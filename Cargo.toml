@@ -11,13 +11,16 @@ name = "physim"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
+default = ["parallel"]
+# Multi-threaded force evaluation (rayon). Results are identical with or without it.
+parallel = ["dep:rayon"]
 # Build the Python bindings (enabled by maturin via pyproject.toml).
 python = ["dep:pyo3", "dep:numpy"]
 
 [dependencies]
 pyo3 = { version = "0.29", features = ["abi3-py39"], optional = true }
 numpy = { version = "0.29", optional = true }
+rayon = { version = "1.12", optional = true }
 
 [profile.release]
 lto = "thin"
@@ -25,6 +28,7 @@ codegen-units = 1
 
 [dev-dependencies]
 criterion = "0.8"
+rayon = "1.12"
 
 [[bench]]
 name = "engine"

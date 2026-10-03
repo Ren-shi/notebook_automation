@@ -9,6 +9,7 @@
 pub mod error;
 pub mod forces;
 pub mod integrators;
+mod parallel;
 pub mod state;
 pub mod vec3;
 pub mod world;

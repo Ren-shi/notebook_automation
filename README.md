@@ -86,6 +86,11 @@ that reads mutable outside state should be declared `velocity_dependent=True` (t
   the last completed step. From `run`, the exception carries the frames recorded so far as `err.trajectory`.
 - `w.integrator_info` gives the integrator's name, order and whether it is symplectic.
 
+**Parallelism**: direct-sum gravity and per-particle forces use all CPU cores (rayon, `parallel` feature, on by
+default). Work is split into blocks that depend only on N, so results are bit-identical for any thread count and
+with the feature off. Set `RAYON_NUM_THREADS` to limit threads. Small systems (under ~360 bodies for gravity) run
+on one thread, avoiding overhead.
+
 **Diagnostics**: `kinetic_energy()`, `potential_energy()`, `total_energy()`, `momentum()`,
 `angular_momentum()`, `center_of_mass()`, `accelerations()`; trajectories record `t`, `pos`, `vel`,
 `kinetic`, `potential`, `energy`.
