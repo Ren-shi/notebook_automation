@@ -111,6 +111,14 @@ or reused, so restarts stay bit-exact. Thermostats: `w.use_langevin(T, friction,
 counter-based noise) and `w.use_nose_hoover(T, tau)` (`total_energy() + thermostat_energy()` is conserved).
 Observables: `w.temperature()`, `w.pressure(volume)` (virial), `ps.radial_distribution(positions, box)`.
 
+**Scenarios and units**: `ps.scenarios` builds standard systems as ready-to-run worlds — `two_body(m1, m2, a, e, i,
+Omega, omega, nu=... | M=...)` (barycentric), `solar_system(["Jupiter", ...])` (JPL J2000 mean elements, Sun first),
+`plummer_sphere(n)` (equilibrium cluster), `figure_eight()` (returns to its start to 3e-8 after one period),
+`pendulum(length, theta0)` and `spring_lattice(shape, boundary="fixed")` — plus `elements_to_state` /
+`state_to_elements`. The engine has no units; `ps.units` converts between `SI`, `ASTRONOMICAL` (AU, solar mass,
+Gaussian year, so `G = 4π²`), `DIMENSIONLESS` and your own `units.scaled(name, length, mass, time)`:
+`ps.units.ASTRONOMICAL.to_si(v, "velocity")`, `ps.units.convert(x, "energy", src, dst)`.
+
 **Rigid bodies**: `ps.RigidSystem(order=2 | 4)` holds bodies with a mass, principal moments of inertia, an
 orientation (unit quaternion) and angular momentum — free (`position` is the centre of mass) or turning about a fixed
 `pivot` with a `center_of_mass` offset. Forces act at body points and give torques: `BodyGravity(g)`,
@@ -317,7 +325,7 @@ src/
   parallel.rs     deterministic block-parallel helpers
   python.rs       PyO3 bindings (feature "python"; python/rigid.rs for RigidSystem)
 scripts/          developer tools (notebook runner)
-python/physim/    Python package (re-exports the extension, file I/O, analysis helpers, type stubs)
+python/physim/    Python package (re-exports the extension, file I/O, analysis helpers, scenarios, units, type stubs)
 tests/            Rust tests; tests/python for the bindings
 benches/          Rust (criterion) and Python benchmarks
 examples/         standalone Rust programs (cargo run --release --example <name>)

@@ -57,6 +57,7 @@ from .analysis import (
     relative_energy_error,
     tabulate_pair,
 )
+from . import scenarios, units
 from .geometry import (
     box_walls,
     inertia_box,
@@ -125,5 +126,7 @@ __all__ = [
     "save_checkpoint",
     "save_trajectory",
     "tabulate_pair",
+    "scenarios",
+    "units",
     "__version__",
 ]
