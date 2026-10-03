@@ -1,1 +1,7 @@
+/target
 __pycache__/
+*.so
+*.pyd
+.venv/
+.ipynb_checkpoints/
+.pytest_cache/
