@@ -63,12 +63,32 @@ CI (`.github/workflows/ci.yml`) runs all of the above plus `cargo fmt --check` a
 | `verlet` | 2 | yes | velocity Verlet / KDK leapfrog, time-reversible; 1 force evaluation per step*; RATTLE with rods |
 | `yoshida4` | 4 | yes | Yoshida (1990) triple-jump composition of leapfrog; 3 force evaluations per step*; supports rods |
 | `rk4` | 4 | no | classical Runge-Kutta; consistent for velocity-dependent forces |
+| `dopri5` | 5 | no | Dormand-Prince 5(4) at a fixed step; 6 force evaluations per step; also the adaptive method below |
 
-The symplectic schemes are only symplectic for velocity-independent forces; prefer `rk4` with drag.
+The symplectic schemes are only symplectic for velocity-independent forces; prefer `rk4` or `dopri5` with drag.
 
 \* `verlet` and `yoshida4` reuse the end-of-step acceleration when no force depends on velocity (otherwise 2 and 6
 evaluations). Forces must therefore be pure functions of `t`, positions, velocities and masses: a `CustomForce`
 that reads mutable outside state should be declared `velocity_dependent=True` (the default) to disable reuse.
+
+**Adaptive time stepping**: `w.run_adaptive(t_end, rtol=1e-9, atol=1e-12)` integrates to `t_end` with
+Dormand-Prince 5(4), choosing each step so the estimated local error of every position and velocity component
+stays below `atol + rtol·|value|`. It records every accepted step, or exactly the times you ask for with
+`times=[...]` (interpolated by the method's continuous extension, at no extra cost). `events`, `energies` and
+`sink` work as in `run`, events are located on the continuous extension, and `t_end` may lie in the past.
+`traj.metadata["adaptive"]` reports accepted and rejected steps and force evaluations. Constraints are not supported.
+
+```python
+traj = w.run_adaptive(2 * math.pi, rtol=1e-10, atol=1e-13)                    # one orbit, every step
+traj = w.run_adaptive(100.0, times=np.linspace(w.t, 100.0, 1001), events=[periapsis])
+```
+
+When to use it: on an e = 0.99 Kepler orbit, adaptive stepping reaches a given energy error with about 350 to 16 000 times
+fewer force evaluations than any fixed-step integrator here (`cargo run --release --example eccentric_orbit`).
+The catch is that it is not symplectic: its energy error grows linearly with time (about 1.6e-10 per orbit at
+e = 0.5 and `rtol=1e-10`, so 1.6e-6 after 10 000 orbits), whereas `yoshida4` at the same cost stays bounded
+(1e-12). Use adaptive steps for transients, close encounters and moderately long runs with widely varying time
+scales; use a fixed-step symplectic integrator for very long integrations of smooth conservative motion.
 
 **Forces**: `UniformField(g)`, `NewtonianGravity(G, softening)` (direct O(N²), Plummer softening),
 `Spring(i, j, k, rest_length)`, `AnchorSpring(i, anchor, k, rest_length=0)`, `LinearDrag(gamma)` (`a = -γv`),
@@ -209,6 +229,7 @@ src/
   forces.rs       Force trait, ForceSet, built-in forces
   integrators.rs  Integrator trait and schemes
   world.rs        World (state + forces + integrator), run loop, Recorder, Trajectory
+  adaptive.rs     adaptive Dormand-Prince run loop (error control, dense output)
   events.rs       event functions and crossing detection
   constraints.rs  rigid rods and the RATTLE projections
   checkpoint.rs   save/restore a World
@@ -218,6 +239,7 @@ scripts/          developer tools (notebook runner)
 python/physim/    Python package (re-exports the extension, file I/O, analysis helpers, type stubs)
 tests/            Rust tests; tests/python for the bindings
 benches/          Rust (criterion) and Python benchmarks
+examples/         standalone Rust programs (cargo run --release --example <name>)
 notebooks/        examples
 backlog/          planned work
 ```

@@ -131,6 +131,21 @@ class World:
         sink: Optional[Callable[[Trajectory], Any]] = None,
         chunk_size: int = 1024,
     ) -> Trajectory: ...
+    def run_adaptive(
+        self,
+        t_end: float,
+        *,
+        rtol: float = 1e-9,
+        atol: float = 1e-12,
+        times: Optional[ArrayLike] = None,
+        events: Optional[Sequence[Event]] = None,
+        energies: bool = True,
+        first_step: Optional[float] = None,
+        max_step: Optional[float] = None,
+        max_steps: int = 10_000_000,
+        sink: Optional[Callable[[Trajectory], Any]] = None,
+        chunk_size: int = 1024,
+    ) -> Trajectory: ...
     def add_rod(self, i: int, to: Union[int, ArrayLike], length: Optional[float] = None) -> int: ...
     def remove_constraint(self, id: int) -> None: ...
     def clear_constraints(self) -> None: ...
