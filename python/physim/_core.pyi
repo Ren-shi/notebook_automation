@@ -137,6 +137,11 @@ class FieldForce:
         name: str = "FieldForce",
     ) -> None: ...
 
+class TreeGravity:
+    def __init__(
+        self, G: float = 1.0, softening: float = 0.0, theta: float = 0.5, quadrupole: bool = False
+    ) -> None: ...
+
 class CustomForce:
     def __init__(
         self,
@@ -167,6 +172,7 @@ class Event:
 Force = Union[
     UniformField,
     NewtonianGravity,
+    TreeGravity,
     Spring,
     AnchorSpring,
     LinearDrag,

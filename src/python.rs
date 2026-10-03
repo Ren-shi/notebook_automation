@@ -726,6 +726,31 @@ impl PyForceSpec for PyFieldForce {
     }
 }
 
+/// Barnes-Hut tree gravity: the same physics as ``NewtonianGravity`` at O(N log N) cost.
+/// ``theta`` in (0, 1] sets the accuracy (rms force error ~1e-3 at 0.5, ~1e-2 at 1.0);
+/// ``quadrupole=True`` adds each node's quadrupole (about 3x more accurate at the same
+/// ``theta``, 2.5x slower). Momentum is conserved only to the force accuracy.
+#[pyclass(frozen, name = "TreeGravity", module = "physim")]
+struct PyTreeGravity(forces::TreeGravity);
+
+#[pymethods]
+impl PyTreeGravity {
+    #[new]
+    #[pyo3(signature = (G = 1.0, softening = 0.0, theta = 0.5, quadrupole = false))]
+    #[allow(non_snake_case)]
+    fn new(G: f64, softening: f64, theta: f64, quadrupole: bool) -> PyResult<Self> {
+        Ok(Self(validated(forces::TreeGravity {
+            g: G,
+            softening,
+            theta,
+            quadrupole,
+        })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
 simple_spec!(
     PyDampedSpring,
     PyModulatedSpring,
@@ -741,7 +766,8 @@ simple_spec!(
     PyHenonHeiles,
     PyElectricField,
     PyMagneticField,
-    PyCoulomb
+    PyCoulomb,
+    PyTreeGravity
 );
 
 /// A force defined in Python, for prototyping new physics without recompiling.
@@ -890,6 +916,7 @@ fn build_force(force: &Bound<'_, PyAny>) -> PyResult<Box<dyn Force>> {
         PyElectricField,
         PyMagneticField,
         PyCoulomb,
+        PyTreeGravity,
         PyFieldForce,
         PyCustomForce
     );
@@ -1028,6 +1055,13 @@ fn describe_force<'py>(
             d.set_item("k", f.k)?;
             d.set_item("softening", f.softening)?;
         }
+        Some(BuiltinForce::TreeGravity(f)) => {
+            d.set_item("type", "TreeGravity")?;
+            d.set_item("G", f.g)?;
+            d.set_item("softening", f.softening)?;
+            d.set_item("theta", f.theta)?;
+            d.set_item("quadrupole", f.quadrupole)?;
+        }
         Some(BuiltinForce::HenonHeiles(f)) => {
             d.set_item("type", "HenonHeiles")?;
             d.set_item("lam", f.lambda)?;
@@ -1060,7 +1094,8 @@ fn builtin_from_description(desc: &Bound<'_, PyDict>) -> PyResult<BuiltinForce> 
         .get_item("type")?
         .ok_or_else(|| PyValueError::new_err("force description has no \"type\""))?
         .extract()?;
-    const BUILTIN: [&str; 21] = [
+    const BUILTIN: [&str; 22] = [
+        "TreeGravity",
         "HenonHeiles",
         "ElectricField",
         "MagneticField",
@@ -2522,6 +2557,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyElectricField>()?;
     m.add_class::<PyMagneticField>()?;
     m.add_class::<PyCoulomb>()?;
+    m.add_class::<PyTreeGravity>()?;
     m.add_class::<PyFieldForce>()?;
     m.add_class::<PyCustomForce>()?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;

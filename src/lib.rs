@@ -33,8 +33,8 @@ pub use forces::{
     AnchorSpring, BuiltinForce, ClosureForce, Coulomb, DampedSpring, ElectricField, FieldFunctions,
     Force, ForceId, ForceSet, HarmonicTrap, HenonHeiles, HernquistPotential, J2Oblateness,
     LinearDrag, MagneticField, ModulatedSpring, NewtonianGravity, Param, PeriodicForce,
-    PlummerPotential, PostNewtonian, PowerLaw, QuadraticDrag, Spring, SpringNetwork, UniformField,
-    Yukawa,
+    PlummerPotential, PostNewtonian, PowerLaw, QuadraticDrag, Spring, SpringNetwork, TreeGravity,
+    UniformField, Yukawa,
 };
 pub use integrators::Integrator;
 pub use state::State;

@@ -83,6 +83,28 @@ fn gravity(c: &mut Criterion) {
     g.finish();
 }
 
+/// Barnes-Hut tree gravity, one force evaluation per Verlet step (compare `gravity_verlet_step`;
+/// `cargo run --release --example tree_gravity` compares against direct summation at N = 1e5).
+fn tree_gravity(c: &mut Criterion) {
+    let mut g = c.benchmark_group("tree_gravity_verlet_step");
+    g.sample_size(10);
+    for n in [5_000usize, 100_000] {
+        g.throughput(Throughput::Elements(n as u64));
+        g.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
+            let mut w = cluster(n, "verlet");
+            w.forces.clear();
+            w.add_force(TreeGravity {
+                g: 1.0,
+                softening: 0.01,
+                theta: 0.5,
+                quadrupole: false,
+            });
+            b.iter(|| w.step(black_box(1e-4)).unwrap());
+        });
+    }
+    g.finish();
+}
+
 /// Each integrator on cheap forces (integrator overhead) and on gravity (force-dominated).
 fn integrators(c: &mut Criterion) {
     let mut g = c.benchmark_group("integrator_step_chain10k");
@@ -157,6 +179,6 @@ fn springs(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default().warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(3));
-    targets = gravity, integrators, recording, springs
+    targets = gravity, tree_gravity, integrators, recording, springs
 }
 criterion_main!(benches);

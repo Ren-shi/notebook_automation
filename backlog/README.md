@@ -15,7 +15,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 07 | ~~[Holonomic constraints (SHAKE/RATTLE)](07-constraints.md)~~ **Done** | Physics | P1 | M | — |
 | 08 | ~~[Adaptive time stepping](08-adaptive-time-stepping.md)~~ **Done** | Integrators | P2 | M | 05 |
 | 09 | ~~[Charged particles: Lorentz force and Boris pusher](09-lorentz-force-boris.md)~~ **Done** | Physics | P2 | M | — |
-| 10 | [Tree gravity (Barnes–Hut)](10-barnes-hut.md) | Performance | P2 | L | 02, 04 |
+| 10 | ~~[Tree gravity (Barnes–Hut)](10-barnes-hut.md)~~ **Done** | Performance | P2 | L | 02, 04 |
 | 11 | [Collisions and contact](11-collisions.md) | Physics | P2 | L | 05 |
 | 12 | [Molecular dynamics: pair potentials, periodic boxes, thermostats](12-molecular-dynamics.md) | Physics | P2 | L | 04 |
 | 13 | [Rigid bodies](13-rigid-bodies.md) | Physics | P3 | L | 07 |
@@ -39,7 +39,8 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 31 | [Seeded, reproducible randomness](31-seeded-randomness.md) | Core | P2 | S | — |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
-- Gravity is direct O(N²) summation, so practical up to a few thousand bodies.
+- `NewtonianGravity` is direct O(N²); `TreeGravity` (item 10) is O(N log N) but its per-interaction cost is not yet
+  SIMD-vectorised, which caps its speedup at ~N / (2 × interactions per particle).
 - `verlet`/`yoshida4` are only symplectic for velocity-independent forces; use `rk4` with drag.
 - Rods (item 07) need `verlet` or `yoshida4`; long chains use an iterative solver (~43 ms/step at 1 000 links).
 - `CustomForce` costs one Python call per force evaluation.
