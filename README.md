@@ -103,6 +103,10 @@ Then expose it to Python in `src/python.rs`: add a `#[pyclass]` wrapper with an 
 New integrators work the same way: implement `Integrator` in `src/integrators.rs` and register a name in
 `integrators::by_name`.
 
+## Roadmap
+
+Planned work lives in [`backlog/`](backlog/README.md), one file per item with priority, scope and acceptance criteria.
+
 ## Layout
 
 ```
@@ -116,4 +120,5 @@ src/
 python/physim/    Python package (re-exports the extension, analysis helpers, type stubs)
 tests/            Rust tests; tests/python for the bindings
 notebooks/        examples
+backlog/          planned work
 ```
