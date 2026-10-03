@@ -23,8 +23,13 @@ fn oscillator_error(integrator: &str, dt: f64) -> f64 {
 #[test]
 fn integrators_converge_at_their_stated_order() {
     for &name in NAMES {
+        if name == "wisdom_holman" {
+            continue; // needs gravity; see tests/integrators.rs
+        }
         let order = integrators::by_name(name).unwrap().order() as f64;
-        let (e1, e2) = (oscillator_error(name, 0.02), oscillator_error(name, 0.01));
+        // High orders reach round-off quickly at small steps.
+        let dt = if order >= 5.0 { 0.1 } else { 0.02 };
+        let (e1, e2) = (oscillator_error(name, dt), oscillator_error(name, dt / 2.0));
         let measured = (e1 / e2).log2();
         assert!(
             (measured - order).abs() < 0.25,

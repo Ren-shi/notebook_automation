@@ -9,6 +9,7 @@
 use crate::constraints::Constraints;
 use crate::error::{invalid, Result};
 use crate::forces::{BuiltinForce, Force, ForceId, ForceSet};
+use crate::integrators::{self, Scheme};
 use crate::state::State;
 use crate::world::World;
 
@@ -28,6 +29,8 @@ pub struct Checkpoint {
     pub state: State,
     /// Integrator name, as accepted by [`crate::integrators::by_name`].
     pub integrator: String,
+    /// Coefficients of a user-defined integrator (then used instead of `integrator`).
+    pub integrator_scheme: Option<Scheme>,
     /// Forces in evaluation order, with their ids.
     pub forces: Vec<(ForceId, SavedForce)>,
     /// The id the next added force will get.
@@ -41,6 +44,7 @@ impl World {
         Checkpoint {
             state: self.state.clone(),
             integrator: self.integrator().name().to_string(),
+            integrator_scheme: self.integrator().scheme(),
             forces: self
                 .forces
                 .iter()
@@ -66,6 +70,7 @@ impl World {
         let Checkpoint {
             state,
             integrator,
+            integrator_scheme,
             forces,
             next_force_id,
             constraints,
@@ -79,7 +84,10 @@ impl World {
                 state.pinned.len()
             ));
         }
-        let mut world = World::with_integrator(&integrator)?;
+        let mut world = World::new(match integrator_scheme {
+            Some(scheme) => scheme.build()?,
+            None => integrators::by_name(&integrator)?,
+        });
         let forces = forces
             .into_iter()
             .map(|(id, saved)| {

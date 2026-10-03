@@ -29,7 +29,8 @@ def busy_world(integrator="yoshida4"):
     return w
 
 
-@pytest.mark.parametrize("integrator", ps.INTEGRATORS)
+# wisdom_holman needs pure gravity without pins; its restart is tested in test_integrators.py
+@pytest.mark.parametrize("integrator", [i for i in ps.INTEGRATORS if i != "wisdom_holman"])
 def test_checkpoint_restart_is_bit_exact(tmp_path, integrator):
     straight = busy_world(integrator)
     interrupted = busy_world(integrator)

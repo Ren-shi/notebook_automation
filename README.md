@@ -64,8 +64,20 @@ CI (`.github/workflows/ci.yml`) runs all of the above plus `cargo fmt --check` a
 | `yoshida4` | 4 | yes | Yoshida (1990) triple-jump composition of leapfrog; 3 force evaluations per step*; supports rods |
 | `rk4` | 4 | no | classical Runge-Kutta; consistent for velocity-dependent forces |
 | `dopri5` | 5 | no | Dormand-Prince 5(4) at a fixed step; 6 force evaluations per step; also the adaptive method below |
+| `yoshida6`, `yoshida8` | 6, 8 | yes | Yoshida compositions of 7 and 15 Verlet substeps; support rods |
+| `pefrl` | 4 | yes | Omelyan et al. (2002) optimised splitting: 4 evaluations, error 60× below `yoshida4` at equal cost |
+| `blanes_moan4` | 4 | yes | Blanes & Moan (2002) 6-stage splitting: 6 evaluations, error 190× below `yoshida4` at equal cost |
+| `gauss2`, `gauss4`, `gauss6` | 2, 4, 6 | yes | Gauss-Legendre implicit RK (`gauss2` = implicit midpoint): symplectic and symmetric even with velocity-dependent forces, conserve quadratic invariants exactly; fixed-point iteration, so several evaluations per stage |
+| `wisdom_holman` | 2 | yes | Wisdom-Holman for planetary systems (particle 0 is the star; needs one `NewtonianGravity`, no pins): error ∝ planet/star mass ratio |
 
-The symplectic schemes are only symplectic for velocity-independent forces; prefer `rk4` or `dopri5` with drag.
+The explicit symplectic schemes are only symplectic for velocity-independent forces; with drag prefer `rk4` or
+`dopri5`, and for Hamiltonian velocity-dependent forces (e.g. magnetic) the `gauss*` schemes. Aliases:
+`forest_ruth` = `yoshida4`, `omelyan` = `pefrl`, `implicit_midpoint` = `gauss2`.
+
+Your own schemes: `w.use_composition(weights, order)` composes Verlet substeps of `weights[k]·dt`, and
+`w.use_splitting([("kick", b1), ("drift", a1), ...], order)` applies kicks and drifts in order. Both are saved in
+checkpoints. On the outer solar system (Sun to Pluto) at 1/20 of Jupiter's period, `wisdom_holman` holds the energy
+error at 4e-6 for a million years, against 2e-3 for `verlet` (`cargo run --release --example outer_solar_system`).
 
 \* `verlet` and `yoshida4` reuse the end-of-step acceleration when no force depends on velocity (otherwise 2 and 6
 evaluations). Forces must therefore be pure functions of `t`, positions, velocities and masses: a `CustomForce`

@@ -15,7 +15,7 @@ use crate::constraints::{Anchor, ConstraintId, Constraints, Rod};
 use crate::error::{Result as SimResult, SimError};
 use crate::events::{self, Direction, Event, EventFunction};
 use crate::forces::{self, BuiltinForce, Force, ForceId, Param};
-use crate::integrators;
+use crate::integrators::{self, Op, Scheme};
 use crate::state::State;
 use crate::vec3::Vec3;
 use crate::world::{Frame, Recorder, RunOptions, Trajectory, World};
@@ -1327,6 +1327,81 @@ fn record_run(
 }
 
 // ---------------------------------------------------------------------------
+// User-defined integrator schemes
+
+fn parse_ops(ops: &[(String, f64)]) -> PyResult<Vec<Op>> {
+    ops.iter()
+        .map(|(kind, c)| match kind.as_str() {
+            "kick" => Ok(Op::Kick(*c)),
+            "drift" => Ok(Op::Drift(*c)),
+            other => Err(PyValueError::new_err(format!(
+                "splitting steps are (\"kick\" or \"drift\", coefficient), got {other:?}"
+            ))),
+        })
+        .collect()
+}
+
+/// ``{"kind": "composition", "name", "order", "weights"}`` or
+/// ``{"kind": "splitting", "name", "order", "ops": [["kick", c], ["drift", c], ...]}``.
+fn describe_scheme<'py>(py: Python<'py>, scheme: &Scheme) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    match scheme {
+        Scheme::Composition {
+            name,
+            order,
+            weights,
+        } => {
+            d.set_item("kind", "composition")?;
+            d.set_item("name", name)?;
+            d.set_item("order", order)?;
+            d.set_item("weights", weights.clone())?;
+        }
+        Scheme::Splitting { name, order, ops } => {
+            d.set_item("kind", "splitting")?;
+            d.set_item("name", name)?;
+            d.set_item("order", order)?;
+            let ops: Vec<(&str, f64)> = ops
+                .iter()
+                .map(|op| match *op {
+                    Op::Kick(c) => ("kick", c),
+                    Op::Drift(c) => ("drift", c),
+                })
+                .collect();
+            d.set_item("ops", ops)?;
+        }
+    }
+    Ok(d)
+}
+
+fn scheme_from_description(d: &Bound<'_, PyDict>) -> PyResult<Scheme> {
+    let field = |k: &str| -> PyResult<Bound<'_, PyAny>> {
+        d.get_item(k)?
+            .ok_or_else(|| PyValueError::new_err(format!("integrator scheme has no {k:?}")))
+    };
+    let kind: String = field("kind")?.extract()?;
+    let name: String = field("name")?.extract()?;
+    let order: u32 = field("order")?.extract()?;
+    match kind.as_str() {
+        "composition" => Ok(Scheme::Composition {
+            name,
+            order,
+            weights: field("weights")?.extract()?,
+        }),
+        "splitting" => {
+            let ops: Vec<(String, f64)> = field("ops")?.extract()?;
+            Ok(Scheme::Splitting {
+                name,
+                order,
+                ops: parse_ops(&ops)?,
+            })
+        }
+        _ => Err(PyValueError::new_err(format!(
+            "unknown integrator scheme kind {kind:?}"
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // World
 
 /// A simulation: particles, forces and a time integrator.
@@ -1500,8 +1575,37 @@ impl PyWorld {
     }
 
     #[getter]
-    fn integrator(&self) -> &'static str {
-        self.inner.integrator().name()
+    fn integrator(&self) -> String {
+        self.inner.integrator().name().to_string()
+    }
+
+    /// Switches to a composition of velocity Verlet substeps of ``weights[k] * dt`` (the
+    /// weights must sum to 1; symmetric weights give a time-reversible symplectic scheme).
+    /// ``order`` is what you claim for it (reported in ``integrator_info``). Supports rods.
+    /// Saved in checkpoints.
+    #[pyo3(signature = (weights, order, name = "composition"))]
+    fn use_composition(&mut self, weights: Vec<f64>, order: u32, name: &str) -> PyResult<()> {
+        let scheme = Scheme::Composition {
+            name: name.to_string(),
+            order,
+            weights,
+        };
+        self.inner.set_integrator(scheme.build()?);
+        Ok(())
+    }
+
+    /// Switches to a general splitting: ``ops`` is a sequence of ``("kick", c)`` (``v += c dt
+    /// a(x)``) and ``("drift", c)`` (``x += c dt v``) applied in order; kick and drift
+    /// coefficients must each sum to 1. Saved in checkpoints.
+    #[pyo3(signature = (ops, order, name = "splitting"))]
+    fn use_splitting(&mut self, ops: Vec<(String, f64)>, order: u32, name: &str) -> PyResult<()> {
+        let scheme = Scheme::Splitting {
+            name: name.to_string(),
+            order,
+            ops: parse_ops(&ops)?,
+        };
+        self.inner.set_integrator(scheme.build()?);
+        Ok(())
     }
 
     #[setter]
@@ -1696,6 +1800,11 @@ impl PyWorld {
         d.set_item("masses", PyArray1::from_slice(py, &s.mass))?;
         d.set_item("pinned", PyArray1::from_slice(py, &s.pinned))?;
         d.set_item("integrator", self.inner.integrator().name())?;
+        let scheme = self.inner.integrator().scheme();
+        match &scheme {
+            Some(s) => d.set_item("integrator_scheme", describe_scheme(py, s)?)?,
+            None => d.set_item("integrator_scheme", py.None())?,
+        }
         d.set_item("forces", describe_forces(py, &self.inner)?)?;
         d.set_item("next_force_id", self.inner.forces.next_id())?;
         let c = &self.inner.constraints;
@@ -1803,9 +1912,14 @@ impl PyWorld {
         if let Some(n) = optional(checkpoint, "constraint_max_iterations")? {
             constraints.max_iterations = n;
         }
+        let integrator_scheme = match checkpoint.get_item("integrator_scheme")? {
+            Some(d) if !d.is_none() => Some(scheme_from_description(d.cast::<PyDict>()?)?),
+            _ => None,
+        };
         let checkpoint = Checkpoint {
             state,
             integrator: get("integrator")?.extract()?,
+            integrator_scheme,
             forces,
             next_force_id: get("next_force_id")?.extract()?,
             constraints,

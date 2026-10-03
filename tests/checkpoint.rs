@@ -93,6 +93,9 @@ fn assert_same_bits(a: &World, b: &World) {
 #[test]
 fn restart_from_checkpoint_matches_uninterrupted_run_bit_for_bit() {
     for &name in NAMES {
+        if name == "wisdom_holman" {
+            continue; // needs pure gravity and no pins; see tests/integrators.rs
+        }
         let mut straight = busy_world(name, 12);
         straight.step(1e-3).unwrap(); // warm the acceleration cache, as a real run would be
         let mut interrupted = busy_world(name, 12);
