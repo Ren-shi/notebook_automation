@@ -94,6 +94,33 @@ impl World {
         Ok(())
     }
 
+    /// Sets every particle's electric charge (used by `ElectricField`, `MagneticField`,
+    /// `Coulomb` and the Boris integrator).
+    pub fn set_charges(&mut self, charges: Vec<f64>) -> Result<()> {
+        if charges.len() != self.state.len() {
+            return invalid(format!(
+                "expected {} charges, got {}",
+                self.state.len(),
+                charges.len()
+            ));
+        }
+        if let Some(q) = charges.iter().find(|q| !q.is_finite()) {
+            return invalid(format!("charges must be finite, got {q}"));
+        }
+        self.state.charge = charges;
+        Ok(())
+    }
+
+    /// Sets the electric charge of particle `i`.
+    pub fn set_charge(&mut self, i: usize, charge: f64) -> Result<()> {
+        self.check_particle(i)?;
+        if !charge.is_finite() {
+            return invalid(format!("charge must be finite, got {charge}"));
+        }
+        self.state.charge[i] = charge;
+        Ok(())
+    }
+
     /// Sets velocities; pinned particles must be given zero velocity.
     pub fn set_velocities(&mut self, vel: Vec<Vec3>) -> Result<()> {
         if vel.len() != self.state.len() {
@@ -403,7 +430,10 @@ impl World {
                 .zip(mass)
                 .map(|(v, m)| 0.5 * m * v.norm_squared())
                 .sum();
-            (Some(kinetic), Some(self.forces.potential(t, pos, mass)?))
+            (
+                Some(kinetic),
+                Some(self.forces.potential(t, pos, mass, &self.state.charge)?),
+            )
         } else {
             (None, None)
         };
@@ -534,8 +564,12 @@ impl World {
 
     /// Potential energy of all conservative forces.
     pub fn potential_energy(&self) -> Result<f64> {
-        self.forces
-            .potential(self.state.t, &self.state.pos, &self.state.mass)
+        self.forces.potential(
+            self.state.t,
+            &self.state.pos,
+            &self.state.mass,
+            &self.state.charge,
+        )
     }
 
     pub fn total_energy(&self) -> Result<f64> {
@@ -547,7 +581,7 @@ impl World {
         let s = &self.state;
         let mut acc = Vec::new();
         self.forces
-            .accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, &mut acc)?;
+            .accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.charge, &s.pinned, &mut acc)?;
         Ok(acc)
     }
 }

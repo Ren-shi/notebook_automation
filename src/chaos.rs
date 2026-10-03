@@ -68,25 +68,39 @@ struct Variational {
 impl Force for Variational {
     fn accumulate(
         &self,
+        _t: f64,
+        _p: &[Vec3],
+        _v: &[Vec3],
+        _m: &[f64],
+        _a: &mut [Vec3],
+    ) -> Result<()> {
+        invalid("the variational force is evaluated with charges")
+    }
+
+    fn accumulate_charged(
+        &self,
         t: f64,
         pos: &[Vec3],
         vel: &[Vec3],
         mass: &[f64],
+        charge: &[f64],
         acc: &mut [Vec3],
     ) -> Result<()> {
         let n = self.n;
         let free = vec![false; n]; // pinned entries are zeroed by the outer force set
+        let (pos0, vel0, mass0, charge0) = (&pos[..n], &vel[..n], &mass[..n], &charge[..n]);
         let mut a = Vec::new();
         self.inner
-            .accelerations(t, &pos[..n], &vel[..n], &mass[..n], &free, &mut a)?;
+            .accelerations(t, pos0, vel0, mass0, charge0, &free, &mut a)?;
         acc[..n].copy_from_slice(&a);
         for b in 1..=self.blocks {
             let r = b * n..(b + 1) * n;
             self.inner.jacobian_vector(
                 t,
-                &pos[..n],
-                &vel[..n],
-                &mass[..n],
+                pos0,
+                vel0,
+                mass0,
+                charge0,
                 &free,
                 &pos[r.clone()],
                 &vel[r.clone()],
@@ -203,6 +217,7 @@ impl World {
                 };
                 let m = if b == 0 { self.state.mass[i] } else { 1.0 };
                 ext.add_particle(x, v, m);
+                ext.charge[b * n + i] = if b == 0 { self.state.charge[i] } else { 0.0 };
                 ext.pinned[b * n + i] = self.state.pinned[i];
             }
         }

@@ -33,6 +33,8 @@ from ._core import Trajectory, World
 PathLike = Union[str, "os.PathLike[str]"]
 
 _CHECKPOINT_ARRAYS = ("positions", "velocities", "masses", "pinned")
+# Arrays added in later versions; files without them still load.
+_OPTIONAL_CHECKPOINT_ARRAYS = ("charges",)
 
 # name: (dtype, per-row shape given n_particles and n_constraints)
 _FIELDS = {
@@ -84,6 +86,9 @@ def save_checkpoint(world: World, path: PathLike) -> None:
     path = _npz_path(path)
     data = world.checkpoint()
     arrays = {k: np.asarray(data.pop(k)) for k in _CHECKPOINT_ARRAYS}
+    for k in _OPTIONAL_CHECKPOINT_ARRAYS:
+        if k in data:
+            arrays[k] = np.asarray(data.pop(k))
     arrays["t"] = np.float64(data.pop("t"))
     meta = json.dumps(data)
     np.savez(path, meta=np.array(meta), **arrays)
@@ -100,6 +105,7 @@ def load_checkpoint(
     with np.load(_npz_path(path), allow_pickle=False) as f:
         data = json.loads(str(f["meta"]))
         data.update({k: f[k] for k in _CHECKPOINT_ARRAYS})
+        data.update({k: f[k] for k in _OPTIONAL_CHECKPOINT_ARRAYS if k in f})
         data["t"] = float(f["t"])
     return World.from_checkpoint(data, dict(custom_forces or {}))
 

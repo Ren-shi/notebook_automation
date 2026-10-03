@@ -29,8 +29,11 @@ def busy_world(integrator="yoshida4"):
     return w
 
 
-# wisdom_holman needs pure gravity without pins; its restart is tested in test_integrators.py
-@pytest.mark.parametrize("integrator", [i for i in ps.INTEGRATORS if i != "wisdom_holman"])
+# wisdom_holman needs pure gravity without pins and boris rejects drag; their restarts are
+# tested in test_integrators.py and test_em.py
+@pytest.mark.parametrize(
+    "integrator", [i for i in ps.INTEGRATORS if i not in ("wisdom_holman", "boris")]
+)
 def test_checkpoint_restart_is_bit_exact(tmp_path, integrator):
     straight = busy_world(integrator)
     interrupted = busy_world(integrator)
@@ -66,7 +69,7 @@ def test_checkpoint_needs_custom_forces_back(tmp_path):
 
 def test_checkpoint_dict_is_plain_data():
     data = busy_world().checkpoint()
-    arrays = {k: data.pop(k) for k in ("positions", "velocities", "masses", "pinned")}
+    arrays = {k: data.pop(k) for k in ("positions", "velocities", "masses", "charges", "pinned")}
     assert arrays["positions"].shape == (4, 3)
     restored = json.loads(json.dumps(data))  # everything else is JSON
     assert restored["integrator"] == "yoshida4"

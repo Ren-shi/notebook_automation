@@ -7,6 +7,8 @@ pub struct State {
     pub pos: Vec<Vec3>,
     pub vel: Vec<Vec3>,
     pub mass: Vec<f64>,
+    /// Electric charge of each particle (zero unless set).
+    pub charge: Vec<f64>,
     /// Pinned particles never move but still exert forces.
     pub pinned: Vec<bool>,
 }
@@ -21,6 +23,7 @@ impl State {
         self.pos.push(pos);
         self.vel.push(vel);
         self.mass.push(mass);
+        self.charge.push(0.0);
         self.pinned.push(false);
         self.pos.len() - 1
     }
@@ -30,6 +33,7 @@ impl State {
         self.pos.remove(i);
         self.vel.remove(i);
         self.mass.remove(i);
+        self.charge.remove(i);
         self.pinned.remove(i);
     }
 
@@ -47,6 +51,10 @@ impl State {
             .zip(&self.mass)
             .map(|(v, m)| 0.5 * m * v.norm_squared())
             .sum()
+    }
+
+    pub fn total_charge(&self) -> f64 {
+        self.charge.iter().sum()
     }
 
     pub fn total_mass(&self) -> f64 {

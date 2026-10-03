@@ -173,6 +173,7 @@ impl World {
             None => dp.initial_step(
                 &self.forces,
                 &self.state.mass,
+                &self.state.charge,
                 &self.state.pinned,
                 direction,
                 o.rtol,
@@ -208,6 +209,7 @@ impl World {
             if let Err(e) = dp.attempt(
                 &self.forces,
                 &self.state.mass,
+                &self.state.charge,
                 &self.state.pinned,
                 h * direction,
             ) {
