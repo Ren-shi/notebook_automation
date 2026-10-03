@@ -19,7 +19,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 11 | ~~[Collisions and contact](11-collisions.md)~~ **Done** | Physics | P2 | L | 05 |
 | 12 | ~~[Molecular dynamics: pair potentials, periodic boxes, thermostats](12-molecular-dynamics.md)~~ **Done** | Physics | P2 | L | 04 |
 | 13 | ~~[Rigid bodies](13-rigid-bodies.md)~~ **Done** | Physics | P3 | L | 07 |
-| 14 | [Scenario library and units](14-scenarios-and-units.md) | Usability | P3 | M | — |
+| 14 | ~~[Scenario library and units](14-scenarios-and-units.md)~~ **Done** | Usability | P3 | M | — |
 | 15 | [Visualization and animation helpers](15-visualization.md) | Usability | P3 | S | — |
 | 16 | ~~[World API gaps: particle and force management](16-world-api-gaps.md)~~ **Done** | Core | P1 | S | — |
 | 17 | ~~[Higher-order and specialised integrators](17-more-integrators.md)~~ **Done** | Integrators | P2 | M | — |
