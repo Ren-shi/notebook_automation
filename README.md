@@ -60,11 +60,15 @@ CI (`.github/workflows/ci.yml`) runs all of the above plus `cargo fmt --check` a
 |---|---|---|---|
 | `explicit_euler` | 1 | no | baseline; energy drifts |
 | `symplectic_euler` | 1 | yes | kick-drift |
-| `verlet` | 2 | yes | velocity Verlet / KDK leapfrog, time-reversible |
-| `yoshida4` | 4 | yes | Yoshida (1990) triple-jump composition of leapfrog |
+| `verlet` | 2 | yes | velocity Verlet / KDK leapfrog, time-reversible; 1 force evaluation per step* |
+| `yoshida4` | 4 | yes | Yoshida (1990) triple-jump composition of leapfrog; 3 force evaluations per step* |
 | `rk4` | 4 | no | classical Runge-Kutta; consistent for velocity-dependent forces |
 
 The symplectic schemes are only symplectic for velocity-independent forces; prefer `rk4` with drag.
+
+\* `verlet` and `yoshida4` reuse the end-of-step acceleration when no force depends on velocity (otherwise 2 and 6
+evaluations). Forces must therefore be pure functions of `t`, positions, velocities and masses: a `CustomForce`
+that reads mutable outside state should be declared `velocity_dependent=True` (the default) to disable reuse.
 
 **Forces**: `UniformField(g)`, `NewtonianGravity(G, softening)` (direct O(N²), Plummer softening),
 `Spring(i, j, k, rest_length)`, `AnchorSpring(i, anchor, k, rest_length=0)`, `LinearDrag(gamma)` (`a = -γv`),
