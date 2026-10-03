@@ -111,6 +111,11 @@ or reused, so restarts stay bit-exact. Thermostats: `w.use_langevin(T, friction,
 counter-based noise) and `w.use_nose_hoover(T, tau)` (`total_energy() + thermostat_energy()` is conserved).
 Observables: `w.temperature()`, `w.pressure(volume)` (virial), `ps.radial_distribution(positions, box)`.
 
+**Plotting**: `ps.plot` (matplotlib, imported on first use) — `orbits(traj, labels=...)`, `energy_error({"verlet":
+t1, "rk4": t2})`, `phase_space(traj, particle, "x")`, `tidy(ax)` for the house style, and `animate(traj, trail=30)`
+(save with `anim.save("orbit.gif", writer="pillow")` or mp4; in a notebook `HTML(anim.to_jshtml())`). `view3d(traj)`
+gives an interactive plotly figure (`pip install physim[plot3d]`). They accept `Trajectory` and `RigidTrajectory`.
+
 **Scenarios and units**: `ps.scenarios` builds standard systems as ready-to-run worlds — `two_body(m1, m2, a, e, i,
 Omega, omega, nu=... | M=...)` (barycentric), `solar_system(["Jupiter", ...])` (JPL J2000 mean elements, Sun first),
 `plummer_sphere(n)` (equilibrium cluster), `figure_eight()` (returns to its start to 3e-8 after one period),
@@ -325,7 +330,7 @@ src/
   parallel.rs     deterministic block-parallel helpers
   python.rs       PyO3 bindings (feature "python"; python/rigid.rs for RigidSystem)
 scripts/          developer tools (notebook runner)
-python/physim/    Python package (re-exports the extension, file I/O, analysis helpers, scenarios, units, type stubs)
+python/physim/    Python package (re-exports the extension, file I/O, analysis helpers, scenarios, units, plotting, type stubs)
 tests/            Rust tests; tests/python for the bindings
 benches/          Rust (criterion) and Python benchmarks
 examples/         standalone Rust programs (cargo run --release --example <name>)
