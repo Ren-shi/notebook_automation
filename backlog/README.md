@@ -25,7 +25,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 17 | ~~[Higher-order and specialised integrators](17-more-integrators.md)~~ **Done** | Integrators | P2 | M | — |
 | 18 | ~~[Chaos and stability analysis](18-chaos-and-stability.md)~~ **Done** | Analysis | P2 | M | 05 |
 | 19 | ~~[More built-in forces](19-more-forces.md)~~ **Done** | Physics | P2 | M | — |
-| 20 | [Fields and continua](20-fields-and-continua.md) | Physics | P3 | L | — |
+| 20 | ~~[Fields and continua](20-fields-and-continua.md)~~ **Done** | Physics | P3 | L | — |
 | 21 | ~~[Packaging and release](21-packaging-and-release.md)~~ **Done** | Tooling | P3 | S | 01 |
 | 22 | ~~[Documentation](22-documentation.md)~~ **Done** | Usability | P3 | M | — |
 | 23 | [Equations of motion from a Lagrangian or Hamiltonian](23-lagrangian-input.md) | Usability | P2 | L | 17 |

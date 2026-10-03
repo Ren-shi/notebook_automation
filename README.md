@@ -140,6 +140,15 @@ or reused, so restarts stay bit-exact. Thermostats: `w.use_langevin(T, friction,
 counter-based noise) and `w.use_nose_hoover(T, tau)` (`total_energy() + thermostat_energy()` is conserved).
 Observables: `w.temperature()`, `w.pressure(volume)` (virial), `ps.radial_distribution(positions, box)`.
 
+**Fields on grids**: partial differential equations on regular 1D/2D/3D grids with `"dirichlet"`, `"neumann"` or
+`"periodic"` boundaries. `ps.WaveEquation(shape, spacing, c)` (leapfrog, second order, CFL-checked),
+`ps.HeatEquation(shape, spacing, diffusivity, method="crank_nicolson" | "explicit")` and
+`ps.solve_poisson(f, spacing, boundary)` (FFT on periodic grids, conjugate gradients otherwise); each converges at
+second order against analytic solutions. `ps.ParticleMesh(box_size, cells=64, periodic=False)` is particle-mesh
+gravity (cloud-in-cell deposit, FFT solve on a zero-padded grid for open boundaries, or periodic): O(N + M log M),
+momentum-conserving, within ~1% of direct summation beyond 8 cells; at N = 10⁵ it is 9× (32³) or 1.6× (64³) faster
+than Barnes-Hut but less accurate (`cargo run --release --example particle_mesh`).
+
 **Plotting**: `ps.plot` (matplotlib, imported on first use) — `orbits(traj, labels=...)`, `energy_error({"verlet":
 t1, "rk4": t2})`, `phase_space(traj, particle, "x")`, `tidy(ax)` for the house style, and `animate(traj, trail=30)`
 (save with `anim.save("orbit.gif", writer="pillow")` or mp4; in a notebook `HTML(anim.to_jshtml())`). `view3d(traj)`
@@ -359,6 +368,7 @@ src/
   events.rs       event functions and crossing detection
   constraints.rs  rigid rods and the RATTLE projections
   rigid.rs        rigid bodies: quaternions, torques, splitting step (RigidSystem)
+  fields/         grids, wave/heat/Poisson solvers, FFT, particle-mesh gravity
   checkpoint.rs   save/restore a World
   parallel.rs     deterministic block-parallel helpers
   python.rs       PyO3 bindings (feature "python"; python/rigid.rs for RigidSystem)

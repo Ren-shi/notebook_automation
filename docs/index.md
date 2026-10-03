@@ -2,7 +2,8 @@
 
 A classical-mechanics engine: the time stepping and forces run in **Rust**, and **Python** sets up systems and
 analyses results. Point particles under gravity, springs, fields and pair potentials; constraints, collisions and
-events; rigid bodies; symplectic, adaptive and stochastic integrators; chaos indicators.
+events; rigid bodies; symplectic, adaptive and stochastic integrators; chaos indicators; and fields on grids
+(waves, diffusion, Poisson's equation, particle-mesh gravity).
 
 ```python
 import physim as ps
@@ -30,6 +31,7 @@ new-ideas
 theory/integrators
 theory/forces
 theory/methods
+theory/fields
 ```
 
 ```{toctree}
@@ -41,6 +43,7 @@ examples/02_nbody_cluster
 examples/03_three_body_chaos
 examples/04_driven_oscillator
 examples/05_charged_particles
+examples/06_fields
 ```
 
 ```{toctree}
