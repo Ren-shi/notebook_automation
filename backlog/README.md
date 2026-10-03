@@ -37,6 +37,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 29 | [Variable mass](29-variable-mass.md) | Physics | P3 | S | — |
 | 30 | [Special-relativistic particle dynamics](30-special-relativity.md) | Physics | P3 | M | 09 |
 | 31 | [Seeded, reproducible randomness](31-seeded-randomness.md) | Core | P2 | S | — |
+| 32 | ~~[Quantum mechanics: the Schrödinger equation on a grid](32-quantum-mechanics.md)~~ **Done** | Physics | P3 | L | 20 |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - `NewtonianGravity` is direct O(N²); `TreeGravity` (item 10) is O(N log N) but its per-interaction cost is not yet
@@ -50,6 +51,6 @@ Known limits of the current engine (worth keeping in mind until the items above 
 
 Finished items stay in the table, struck through and marked **Done**, with a note at the top of their file.
 
-Items 23–31 were added after the original plan and are deferred: finish 08–22 first.
+Items 23–32 were added after the original plan and are deferred: finish 08–22 first.
 
 To add an item: copy any file, give it the next number, and add a row to the table.

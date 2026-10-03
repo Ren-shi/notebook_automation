@@ -60,5 +60,5 @@ When it works, port it to Rust for speed: see {doc}`new-ideas`.
 - {doc}`guide`: everything the engine does, feature by feature.
 - {doc}`theory/integrators`: which integrator to choose and why.
 - The example notebooks: integrator comparisons, an N-body cluster, chaos in the three-body problem, a driven
-  oscillator's route to chaos, charged particles in a magnetic bottle, fields on grids, and particle accelerators
-  (linac, cyclotrons, Rutherford scattering).
+  oscillator's route to chaos, charged particles in a magnetic bottle, fields on grids, particle accelerators
+  (linac, cyclotrons, Rutherford scattering), and quantum wave packets, tunnelling and bound states.

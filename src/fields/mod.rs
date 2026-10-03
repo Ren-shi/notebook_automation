@@ -1,6 +1,7 @@
 //! Fields on regular grids: finite differences in 1, 2 and 3 dimensions, boundary
-//! conditions, and solvers for the wave, heat and Poisson equations ([`solvers`]), plus
-//! particle-mesh gravity coupling particles to a grid ([`pm`]).
+//! conditions, solvers for the wave, heat and Poisson equations ([`solvers`]) and the
+//! Schrödinger equation ([`quantum`]), plus particle-mesh gravity coupling particles to a grid
+//! ([`pm`]).
 //!
 //! A [`Grid`] has `n` points per axis (unused axes have `n = 1`) spaced `h` apart, stored
 //! row-major: point `(i, j, k)` is at index `(i * ny + j) * nz + k`. Boundary conditions:
@@ -17,7 +18,10 @@
 
 pub mod fft;
 pub mod pm;
+pub mod quantum;
 pub mod solvers;
+
+use std::ops::{Add, Mul, Sub};
 
 use crate::error::{invalid, Result};
 
@@ -134,17 +138,20 @@ impl Grid {
         })
     }
 
-    /// `out = ∇²u` (zero at Dirichlet boundary nodes).
-    pub fn laplacian(&self, u: &[f64], out: &mut [f64]) {
+    /// `out = ∇²u` (zero at Dirichlet boundary nodes), for real or complex values.
+    pub fn laplacian<T>(&self, u: &[T], out: &mut [T])
+    where
+        T: Copy + Default + Add<Output = T> + Sub<Output = T> + Mul<f64, Output = T>,
+    {
         let s = self.strides();
         let inv_h2 = 1.0 / (self.h * self.h);
         let dims = self.dims();
         for (idx, o) in out.iter_mut().enumerate() {
             if self.is_fixed(idx) {
-                *o = 0.0;
+                *o = T::default();
                 continue;
             }
-            let mut acc = 0.0;
+            let mut acc = T::default();
             for (&n, &stride) in self.n.iter().zip(&s).take(dims) {
                 let i = (idx / stride) % n;
                 let up = if i + 1 < n {
@@ -163,7 +170,7 @@ impl Grid {
                         _ => idx,
                     }
                 };
-                acc += u[up] - 2.0 * u[idx] + u[down];
+                acc = acc + (u[up] - u[idx] * 2.0 + u[down]);
             }
             *o = acc * inv_h2;
         }

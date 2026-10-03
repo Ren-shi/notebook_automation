@@ -23,6 +23,7 @@ use crate::vec3::Vec3;
 use crate::world::{Frame, Recorder, RunOptions, Trajectory, World};
 
 mod fields;
+mod quantum;
 mod rigid;
 
 impl From<SimError> for PyErr {
@@ -3016,6 +3017,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCustomForce>()?;
     rigid::register(m)?;
     fields::register(m)?;
+    quantum::register(m)?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

@@ -1,10 +1,12 @@
-//! `physim`: a classical-mechanics engine for point particles.
+//! `physim`: a classical-mechanics engine for point particles, with grid solvers for fields
+//! and the Schrödinger equation.
 //!
 //! The pieces are deliberately small and swappable:
 //! - [`State`]: positions, velocities, masses and time.
 //! - [`Force`]: anything that adds accelerations (and optionally a potential).
 //! - [`Integrator`]: a time-stepping scheme.
-//! - [`fields`]: grids, the wave, heat and Poisson equations, and particle-mesh gravity.
+//! - [`fields`]: grids, the wave, heat, Poisson and Schrödinger equations, and particle-mesh
+//!   gravity.
 //! - [`RigidSystem`]: rigid bodies with orientation, torques and a symplectic rotation step.
 //! - [`World`]: ties them together and records [`Trajectory`]s, with fixed steps
 //!   ([`World::run`]) or adaptive ones ([`World::run_adaptive`]).
@@ -38,6 +40,7 @@ pub use constraints::{Anchor, ConstraintId, Constraints, Rod};
 pub use error::{Result, SimError};
 pub use events::{Direction, Event, EventFunction, EventHit};
 pub use fields::pm::ParticleMesh;
+pub use fields::quantum::{PotentialFn, QuantumMethod, Schrodinger};
 pub use fields::solvers::{poisson, Heat, HeatMethod, Wave};
 pub use fields::{Boundary, Grid};
 pub use forces::{

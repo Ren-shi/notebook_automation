@@ -1,6 +1,6 @@
 """Plotting and animation helpers (matplotlib, imported on first use).
 
-Every function takes a recorded trajectory (:class:`physim.Trajectory` or
+Most functions take a recorded trajectory (:class:`physim.Trajectory` or
 :class:`physim.RigidTrajectory`), draws on ``ax`` (a new figure if ``None``) and returns
 the axes, so the result can be styled further::
 
@@ -8,6 +8,9 @@ the axes, so the result can be styled further::
     ps.plot.energy_error({"verlet": t1, "rk4": t2})
     anim = ps.plot.animate(traj, trail=40)
     anim.save("orbit.gif", writer="pillow")      # or "orbit.mp4" with ffmpeg installed
+
+:func:`wavefunction` and :func:`animate_wavefunction` draw :class:`physim.Schrodinger` states
+instead (``|ψ|²`` coloured by phase).
 
 :func:`view3d` makes an interactive plotly figure; it needs the optional ``plotly`` package
 (``pip install physim[plot3d]``).
@@ -231,3 +234,141 @@ def view3d(traj, particles=None, *, labels=None, trail=True, marker_size=4, ever
     fig.update_layout(scene=dict(aspectmode="data"), sliders=[dict(steps=steps, currentvalue=dict(prefix="t = "))],
                       margin=dict(l=0, r=0, t=30, b=0))
     return fig
+
+
+def _phase_rgb(psi, brightness=None):
+    """RGB colours with hue = arg ψ (red: 0, cyan: π) and value ``brightness`` (default 0.9)."""
+    from matplotlib.colors import hsv_to_rgb
+
+    hue = (np.angle(psi) / (2 * np.pi)) % 1.0
+    value = np.full(hue.shape, 0.9) if brightness is None else brightness
+    return hsv_to_rgb(np.stack([hue, np.full(hue.shape, 0.75), value], axis=-1))
+
+
+def _phase_quads(x, psi):
+    """Quadrilaterals under ``|ψ|²`` between neighbouring points, and their phase colours."""
+    d = np.abs(psi) ** 2
+    verts = np.stack([np.stack([x[:-1], np.zeros(len(x) - 1)], -1),
+                      np.stack([x[:-1], d[:-1]], -1),
+                      np.stack([x[1:], d[1:]], -1),
+                      np.stack([x[1:], np.zeros(len(x) - 1)], -1)], axis=1)
+    mid = 0.5 * (psi[:-1] + psi[1:])
+    return verts, _phase_rgb(mid)
+
+
+def _wave_state(state, x):
+    """``(psi, axes, potential)`` from a :class:`physim.Schrodinger` or a complex array."""
+    if hasattr(state, "psi"):
+        return np.asarray(state.psi), list(state.axes), np.asarray(state.potential)
+    psi = np.asarray(state)
+    if x is None:
+        axes = [np.arange(n, dtype=float) for n in psi.shape]
+    elif psi.ndim == 1:
+        axes = [np.asarray(x, dtype=float)]
+    else:
+        axes = [np.asarray(a, dtype=float) for a in x]
+    return psi, axes, None
+
+
+def _draw_potential(ax, x, v, label="V"):
+    twin = ax.twinx()
+    twin.plot(x, v, color="#52514e", lw=1, alpha=0.8, label=label)
+    twin.set_ylabel(label, color="#52514e")
+    twin.spines[["top"]].set_visible(False)
+    return twin
+
+
+def wavefunction(state, x=None, *, ax=None, potential=None, phase=True, gamma=1.0, figsize=(7, 3.5)):
+    """The probability density of a wavefunction: ``state`` is a :class:`physim.Schrodinger`
+    or a complex array (with coordinates ``x``: an array in 1D, a list of two in 2D).
+
+    - 1D: ``|ψ|²`` filled with colours showing the phase ``arg ψ`` (hue; red is 0) when
+      ``phase``. The potential (``potential``: an array, ``False`` for none, or by default the
+      solver's own when it is not zero) is drawn on a second y axis.
+    - 2D: an image whose brightness is ``(|ψ|² / max |ψ|²)^gamma`` and hue the phase (or the
+      density alone); ``gamma < 1`` brings out faint parts such as interference fringes.
+    """
+    plt = _plt()
+    psi, axes, own_v = _wave_state(state, x)
+    if psi.ndim not in (1, 2):
+        raise ValueError(f"wavefunction plots 1D or 2D states, got {psi.ndim} dimensions")
+    ax = _axes(ax, figsize)
+    if psi.ndim == 2:
+        d = (np.abs(psi) ** 2 / max(np.max(np.abs(psi) ** 2), 1e-300)) ** gamma
+        (x0, y0) = axes
+        extent = (x0[0], x0[-1], y0[0], y0[-1])
+        if phase:
+            img = _phase_rgb(psi, d)
+            ax.imshow(np.transpose(img, (1, 0, 2)), origin="lower", extent=extent)
+        else:
+            ax.imshow(d.T, origin="lower", extent=extent, cmap="magma")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_aspect("equal")
+        return ax
+    from matplotlib.collections import PolyCollection
+
+    (x0,) = axes
+    d = np.abs(psi) ** 2
+    if phase:
+        verts, cols = _phase_quads(x0, psi)
+        ax.add_collection(PolyCollection(verts, facecolors=cols, edgecolors="none"))
+    else:
+        ax.fill_between(x0, d, color=color(0), alpha=0.3, lw=0)
+    ax.plot(x0, d, color="black", lw=0.8)
+    ax.set_xlim(x0[0], x0[-1])
+    ax.set_ylim(0, 1.1 * max(d.max(), 1e-300))
+    ax.set_xlabel("x")
+    ax.set_ylabel(r"$|\psi|^2$")
+    v = own_v if potential is None else (None if potential is False else np.asarray(potential))
+    if v is not None and np.any(v != 0):
+        _draw_potential(ax, x0, v)
+    return tidy(ax)
+
+
+def animate_wavefunction(t, psi, x, *, potential=None, phase=True, every=1, interval=40, ax=None,
+                         ylim=None, time_label=True, figsize=(7, 3.5)):
+    """A matplotlib animation of 1D wavefunctions ``psi`` ``(F, n)`` at times ``t`` on the grid
+    ``x`` (e.g. ``t, psi = solver.run(...)`` and ``x = solver.axes[0]``): ``|ψ|²`` coloured by
+    phase, with ``potential`` (an array) on a second y axis. ``ylim`` defaults to the largest
+    density in the run. Save or show it like :func:`animate`."""
+    plt = _plt()
+    from matplotlib.animation import FuncAnimation
+    from matplotlib.collections import PolyCollection
+
+    psi = np.asarray(psi)[::every]
+    t = np.asarray(t)[::every]
+    x = np.asarray(x, dtype=float)
+    if psi.ndim != 2 or psi.shape[1] != len(x):
+        raise ValueError(f"psi must have shape (frames, {len(x)}), got {psi.shape}")
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
+    d = np.abs(psi) ** 2
+    ax.set_xlim(x[0], x[-1])
+    ax.set_ylim(*(ylim or (0, 1.1 * max(d.max(), 1e-300))))
+    ax.set_xlabel("x")
+    ax.set_ylabel(r"$|\psi|^2$")
+    tidy(ax, legend=False)
+    if potential is not None:
+        _draw_potential(ax, x, np.asarray(potential))
+    fill = ax.add_collection(PolyCollection([], edgecolors="none",
+                                            facecolors=None if phase else color(0),
+                                            alpha=None if phase else 0.3))
+    (line,) = ax.plot([], [], color="black", lw=0.8)
+    text = ax.text(0.02, 0.95, "", transform=ax.transAxes, va="top") if time_label else None
+
+    def update(f):
+        verts, cols = _phase_quads(x, psi[f])
+        fill.set_verts(verts)
+        if phase:
+            fill.set_facecolors(cols)
+        line.set_data(x, d[f])
+        if text is not None:
+            text.set_text(f"t = {t[f]:.3g}")
+        return [fill, line] + ([text] if text is not None else [])
+
+    anim = FuncAnimation(fig, update, frames=len(t), interval=interval, blit=True)
+    plt.close(fig)
+    return anim

@@ -2,8 +2,9 @@
 
 [![CI](https://github.com/Ren-shi/notebook_automation/actions/workflows/ci.yml/badge.svg)](https://github.com/Ren-shi/notebook_automation/actions/workflows/ci.yml)
 
-A classical-mechanics engine for point particles: the time stepping and forces run in **Rust**, and
-**Python** (via [PyO3](https://pyo3.rs) and [maturin](https://www.maturin.rs)) sets up systems and analyses results.
+A classical-mechanics engine for point particles, with grid solvers for fields and single-particle quantum
+mechanics: the time stepping and forces run in **Rust**, and **Python** (via [PyO3](https://pyo3.rs) and
+[maturin](https://www.maturin.rs)) sets up systems and analyses results.
 
 ```python
 import physim as ps
@@ -20,8 +21,9 @@ ps.relative_energy_error(traj)      # (E - E0) / |E0| per frame
 
 See [`notebooks/`](notebooks/) for worked examples: integrator comparisons and measured convergence orders
 (`01_getting_started`), an N-body star cluster, chaos in the three-body problem, a driven oscillator's route to
-chaos, charged particles in a magnetic bottle, fields on grids, and particle accelerators (an electrostatic column, a
-drift-tube linac, classical and isochronous cyclotrons for protons and alpha particles, and Rutherford scattering).
+chaos, charged particles in a magnetic bottle, fields on grids, particle accelerators (an electrostatic column, a
+drift-tube linac, classical and isochronous cyclotrons for protons and alpha particles, and Rutherford scattering),
+and quantum mechanics (wave packets, tunnelling, bound states, and the quantum-classical correspondence).
 
 ## Install
 
@@ -149,6 +151,18 @@ second order against analytic solutions. `ps.ParticleMesh(box_size, cells=64, pe
 gravity (cloud-in-cell deposit, FFT solve on a zero-padded grid for open boundaries, or periodic): O(N + M log M),
 momentum-conserving, within ~1% of direct summation beyond 8 cells; at N = 10⁵ it is 9× (32³) or 1.6× (64³) faster
 than Barnes-Hut but less accurate (`cargo run --release --example particle_mesh`).
+
+**Quantum mechanics**: `ps.Schrodinger(shape, spacing, hbar=1, mass=1, boundary="periodic", potential=V)` solves the
+time-dependent Schrödinger equation for one particle in 1D/2D/3D. Split-step Fourier on periodic grids (spectral in
+space, exactly unitary, `order=2` or `4` in time) or Crank–Nicolson on any grid (unitary, conserves the discrete
+energy; hard walls with `"dirichlet"`). `V` is an array or a function `V(t, x[, y[, z]])`; `absorbing_layer(width,
+strength)` swallows outgoing waves. `set_gaussian(center, width, momentum)` makes wave packets, `run(dt, steps,
+record_every)` records `(t, psi)`, and `norm()`, `position()`, `position_variance()`, `momentum()`, `energy()` measure
+them; `eigenstates(count)` finds bound states (LOBPCG) of the same discretisation. `ps.quantum` has momentum
+densities, probability currents, `probability(s, region)`, and analytic checks (`barrier_transmission`,
+`packet_transmission`, `harmonic_levels`, `box_levels`); `ps.plot.wavefunction(s)` draws `|ψ|²` coloured by phase
+and `ps.plot.animate_wavefunction(t, psi, x)` animates it. Validated against free spreading, coherent states,
+oscillator and box spectra, barrier transmission (within 0.2%) and Ehrenfest's theorem; see `docs/theory/quantum.md`.
 
 **Plotting**: `ps.plot` (matplotlib, imported on first use) — `orbits(traj, labels=...)`, `energy_error({"verlet":
 t1, "rk4": t2})`, `phase_space(traj, particle, "x")`, `tidy(ax)` for the house style, and `animate(traj, trail=30)`
@@ -369,10 +383,10 @@ src/
   events.rs       event functions and crossing detection
   constraints.rs  rigid rods and the RATTLE projections
   rigid.rs        rigid bodies: quaternions, torques, splitting step (RigidSystem)
-  fields/         grids, wave/heat/Poisson solvers, FFT, particle-mesh gravity
+  fields/         grids, wave/heat/Poisson solvers, FFT, particle-mesh gravity, Schrödinger equation (quantum.rs)
   checkpoint.rs   save/restore a World
   parallel.rs     deterministic block-parallel helpers
-  python.rs       PyO3 bindings (feature "python"; python/rigid.rs for RigidSystem)
+  python.rs       PyO3 bindings (feature "python"; python/rigid.rs, fields.rs, quantum.rs)
 scripts/          developer tools (notebook runner)
 python/physim/    Python package (re-exports the extension, file I/O, analysis helpers, scenarios, units, plotting, type stubs)
 tests/            Rust tests; tests/python for the bindings

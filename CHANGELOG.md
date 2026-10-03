@@ -11,6 +11,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Quantum mechanics: `Schrodinger`, the time-dependent Schrödinger equation for one particle on 1–3D grids, by
+  split-step Fourier (spectral in space, second or fourth order in time, exactly unitary) or Crank–Nicolson (any
+  boundary, unitary, direct 1D and BiCGSTAB 2D/3D solves); static or time-dependent potentials (arrays or Python
+  functions), absorbing layers, Gaussian wave packets, observables, recorded runs, and bound states by LOBPCG.
+  `physim.quantum` helpers (momentum densities, probability currents, analytic barrier transmission and energy
+  levels), `plot.wavefunction` and `plot.animate_wavefunction`, the theory note `theory/quantum`, and example notebook
+  `08_quantum` (wave packets, tunnelling, bound states, Ehrenfest's theorem, a 2D double slit).
 - Example notebook `07_accelerators`: electrostatic acceleration, a drift-tube linac with phase stability, classical
   and isochronous cyclotrons (protons and alpha particles, relativistic dynamics via `CustomForce`), and Rutherford
   scattering of alpha particles on gold.

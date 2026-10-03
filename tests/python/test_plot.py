@@ -72,3 +72,36 @@ def test_view3d(traj):
     fig = ps.plot.view3d(traj, labels=["a", "b", "c"], every=3)
     assert len(fig.data) == 4 and len(fig.frames) == len(traj.t[::3])
     assert np.allclose(fig.frames[2].data[0].x, traj.pos[6, :, 0])
+
+
+def test_wavefunction_plots(tmp_path):
+    s = ps.Schrodinger([128], 0.2, potential=lambda t, x: 0.5 * x**2)
+    s.set_gaussian(center=2.0, width=0.7, momentum=1.0)
+    ax = ps.plot.wavefunction(s)
+    assert np.allclose(ax.lines[0].get_ydata(), s.density)
+    assert len(ax.collections) == 1  # phase-coloured fill
+    assert len(ax.figure.axes) == 2  # potential on a twin axis
+    ax = ps.plot.wavefunction(s.psi, s.axes[0], phase=False, potential=False)
+    assert len(ax.figure.axes) == 1
+
+    s2 = ps.Schrodinger([32, 16], 0.25)
+    s2.set_gaussian(width=0.6, momentum=[1.0, 0.0])
+    ax = ps.plot.wavefunction(s2)
+    img = ax.images[0].get_array()
+    assert img.shape == (16, 32, 3)
+    dim = ps.plot.wavefunction(s2, gamma=0.5).images[0].get_array()
+    assert dim.max() == pytest.approx(img.max()) and dim.mean() > img.mean()
+    with pytest.raises(ValueError, match="1D or 2D"):
+        ps.plot.wavefunction(np.zeros((4, 4, 4), complex))
+
+    t, frames = s.run(0.05, 40, record_every=4)
+    anim = ps.plot.animate_wavefunction(t, frames, s.axes[0], potential=s.potential, every=2)
+    assert len(list(anim.new_frame_seq())) == len(t[::2])
+    fill, line = anim._func(3)[:2]
+    assert np.allclose(line.get_ydata(), np.abs(frames[6]) ** 2)
+    out = tmp_path / "packet.gif"
+    anim.save(out, writer="pillow", fps=10)
+    assert out.stat().st_size > 1000
+    with pytest.raises(ValueError, match="shape"):
+        ps.plot.animate_wavefunction(t, frames, s.axes[0][:10])
+    plt.close("all")
