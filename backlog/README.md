@@ -24,7 +24,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 16 | ~~[World API gaps: particle and force management](16-world-api-gaps.md)~~ **Done** | Core | P1 | S | — |
 | 17 | [Higher-order and specialised integrators](17-more-integrators.md) | Integrators | P2 | M | — |
 | 18 | [Chaos and stability analysis](18-chaos-and-stability.md) | Analysis | P2 | M | 05 |
-| 19 | [More built-in forces](19-more-forces.md) | Physics | P2 | M | — |
+| 19 | ~~[More built-in forces](19-more-forces.md)~~ **Done** | Physics | P2 | M | — |
 | 20 | [Fields and continua](20-fields-and-continua.md) | Physics | P3 | L | — |
 | 21 | [Packaging and release](21-packaging-and-release.md) | Tooling | P3 | S | 01 |
 | 22 | [Documentation](22-documentation.md) | Usability | P3 | M | — |
@@ -43,6 +43,9 @@ Known limits of the current engine (worth keeping in mind until the items above 
 - `verlet`/`yoshida4` are only symplectic for velocity-independent forces; use `rk4` with drag.
 - Rods (item 07) need `verlet` or `yoshida4`; long chains use an iterative solver (~43 ms/step at 1 000 links).
 - `CustomForce` costs one Python call per force evaluation.
+- Every step copies the whole state so a failed step can be rolled back: ~20 ns per particle on the CI-class machines
+  used here, which dominates for cheap forces (a 10 000-particle spring chain spends ~200 of ~235 µs per Verlet step
+  outside the force).
 
 Finished items stay in the table, struck through and marked **Done**, with a note at the top of their file.
 

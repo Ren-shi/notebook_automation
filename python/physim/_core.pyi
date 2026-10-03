@@ -61,6 +61,62 @@ class LinearDrag:
 class QuadraticDrag:
     def __init__(self, c: float) -> None: ...
 
+class DampedSpring:
+    def __init__(self, i: int, j: int, k: float, rest_length: float, c: float) -> None: ...
+
+class ModulatedSpring:
+    def __init__(
+        self,
+        i: int,
+        to: Union[int, ArrayLike],
+        k: float,
+        depth: float,
+        omega: float,
+        phase: float = 0.0,
+        rest_length: float = 0.0,
+    ) -> None: ...
+
+class SpringNetwork:
+    def __init__(
+        self,
+        i: Sequence[int],
+        j: Sequence[int],
+        k: Union[float, ArrayLike],
+        rest_length: Union[float, ArrayLike],
+    ) -> None: ...
+    def __len__(self) -> int: ...
+
+class PowerLaw:
+    def __init__(self, k: float, n: float, center: Optional[ArrayLike] = None) -> None: ...
+
+class Yukawa:
+    def __init__(self, k: float, length: float, center: Optional[ArrayLike] = None) -> None: ...
+
+class PlummerPotential:
+    def __init__(self, GM: float, a: float, center: Optional[ArrayLike] = None) -> None: ...
+
+class HernquistPotential:
+    def __init__(self, GM: float, a: float, center: Optional[ArrayLike] = None) -> None: ...
+
+class HarmonicTrap:
+    def __init__(self, omega: Union[float, ArrayLike], center: Optional[ArrayLike] = None) -> None: ...
+
+class PeriodicForce:
+    def __init__(self, i: int, amplitude: ArrayLike, omega: float, phase: float = 0.0) -> None: ...
+
+class PostNewtonian:
+    def __init__(self, central: int, c: float, G: float = 1.0) -> None: ...
+
+class J2Oblateness:
+    def __init__(
+        self,
+        central: int,
+        J2: float,
+        radius: float,
+        axis: Optional[ArrayLike] = None,
+        G: float = 1.0,
+    ) -> None: ...
+
 class CustomForce:
     def __init__(
         self,

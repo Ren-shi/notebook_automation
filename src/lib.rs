@@ -28,8 +28,10 @@ pub use constraints::{Anchor, ConstraintId, Constraints, Rod};
 pub use error::{Result, SimError};
 pub use events::{Direction, Event, EventFunction, EventHit};
 pub use forces::{
-    AnchorSpring, BuiltinForce, Force, ForceId, ForceSet, LinearDrag, NewtonianGravity, Param,
-    QuadraticDrag, Spring, UniformField,
+    AnchorSpring, BuiltinForce, ClosureForce, DampedSpring, Force, ForceId, ForceSet, HarmonicTrap,
+    HernquistPotential, J2Oblateness, LinearDrag, ModulatedSpring, NewtonianGravity, Param,
+    PeriodicForce, PlummerPotential, PostNewtonian, PowerLaw, QuadraticDrag, Spring, SpringNetwork,
+    UniformField, Yukawa,
 };
 pub use integrators::Integrator;
 pub use state::State;
