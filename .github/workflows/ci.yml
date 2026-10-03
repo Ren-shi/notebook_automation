@@ -28,7 +28,7 @@ jobs:
       - name: Tests
         run: cargo test --release
       - name: Tests without the parallel feature
-        run: cargo test --release --no-default-features --lib --test physics --test world_api --test force_reuse
+        run: cargo test --release --no-default-features --lib --test physics --test world_api --test force_reuse --test events
 
   python:
     name: Python (bindings, notebooks)

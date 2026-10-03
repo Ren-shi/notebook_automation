@@ -10,6 +10,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::error::{Result as SimResult, SimError};
+use crate::events::{self, Direction, Event, EventFunction};
 use crate::forces::{self, Force, ForceId, Param};
 use crate::integrators;
 use crate::vec3::Vec3;
@@ -416,13 +417,48 @@ struct PyTrajectory {
     energy: Py<PyArray1<f64>>,
     #[pyo3(get)]
     n_particles: usize,
+    /// Time of each detected event, (K,).
+    #[pyo3(get)]
+    event_t: Py<PyArray1<f64>>,
+    /// Which event (index into the ``events`` list) fired, (K,).
+    #[pyo3(get)]
+    event_index: Py<PyArray1<i64>>,
+    /// Positions and velocities at each event, (K, N, 3).
+    #[pyo3(get)]
+    event_pos: Py<PyArray3<f64>>,
+    #[pyo3(get)]
+    event_vel: Py<PyArray3<f64>>,
+    /// Index of the terminal event that stopped the run, or None.
+    #[pyo3(get)]
+    terminated_by: Option<usize>,
 }
 
 impl PyTrajectory {
     fn from_rust(py: Python<'_>, tr: Trajectory) -> PyResult<Self> {
         let shape = [tr.n_frames(), tr.n_particles, 3];
         let energy = tr.total_energy();
+        let event_shape = [tr.events.len(), tr.n_particles, 3];
+        let event_pos: Vec<Vec3> = tr
+            .events
+            .iter()
+            .flat_map(|h| h.pos.iter().copied())
+            .collect();
+        let event_vel: Vec<Vec3> = tr
+            .events
+            .iter()
+            .flat_map(|h| h.vel.iter().copied())
+            .collect();
         Ok(Self {
+            event_t: PyArray1::from_vec(py, tr.events.iter().map(|h| h.t).collect()).unbind(),
+            event_index: PyArray1::from_vec(py, tr.events.iter().map(|h| h.event as i64).collect())
+                .unbind(),
+            event_pos: PyArray1::from_vec(py, flatten(&event_pos))
+                .reshape(event_shape)?
+                .unbind(),
+            event_vel: PyArray1::from_vec(py, flatten(&event_vel))
+                .reshape(event_shape)?
+                .unbind(),
+            terminated_by: tr.terminated_by,
             pos: PyArray1::from_vec(py, flatten(&tr.pos))
                 .reshape(shape)?
                 .unbind(),
@@ -608,16 +644,25 @@ impl PyWorld {
     ///
     /// If a step fails, the world is left at the last completed step and the exception
     /// carries the frames recorded so far as its ``trajectory`` attribute.
-    #[pyo3(signature = (dt, steps, record_every = 1))]
+    ///
+    /// ``events`` is a list of :class:`Event`; detected events are returned in the
+    /// trajectory's ``event_*`` arrays, and a terminal event stops the run at that moment.
+    #[pyo3(signature = (dt, steps, record_every = 1, events = None))]
     fn run(
         &mut self,
         py: Python<'_>,
         dt: f64,
         steps: usize,
         record_every: usize,
+        events: Option<Vec<PyRef<'_, PyEvent>>>,
     ) -> PyResult<PyTrajectory> {
+        let events: Vec<Event> = events
+            .unwrap_or_default()
+            .iter()
+            .map(|e| e.build(py))
+            .collect();
         let world = &mut self.inner;
-        match py.detach(|| world.run(dt, steps, record_every)) {
+        match py.detach(|| world.run_with_events(dt, steps, record_every, &events)) {
             Ok(traj) => PyTrajectory::from_rust(py, traj),
             Err(RunFailure { error, trajectory }) => {
                 let err = PyErr::from(error);
@@ -715,8 +760,209 @@ impl PyWorld {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Events
+
+enum EventSpec {
+    Custom { function: Py<PyAny>, name: String },
+    RadialVelocity(events::RadialVelocity),
+    Coordinate(events::CoordinateCrossing),
+    Separation(events::Separation),
+}
+
+/// An event for :meth:`World.run`: a moment when a scalar function ``g`` of the state
+/// crosses zero. ``direction`` is +1 (``g`` rising through zero), -1 (falling) or 0
+/// (either); ``terminal=True`` stops the run there.
+///
+/// ``Event(g)`` takes a Python function ``g(t, pos, vel, mass) -> float``. The static
+/// constructors build Rust-side events that cost nothing per step from Python.
+#[pyclass(frozen, name = "Event", module = "physim")]
+struct PyEvent {
+    spec: EventSpec,
+    direction: Direction,
+    terminal: bool,
+}
+
+fn direction(sign: i32) -> PyResult<Direction> {
+    Ok(Direction::from_sign(sign)?)
+}
+
+#[pymethods]
+impl PyEvent {
+    #[new]
+    #[pyo3(signature = (function, direction = 0, terminal = false, name = None))]
+    fn new(
+        function: &Bound<'_, PyAny>,
+        direction: i32,
+        terminal: bool,
+        name: Option<String>,
+    ) -> PyResult<Self> {
+        if !function.is_callable() {
+            return Err(PyValueError::new_err("Event function must be callable"));
+        }
+        let name = match name {
+            Some(n) => n,
+            None => function
+                .getattr("__name__")
+                .and_then(|n| n.extract())
+                .unwrap_or_else(|_| "Event".to_string()),
+        };
+        Ok(Self {
+            spec: EventSpec::Custom {
+                function: function.clone().unbind(),
+                name,
+            },
+            direction: self::direction(direction)?,
+            terminal,
+        })
+    }
+
+    /// ``(r_i - r_j) · (v_i - v_j)`` (``j=None``: relative to the origin). Rising
+    /// crossings (``direction=+1``) are periapses, falling ones apoapses.
+    #[staticmethod]
+    #[pyo3(signature = (i, j = None, direction = 0, terminal = false))]
+    fn radial_velocity(
+        i: usize,
+        j: Option<usize>,
+        direction: i32,
+        terminal: bool,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            spec: EventSpec::RadialVelocity(events::RadialVelocity { i, j }),
+            direction: self::direction(direction)?,
+            terminal,
+        })
+    }
+
+    /// ``pos[i, axis] - value``; ``axis`` is 0/1/2 or "x"/"y"/"z".
+    #[staticmethod]
+    #[pyo3(signature = (i, axis, value = 0.0, direction = 0, terminal = false))]
+    fn coordinate(
+        i: usize,
+        axis: &Bound<'_, PyAny>,
+        value: f64,
+        direction: i32,
+        terminal: bool,
+    ) -> PyResult<Self> {
+        let axis = match axis.extract::<usize>() {
+            Ok(a) if a < 3 => a,
+            _ => match axis.extract::<String>().as_deref() {
+                Ok("x") => 0,
+                Ok("y") => 1,
+                Ok("z") => 2,
+                _ => {
+                    return Err(PyValueError::new_err(
+                        "axis must be 0, 1, 2, 'x', 'y' or 'z'",
+                    ))
+                }
+            },
+        };
+        Ok(Self {
+            spec: EventSpec::Coordinate(events::CoordinateCrossing { i, axis, value }),
+            direction: self::direction(direction)?,
+            terminal,
+        })
+    }
+
+    /// ``|r_i - r_j| - distance``: falling for approach to contact, rising for escape.
+    #[staticmethod]
+    #[pyo3(signature = (i, j, distance, direction = 0, terminal = false))]
+    fn separation(
+        i: usize,
+        j: usize,
+        distance: f64,
+        direction: i32,
+        terminal: bool,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            spec: EventSpec::Separation(events::Separation { i, j, distance }),
+            direction: self::direction(direction)?,
+            terminal,
+        })
+    }
+
+    #[getter]
+    fn name(&self) -> String {
+        match &self.spec {
+            EventSpec::Custom { name, .. } => name.clone(),
+            EventSpec::RadialVelocity(e) => e.name(),
+            EventSpec::Coordinate(e) => e.name(),
+            EventSpec::Separation(e) => e.name(),
+        }
+    }
+
+    #[getter(direction)]
+    fn direction_sign(&self) -> i32 {
+        match self.direction {
+            Direction::Rising => 1,
+            Direction::Falling => -1,
+            Direction::Either => 0,
+        }
+    }
+
+    #[getter]
+    fn terminal(&self) -> bool {
+        self.terminal
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Event({}, direction={}, terminal={})",
+            self.name(),
+            self.direction_sign(),
+            if self.terminal { "True" } else { "False" }
+        )
+    }
+}
+
+impl PyEvent {
+    fn build(&self, py: Python<'_>) -> Event {
+        let function: Box<dyn EventFunction> = match &self.spec {
+            EventSpec::Custom { function, name } => Box::new(PythonEvent {
+                function: function.clone_ref(py),
+                name: name.clone(),
+            }),
+            EventSpec::RadialVelocity(e) => Box::new(e.clone()),
+            EventSpec::Coordinate(e) => Box::new(e.clone()),
+            EventSpec::Separation(e) => Box::new(e.clone()),
+        };
+        Event {
+            function,
+            direction: self.direction,
+            terminal: self.terminal,
+        }
+    }
+}
+
+struct PythonEvent {
+    function: Py<PyAny>,
+    name: String,
+}
+
+impl EventFunction for PythonEvent {
+    fn value(&self, t: f64, pos: &[Vec3], vel: &[Vec3], mass: &[f64]) -> SimResult<f64> {
+        Python::attach(|py| -> PyResult<f64> {
+            self.function
+                .bind(py)
+                .call1((
+                    t,
+                    vecs_to_array(py, pos)?,
+                    vecs_to_array(py, vel)?,
+                    PyArray1::from_slice(py, mass),
+                ))?
+                .extract()
+        })
+        .map_err(SimError::Python)
+    }
+
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyEvent>()?;
     m.add_class::<PyWorld>()?;
     m.add_class::<PyTrajectory>()?;
     m.add_class::<PyUniformField>()?;

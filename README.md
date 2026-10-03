@@ -86,6 +86,20 @@ that reads mutable outside state should be declared `velocity_dependent=True` (t
   the last completed step. From `run`, the exception carries the frames recorded so far as `err.trajectory`.
 - `w.integrator_info` gives the integrator's name, order and whether it is symplectic.
 
+**Events**: find the exact moment something happens, instead of scanning recorded frames.
+```python
+periapsis = ps.Event.radial_velocity(0, 1, direction=+1)       # (r0 - r1)·(v0 - v1) rising through 0
+ground = ps.Event.coordinate(0, "y", direction=-1, terminal=True)  # stop when particle 0 reaches y = 0
+custom = ps.Event(lambda t, pos, vel, mass: pos[0, 0] - 2.0)     # any g(t, state); zeros are events
+traj = w.run(dt, steps, events=[periapsis, ground, custom])
+traj.event_t, traj.event_index, traj.event_pos, traj.terminated_by
+```
+After each step, a sign change of `g` is located by re-stepping the integrator from the start of the step with a
+fraction of `dt` (Illinois root finding, to ~1e-12 of a step), so event states are as accurate as the integrator
+itself. `direction` is +1 (rising), -1 (falling) or 0 (either); a terminal event stops the run and leaves the world
+at the event. Built-in events (`radial_velocity`, `coordinate`, `separation`) run in Rust at no per-step Python cost.
+Two crossings of one event within a single step are not detected, so keep `dt` small compared with event spacing.
+
 **Parallelism**: direct-sum gravity and per-particle forces use all CPU cores (rayon, `parallel` feature, on by
 default). Work is split into blocks that depend only on N, so results are bit-identical for any thread count and
 with the feature off. Set `RAYON_NUM_THREADS` to limit threads. Small systems (under ~360 bodies for gravity) run

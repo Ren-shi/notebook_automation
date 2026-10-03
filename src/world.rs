@@ -1,6 +1,7 @@
 use std::fmt;
 
 use crate::error::{invalid, Result, SimError};
+use crate::events::{Event, EventHit};
 use crate::forces::{Force, ForceId, ForceSet, Param};
 use crate::integrators::{self, Integrator};
 use crate::state::State;
@@ -165,6 +166,21 @@ impl World {
         steps: usize,
         record_every: usize,
     ) -> std::result::Result<Trajectory, RunFailure> {
+        self.run_with_events(dt, steps, record_every, &[])
+    }
+
+    /// Like [`World::run`], also detecting `events`. Every crossing is located to
+    /// ~1e-12 of a step and stored in [`Trajectory::events`] with the state at that time.
+    /// A terminal event stops the run there: the world is left at the event state, which
+    /// is recorded as the final frame, and [`Trajectory::terminated_by`] names the event.
+    /// Two crossings of the same event within one step are not detected (use a smaller `dt`).
+    pub fn run_with_events(
+        &mut self,
+        dt: f64,
+        steps: usize,
+        record_every: usize,
+        events: &[Event],
+    ) -> std::result::Result<Trajectory, RunFailure> {
         let mut traj = Trajectory::new(self.state.len());
         let fail = |error, trajectory| RunFailure {
             error,
@@ -179,12 +195,45 @@ impl World {
         if let Err(e) = traj.record(self) {
             return Err(fail(e, traj));
         }
+        let mut g = match self.event_values(events) {
+            Ok(g) => g,
+            Err(e) => return Err(fail(e, traj)),
+        };
+        let mut start = State::new();
         for k in 1..=steps {
-            if let Err(e) = self.step(dt) {
-                if traj.t.last() != Some(&self.state.t) {
-                    let _ = traj.record(self);
+            if !events.is_empty() {
+                start.clone_from(&self.state);
+            }
+            let stepped = self.step(dt).and_then(|()| {
+                if events.is_empty() {
+                    return Ok(false);
                 }
-                return Err(fail(e, traj));
+                let g_new = self.event_values(events)?;
+                let terminated =
+                    self.handle_crossings(events, &start, &g, &g_new, dt, &mut traj)?;
+                g = g_new;
+                Ok(terminated)
+            });
+            match stepped {
+                Ok(true) => {
+                    if traj.t.last() != Some(&self.state.t) {
+                        if let Err(e) = traj.record(self) {
+                            return Err(fail(e, traj));
+                        }
+                    }
+                    return Ok(traj);
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    if !events.is_empty() && self.state.t != start.t {
+                        // The step itself succeeded but event handling failed: undo it too.
+                        self.state.clone_from(&start);
+                    }
+                    if traj.t.last() != Some(&self.state.t) {
+                        let _ = traj.record(self);
+                    }
+                    return Err(fail(e, traj));
+                }
             }
             if k % record_every == 0 || k == steps {
                 if let Err(e) = traj.record(self) {
@@ -193,6 +242,107 @@ impl World {
             }
         }
         Ok(traj)
+    }
+
+    fn event_values(&self, events: &[Event]) -> Result<Vec<f64>> {
+        let s = &self.state;
+        events
+            .iter()
+            .map(|e| e.function.value(s.t, &s.pos, &s.vel, &s.mass))
+            .collect()
+    }
+
+    /// Locates the events that fired during the step from `start` (values `g0`) to the
+    /// current state (values `g1`) and records them in time order. Returns `true` if a
+    /// terminal event fired, in which case the world is left at that event.
+    fn handle_crossings(
+        &mut self,
+        events: &[Event],
+        start: &State,
+        g0: &[f64],
+        g1: &[f64],
+        dt: f64,
+        traj: &mut Trajectory,
+    ) -> Result<bool> {
+        let fired: Vec<usize> = (0..events.len())
+            .filter(|&e| events[e].triggers(g0[e], g1[e]))
+            .collect();
+        if fired.is_empty() {
+            return Ok(false);
+        }
+        let mut hits = Vec::with_capacity(fired.len());
+        for e in fired {
+            let (theta, state) = self.locate(&events[e], start, g0[e], g1[e], dt)?;
+            hits.push((theta, e, state));
+        }
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let stop = hits.iter().position(|(_, e, _)| events[*e].terminal);
+        let keep = stop.map_or(hits.len(), |s| s + 1);
+        for (_, e, state) in hits.drain(..).take(keep) {
+            traj.events.push(EventHit {
+                event: e,
+                t: state.t,
+                pos: state.pos.clone(),
+                vel: state.vel.clone(),
+            });
+            if events[e].terminal {
+                traj.terminated_by = Some(e);
+                self.state = state;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Finds the fraction `theta` of the step at which `event` crosses zero, by stepping
+    /// from `start` with `theta * dt` (Illinois variant of regula falsi). Returns the end of
+    /// the final bracket that lies past the crossing, and the state there.
+    fn locate(
+        &mut self,
+        event: &Event,
+        start: &State,
+        g0: f64,
+        g1: f64,
+        dt: f64,
+    ) -> Result<(f64, State)> {
+        const TOLERANCE: f64 = 1e-12;
+        let (mut lo, mut f_lo, mut hi, mut f_hi) = (0.0, g0, 1.0, g1);
+        let mut last_side = 0;
+        for _ in 0..100 {
+            if hi - lo <= TOLERANCE || f_hi == 0.0 {
+                break;
+            }
+            let mut theta = (lo * f_hi - hi * f_lo) / (f_hi - f_lo);
+            if !(theta > lo && theta < hi) {
+                theta = 0.5 * (lo + hi);
+                if !(theta > lo && theta < hi) {
+                    break; // bracket cannot shrink further in floating point
+                }
+            }
+            let s = self.advance(start, theta * dt)?;
+            let f = event.function.value(s.t, &s.pos, &s.vel, &s.mass)?;
+            if f * f_lo > 0.0 {
+                (lo, f_lo) = (theta, f);
+                if last_side == -1 {
+                    f_hi *= 0.5;
+                }
+                last_side = -1;
+            } else {
+                (hi, f_hi) = (theta, f);
+                if last_side == 1 {
+                    f_lo *= 0.5;
+                }
+                last_side = 1;
+            }
+        }
+        Ok((hi, self.advance(start, hi * dt)?))
+    }
+
+    /// The integrator's solution after a step of `h` from `start` (the world is unchanged).
+    fn advance(&mut self, start: &State, h: f64) -> Result<State> {
+        let mut s = start.clone();
+        self.integrator.step(&mut s, &self.forces, h)?;
+        Ok(s)
     }
 
     pub fn kinetic_energy(&self) -> f64 {
@@ -262,6 +412,10 @@ pub struct Trajectory {
     pub vel: Vec<Vec3>,
     pub kinetic: Vec<f64>,
     pub potential: Vec<f64>,
+    /// Events detected during the run, in time order.
+    pub events: Vec<EventHit>,
+    /// The terminal event that stopped the run, if any.
+    pub terminated_by: Option<usize>,
 }
 
 impl Trajectory {
