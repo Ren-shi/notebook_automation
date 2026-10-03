@@ -1,4 +1,4 @@
-from typing import Callable, Optional, TypedDict
+from typing import Callable, Optional, Sequence, TypedDict
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -14,6 +14,11 @@ class Trajectory:
     energy: NDArray[np.float64]  # (F,)
     n_particles: int
     n_frames: int
+    event_t: NDArray[np.float64]  # (K,)
+    event_index: NDArray[np.int64]  # (K,) index into the run's events list
+    event_pos: NDArray[np.float64]  # (K, N, 3)
+    event_vel: NDArray[np.float64]  # (K, N, 3)
+    terminated_by: Optional[int]
     def __len__(self) -> int: ...
 
 class UniformField:
@@ -45,6 +50,24 @@ class CustomForce:
         velocity_dependent: bool = True,
         name: Optional[str] = None,
     ) -> None: ...
+
+class Event:
+    name: str
+    direction: int
+    terminal: bool
+    def __init__(
+        self,
+        function: Callable[[float, NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]], float],
+        direction: int = 0,
+        terminal: bool = False,
+        name: Optional[str] = None,
+    ) -> None: ...
+    @staticmethod
+    def radial_velocity(i: int, j: Optional[int] = None, direction: int = 0, terminal: bool = False) -> Event: ...
+    @staticmethod
+    def coordinate(i: int, axis: int | str, value: float = 0.0, direction: int = 0, terminal: bool = False) -> Event: ...
+    @staticmethod
+    def separation(i: int, j: int, distance: float, direction: int = 0, terminal: bool = False) -> Event: ...
 
 Force = UniformField | NewtonianGravity | Spring | AnchorSpring | LinearDrag | QuadraticDrag | CustomForce
 
@@ -78,7 +101,9 @@ class World:
     def set_force_params(self, id: int, **params: float | ArrayLike) -> None: ...
     def clear_forces(self) -> None: ...
     def step(self, dt: float, n: int = 1) -> None: ...
-    def run(self, dt: float, steps: int, record_every: int = 1) -> Trajectory: ...
+    def run(
+        self, dt: float, steps: int, record_every: int = 1, events: Optional[Sequence[Event]] = None
+    ) -> Trajectory: ...
     def accelerations(self) -> NDArray[np.float64]: ...
     def kinetic_energy(self) -> float: ...
     def potential_energy(self) -> float: ...

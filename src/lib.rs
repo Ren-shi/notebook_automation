@@ -7,6 +7,7 @@
 //! - [`World`]: ties them together and records [`Trajectory`]s.
 
 pub mod error;
+pub mod events;
 pub mod forces;
 pub mod integrators;
 mod parallel;
@@ -18,6 +19,7 @@ pub mod world;
 mod python;
 
 pub use error::{Result, SimError};
+pub use events::{Direction, Event, EventFunction, EventHit};
 pub use forces::{
     AnchorSpring, Force, ForceId, ForceSet, LinearDrag, NewtonianGravity, Param, QuadraticDrag,
     Spring, UniformField,
