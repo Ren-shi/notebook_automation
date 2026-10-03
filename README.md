@@ -111,6 +111,16 @@ or reused, so restarts stay bit-exact. Thermostats: `w.use_langevin(T, friction,
 counter-based noise) and `w.use_nose_hoover(T, tau)` (`total_energy() + thermostat_energy()` is conserved).
 Observables: `w.temperature()`, `w.pressure(volume)` (virial), `ps.radial_distribution(positions, box)`.
 
+**Rigid bodies**: `ps.RigidSystem(order=2 | 4)` holds bodies with a mass, principal moments of inertia, an
+orientation (unit quaternion) and angular momentum — free (`position` is the centre of mass) or turning about a fixed
+`pivot` with a `center_of_mass` offset. Forces act at body points and give torques: `BodyGravity(g)`,
+`BodySpring((body, point), (body, point) | anchor, k, rest_length)`, or any `f(t, positions, orientations) ->
+(forces, torques)`. The step splits the free rotation into exact turns about the body axes (symplectic, time
+reversible, angular momentum of a free body exact). A box spun about its intermediate axis flips with the
+elliptic-integral period to 1e-4, and a fast heavy top precesses within 0.3% of `mgl / (I3 ω3)`
+(`cargo run --release --example spinning_tops`). Inertia helpers: `ps.inertia_box`, `inertia_cylinder`,
+`inertia_ellipsoid`, `inertia_sphere`; `ps.quaternion_from_axis_angle`.
+
 **Collisions and contact**: particles get a size with `add_particle(..., radius=r)` or `w.radii = [...]`.
 - Hard collisions: `w.set_collisions(restitution=1.0, walls=ps.box_walls(lo, hi))` makes spheres bounce off each
   other and off planar walls (`(normal, offset)` pairs). Each contact is found inside the step (swept spheres on a uniform
@@ -302,9 +312,10 @@ src/
   collisions.rs   event-driven hard collisions and walls (broadphase.rs: uniform grid)
   events.rs       event functions and crossing detection
   constraints.rs  rigid rods and the RATTLE projections
+  rigid.rs        rigid bodies: quaternions, torques, splitting step (RigidSystem)
   checkpoint.rs   save/restore a World
   parallel.rs     deterministic block-parallel helpers
-  python.rs       PyO3 bindings (feature "python")
+  python.rs       PyO3 bindings (feature "python"; python/rigid.rs for RigidSystem)
 scripts/          developer tools (notebook runner)
 python/physim/    Python package (re-exports the extension, file I/O, analysis helpers, type stubs)
 tests/            Rust tests; tests/python for the bindings

@@ -4,6 +4,7 @@
 //! - [`State`]: positions, velocities, masses and time.
 //! - [`Force`]: anything that adds accelerations (and optionally a potential).
 //! - [`Integrator`]: a time-stepping scheme.
+//! - [`RigidSystem`]: rigid bodies with orientation, torques and a symplectic rotation step.
 //! - [`World`]: ties them together and records [`Trajectory`]s, with fixed steps
 //!   ([`World::run`]) or adaptive ones ([`World::run_adaptive`]).
 
@@ -18,6 +19,7 @@ pub mod events;
 pub mod forces;
 pub mod integrators;
 mod parallel;
+pub mod rigid;
 mod rng;
 pub mod state;
 pub mod vec3;
@@ -41,6 +43,10 @@ pub use forces::{
     SoftContact, Spring, SpringNetwork, TreeGravity, UniformField, Yukawa,
 };
 pub use integrators::Integrator;
+pub use rigid::{
+    Attachment, BodyClosure, BodyForce, BodyGravity, BodySpring, Quat, RigidBody, RigidSystem,
+    RigidTrajectory, Wrench,
+};
 pub use state::State;
 pub use vec3::Vec3;
 pub use world::{Frame, Recorder, RunFailure, RunOptions, Trajectory, World};

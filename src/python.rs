@@ -22,6 +22,8 @@ use crate::state::State;
 use crate::vec3::Vec3;
 use crate::world::{Frame, Recorder, RunOptions, Trajectory, World};
 
+mod rigid;
+
 impl From<SimError> for PyErr {
     fn from(e: SimError) -> PyErr {
         match e {
@@ -2969,6 +2971,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTabulatedPair>()?;
     m.add_class::<PyFieldForce>()?;
     m.add_class::<PyCustomForce>()?;
+    rigid::register(m)?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
