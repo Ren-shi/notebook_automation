@@ -1,6 +1,7 @@
 //! Time integrators. Each owns its scratch buffers so stepping does not allocate.
 //! Implement [`Integrator`] to add a new scheme.
 
+use crate::constraints::Constraints;
 use crate::error::{invalid, Result};
 use crate::forces::ForceSet;
 use crate::state::State;
@@ -14,6 +15,23 @@ pub trait Integrator: Send + Sync {
     fn order(&self) -> u32;
     /// Symplectic for velocity-independent forces (bounded long-time energy error).
     fn symplectic(&self) -> bool;
+
+    /// Advance `state` by `dt` subject to distance `constraints` (see
+    /// [`crate::constraints`]), writing each constraint's tension at the end of the step to
+    /// `tension`. Only schemes built from velocity Verlet support this.
+    fn step_constrained(
+        &mut self,
+        _state: &mut State,
+        _forces: &ForceSet,
+        _constraints: &Constraints,
+        _tension: &mut Vec<f64>,
+        _dt: f64,
+    ) -> Result<()> {
+        invalid(format!(
+            "the {} integrator does not support constraints; use verlet or yoshida4",
+            self.name()
+        ))
+    }
 }
 
 /// Names accepted by [`by_name`].
@@ -170,17 +188,63 @@ fn kdk(s: &mut State, forces: &ForceSet, cache: &mut AccelCache, h: f64) -> Resu
     Ok(())
 }
 
+/// One RATTLE substep of length `h`: [`kdk`] with the positions projected onto the
+/// constraints after the drift and the velocities after the final kick.
+fn rattle(
+    s: &mut State,
+    forces: &ForceSet,
+    constraints: &Constraints,
+    cache: &mut AccelCache,
+    old: &mut Vec<Vec3>,
+    tension: &mut Vec<f64>,
+    h: f64,
+) -> Result<()> {
+    old.clone_from(&s.pos);
+    let acc = cache.get(s, forces)?;
+    for ((x, v), a) in s.pos.iter_mut().zip(s.vel.iter_mut()).zip(acc) {
+        *v += *a * (0.5 * h);
+        *x += *v * h;
+    }
+    constraints.project_positions(s, old, h)?;
+    s.t += h;
+    let acc = cache.get(s, forces)?;
+    for (v, a) in s.vel.iter_mut().zip(acc) {
+        *v += *a * (0.5 * h);
+    }
+    constraints.project_velocities(s, h, tension)
+}
+
 /// Velocity Verlet (kick-drift-kick leapfrog). Second order, symplectic, time-reversible.
 /// One force evaluation per step for velocity-independent forces (the end-of-step
 /// acceleration is reused), two otherwise.
+/// With constraints this is RATTLE.
 #[derive(Default)]
 pub struct VelocityVerlet {
     cache: AccelCache,
+    old: Vec<Vec3>,
 }
 
 impl Integrator for VelocityVerlet {
     fn step(&mut self, s: &mut State, forces: &ForceSet, dt: f64) -> Result<()> {
         kdk(s, forces, &mut self.cache, dt)
+    }
+    fn step_constrained(
+        &mut self,
+        s: &mut State,
+        forces: &ForceSet,
+        constraints: &Constraints,
+        tension: &mut Vec<f64>,
+        dt: f64,
+    ) -> Result<()> {
+        rattle(
+            s,
+            forces,
+            constraints,
+            &mut self.cache,
+            &mut self.old,
+            tension,
+            dt,
+        )
     }
     fn name(&self) -> &'static str {
         "verlet"
@@ -195,18 +259,46 @@ impl Integrator for VelocityVerlet {
 
 /// Yoshida (1990) fourth-order symplectic composition of three leapfrog substeps.
 /// Three force evaluations per step for velocity-independent forces, six otherwise.
+/// With constraints, the same composition of RATTLE substeps.
 #[derive(Default)]
 pub struct Yoshida4 {
     cache: AccelCache,
+    old: Vec<Vec3>,
+}
+
+/// Triple-jump weights `[w1, w0, w1]`.
+fn yoshida_weights() -> [f64; 3] {
+    let cbrt2 = 2f64.cbrt();
+    let w1 = 1.0 / (2.0 - cbrt2);
+    let w0 = -cbrt2 / (2.0 - cbrt2);
+    [w1, w0, w1]
 }
 
 impl Integrator for Yoshida4 {
     fn step(&mut self, s: &mut State, forces: &ForceSet, dt: f64) -> Result<()> {
-        let cbrt2 = 2f64.cbrt();
-        let w1 = 1.0 / (2.0 - cbrt2);
-        let w0 = -cbrt2 / (2.0 - cbrt2);
-        for w in [w1, w0, w1] {
+        for w in yoshida_weights() {
             kdk(s, forces, &mut self.cache, w * dt)?;
+        }
+        Ok(())
+    }
+    fn step_constrained(
+        &mut self,
+        s: &mut State,
+        forces: &ForceSet,
+        constraints: &Constraints,
+        tension: &mut Vec<f64>,
+        dt: f64,
+    ) -> Result<()> {
+        for w in yoshida_weights() {
+            rattle(
+                s,
+                forces,
+                constraints,
+                &mut self.cache,
+                &mut self.old,
+                tension,
+                w * dt,
+            )?;
         }
         Ok(())
     }

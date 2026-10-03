@@ -60,8 +60,8 @@ CI (`.github/workflows/ci.yml`) runs all of the above plus `cargo fmt --check` a
 |---|---|---|---|
 | `explicit_euler` | 1 | no | baseline; energy drifts |
 | `symplectic_euler` | 1 | yes | kick-drift |
-| `verlet` | 2 | yes | velocity Verlet / KDK leapfrog, time-reversible; 1 force evaluation per step* |
-| `yoshida4` | 4 | yes | Yoshida (1990) triple-jump composition of leapfrog; 3 force evaluations per step* |
+| `verlet` | 2 | yes | velocity Verlet / KDK leapfrog, time-reversible; 1 force evaluation per step*; RATTLE with rods |
+| `yoshida4` | 4 | yes | Yoshida (1990) triple-jump composition of leapfrog; 3 force evaluations per step*; supports rods |
 | `rk4` | 4 | no | classical Runge-Kutta; consistent for velocity-dependent forces |
 
 The symplectic schemes are only symplectic for velocity-independent forces; prefer `rk4` with drag.
@@ -99,6 +99,25 @@ fraction of `dt` (Illinois root finding, to ~1e-12 of a step), so event states a
 itself. `direction` is +1 (rising), -1 (falling) or 0 (either); a terminal event stops the run and leaves the world
 at the event. Built-in events (`radial_velocity`, `coordinate`, `separation`) run in Rust at no per-step Python cost.
 Two crossings of one event within a single step are not detected, so keep `dt` small compared with event spacing.
+
+**Rigid constraints**: rods instead of stiff springs.
+```python
+bob = w.add_particle([1, 0, 0])
+w.add_rod(bob, [0, 0, 0])            # to a fixed point; length = current distance
+w.add_rod(2, bob, length=0.5)        # between particles (length must match their distance)
+traj = w.run(dt, steps)
+traj.tension                          # (frames, rods): force pulling each rod's ends together
+w.constraint_tensions(), w.constraints, w.remove_constraint(id), w.constraint_tolerance
+```
+- Integrated with RATTLE (velocity Verlet plus Lagrange multipliers): `verlet` is second order and `yoshida4`
+  composes it to fourth order; both stay symplectic. Other integrators refuse to step a constrained world.
+- Lengths hold to `constraint_tolerance` (default 1e-10, relative) at every step; velocity components along rods are
+  removed. All rods are solved together (conjugate gradients on `G M⁻¹ Gᵀ`), so chains and closed loops converge:
+  a 2-rod double pendulum costs ~1.7 µs/step (Verlet; 5 µs with yoshida4); chains of 10/100/300 links ~6 µs/0.36 ms/3.3 ms per step (cost grows
+  as links²).
+- The rigid pendulum's period matches the elliptic-integral result to 1e-10 from small angles up to 3 rad;
+  tensions agree with m(g + v²/L) to O(dt²). Rods to pinned particles behave like rods to fixed points; massless
+  particles cannot be constrained. Constraints are saved in checkpoints and trajectory metadata.
 
 **Saving, loading and streaming**:
 ```python
@@ -191,6 +210,7 @@ src/
   integrators.rs  Integrator trait and schemes
   world.rs        World (state + forces + integrator), run loop, Recorder, Trajectory
   events.rs       event functions and crossing detection
+  constraints.rs  rigid rods and the RATTLE projections
   checkpoint.rs   save/restore a World
   parallel.rs     deterministic block-parallel helpers
   python.rs       PyO3 bindings (feature "python")

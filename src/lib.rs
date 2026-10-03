@@ -7,6 +7,7 @@
 //! - [`World`]: ties them together and records [`Trajectory`]s.
 
 pub mod checkpoint;
+pub mod constraints;
 pub mod error;
 pub mod events;
 pub mod forces;
@@ -20,6 +21,7 @@ pub mod world;
 mod python;
 
 pub use checkpoint::{Checkpoint, SavedForce};
+pub use constraints::{Anchor, ConstraintId, Constraints, Rod};
 pub use error::{Result, SimError};
 pub use events::{Direction, Event, EventFunction, EventHit};
 pub use forces::{
