@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 .ipynb_checkpoints/
 .pytest_cache/
+docs/_build/
+docs/examples/
+docs/jupyter_execute/

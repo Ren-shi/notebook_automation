@@ -1,0 +1,7 @@
+# Documentation build (on top of the extension, installed with `maturin develop --release`).
+sphinx>=7
+furo
+myst-nb
+matplotlib
+ipykernel
+plotly

@@ -60,6 +60,7 @@ impl PyBodyGravity {
             g: extract_vec3(g, "g")?,
         }))
     }
+    /// The gravitational acceleration ``g``.
     #[getter]
     fn g<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         vec3_to_array(py, self.0.g)
@@ -159,10 +160,13 @@ impl BodyForce for PythonBodyForce {
 /// Recorded frames of a :class:`RigidSystem` run. Arrays are ``(frames, bodies, ...)``.
 #[pyclass(frozen, name = "RigidTrajectory", module = "physim")]
 struct PyRigidTrajectory {
+    /// Recorded times, shape ``(F,)``.
     #[pyo3(get)]
     t: Py<PyArray1<f64>>,
+    /// Reference-point positions, shape ``(F, N, 3)``.
     #[pyo3(get)]
     pos: Py<PyArray3<f64>>,
+    /// Reference-point velocities, shape ``(F, N, 3)``.
     #[pyo3(get)]
     vel: Py<PyArray3<f64>>,
     /// Unit quaternions ``(w, x, y, z)``, body to space.
@@ -177,14 +181,19 @@ struct PyRigidTrajectory {
     /// Angular velocity, space frame.
     #[pyo3(get)]
     angular_velocity: Py<PyArray3<f64>>,
+    /// Kinetic energy per frame, shape ``(F,)``.
     #[pyo3(get)]
     kinetic: Py<PyArray1<f64>>,
+    /// Potential energy per frame, shape ``(F,)``.
     #[pyo3(get)]
     potential: Py<PyArray1<f64>>,
+    /// Total energy per frame, shape ``(F,)``.
     #[pyo3(get)]
     energy: Py<PyArray1<f64>>,
+    /// Number of bodies.
     #[pyo3(get)]
     n_bodies: usize,
+    /// Number of recorded frames.
     #[pyo3(get)]
     n_frames: usize,
 }
@@ -431,14 +440,17 @@ impl PyRigidSystem {
         Ok((vecs_to_array(py, &f)?, vecs_to_array(py, &t)?))
     }
 
+    /// Translational plus rotational kinetic energy.
     fn kinetic_energy(&self) -> f64 {
         self.inner.kinetic_energy()
     }
 
+    /// Potential energy of the forces that define one (callables count as zero).
     fn potential_energy(&self) -> PyResult<f64> {
         Ok(self.inner.potential_energy()?)
     }
 
+    /// Kinetic plus potential energy.
     fn total_energy(&self) -> PyResult<f64> {
         Ok(self.inner.total_energy()?)
     }
@@ -453,6 +465,7 @@ impl PyRigidSystem {
         vec3_to_array(py, self.inner.angular_momentum())
     }
 
+    /// Current time; assignable.
     #[getter]
     fn t(&self) -> f64 {
         self.inner.t
@@ -461,10 +474,12 @@ impl PyRigidSystem {
     fn set_t(&mut self, t: f64) {
         self.inner.t = t;
     }
+    /// Order of the time step (2 or 4).
     #[getter]
     fn order(&self) -> u8 {
         self.inner.order()
     }
+    /// Number of bodies.
     #[getter]
     fn n_bodies(&self) -> usize {
         self.inner.bodies().len()
@@ -472,6 +487,7 @@ impl PyRigidSystem {
     fn __len__(&self) -> usize {
         self.inner.bodies().len()
     }
+    /// Masses, shape ``(N,)``.
     #[getter]
     fn masses<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_vec(py, self.inner.bodies().iter().map(|b| b.mass).collect())
@@ -482,11 +498,13 @@ impl PyRigidSystem {
         let v: Vec<Vec3> = self.inner.bodies().iter().map(|b| b.inertia).collect();
         vecs_to_array(py, &v)
     }
+    /// Reference points (centre of mass, or the pivot), shape ``(N, 3)``.
     #[getter]
     fn positions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let v: Vec<Vec3> = self.inner.bodies().iter().map(|b| b.pos).collect();
         vecs_to_array(py, &v)
     }
+    /// Velocities of the reference points, shape ``(N, 3)``.
     #[getter]
     fn velocities<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let v: Vec<Vec3> = self.inner.bodies().iter().map(|b| b.vel).collect();
@@ -503,21 +521,25 @@ impl PyRigidSystem {
             .collect();
         vecs_to_array(py, &v)
     }
+    /// Body-to-space unit quaternions ``(w, x, y, z)``, shape ``(N, 4)``.
     #[getter]
     fn orientations<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let q: Vec<Quat> = self.inner.bodies().iter().map(|b| b.orientation).collect();
         PyArray1::from_vec(py, quats_flat(&q)).reshape([q.len(), 4])
     }
+    /// Body-to-space rotation matrices, shape ``(N, 3, 3)``; column ``k`` is body axis ``k``.
     #[getter]
     fn rotation_matrices<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray3<f64>>> {
         let q: Vec<Quat> = self.inner.bodies().iter().map(|b| b.orientation).collect();
         PyArray1::from_vec(py, matrices_flat(&q)).reshape([q.len(), 3, 3])
     }
+    /// Angular momentum about each reference point (space frame), shape ``(N, 3)``.
     #[getter]
     fn angular_momenta<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let v: Vec<Vec3> = self.inner.bodies().iter().map(|b| b.ang_mom).collect();
         vecs_to_array(py, &v)
     }
+    /// Angular velocities (space frame), shape ``(N, 3)``.
     #[getter]
     fn angular_velocities<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let v: Vec<Vec3> = self
