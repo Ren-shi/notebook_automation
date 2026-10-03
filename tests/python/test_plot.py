@@ -1,12 +1,11 @@
-import matplotlib
+import numpy as np
+import pytest
 
+import physim as ps
+
+matplotlib = pytest.importorskip("matplotlib")
 matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pytest  # noqa: E402
-
-import physim as ps  # noqa: E402
+plt = pytest.importorskip("matplotlib.pyplot")
 
 
 @pytest.fixture

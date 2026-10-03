@@ -22,7 +22,25 @@ See [`notebooks/01_getting_started.ipynb`](notebooks/01_getting_started.ipynb) f
 measured convergence orders, a Python-defined force checked against an analytic precession rate, and a
 many-particle wave example.
 
-## Setup
+## Install
+
+Prebuilt wheels (Linux x86_64/aarch64, macOS x86_64/arm64, Windows x64; one abi3 wheel per platform covers
+Python ≥ 3.9) need no Rust toolchain. The distribution is called `physim-engine` because `physim` is taken on PyPI;
+the import name is `physim`:
+
+```bash
+pip install physim-engine                 # once a release has been published
+pip install "physim-engine[plot]"         # with matplotlib for physim.plot ([plot3d] adds plotly, [io] h5py)
+```
+
+Releases: bump `version` in `Cargo.toml` (shared by the crate, the wheel and `physim.__version__`), note the
+changes in [`CHANGELOG.md`](CHANGELOG.md), merge, and push a tag `vX.Y.Z`. The
+[release workflow](.github/workflows/release.yml) builds and tests the wheels and the sdist and publishes to PyPI by
+trusted publishing (configure the PyPI project's trusted publisher for this repository and workflow, environment
+`pypi`). Publishing the Rust crate is opt-in (repository variable `PUBLISH_CRATE=true` and secret
+`CARGO_REGISTRY_TOKEN`). Licensed under the MIT license ([`LICENSE`](LICENSE)).
+
+## Setup (from source)
 
 Requires a Rust toolchain and Python ≥ 3.9.
 
