@@ -21,6 +21,13 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 13 | [Rigid bodies](13-rigid-bodies.md) | Physics | P3 | L | 07 |
 | 14 | [Scenario library and units](14-scenarios-and-units.md) | Usability | P3 | M | — |
 | 15 | [Visualization and animation helpers](15-visualization.md) | Usability | P3 | S | — |
+| 16 | [World API gaps: particle and force management](16-world-api-gaps.md) | Core | P1 | S | — |
+| 17 | [Higher-order and specialised integrators](17-more-integrators.md) | Integrators | P2 | M | — |
+| 18 | [Chaos and stability analysis](18-chaos-and-stability.md) | Analysis | P2 | M | 05 |
+| 19 | [More built-in forces](19-more-forces.md) | Physics | P2 | M | — |
+| 20 | [Fields and continua](20-fields-and-continua.md) | Physics | P3 | L | — |
+| 21 | [Packaging and release](21-packaging-and-release.md) | Tooling | P3 | S | 01 |
+| 22 | [Documentation](22-documentation.md) | Usability | P3 | M | — |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - Gravity is direct O(N²) summation, so practical up to a few thousand bodies.
@@ -28,5 +35,8 @@ Known limits of the current engine (worth keeping in mind until the items above 
 - No constraints: a pendulum is a stiff `AnchorSpring`, which forces a small time step.
 - `World::run` keeps every recorded frame in memory.
 - `CustomForce` costs one Python call per force evaluation.
+- Particles cannot be removed, masses cannot be changed, and forces can only be cleared all at once.
+- Every particle needs a positive mass, so there are no massless tracers or pinned particles.
+- A run that fails partway loses the frames recorded so far.
 
 To add an item: copy any file, give it the next number, and add a row to the table.
