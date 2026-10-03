@@ -1,0 +1,24 @@
+[package]
+name = "physim"
+version = "0.1.0"
+edition = "2021"
+description = "Classical mechanics simulation engine with Python bindings"
+license = "MIT"
+
+[lib]
+name = "physim"
+# cdylib: the Python extension module; rlib: lets Rust tests and other crates use the engine.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# Build the Python bindings (enabled by maturin via pyproject.toml).
+python = ["dep:pyo3", "dep:numpy"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["abi3-py39"], optional = true }
+numpy = { version = "0.29", optional = true }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

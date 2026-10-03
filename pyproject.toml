@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "physim"
+version = "0.1.0"
+description = "Classical mechanics simulation engine (Rust core, Python front end)"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.21"]
+
+[project.optional-dependencies]
+notebooks = ["matplotlib", "jupyter"]
+test = ["pytest"]
+
+[tool.maturin]
+features = ["python"]
+python-source = "python"
+module-name = "physim._core"
