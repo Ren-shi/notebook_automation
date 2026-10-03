@@ -16,7 +16,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 08 | ~~[Adaptive time stepping](08-adaptive-time-stepping.md)~~ **Done** | Integrators | P2 | M | 05 |
 | 09 | ~~[Charged particles: Lorentz force and Boris pusher](09-lorentz-force-boris.md)~~ **Done** | Physics | P2 | M | — |
 | 10 | ~~[Tree gravity (Barnes–Hut)](10-barnes-hut.md)~~ **Done** | Performance | P2 | L | 02, 04 |
-| 11 | [Collisions and contact](11-collisions.md) | Physics | P2 | L | 05 |
+| 11 | ~~[Collisions and contact](11-collisions.md)~~ **Done** | Physics | P2 | L | 05 |
 | 12 | [Molecular dynamics: pair potentials, periodic boxes, thermostats](12-molecular-dynamics.md) | Physics | P2 | L | 04 |
 | 13 | [Rigid bodies](13-rigid-bodies.md) | Physics | P3 | L | 07 |
 | 14 | [Scenario library and units](14-scenarios-and-units.md) | Usability | P3 | M | — |

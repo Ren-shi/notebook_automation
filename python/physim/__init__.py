@@ -35,6 +35,7 @@ from ._core import (
     PowerLaw,
     QuadraticDrag,
     Spring,
+    SoftContact,
     SpringNetwork,
     Trajectory,
     TreeGravity,
@@ -44,6 +45,7 @@ from ._core import (
     __version__,
 )
 from .analysis import poincare_section, relative_energy_error
+from .geometry import box_walls
 from .io import (
     TrajectoryWriter,
     load_checkpoint,
@@ -75,6 +77,7 @@ __all__ = [
     "PowerLaw",
     "QuadraticDrag",
     "Spring",
+    "SoftContact",
     "SpringNetwork",
     "Trajectory",
     "TrajectoryWriter",
@@ -89,4 +92,5 @@ __all__ = [
     "save_checkpoint",
     "save_trajectory",
     "__version__",
+    "box_walls",
 ]

@@ -174,6 +174,7 @@ impl World {
                 &self.forces,
                 &self.state.mass,
                 &self.state.charge,
+                &self.state.radius,
                 &self.state.pinned,
                 direction,
                 o.rtol,
@@ -210,6 +211,7 @@ impl World {
                 &self.forces,
                 &self.state.mass,
                 &self.state.charge,
+                &self.state.radius,
                 &self.state.pinned,
                 h * direction,
             ) {
@@ -327,6 +329,9 @@ impl World {
             return invalid(
                 "adaptive stepping does not support constraints; use run() with verlet or yoshida4",
             );
+        }
+        if self.collisions.is_some() {
+            return invalid("adaptive stepping does not support hard collisions; use run()");
         }
         if !t_end.is_finite() {
             return invalid(format!("t_end must be finite, got {t_end}"));

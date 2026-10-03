@@ -33,6 +33,7 @@ impl Integrator for Boris {
             &s.vel,
             &s.mass,
             &s.charge,
+            &s.radius,
             &s.pinned,
             &mut self.acc,
             &mut self.b,

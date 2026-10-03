@@ -142,6 +142,9 @@ class TreeGravity:
         self, G: float = 1.0, softening: float = 0.0, theta: float = 0.5, quadrupole: bool = False
     ) -> None: ...
 
+class SoftContact:
+    def __init__(self, k: float, damping: float = 0.0, law: str = "linear") -> None: ...
+
 class CustomForce:
     def __init__(
         self,
@@ -173,6 +176,7 @@ Force = Union[
     UniformField,
     NewtonianGravity,
     TreeGravity,
+    SoftContact,
     Spring,
     AnchorSpring,
     LinearDrag,
@@ -208,6 +212,7 @@ class World:
     velocities: NDArray[np.float64]
     masses: NDArray[np.float64]
     charges: NDArray[np.float64]
+    radii: NDArray[np.float64]
     @property
     def pinned(self) -> NDArray[np.bool_]: ...
     @property
@@ -218,7 +223,9 @@ class World:
     def integrator_info(self) -> IntegratorInfo: ...
     def __init__(self, integrator: str = "verlet") -> None: ...
     def add_particle(
-        self, pos: ArrayLike, vel: Optional[ArrayLike] = None, mass: float = 1.0, charge: float = 0.0
+        self, pos: ArrayLike, vel: Optional[ArrayLike] = None, mass: float = 1.0,
+        charge: float = 0.0,
+        radius: float = 0.0,
     ) -> int: ...
     def remove_particle(self, i: int) -> None: ...
     def pin(self, i: int, pinned: bool = True) -> None: ...
@@ -265,6 +272,19 @@ class World:
         record_every: int = 100,
         seed: int = 1,
     ) -> dict[str, NDArray[np.float64]]: ...
+    def set_collisions(
+        self,
+        restitution: float = 1.0,
+        walls: Optional[Sequence[tuple[ArrayLike, float]]] = None,
+        *,
+        between_particles: bool = True,
+        max_per_step: int = 100_000,
+    ) -> None: ...
+    def clear_collisions(self) -> None: ...
+    @property
+    def collisions(self) -> Optional[dict[str, Any]]: ...
+    @property
+    def collision_count(self) -> int: ...
     def use_composition(self, weights: Sequence[float], order: int, name: str = "composition") -> None: ...
     def use_splitting(
         self, ops: Sequence[tuple[str, float]], order: int, name: str = "splitting"

@@ -34,7 +34,7 @@ PathLike = Union[str, "os.PathLike[str]"]
 
 _CHECKPOINT_ARRAYS = ("positions", "velocities", "masses", "pinned")
 # Arrays added in later versions; files without them still load.
-_OPTIONAL_CHECKPOINT_ARRAYS = ("charges",)
+_OPTIONAL_CHECKPOINT_ARRAYS = ("charges", "radii")
 
 # name: (dtype, per-row shape given n_particles and n_constraints)
 _FIELDS = {

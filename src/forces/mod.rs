@@ -9,6 +9,7 @@ use crate::vec3::Vec3;
 
 mod central;
 mod closure;
+mod contact;
 mod drives;
 mod em;
 mod orbital;
@@ -19,6 +20,7 @@ pub use central::{
     HarmonicTrap, HenonHeiles, HernquistPotential, PlummerPotential, PowerLaw, Yukawa,
 };
 pub use closure::ClosureForce;
+pub use contact::{ContactLaw, SoftContact};
 pub use drives::PeriodicForce;
 pub use em::{Coulomb, ElectricField, FieldFunctions, MagneticField};
 pub use orbital::{J2Oblateness, PostNewtonian};
@@ -90,6 +92,34 @@ pub trait Force: Send + Sync {
         acc: &mut [Vec3],
     ) -> Result<()> {
         self.accumulate(t, pos, vel, mass, acc)
+    }
+
+    /// [`Force::accumulate_charged`] with the particles' radii as well. Contact forces
+    /// implement this; the default ignores the radii. This is what [`ForceSet`] calls.
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_full(
+        &self,
+        t: f64,
+        pos: &[Vec3],
+        vel: &[Vec3],
+        mass: &[f64],
+        charge: &[f64],
+        _radius: &[f64],
+        acc: &mut [Vec3],
+    ) -> Result<()> {
+        self.accumulate_charged(t, pos, vel, mass, charge, acc)
+    }
+
+    /// [`Force::potential_charged`] with the particles' radii as well.
+    fn potential_full(
+        &self,
+        t: f64,
+        pos: &[Vec3],
+        mass: &[f64],
+        charge: &[f64],
+        _radius: &[f64],
+    ) -> Result<Option<f64>> {
+        self.potential_charged(t, pos, mass, charge)
     }
 
     /// [`Force::potential`] with the particles' charges available.
@@ -192,6 +222,7 @@ pub enum BuiltinForce {
     MagneticField(MagneticField),
     Coulomb(Coulomb),
     TreeGravity(TreeGravity),
+    SoftContact(SoftContact),
 }
 
 impl BuiltinForce {
@@ -219,6 +250,7 @@ impl BuiltinForce {
             BuiltinForce::MagneticField(f) => Box::new(f),
             BuiltinForce::Coulomb(f) => Box::new(f),
             BuiltinForce::TreeGravity(f) => Box::new(f),
+            BuiltinForce::SoftContact(f) => Box::new(f),
         }
     }
 }
@@ -384,13 +416,14 @@ impl ForceSet {
         vel: &[Vec3],
         mass: &[f64],
         charge: &[f64],
+        radius: &[f64],
         pinned: &[bool],
         acc: &mut Vec<Vec3>,
     ) -> Result<()> {
         acc.clear();
         acc.resize(pos.len(), Vec3::ZERO);
         for (_, f) in &self.forces {
-            f.accumulate_charged(t, pos, vel, mass, charge, acc)?;
+            f.accumulate_full(t, pos, vel, mass, charge, radius, acc)?;
         }
         for (a, &p) in acc.iter_mut().zip(pinned) {
             if p {
@@ -411,6 +444,7 @@ impl ForceSet {
         vel: &[Vec3],
         mass: &[f64],
         charge: &[f64],
+        radius: &[f64],
         pinned: &[bool],
         dpos: &[Vec3],
         dvel: &[Vec3],
@@ -425,7 +459,7 @@ impl ForceSet {
                 continue;
             }
             let fd = fd.get_or_insert_with(|| FiniteDifference::new(pos, vel, dpos, dvel));
-            fd.add(f.as_ref(), t, mass, charge, out)?;
+            fd.add(f.as_ref(), t, mass, charge, radius, out)?;
         }
         for (o, &p) in out.iter_mut().zip(pinned) {
             if p {
@@ -446,6 +480,7 @@ impl ForceSet {
         vel: &[Vec3],
         mass: &[f64],
         charge: &[f64],
+        radius: &[f64],
         pinned: &[bool],
         acc: &mut Vec<Vec3>,
         b: &mut Vec<Vec3>,
@@ -463,7 +498,11 @@ impl ForceSet {
                     f.name()
                 ));
             }
-            f.accumulate_electric(t, pos, vel, mass, charge, acc)?;
+            if magnetic {
+                f.accumulate_electric(t, pos, vel, mass, charge, acc)?;
+            } else {
+                f.accumulate_full(t, pos, vel, mass, charge, radius, acc)?;
+            }
         }
         for ((a, bi), &p) in acc.iter_mut().zip(b.iter_mut()).zip(pinned) {
             if p {
@@ -475,10 +514,19 @@ impl ForceSet {
     }
 
     /// Sum of the potentials of all conservative forces (non-conservative ones are skipped).
-    pub fn potential(&self, t: f64, pos: &[Vec3], mass: &[f64], charge: &[f64]) -> Result<f64> {
+    pub fn potential(
+        &self,
+        t: f64,
+        pos: &[Vec3],
+        mass: &[f64],
+        charge: &[f64],
+        radius: &[f64],
+    ) -> Result<f64> {
         let mut total = 0.0;
         for (_, f) in &self.forces {
-            total += f.potential_charged(t, pos, mass, charge)?.unwrap_or(0.0);
+            total += f
+                .potential_full(t, pos, mass, charge, radius)?
+                .unwrap_or(0.0);
         }
         Ok(total)
     }
@@ -527,6 +575,7 @@ impl FiniteDifference {
         t: f64,
         mass: &[f64],
         charge: &[f64],
+        radius: &[f64],
         out: &mut [Vec3],
     ) -> Result<()> {
         if self.eps == 0.0 {
@@ -539,7 +588,7 @@ impl FiniteDifference {
         ] {
             buf.clear();
             buf.resize(n, Vec3::ZERO);
-            f.accumulate_charged(t, p, v, mass, charge, buf)?;
+            f.accumulate_full(t, p, v, mass, charge, radius, buf)?;
         }
         let scale = 0.5 / self.eps;
         for ((o, a), b) in out.iter_mut().zip(&self.a_plus).zip(&self.a_minus) {

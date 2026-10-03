@@ -9,6 +9,8 @@ pub struct State {
     pub mass: Vec<f64>,
     /// Electric charge of each particle (zero unless set).
     pub charge: Vec<f64>,
+    /// Radius of each particle for collisions and contact (zero: a point, never collides).
+    pub radius: Vec<f64>,
     /// Pinned particles never move but still exert forces.
     pub pinned: Vec<bool>,
 }
@@ -24,6 +26,7 @@ impl State {
         self.vel.push(vel);
         self.mass.push(mass);
         self.charge.push(0.0);
+        self.radius.push(0.0);
         self.pinned.push(false);
         self.pos.len() - 1
     }
@@ -34,6 +37,7 @@ impl State {
         self.vel.remove(i);
         self.mass.remove(i);
         self.charge.remove(i);
+        self.radius.remove(i);
         self.pinned.remove(i);
     }
 

@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::collisions::Collisions;
 use crate::constraints::{self, Anchor, ConstraintId, Constraints, Rod};
 use crate::error::{invalid, Result, SimError};
 use crate::events::{Event, EventHit};
@@ -20,6 +21,9 @@ pub struct World {
     /// State before the current step, restored if the step fails.
     backup: State,
     backup_tension: Vec<f64>,
+    /// Hard collisions, if enabled (see [`crate::collisions`]).
+    pub(crate) collisions: Option<Collisions>,
+    pub(crate) collision_count: u64,
 }
 
 impl World {
@@ -32,6 +36,8 @@ impl World {
             tension: Vec::new(),
             backup: State::new(),
             backup_tension: Vec::new(),
+            collisions: None,
+            collision_count: 0,
         }
     }
 
@@ -118,6 +124,34 @@ impl World {
             return invalid(format!("charge must be finite, got {charge}"));
         }
         self.state.charge[i] = charge;
+        Ok(())
+    }
+
+    /// Sets every particle's radius for collisions and contact forces (zero: no size).
+    pub fn set_radii(&mut self, radii: Vec<f64>) -> Result<()> {
+        if radii.len() != self.state.len() {
+            return invalid(format!(
+                "expected {} radii, got {}",
+                self.state.len(),
+                radii.len()
+            ));
+        }
+        if let Some(r) = radii.iter().find(|r| !(r.is_finite() && **r >= 0.0)) {
+            return invalid(format!("radii must be finite and non-negative, got {r}"));
+        }
+        self.state.radius = radii;
+        Ok(())
+    }
+
+    /// Sets the radius of particle `i`.
+    pub fn set_radius(&mut self, i: usize, radius: f64) -> Result<()> {
+        self.check_particle(i)?;
+        if !(radius.is_finite() && radius >= 0.0) {
+            return invalid(format!(
+                "radius must be finite and non-negative, got {radius}"
+            ));
+        }
+        self.state.radius[i] = radius;
         Ok(())
     }
 
@@ -254,6 +288,15 @@ impl World {
                     self.backup.t
                 ))
             }
+        });
+        let result = result.and_then(|()| {
+            if self.collisions.is_none() {
+                return Ok(());
+            }
+            let start = std::mem::take(&mut self.backup);
+            let resolved = self.resolve_collisions(&start, dt);
+            self.backup = start;
+            resolved
         });
         if result.is_err() {
             std::mem::swap(&mut self.state, &mut self.backup);
@@ -432,7 +475,13 @@ impl World {
                 .sum();
             (
                 Some(kinetic),
-                Some(self.forces.potential(t, pos, mass, &self.state.charge)?),
+                Some(self.forces.potential(
+                    t,
+                    pos,
+                    mass,
+                    &self.state.charge,
+                    &self.state.radius,
+                )?),
             )
         } else {
             (None, None)
@@ -544,7 +593,7 @@ impl World {
 
     /// The integrator's solution after a step of `h` from `start`, and the constraint
     /// tensions there (the world is unchanged).
-    fn advance(&mut self, start: &State, h: f64) -> Result<(State, Vec<f64>)> {
+    pub(crate) fn advance(&mut self, start: &State, h: f64) -> Result<(State, Vec<f64>)> {
         let mut s = start.clone();
         let mut tension = Vec::new();
         Self::integrate(
@@ -569,6 +618,7 @@ impl World {
             &self.state.pos,
             &self.state.mass,
             &self.state.charge,
+            &self.state.radius,
         )
     }
 
@@ -580,8 +630,9 @@ impl World {
     pub fn accelerations(&self) -> Result<Vec<Vec3>> {
         let s = &self.state;
         let mut acc = Vec::new();
-        self.forces
-            .accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.charge, &s.pinned, &mut acc)?;
+        self.forces.accelerations(
+            s.t, &s.pos, &s.vel, &s.mass, &s.charge, &s.radius, &s.pinned, &mut acc,
+        )?;
         Ok(acc)
     }
 }

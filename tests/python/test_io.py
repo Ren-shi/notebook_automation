@@ -69,7 +69,7 @@ def test_checkpoint_needs_custom_forces_back(tmp_path):
 
 def test_checkpoint_dict_is_plain_data():
     data = busy_world().checkpoint()
-    arrays = {k: data.pop(k) for k in ("positions", "velocities", "masses", "charges", "pinned")}
+    arrays = {k: data.pop(k) for k in ("positions", "velocities", "masses", "charges", "radii", "pinned")}
     assert arrays["positions"].shape == (4, 3)
     restored = json.loads(json.dumps(data))  # everything else is JSON
     assert restored["integrator"] == "yoshida4"
