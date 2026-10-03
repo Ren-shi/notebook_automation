@@ -19,6 +19,7 @@ from ._core import (
     DampedSpring,
     Event,
     HarmonicTrap,
+    HenonHeiles,
     HernquistPotential,
     J2Oblateness,
     LinearDrag,
@@ -37,7 +38,7 @@ from ._core import (
     Yukawa,
     __version__,
 )
-from .analysis import relative_energy_error
+from .analysis import poincare_section, relative_energy_error
 from .io import (
     TrajectoryWriter,
     load_checkpoint,
@@ -53,6 +54,7 @@ __all__ = [
     "DampedSpring",
     "Event",
     "HarmonicTrap",
+    "HenonHeiles",
     "HernquistPotential",
     "J2Oblateness",
     "LinearDrag",
@@ -72,6 +74,7 @@ __all__ = [
     "Yukawa",
     "load_checkpoint",
     "load_trajectory",
+    "poincare_section",
     "relative_energy_error",
     "save_checkpoint",
     "save_trajectory",
