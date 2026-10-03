@@ -98,3 +98,18 @@ def test_integrator_info():
     assert w.integrator_info == {"name": "yoshida4", "order": 4, "symplectic": True}
     w.integrator = "rk4"
     assert w.integrator_info["symplectic"] is False
+
+
+@pytest.mark.parametrize("velocity_dependent, expected", [(False, 101), (True, 200)])
+def test_verlet_reuses_custom_force_evaluations(velocity_dependent, expected):
+    calls = []
+
+    def trap(t, pos, vel, mass):
+        calls.append(t)
+        return -pos
+
+    w = ps.World(integrator="verlet")
+    w.add_particle([1, 0, 0])
+    w.add_force(ps.CustomForce(trap, velocity_dependent=velocity_dependent))
+    w.step(0.01, n=100)
+    assert len(calls) == expected

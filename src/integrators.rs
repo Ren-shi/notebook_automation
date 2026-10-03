@@ -94,30 +94,93 @@ impl Integrator for SymplecticEuler {
     }
 }
 
+/// Acceleration from the last evaluation, with a snapshot of the inputs that produced it.
+///
+/// Kick-drift-kick schemes evaluate the acceleration at the end of one (sub)step and again,
+/// at the same positions and time, at the start of the next. For velocity-independent forces
+/// the cache returns the stored result instead, halving the cost of Verlet. Validity is
+/// checked against the actual inputs (bit-for-bit) and the force set's version, so external
+/// edits to the state or the forces are always picked up.
+#[derive(Default)]
+struct AccelCache {
+    acc: Vec<Vec3>,
+    valid: bool,
+    forces_version: u64,
+    t: f64,
+    pos: Vec<Vec3>,
+    mass: Vec<f64>,
+    pinned: Vec<bool>,
+}
+
+fn same_bits(a: &[Vec3], b: &[Vec3]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(p, q)| {
+            p.x.to_bits() == q.x.to_bits()
+                && p.y.to_bits() == q.y.to_bits()
+                && p.z.to_bits() == q.z.to_bits()
+        })
+}
+
+impl AccelCache {
+    fn hit(&self, s: &State, forces: &ForceSet) -> bool {
+        self.valid
+            && self.forces_version == forces.version()
+            && self.t.to_bits() == s.t.to_bits()
+            && same_bits(&self.pos, &s.pos)
+            && self.pinned == s.pinned
+            && self.mass.len() == s.mass.len()
+            && self
+                .mass
+                .iter()
+                .zip(&s.mass)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+    }
+
+    /// Acceleration for the current state, reused when the inputs are unchanged.
+    fn get(&mut self, s: &State, forces: &ForceSet) -> Result<&[Vec3]> {
+        if !self.hit(s, forces) {
+            self.valid = false;
+            forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, &mut self.acc)?;
+            // Velocity-dependent accelerations change with every kick, so never reuse them.
+            if !forces.velocity_dependent() {
+                self.valid = true;
+                self.forces_version = forces.version();
+                self.t = s.t;
+                self.pos.clone_from(&s.pos);
+                self.mass.clone_from(&s.mass);
+                self.pinned.clone_from(&s.pinned);
+            }
+        }
+        Ok(&self.acc)
+    }
+}
+
 /// One kick-drift-kick leapfrog substep of length `h`.
-fn kdk(s: &mut State, forces: &ForceSet, acc: &mut Vec<Vec3>, h: f64) -> Result<()> {
-    forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, acc)?;
-    for ((x, v), a) in s.pos.iter_mut().zip(s.vel.iter_mut()).zip(acc.iter()) {
+fn kdk(s: &mut State, forces: &ForceSet, cache: &mut AccelCache, h: f64) -> Result<()> {
+    let acc = cache.get(s, forces)?;
+    for ((x, v), a) in s.pos.iter_mut().zip(s.vel.iter_mut()).zip(acc) {
         *v += *a * (0.5 * h);
         *x += *v * h;
     }
     s.t += h;
-    forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, acc)?;
-    for (v, a) in s.vel.iter_mut().zip(acc.iter()) {
+    let acc = cache.get(s, forces)?;
+    for (v, a) in s.vel.iter_mut().zip(acc) {
         *v += *a * (0.5 * h);
     }
     Ok(())
 }
 
 /// Velocity Verlet (kick-drift-kick leapfrog). Second order, symplectic, time-reversible.
+/// One force evaluation per step for velocity-independent forces (the end-of-step
+/// acceleration is reused), two otherwise.
 #[derive(Default)]
 pub struct VelocityVerlet {
-    acc: Vec<Vec3>,
+    cache: AccelCache,
 }
 
 impl Integrator for VelocityVerlet {
     fn step(&mut self, s: &mut State, forces: &ForceSet, dt: f64) -> Result<()> {
-        kdk(s, forces, &mut self.acc, dt)
+        kdk(s, forces, &mut self.cache, dt)
     }
     fn name(&self) -> &'static str {
         "verlet"
@@ -131,9 +194,10 @@ impl Integrator for VelocityVerlet {
 }
 
 /// Yoshida (1990) fourth-order symplectic composition of three leapfrog substeps.
+/// Three force evaluations per step for velocity-independent forces, six otherwise.
 #[derive(Default)]
 pub struct Yoshida4 {
-    acc: Vec<Vec3>,
+    cache: AccelCache,
 }
 
 impl Integrator for Yoshida4 {
@@ -142,7 +206,7 @@ impl Integrator for Yoshida4 {
         let w1 = 1.0 / (2.0 - cbrt2);
         let w0 = -cbrt2 / (2.0 - cbrt2);
         for w in [w1, w0, w1] {
-            kdk(s, forces, &mut self.acc, w * dt)?;
+            kdk(s, forces, &mut self.cache, w * dt)?;
         }
         Ok(())
     }

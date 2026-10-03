@@ -11,6 +11,8 @@ pub enum Param {
     Vector(Vec3),
 }
 
+/// Forces must be pure functions of their arguments (`t`, positions, velocities, masses) and
+/// their parameters: integrators may reuse an acceleration computed for identical inputs.
 pub trait Force: Send + Sync {
     /// Add this force's acceleration contribution for every particle to `acc`.
     /// `acc` is pre-sized to the number of particles and must only be added to.
@@ -64,6 +66,8 @@ pub type ForceId = usize;
 pub struct ForceSet {
     forces: Vec<(ForceId, Box<dyn Force>)>,
     next_id: ForceId,
+    /// Bumped on every change to the set or to a force's parameters.
+    version: u64,
 }
 
 impl ForceSet {
@@ -74,6 +78,7 @@ impl ForceSet {
     pub fn add(&mut self, force: Box<dyn Force>) -> ForceId {
         let id = self.next_id;
         self.next_id += 1;
+        self.version += 1;
         self.forces.push((id, force));
         id
     }
@@ -87,12 +92,14 @@ impl ForceSet {
 
     pub fn remove(&mut self, id: ForceId) -> Result<Box<dyn Force>> {
         let p = self.position(id)?;
+        self.version += 1;
         Ok(self.forces.remove(p).1)
     }
 
     /// Swaps in a new force under the same id and evaluation order.
     pub fn replace(&mut self, id: ForceId, force: Box<dyn Force>) -> Result<Box<dyn Force>> {
         let p = self.position(id)?;
+        self.version += 1;
         Ok(std::mem::replace(&mut self.forces[p].1, force))
     }
 
@@ -104,6 +111,7 @@ impl ForceSet {
     /// Sets several parameters of one force; on any error, already-applied ones are rolled back.
     pub fn set_params(&mut self, id: ForceId, values: &[(String, Param)]) -> Result<()> {
         let p = self.position(id)?;
+        self.version += 1;
         let force = &mut self.forces[p].1;
         let old = force.params();
         for (k, (name, value)) in values.iter().enumerate() {
@@ -120,6 +128,7 @@ impl ForceSet {
     }
 
     pub fn clear(&mut self) {
+        self.version += 1;
         self.forces.clear();
     }
 
@@ -135,6 +144,16 @@ impl ForceSet {
         self.forces.is_empty()
     }
 
+    /// Changes whenever forces are added, removed, replaced or re-parameterised.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Whether any force depends on velocity.
+    pub fn velocity_dependent(&self) -> bool {
+        self.forces.iter().any(|(_, f)| f.velocity_dependent())
+    }
+
     /// Names of the forces that refer to particle `i` by index.
     pub fn referencing(&self, i: usize) -> Vec<String> {
         self.forces
@@ -145,6 +164,7 @@ impl ForceSet {
     }
 
     pub(crate) fn particle_removed(&mut self, removed: usize) {
+        self.version += 1;
         for (_, f) in &mut self.forces {
             f.particle_removed(removed);
         }
