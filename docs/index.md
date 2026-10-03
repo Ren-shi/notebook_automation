@@ -44,6 +44,7 @@ examples/03_three_body_chaos
 examples/04_driven_oscillator
 examples/05_charged_particles
 examples/06_fields
+examples/07_accelerators
 ```
 
 ```{toctree}

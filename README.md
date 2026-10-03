@@ -20,7 +20,8 @@ ps.relative_energy_error(traj)      # (E - E0) / |E0| per frame
 
 See [`notebooks/`](notebooks/) for worked examples: integrator comparisons and measured convergence orders
 (`01_getting_started`), an N-body star cluster, chaos in the three-body problem, a driven oscillator's route to
-chaos, and charged particles in a magnetic bottle.
+chaos, charged particles in a magnetic bottle, fields on grids, and particle accelerators (an electrostatic column, a
+drift-tube linac, classical and isochronous cyclotrons for protons and alpha particles, and Rutherford scattering).
 
 ## Install
 
