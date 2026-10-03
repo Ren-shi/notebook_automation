@@ -155,6 +155,11 @@ fn pinned_particles_stay_put_with_every_integrator() {
         assert!(w
             .set_velocities(vec![p(1.0, 0.0, 0.0), Vec3::ZERO])
             .is_err());
+        if name == "wisdom_holman" {
+            let failure = w.run(1e-3, 10, 10).unwrap_err();
+            assert!(failure.error.to_string().contains("pinned"));
+            continue;
+        }
         w.run(1e-3, 2000, 2000).unwrap();
         assert_eq!(w.state.pos[0], p(0.0, 2.0, 0.0), "{name}");
         assert!(

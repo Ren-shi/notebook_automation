@@ -22,7 +22,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 14 | [Scenario library and units](14-scenarios-and-units.md) | Usability | P3 | M | — |
 | 15 | [Visualization and animation helpers](15-visualization.md) | Usability | P3 | S | — |
 | 16 | ~~[World API gaps: particle and force management](16-world-api-gaps.md)~~ **Done** | Core | P1 | S | — |
-| 17 | [Higher-order and specialised integrators](17-more-integrators.md) | Integrators | P2 | M | — |
+| 17 | ~~[Higher-order and specialised integrators](17-more-integrators.md)~~ **Done** | Integrators | P2 | M | — |
 | 18 | [Chaos and stability analysis](18-chaos-and-stability.md) | Analysis | P2 | M | 05 |
 | 19 | ~~[More built-in forces](19-more-forces.md)~~ **Done** | Physics | P2 | M | — |
 | 20 | [Fields and continua](20-fields-and-continua.md) | Physics | P3 | L | — |

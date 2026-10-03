@@ -7,14 +7,28 @@ use crate::forces::ForceSet;
 use crate::state::State;
 use crate::vec3::Vec3;
 
+mod gauss;
+mod splitting;
+mod wisdom_holman;
+
+pub use gauss::GaussLegendre;
+pub use splitting::{Composition, Op, Scheme, Splitting};
+pub use wisdom_holman::WisdomHolman;
+
 pub trait Integrator: Send + Sync {
     /// Advance `state` (including `state.t`) by `dt`.
     fn step(&mut self, state: &mut State, forces: &ForceSet, dt: f64) -> Result<()>;
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
     /// Global order of accuracy.
     fn order(&self) -> u32;
     /// Symplectic for velocity-independent forces (bounded long-time energy error).
     fn symplectic(&self) -> bool;
+
+    /// For user-defined schemes, the coefficients needed to rebuild them (stored in
+    /// checkpoints). Built-in integrators are rebuilt from their name and return `None`.
+    fn scheme(&self) -> Option<Scheme> {
+        None
+    }
 
     /// Advance `state` by `dt` subject to distance `constraints` (see
     /// [`crate::constraints`]), writing each constraint's tension at the end of the step to
@@ -42,6 +56,14 @@ pub const NAMES: &[&str] = &[
     "yoshida4",
     "rk4",
     "dopri5",
+    "yoshida6",
+    "yoshida8",
+    "pefrl",
+    "blanes_moan4",
+    "gauss2",
+    "gauss4",
+    "gauss6",
+    "wisdom_holman",
 ];
 
 pub fn by_name(name: &str) -> Result<Box<dyn Integrator>> {
@@ -49,7 +71,15 @@ pub fn by_name(name: &str) -> Result<Box<dyn Integrator>> {
         "explicit_euler" | "euler" => Box::new(ExplicitEuler::default()),
         "symplectic_euler" => Box::new(SymplecticEuler::default()),
         "verlet" | "velocity_verlet" | "leapfrog" => Box::new(VelocityVerlet::default()),
-        "yoshida4" => Box::new(Yoshida4::default()),
+        "yoshida4" | "forest_ruth" => Box::new(Yoshida4::default()),
+        "yoshida6" => Box::new(Composition::yoshida6()),
+        "yoshida8" => Box::new(Composition::yoshida8()),
+        "pefrl" | "omelyan" => Box::new(Splitting::pefrl()),
+        "blanes_moan4" => Box::new(Splitting::blanes_moan4()),
+        "gauss2" | "implicit_midpoint" => Box::new(GaussLegendre::order2()),
+        "gauss4" => Box::new(GaussLegendre::order4()),
+        "gauss6" => Box::new(GaussLegendre::order6()),
+        "wisdom_holman" => Box::new(WisdomHolman::default()),
         "rk4" => Box::new(Rk4::default()),
         "dopri5" | "dormand_prince" => Box::new(Dopri5::default()),
         _ => {
@@ -76,7 +106,7 @@ impl Integrator for ExplicitEuler {
         s.t += dt;
         Ok(())
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "explicit_euler"
     }
     fn order(&self) -> u32 {
@@ -103,7 +133,7 @@ impl Integrator for SymplecticEuler {
         s.t += dt;
         Ok(())
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "symplectic_euler"
     }
     fn order(&self) -> u32 {
@@ -283,7 +313,7 @@ impl Integrator for VelocityVerlet {
             dt,
         )
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "verlet"
     }
     fn order(&self) -> u32 {
@@ -339,7 +369,7 @@ impl Integrator for Yoshida4 {
         }
         Ok(())
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "yoshida4"
     }
     fn order(&self) -> u32 {
@@ -409,7 +439,7 @@ impl Integrator for Rk4 {
         s.t += dt;
         Ok(())
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "rk4"
     }
     fn order(&self) -> u32 {
@@ -744,7 +774,7 @@ impl Integrator for Dopri5 {
         self.commit(s, s.t + dt);
         Ok(())
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "dopri5"
     }
     fn order(&self) -> u32 {
