@@ -90,10 +90,27 @@ e = 0.5 and `rtol=1e-10`, so 1.6e-6 after 10 000 orbits), whereas `yoshida4` at 
 (1e-12). Use adaptive steps for transients, close encounters and moderately long runs with widely varying time
 scales; use a fixed-step symplectic integrator for very long integrations of smooth conservative motion.
 
-**Forces**: `UniformField(g)`, `NewtonianGravity(G, softening)` (direct O(N²), Plummer softening),
-`Spring(i, j, k, rest_length)`, `AnchorSpring(i, anchor, k, rest_length=0)`, `LinearDrag(gamma)` (`a = -γv`),
-`QuadraticDrag(c)` (`F = -c|v|v`), and `CustomForce` (below). Conservative forces report a potential, so
-`traj.energy` and `w.total_energy()` include them.
+**Forces**:
+- Basics: `UniformField(g)`, `NewtonianGravity(G, softening)` (direct O(N²), Plummer softening),
+  `LinearDrag(gamma)` (`a = -γv`), `QuadraticDrag(c)` (`F = -c|v|v`).
+- Springs: `Spring(i, j, k, rest_length)`, `AnchorSpring(i, anchor, k, rest_length=0)`,
+  `DampedSpring(i, j, k, rest_length, c)` (dashpot along the bond), `ModulatedSpring(i, to, k, depth, omega,
+  phase=0, rest_length=0)` (`k(t) = k(1 + depth·cos(ωt + φ))`, to a particle or a point: parametric driving), and
+  `SpringNetwork(i, j, k, rest_length)` (all bonds of a lattice or polymer in one force, from index arrays; ~1.75×
+  faster per evaluation than separate springs, identical results).
+- External central potentials about `center` (per unit mass, acting on every particle): `PowerLaw(k, n)`
+  (`Φ = k rⁿ`, `k ln r` for `n = 0`), `Yukawa(k, length)` (`-k e^{-r/λ}/r`), `PlummerPotential(GM, a)`,
+  `HernquistPotential(GM, a)`, `HarmonicTrap(omega)` (scalar or per-axis frequencies).
+- Drives: `PeriodicForce(i, amplitude, omega, phase=0)` (`F = A cos(ωt + φ)` on particle `i`).
+- Orbital perturbations from a central particle, used alongside `NewtonianGravity`: `PostNewtonian(central, c)`
+  (first post-Newtonian GR correction, test-particle limit; gives the `6πGM/(c²a(1−e²))` periapsis advance) and
+  `J2Oblateness(central, J2, radius, axis)` (oblate central body; momentum-conserving).
+- `CustomForce` (below) for Python prototypes; in Rust, `ClosureForce::per_particle(name, |t, r, v, m| ...)` or
+  `ClosureForce::new(...)` turns a closure into a force without writing a struct.
+
+Conservative forces report a potential, so `traj.energy` and `w.total_energy()` include them. Every built-in force
+is saved in checkpoints and run metadata, and its scalar and vector parameters can be changed with
+`set_force_params`.
 
 **Managing a world**:
 - `add_force` returns an id. Use it with `remove_force(id)`, `replace_force(id, force)`, `force_params(id)` and

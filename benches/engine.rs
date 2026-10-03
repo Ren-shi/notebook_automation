@@ -127,9 +127,36 @@ fn recording(c: &mut Criterion) {
     g.finish();
 }
 
+/// One Verlet step of a 10 000-particle chain: one `Spring` per bond versus a single
+/// `SpringNetwork` holding all bonds.
+fn springs(c: &mut Criterion) {
+    let n = 10_000;
+    let mut g = c.benchmark_group("springs_chain10k_verlet_step");
+    g.throughput(Throughput::Elements((n - 1) as u64));
+    let mut separate = chain(n, "verlet");
+    g.bench_function("separate", |b| {
+        b.iter(|| separate.step(black_box(1e-3)).unwrap())
+    });
+    let mut network = chain(n, "verlet");
+    network.forces.clear();
+    network.add_force(
+        SpringNetwork::new(
+            (0..n - 1).collect(),
+            (1..n).collect(),
+            vec![100.0; n - 1],
+            vec![0.8; n - 1],
+        )
+        .unwrap(),
+    );
+    g.bench_function("network", |b| {
+        b.iter(|| network.step(black_box(1e-3)).unwrap())
+    });
+    g.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(3));
-    targets = gravity, integrators, recording
+    targets = gravity, integrators, recording, springs
 }
 criterion_main!(benches);

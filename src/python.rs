@@ -261,6 +261,337 @@ impl PyForceSpec for PyQuadraticDrag {
     }
 }
 
+/// Runs each parameter of a newly built force through its own `set_param` checks.
+fn validated<F: Force>(mut force: F) -> PyResult<F> {
+    for (name, value) in force.params() {
+        force.set_param(name, value)?;
+    }
+    Ok(force)
+}
+
+/// ``Type(key=value, ...)`` from the force's checkpoint description.
+fn builtin_repr(py: Python<'_>, force: &dyn Force) -> PyResult<String> {
+    let d = describe_force(py, 0, force)?;
+    let kind: String = d
+        .get_item("type")?
+        .map_or(Ok(String::new()), |t| t.extract())?;
+    let mut args = Vec::new();
+    for (k, v) in d.iter() {
+        let k: String = k.extract()?;
+        if k != "id" && k != "type" {
+            args.push(format!("{k}={}", v.repr()?));
+        }
+    }
+    Ok(format!("{kind}({})", args.join(", ")))
+}
+
+/// Particle index or fixed point, as accepted by ``World.add_rod``.
+fn extract_anchor(to: &Bound<'_, PyAny>) -> PyResult<Anchor> {
+    Ok(match to.extract::<usize>() {
+        Ok(j) => Anchor::Particle(j),
+        Err(_) => Anchor::Point(extract_vec3(to, "to")?),
+    })
+}
+
+/// A scalar broadcast to ``n`` values, or an array of ``n`` values.
+fn scalar_or_array(obj: &Bound<'_, PyAny>, n: usize, what: &str) -> PyResult<Vec<f64>> {
+    if let Ok(x) = obj.extract::<f64>() {
+        return Ok(vec![x; n]);
+    }
+    let arr = as_f64_array(obj)?;
+    let arr: PyReadonlyArray1<'_, f64> = arr
+        .extract()
+        .map_err(|_| PyValueError::new_err(format!("{what}: expected a scalar or a 1D array")))?;
+    Ok(arr.as_array().to_vec())
+}
+
+macro_rules! simple_spec {
+    ($($ty:ty),*) => {
+        $(impl PyForceSpec for $ty {
+            fn build(&self, _py: Python<'_>) -> Box<dyn Force> {
+                Box::new(self.0.clone())
+            }
+        })*
+    };
+}
+
+/// Spring with a dashpot between particles ``i`` and ``j``: force on ``i`` along the unit
+/// bond vector ``n`` is ``[k (r - rest_length) + c (v_j - v_i)·n] n``.
+#[pyclass(frozen, name = "DampedSpring", module = "physim")]
+struct PyDampedSpring(forces::DampedSpring);
+
+#[pymethods]
+impl PyDampedSpring {
+    #[new]
+    #[pyo3(signature = (i, j, k, rest_length, c))]
+    fn new(i: usize, j: usize, k: f64, rest_length: f64, c: f64) -> PyResult<Self> {
+        Ok(Self(validated(forces::DampedSpring {
+            i,
+            j,
+            k,
+            rest_length,
+            c,
+        })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Spring from particle ``i`` to particle or point ``to`` whose stiffness is modulated:
+/// ``k(t) = k (1 + depth cos(omega t + phase))`` (parametric driving, Mathieu equation).
+#[pyclass(frozen, name = "ModulatedSpring", module = "physim")]
+struct PyModulatedSpring(forces::ModulatedSpring);
+
+#[pymethods]
+impl PyModulatedSpring {
+    #[new]
+    #[pyo3(signature = (i, to, k, depth, omega, phase = 0.0, rest_length = 0.0))]
+    fn new(
+        i: usize,
+        to: &Bound<'_, PyAny>,
+        k: f64,
+        depth: f64,
+        omega: f64,
+        phase: f64,
+        rest_length: f64,
+    ) -> PyResult<Self> {
+        let to = extract_anchor(to)?;
+        if to == Anchor::Particle(i) {
+            return Err(PyValueError::new_err(
+                "ModulatedSpring: i and to must differ",
+            ));
+        }
+        Ok(Self(validated(forces::ModulatedSpring {
+            i,
+            to,
+            k,
+            depth,
+            omega,
+            phase,
+            rest_length,
+        })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Many Hookean springs in one force: bond ``b`` joins ``i[b]`` and ``j[b]`` with stiffness
+/// ``k[b]`` and rest length ``rest_length[b]`` (``k`` and ``rest_length`` may be scalars).
+/// Equivalent to one ``Spring`` per bond, but much faster for lattices and polymers.
+#[pyclass(frozen, name = "SpringNetwork", module = "physim")]
+struct PySpringNetwork(forces::SpringNetwork);
+
+#[pymethods]
+impl PySpringNetwork {
+    #[new]
+    fn new(
+        i: Vec<usize>,
+        j: Vec<usize>,
+        k: &Bound<'_, PyAny>,
+        rest_length: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
+        let n = i.len();
+        let k = scalar_or_array(k, n, "k")?;
+        let rest_length = scalar_or_array(rest_length, n, "rest_length")?;
+        Ok(Self(forces::SpringNetwork::new(i, j, k, rest_length)?))
+    }
+    fn __len__(&self) -> usize {
+        self.0.len()
+    }
+    fn __repr__(&self) -> String {
+        format!("SpringNetwork({} bonds)", self.0.len())
+    }
+}
+
+/// Power-law potential ``Φ = k r^n`` per unit mass about ``center`` (``k ln r`` for
+/// ``n = 0``), acting on every particle.
+#[pyclass(frozen, name = "PowerLaw", module = "physim")]
+struct PyPowerLaw(forces::PowerLaw);
+
+#[pymethods]
+impl PyPowerLaw {
+    #[new]
+    #[pyo3(signature = (k, n, center = None))]
+    fn new(k: f64, n: f64, center: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let center = center.map_or(Ok(Vec3::ZERO), |c| extract_vec3(c, "center"))?;
+        Ok(Self(validated(forces::PowerLaw { center, k, n })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Yukawa (screened) potential ``Φ = -k exp(-r/length) / r`` per unit mass about ``center``.
+#[pyclass(frozen, name = "Yukawa", module = "physim")]
+struct PyYukawa(forces::Yukawa);
+
+#[pymethods]
+impl PyYukawa {
+    #[new]
+    #[pyo3(signature = (k, length, center = None))]
+    fn new(k: f64, length: f64, center: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let center = center.map_or(Ok(Vec3::ZERO), |c| extract_vec3(c, "center"))?;
+        Ok(Self(validated(forces::Yukawa { center, k, length })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Plummer sphere potential ``Φ = -GM / sqrt(r² + a²)`` per unit mass about ``center``.
+#[pyclass(frozen, name = "PlummerPotential", module = "physim")]
+struct PyPlummerPotential(forces::PlummerPotential);
+
+#[pymethods]
+impl PyPlummerPotential {
+    #[new]
+    #[pyo3(signature = (GM, a, center = None))]
+    #[allow(non_snake_case)]
+    fn new(GM: f64, a: f64, center: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let center = center.map_or(Ok(Vec3::ZERO), |c| extract_vec3(c, "center"))?;
+        Ok(Self(validated(forces::PlummerPotential {
+            center,
+            gm: GM,
+            a,
+        })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Hernquist potential ``Φ = -GM / (r + a)`` per unit mass about ``center``.
+#[pyclass(frozen, name = "HernquistPotential", module = "physim")]
+struct PyHernquistPotential(forces::HernquistPotential);
+
+#[pymethods]
+impl PyHernquistPotential {
+    #[new]
+    #[pyo3(signature = (GM, a, center = None))]
+    #[allow(non_snake_case)]
+    fn new(GM: f64, a: f64, center: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let center = center.map_or(Ok(Vec3::ZERO), |c| extract_vec3(c, "center"))?;
+        Ok(Self(validated(forces::HernquistPotential {
+            center,
+            gm: GM,
+            a,
+        })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Harmonic trap ``Φ = ½ Σ ω_k² (x_k - c_k)²`` per unit mass, acting on every particle.
+/// ``omega`` is a scalar (isotropic) or one angular frequency per axis.
+#[pyclass(frozen, name = "HarmonicTrap", module = "physim")]
+struct PyHarmonicTrap(forces::HarmonicTrap);
+
+#[pymethods]
+impl PyHarmonicTrap {
+    #[new]
+    #[pyo3(signature = (omega, center = None))]
+    fn new(omega: &Bound<'_, PyAny>, center: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let omega = match omega.extract::<f64>() {
+            Ok(w) => Vec3::new(w, w, w),
+            Err(_) => extract_vec3(omega, "omega")?,
+        };
+        let center = center.map_or(Ok(Vec3::ZERO), |c| extract_vec3(c, "center"))?;
+        Ok(Self(validated(forces::HarmonicTrap { center, omega })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Sinusoidal force on particle ``i``: ``F(t) = amplitude cos(omega t + phase)``.
+#[pyclass(frozen, name = "PeriodicForce", module = "physim")]
+struct PyPeriodicForce(forces::PeriodicForce);
+
+#[pymethods]
+impl PyPeriodicForce {
+    #[new]
+    #[pyo3(signature = (i, amplitude, omega, phase = 0.0))]
+    fn new(i: usize, amplitude: &Bound<'_, PyAny>, omega: f64, phase: f64) -> PyResult<Self> {
+        let amplitude = extract_vec3(amplitude, "amplitude")?;
+        Ok(Self(validated(forces::PeriodicForce {
+            i,
+            amplitude,
+            omega,
+            phase,
+        })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// First post-Newtonian (general-relativistic) correction from particle ``central``, in the
+/// test-particle limit. Add it alongside ``NewtonianGravity``; ``c`` is the speed of light
+/// in simulation units.
+#[pyclass(frozen, name = "PostNewtonian", module = "physim")]
+struct PyPostNewtonian(forces::PostNewtonian);
+
+#[pymethods]
+impl PyPostNewtonian {
+    #[new]
+    #[pyo3(signature = (central, c, G = 1.0))]
+    #[allow(non_snake_case)]
+    fn new(central: usize, c: f64, G: f64) -> PyResult<Self> {
+        Ok(Self(validated(forces::PostNewtonian { central, g: G, c })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// J2 oblateness of particle ``central`` (equatorial radius ``radius``, spin ``axis``).
+/// Add it alongside ``NewtonianGravity``.
+#[pyclass(frozen, name = "J2Oblateness", module = "physim")]
+struct PyJ2Oblateness(forces::J2Oblateness);
+
+#[pymethods]
+impl PyJ2Oblateness {
+    #[new]
+    #[pyo3(signature = (central, J2, radius, axis = None, G = 1.0))]
+    #[allow(non_snake_case)]
+    fn new(
+        central: usize,
+        J2: f64,
+        radius: f64,
+        axis: Option<&Bound<'_, PyAny>>,
+        G: f64,
+    ) -> PyResult<Self> {
+        let axis = axis.map_or(Ok(Vec3::new(0.0, 0.0, 1.0)), |a| extract_vec3(a, "axis"))?;
+        Ok(Self(validated(forces::J2Oblateness {
+            central,
+            g: G,
+            j2: J2,
+            radius,
+            axis,
+        })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+simple_spec!(
+    PyDampedSpring,
+    PyModulatedSpring,
+    PySpringNetwork,
+    PyPowerLaw,
+    PyYukawa,
+    PyPlummerPotential,
+    PyHernquistPotential,
+    PyHarmonicTrap,
+    PyPeriodicForce,
+    PyPostNewtonian,
+    PyJ2Oblateness
+);
+
 /// A force defined in Python, for prototyping new physics without recompiling.
 ///
 /// ``acceleration(t, pos, vel, mass)`` receives ``pos``/``vel`` as ``(N, 3)`` arrays and
@@ -392,6 +723,17 @@ fn build_force(force: &Bound<'_, PyAny>) -> PyResult<Box<dyn Force>> {
         PyAnchorSpring,
         PyLinearDrag,
         PyQuadraticDrag,
+        PyDampedSpring,
+        PyModulatedSpring,
+        PySpringNetwork,
+        PyPowerLaw,
+        PyYukawa,
+        PyPlummerPotential,
+        PyHernquistPotential,
+        PyHarmonicTrap,
+        PyPeriodicForce,
+        PyPostNewtonian,
+        PyJ2Oblateness,
         PyCustomForce
     );
     Err(PyValueError::new_err(format!(
@@ -446,6 +788,84 @@ fn describe_force<'py>(
             d.set_item("type", "QuadraticDrag")?;
             d.set_item("c", f.c)?;
         }
+        Some(BuiltinForce::DampedSpring(f)) => {
+            d.set_item("type", "DampedSpring")?;
+            d.set_item("i", f.i)?;
+            d.set_item("j", f.j)?;
+            d.set_item("k", f.k)?;
+            d.set_item("rest_length", f.rest_length)?;
+            d.set_item("c", f.c)?;
+        }
+        Some(BuiltinForce::ModulatedSpring(f)) => {
+            d.set_item("type", "ModulatedSpring")?;
+            d.set_item("i", f.i)?;
+            match f.to {
+                Anchor::Particle(j) => d.set_item("to", j)?,
+                Anchor::Point(p) => d.set_item("to", v(p))?,
+            }
+            d.set_item("k", f.k)?;
+            d.set_item("depth", f.depth)?;
+            d.set_item("omega", f.omega)?;
+            d.set_item("phase", f.phase)?;
+            d.set_item("rest_length", f.rest_length)?;
+        }
+        Some(BuiltinForce::SpringNetwork(f)) => {
+            d.set_item("type", "SpringNetwork")?;
+            d.set_item("i", f.i().to_vec())?;
+            d.set_item("j", f.j().to_vec())?;
+            d.set_item("k", f.k().to_vec())?;
+            d.set_item("rest_length", f.rest_length().to_vec())?;
+        }
+        Some(BuiltinForce::PowerLaw(f)) => {
+            d.set_item("type", "PowerLaw")?;
+            d.set_item("k", f.k)?;
+            d.set_item("n", f.n)?;
+            d.set_item("center", v(f.center))?;
+        }
+        Some(BuiltinForce::Yukawa(f)) => {
+            d.set_item("type", "Yukawa")?;
+            d.set_item("k", f.k)?;
+            d.set_item("length", f.length)?;
+            d.set_item("center", v(f.center))?;
+        }
+        Some(BuiltinForce::PlummerPotential(f)) => {
+            d.set_item("type", "PlummerPotential")?;
+            d.set_item("GM", f.gm)?;
+            d.set_item("a", f.a)?;
+            d.set_item("center", v(f.center))?;
+        }
+        Some(BuiltinForce::HernquistPotential(f)) => {
+            d.set_item("type", "HernquistPotential")?;
+            d.set_item("GM", f.gm)?;
+            d.set_item("a", f.a)?;
+            d.set_item("center", v(f.center))?;
+        }
+        Some(BuiltinForce::HarmonicTrap(f)) => {
+            d.set_item("type", "HarmonicTrap")?;
+            d.set_item("omega", v(f.omega))?;
+            d.set_item("center", v(f.center))?;
+        }
+        Some(BuiltinForce::PeriodicForce(f)) => {
+            d.set_item("type", "PeriodicForce")?;
+            d.set_item("i", f.i)?;
+            d.set_item("amplitude", v(f.amplitude))?;
+            d.set_item("omega", f.omega)?;
+            d.set_item("phase", f.phase)?;
+        }
+        Some(BuiltinForce::PostNewtonian(f)) => {
+            d.set_item("type", "PostNewtonian")?;
+            d.set_item("central", f.central)?;
+            d.set_item("c", f.c)?;
+            d.set_item("G", f.g)?;
+        }
+        Some(BuiltinForce::J2Oblateness(f)) => {
+            d.set_item("type", "J2Oblateness")?;
+            d.set_item("central", f.central)?;
+            d.set_item("J2", f.j2)?;
+            d.set_item("radius", f.radius)?;
+            d.set_item("axis", v(f.axis))?;
+            d.set_item("G", f.g)?;
+        }
     }
     Ok(d)
 }
@@ -465,13 +885,24 @@ fn builtin_from_description(desc: &Bound<'_, PyDict>) -> PyResult<BuiltinForce> 
         .get_item("type")?
         .ok_or_else(|| PyValueError::new_err("force description has no \"type\""))?
         .extract()?;
-    const BUILTIN: [&str; 6] = [
+    const BUILTIN: [&str; 17] = [
         "UniformField",
         "NewtonianGravity",
         "Spring",
         "AnchorSpring",
         "LinearDrag",
         "QuadraticDrag",
+        "DampedSpring",
+        "ModulatedSpring",
+        "SpringNetwork",
+        "PowerLaw",
+        "Yukawa",
+        "PlummerPotential",
+        "HernquistPotential",
+        "HarmonicTrap",
+        "PeriodicForce",
+        "PostNewtonian",
+        "J2Oblateness",
     ];
     if !BUILTIN.contains(&kind.as_str()) {
         return Err(PyValueError::new_err(format!(
@@ -1708,6 +2139,17 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAnchorSpring>()?;
     m.add_class::<PyLinearDrag>()?;
     m.add_class::<PyQuadraticDrag>()?;
+    m.add_class::<PyDampedSpring>()?;
+    m.add_class::<PyModulatedSpring>()?;
+    m.add_class::<PySpringNetwork>()?;
+    m.add_class::<PyPowerLaw>()?;
+    m.add_class::<PyYukawa>()?;
+    m.add_class::<PyPlummerPotential>()?;
+    m.add_class::<PyHernquistPotential>()?;
+    m.add_class::<PyHarmonicTrap>()?;
+    m.add_class::<PyPeriodicForce>()?;
+    m.add_class::<PyPostNewtonian>()?;
+    m.add_class::<PyJ2Oblateness>()?;
     m.add_class::<PyCustomForce>()?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

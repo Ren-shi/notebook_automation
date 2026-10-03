@@ -7,6 +7,18 @@ use crate::error::{invalid, Result};
 use crate::parallel;
 use crate::vec3::Vec3;
 
+mod central;
+mod closure;
+mod drives;
+mod orbital;
+mod springs;
+
+pub use central::{HarmonicTrap, HernquistPotential, PlummerPotential, PowerLaw, Yukawa};
+pub use closure::ClosureForce;
+pub use drives::PeriodicForce;
+pub use orbital::{J2Oblateness, PostNewtonian};
+pub use springs::{DampedSpring, ModulatedSpring, SpringNetwork};
+
 /// Value of a tunable force parameter.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Param {
@@ -77,6 +89,17 @@ pub enum BuiltinForce {
     AnchorSpring(AnchorSpring),
     LinearDrag(LinearDrag),
     QuadraticDrag(QuadraticDrag),
+    DampedSpring(DampedSpring),
+    ModulatedSpring(ModulatedSpring),
+    SpringNetwork(SpringNetwork),
+    PowerLaw(PowerLaw),
+    Yukawa(Yukawa),
+    PlummerPotential(PlummerPotential),
+    HernquistPotential(HernquistPotential),
+    HarmonicTrap(HarmonicTrap),
+    PeriodicForce(PeriodicForce),
+    PostNewtonian(PostNewtonian),
+    J2Oblateness(J2Oblateness),
 }
 
 impl BuiltinForce {
@@ -88,6 +111,17 @@ impl BuiltinForce {
             BuiltinForce::AnchorSpring(f) => Box::new(f),
             BuiltinForce::LinearDrag(f) => Box::new(f),
             BuiltinForce::QuadraticDrag(f) => Box::new(f),
+            BuiltinForce::DampedSpring(f) => Box::new(f),
+            BuiltinForce::ModulatedSpring(f) => Box::new(f),
+            BuiltinForce::SpringNetwork(f) => Box::new(f),
+            BuiltinForce::PowerLaw(f) => Box::new(f),
+            BuiltinForce::Yukawa(f) => Box::new(f),
+            BuiltinForce::PlummerPotential(f) => Box::new(f),
+            BuiltinForce::HernquistPotential(f) => Box::new(f),
+            BuiltinForce::HarmonicTrap(f) => Box::new(f),
+            BuiltinForce::PeriodicForce(f) => Box::new(f),
+            BuiltinForce::PostNewtonian(f) => Box::new(f),
+            BuiltinForce::J2Oblateness(f) => Box::new(f),
         }
     }
 }
