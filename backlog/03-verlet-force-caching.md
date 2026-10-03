@@ -8,6 +8,8 @@ velocity-independent forces the end-of-step acceleration equals the next step's 
 half the force evaluations are wasted. Force evaluation dominates N-body cost, so this is close to a 2×
 speedup for `verlet` and saves 2 of 6 evaluations per `yoshida4` step.
 
+Measured (item 02 baseline): Verlet costs 1.7–2.0× symplectic Euler per step, and Yoshida 4 is 4.9–6× Euler, in line with 2 and 6 force evaluations.
+
 ## Scope
 - Cache the last acceleration and the state it was computed for.
 - Invalidate when the cache cannot be trusted: forces added or removed, particles added, positions,

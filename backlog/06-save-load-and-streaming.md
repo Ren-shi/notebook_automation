@@ -13,6 +13,9 @@ later. Long or large runs need to write to disk as they go.
   accumulating it, so memory stays flat.
 - Store metadata with every file: engine version, integrator, dt, force parameters.
 
+- Make per-frame energies optional: recording every step currently more than doubles run time (item 02
+  baseline), mostly from evaluating the potential, which is O(N²) for gravity.
+
 ## Notes
 - `CustomForce` holds a Python function and cannot be serialised; save its name and require it to be
   supplied again on load.
