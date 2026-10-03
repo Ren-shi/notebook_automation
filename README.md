@@ -103,6 +103,15 @@ e = 0.5 and `rtol=1e-10`, so 1.6e-6 after 10 000 orbits), whereas `yoshida4` at 
 (1e-12). Use adaptive steps for transients, close encounters and moderately long runs with widely varying time
 scales; use a fixed-step symplectic integrator for very long integrations of smooth conservative motion.
 
+**Collisions and contact**: particles get a size with `add_particle(..., radius=r)` or `w.radii = [...]`.
+- Hard collisions: `w.set_collisions(restitution=1.0, walls=ps.box_walls(lo, hi))` makes spheres bounce off each
+  other and off planar walls (`(normal, offset)` pairs). Each contact is found inside the step (swept spheres on a uniform
+  grid), the world is moved to that instant, the impulse is applied and the step continues — exact event-driven
+  dynamics when no forces act between collisions, and contact times refined on the integrator's trajectory when they do.
+  A 500-sphere gas conserves energy to 3e-15 and relaxes to Maxwell-Boltzmann (⟨v⁴⟩/⟨v²⟩² = 1.669 vs 5/3).
+- Soft contact: `SoftContact(k, damping=0, law="linear" | "hertz")`, an ordinary force (contact duration matches
+  π√(μ/k) and the Hertz law to 6e-5).
+
 **Chaos indicators**: `w.lyapunov(dt, steps, n=1)` integrates the variational equations with the world's own
 integrator (tangent vectors ride along as extra pseudo-particles whose acceleration is the Jacobian-vector product
 `∂a/∂x·δx + ∂a/∂v·δv`: analytic for most built-in forces, finite differences otherwise) and returns the `n` largest
@@ -282,6 +291,7 @@ src/
   world.rs        World (state + forces + integrator), run loop, Recorder, Trajectory
   adaptive.rs     adaptive Dormand-Prince run loop (error control, dense output)
   chaos.rs        variational equations, Lyapunov exponents, MEGNO
+  collisions.rs   event-driven hard collisions and walls (broadphase.rs: uniform grid)
   events.rs       event functions and crossing detection
   constraints.rs  rigid rods and the RATTLE projections
   checkpoint.rs   save/restore a World

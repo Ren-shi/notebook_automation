@@ -87,6 +87,7 @@ impl Integrator for GaussLegendre {
             &s.vel,
             &s.mass,
             &s.charge,
+            &s.radius,
             &s.pinned,
             &mut self.acc,
         )?;
@@ -115,6 +116,7 @@ impl Integrator for GaussLegendre {
                     &self.vs,
                     &s.mass,
                     &s.charge,
+                    &s.radius,
                     &s.pinned,
                     &mut self.acc,
                 )?;

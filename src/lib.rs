@@ -8,8 +8,10 @@
 //!   ([`World::run`]) or adaptive ones ([`World::run_adaptive`]).
 
 pub mod adaptive;
+mod broadphase;
 pub mod chaos;
 pub mod checkpoint;
+pub mod collisions;
 pub mod constraints;
 pub mod error;
 pub mod events;
@@ -26,15 +28,16 @@ mod python;
 pub use adaptive::{AdaptiveOptions, AdaptiveOutcome, AdaptiveRun, AdaptiveStats, Output};
 pub use chaos::{LyapunovOptions, LyapunovRun};
 pub use checkpoint::{Checkpoint, SavedForce};
+pub use collisions::{Collisions, Wall};
 pub use constraints::{Anchor, ConstraintId, Constraints, Rod};
 pub use error::{Result, SimError};
 pub use events::{Direction, Event, EventFunction, EventHit};
 pub use forces::{
-    AnchorSpring, BuiltinForce, ClosureForce, Coulomb, DampedSpring, ElectricField, FieldFunctions,
-    Force, ForceId, ForceSet, HarmonicTrap, HenonHeiles, HernquistPotential, J2Oblateness,
-    LinearDrag, MagneticField, ModulatedSpring, NewtonianGravity, Param, PeriodicForce,
-    PlummerPotential, PostNewtonian, PowerLaw, QuadraticDrag, Spring, SpringNetwork, TreeGravity,
-    UniformField, Yukawa,
+    AnchorSpring, BuiltinForce, ClosureForce, ContactLaw, Coulomb, DampedSpring, ElectricField,
+    FieldFunctions, Force, ForceId, ForceSet, HarmonicTrap, HenonHeiles, HernquistPotential,
+    J2Oblateness, LinearDrag, MagneticField, ModulatedSpring, NewtonianGravity, Param,
+    PeriodicForce, PlummerPotential, PostNewtonian, PowerLaw, QuadraticDrag, SoftContact, Spring,
+    SpringNetwork, TreeGravity, UniformField, Yukawa,
 };
 pub use integrators::Integrator;
 pub use state::State;

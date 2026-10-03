@@ -12,6 +12,7 @@ use pyo3::types::{PyDict, PyList};
 use crate::adaptive::{AdaptiveOptions, Output};
 use crate::chaos::LyapunovOptions;
 use crate::checkpoint::{Checkpoint, SavedForce};
+use crate::collisions::{Collisions, Wall};
 use crate::constraints::{Anchor, ConstraintId, Constraints, Rod};
 use crate::error::{Result as SimResult, SimError};
 use crate::events::{self, Direction, Event, EventFunction};
@@ -751,6 +752,34 @@ impl PyTreeGravity {
     }
 }
 
+/// Soft contact between particles with a radius: overlapping spheres (overlap ``δ``) repel with
+/// ``k δ`` (``law="linear"``) or ``k δ^1.5`` (``law="hertz"``) plus a dashpot ``-damping * u_n``
+/// on the normal approach speed. Set radii with ``add_particle(..., radius=r)`` or
+/// ``w.radii``. Use steps well below the contact duration (``π sqrt(μ/k)`` for the linear law).
+#[pyclass(frozen, name = "SoftContact", module = "physim")]
+struct PySoftContact(forces::SoftContact);
+
+#[pymethods]
+impl PySoftContact {
+    #[new]
+    #[pyo3(signature = (k, damping = 0.0, law = "linear"))]
+    fn new(k: f64, damping: f64, law: &str) -> PyResult<Self> {
+        let law = match law {
+            "linear" => forces::ContactLaw::Linear,
+            "hertz" => forces::ContactLaw::Hertz,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "law must be \"linear\" or \"hertz\", got {other:?}"
+                )))
+            }
+        };
+        Ok(Self(validated(forces::SoftContact { k, damping, law })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
 simple_spec!(
     PyDampedSpring,
     PyModulatedSpring,
@@ -767,7 +796,8 @@ simple_spec!(
     PyElectricField,
     PyMagneticField,
     PyCoulomb,
-    PyTreeGravity
+    PyTreeGravity,
+    PySoftContact
 );
 
 /// A force defined in Python, for prototyping new physics without recompiling.
@@ -917,6 +947,7 @@ fn build_force(force: &Bound<'_, PyAny>) -> PyResult<Box<dyn Force>> {
         PyMagneticField,
         PyCoulomb,
         PyTreeGravity,
+        PySoftContact,
         PyFieldForce,
         PyCustomForce
     );
@@ -1062,6 +1093,18 @@ fn describe_force<'py>(
             d.set_item("theta", f.theta)?;
             d.set_item("quadrupole", f.quadrupole)?;
         }
+        Some(BuiltinForce::SoftContact(f)) => {
+            d.set_item("type", "SoftContact")?;
+            d.set_item("k", f.k)?;
+            d.set_item("damping", f.damping)?;
+            d.set_item(
+                "law",
+                match f.law {
+                    forces::ContactLaw::Linear => "linear",
+                    forces::ContactLaw::Hertz => "hertz",
+                },
+            )?;
+        }
         Some(BuiltinForce::HenonHeiles(f)) => {
             d.set_item("type", "HenonHeiles")?;
             d.set_item("lam", f.lambda)?;
@@ -1094,7 +1137,8 @@ fn builtin_from_description(desc: &Bound<'_, PyDict>) -> PyResult<BuiltinForce> 
         .get_item("type")?
         .ok_or_else(|| PyValueError::new_err("force description has no \"type\""))?
         .extract()?;
-    const BUILTIN: [&str; 22] = [
+    const BUILTIN: [&str; 23] = [
+        "SoftContact",
         "TreeGravity",
         "HenonHeiles",
         "ElectricField",
@@ -1615,6 +1659,41 @@ fn scheme_from_description(d: &Bound<'_, PyDict>) -> PyResult<Scheme> {
     }
 }
 
+/// ``{"restitution", "walls": [[nx, ny, nz, offset], ...], "between_particles", "max_per_step"}``.
+fn describe_collisions<'py>(py: Python<'py>, c: &Collisions) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("restitution", c.restitution)?;
+    let walls: Vec<[f64; 4]> = c
+        .walls
+        .iter()
+        .map(|w| [w.normal.x, w.normal.y, w.normal.z, w.offset])
+        .collect();
+    d.set_item("walls", walls)?;
+    d.set_item("between_particles", c.between_particles)?;
+    d.set_item("max_per_step", c.max_per_step)?;
+    Ok(d)
+}
+
+fn collisions_from_description(d: &Bound<'_, PyDict>) -> PyResult<Collisions> {
+    let field = |k: &str| -> PyResult<Bound<'_, PyAny>> {
+        d.get_item(k)?
+            .ok_or_else(|| PyValueError::new_err(format!("collisions description has no {k:?}")))
+    };
+    let walls: Vec<[f64; 4]> = field("walls")?.extract()?;
+    Ok(Collisions {
+        restitution: field("restitution")?.extract()?,
+        walls: walls
+            .iter()
+            .map(|w| Wall {
+                normal: Vec3::new(w[0], w[1], w[2]),
+                offset: w[3],
+            })
+            .collect(),
+        between_particles: field("between_particles")?.extract()?,
+        max_per_step: field("max_per_step")?.extract()?,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // World
 
@@ -1635,13 +1714,14 @@ impl PyWorld {
     }
 
     /// Adds a particle (optionally charged) and returns its index.
-    #[pyo3(signature = (pos, vel = None, mass = 1.0, charge = 0.0))]
+    #[pyo3(signature = (pos, vel = None, mass = 1.0, charge = 0.0, radius = 0.0))]
     fn add_particle(
         &mut self,
         pos: &Bound<'_, PyAny>,
         vel: Option<&Bound<'_, PyAny>>,
         mass: f64,
         charge: f64,
+        radius: f64,
     ) -> PyResult<usize> {
         let pos = extract_vec3(pos, "pos")?;
         let vel = vel
@@ -1653,8 +1733,14 @@ impl PyWorld {
                 "charge must be finite, got {charge}"
             )));
         }
+        if !(radius.is_finite() && radius >= 0.0) {
+            return Err(PyValueError::new_err(format!(
+                "radius must be finite and non-negative, got {radius}"
+            )));
+        }
         let i = self.inner.add_particle(pos, vel, mass)?;
         self.inner.set_charge(i, charge)?;
+        self.inner.set_radius(i, radius)?;
         Ok(i)
     }
 
@@ -2067,6 +2153,7 @@ impl PyWorld {
         d.set_item("velocities", vecs_to_array(py, &s.vel)?)?;
         d.set_item("masses", PyArray1::from_slice(py, &s.mass))?;
         d.set_item("charges", PyArray1::from_slice(py, &s.charge))?;
+        d.set_item("radii", PyArray1::from_slice(py, &s.radius))?;
         d.set_item("pinned", PyArray1::from_slice(py, &s.pinned))?;
         d.set_item("integrator", self.inner.integrator().name())?;
         let scheme = self.inner.integrator().scheme();
@@ -2081,6 +2168,10 @@ impl PyWorld {
         d.set_item("next_constraint_id", c.next_id())?;
         d.set_item("constraint_tolerance", c.tolerance)?;
         d.set_item("constraint_max_iterations", c.max_iterations)?;
+        match self.inner.collisions() {
+            Some(c) => d.set_item("collisions", describe_collisions(py, c)?)?,
+            None => d.set_item("collisions", py.None())?,
+        }
         Ok(d)
     }
 
@@ -2118,6 +2209,10 @@ impl PyWorld {
             // Checkpoints from before charges existed have none: all neutral.
             charge: match checkpoint.get_item("charges")? {
                 Some(c) => extract_f64s(&c, "charges")?,
+                None => vec![0.0; n],
+            },
+            radius: match checkpoint.get_item("radii")? {
+                Some(r) => extract_f64s(&r, "radii")?,
                 None => vec![0.0; n],
             },
             pinned: pinned.as_array().to_vec(),
@@ -2190,10 +2285,15 @@ impl PyWorld {
             Some(d) if !d.is_none() => Some(scheme_from_description(d.cast::<PyDict>()?)?),
             _ => None,
         };
+        let collisions = match checkpoint.get_item("collisions")? {
+            Some(c) if !c.is_none() => Some(collisions_from_description(c.cast::<PyDict>()?)?),
+            _ => None,
+        };
         let checkpoint = Checkpoint {
             state,
             integrator: get("integrator")?.extract()?,
             integrator_scheme,
+            collisions,
             forces,
             next_force_id: get("next_force_id")?.extract()?,
             constraints,
@@ -2269,6 +2369,75 @@ impl PyWorld {
         Ok(self.inner.set_charges(arr.as_array().to_vec())?)
     }
 
+    /// Enables hard collisions: particles with a radius bounce off each other (if
+    /// ``between_particles``) and off ``walls`` with coefficient of restitution
+    /// ``restitution``. Each wall is ``(normal, offset)``: the plane ``normal·x = offset``,
+    /// with particles kept on the side the unit ``normal`` points to (see
+    /// :func:`physim.box_walls`). Contacts are found and resolved event by event inside each
+    /// step, exactly so when no forces act between collisions. Not available with
+    /// :meth:`run_adaptive` or :meth:`lyapunov`.
+    #[pyo3(signature = (restitution = 1.0, walls = None, *, between_particles = true, max_per_step = 100_000))]
+    fn set_collisions(
+        &mut self,
+        restitution: f64,
+        walls: Option<Vec<(Bound<'_, PyAny>, f64)>>,
+        between_particles: bool,
+        max_per_step: usize,
+    ) -> PyResult<()> {
+        let walls = walls
+            .unwrap_or_default()
+            .iter()
+            .map(|(n, offset)| {
+                Ok(Wall {
+                    normal: extract_vec3(n, "wall normal")?,
+                    offset: *offset,
+                })
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        self.inner.set_collisions(Some(Collisions {
+            restitution,
+            walls,
+            between_particles,
+            max_per_step,
+        }))?;
+        Ok(())
+    }
+
+    /// Disables hard collisions.
+    fn clear_collisions(&mut self) -> PyResult<()> {
+        self.inner.set_collisions(None)?;
+        Ok(())
+    }
+
+    /// The hard-collision settings as a dict, or None.
+    #[getter]
+    fn collisions<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        self.inner
+            .collisions()
+            .map(|c| describe_collisions(py, c))
+            .transpose()
+    }
+
+    /// Number of hard collisions resolved so far.
+    #[getter]
+    fn collision_count(&self) -> u64 {
+        self.inner.collision_count()
+    }
+
+    /// Radius of every particle (for collisions and contact forces), shape (N,).
+    #[getter]
+    fn radii<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_slice(py, &self.inner.state.radius)
+    }
+    #[setter]
+    fn set_radii(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let arr = as_f64_array(value)?;
+        let arr: PyReadonlyArray1<'_, f64> = arr
+            .extract()
+            .map_err(|_| PyValueError::new_err("radii: expected a 1D array"))?;
+        Ok(self.inner.set_radii(arr.as_array().to_vec())?)
+    }
+
     /// Current total acceleration of every particle, shape (N, 3).
     fn accelerations<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         vecs_to_array(py, &self.inner.accelerations()?)
@@ -2322,6 +2491,7 @@ impl PyWorld {
         d.set_item("n_particles", w.state.len())?;
         d.set_item("masses", w.state.mass.clone())?;
         d.set_item("charges", w.state.charge.clone())?;
+        d.set_item("radii", w.state.radius.clone())?;
         d.set_item("pinned", w.state.pinned.clone())?;
         d.set_item("forces", describe_forces(py, w)?)?;
         d.set_item("constraints", describe_constraints(py, &w.constraints)?)?;
@@ -2558,6 +2728,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMagneticField>()?;
     m.add_class::<PyCoulomb>()?;
     m.add_class::<PyTreeGravity>()?;
+    m.add_class::<PySoftContact>()?;
     m.add_class::<PyFieldForce>()?;
     m.add_class::<PyCustomForce>()?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;

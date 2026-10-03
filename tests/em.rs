@@ -250,12 +250,12 @@ fn em_forces_have_correct_jacobians_and_survive_checkpoints() {
         let pinned = [false; 3];
         analytic
             .jacobian_vector(
-                0.0, &pos, &vel, &mass, &charge, &pinned, &dpos, &dvel, &mut a,
+                0.0, &pos, &vel, &mass, &charge, &[0.0; 3], &pinned, &dpos, &dvel, &mut a,
             )
             .unwrap();
         numeric
             .jacobian_vector(
-                0.0, &pos, &vel, &mass, &charge, &pinned, &dpos, &dvel, &mut b,
+                0.0, &pos, &vel, &mass, &charge, &[0.0; 3], &pinned, &dpos, &dvel, &mut b,
             )
             .unwrap();
         for (x, y) in a.iter().zip(&b) {

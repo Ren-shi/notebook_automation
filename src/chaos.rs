@@ -63,6 +63,8 @@ struct Variational {
     inner: Arc<ForceSet>,
     n: usize,
     blocks: usize,
+    /// Radii of the real particles (the pseudo-particles have none).
+    radius: Vec<f64>,
 }
 
 impl Force for Variational {
@@ -89,9 +91,10 @@ impl Force for Variational {
         let n = self.n;
         let free = vec![false; n]; // pinned entries are zeroed by the outer force set
         let (pos0, vel0, mass0, charge0) = (&pos[..n], &vel[..n], &mass[..n], &charge[..n]);
+        let radius0 = &self.radius;
         let mut a = Vec::new();
         self.inner
-            .accelerations(t, pos0, vel0, mass0, charge0, &free, &mut a)?;
+            .accelerations(t, pos0, vel0, mass0, charge0, radius0, &free, &mut a)?;
         acc[..n].copy_from_slice(&a);
         for b in 1..=self.blocks {
             let r = b * n..(b + 1) * n;
@@ -101,6 +104,7 @@ impl Force for Variational {
                 vel0,
                 mass0,
                 charge0,
+                radius0,
                 &free,
                 &pos[r.clone()],
                 &vel[r.clone()],
@@ -189,8 +193,10 @@ impl World {
     ) -> Result<LyapunovRun> {
         let n = self.state.len();
         let k = options.n_exponents;
-        if !self.constraints.is_empty() {
-            return invalid("Lyapunov exponents are not available with constraints");
+        if !self.constraints.is_empty() || self.collisions.is_some() {
+            return invalid(
+                "Lyapunov exponents are not available with constraints or hard collisions",
+            );
         }
         if self.integrator().name() == "wisdom_holman" {
             return invalid("Lyapunov exponents need an integrator other than wisdom_holman");
@@ -249,6 +255,7 @@ impl World {
             inner: inner.clone(),
             n,
             blocks: k,
+            radius: self.state.radius.clone(),
         }));
         let result = self.integrate_tangents(&mut ext, &forces, n, k, dt, steps, options);
         drop(forces);

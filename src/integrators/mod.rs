@@ -108,6 +108,7 @@ impl Integrator for ExplicitEuler {
             &s.vel,
             &s.mass,
             &s.charge,
+            &s.radius,
             &s.pinned,
             &mut self.acc,
         )?;
@@ -143,6 +144,7 @@ impl Integrator for SymplecticEuler {
             &s.vel,
             &s.mass,
             &s.charge,
+            &s.radius,
             &s.pinned,
             &mut self.acc,
         )?;
@@ -183,6 +185,7 @@ struct AccelCache {
     vel: Vec<Vec3>,
     mass: Vec<f64>,
     charge: Vec<f64>,
+    radius: Vec<f64>,
     pinned: Vec<bool>,
     /// Number of times the forces were actually evaluated.
     evaluations: u64,
@@ -212,6 +215,7 @@ impl AccelCache {
             && self.mass.len() == at.mass.len()
             && same_scalars(&self.mass, at.mass)
             && same_scalars(&self.charge, at.charge)
+            && same_scalars(&self.radius, at.radius)
     }
 
     /// Acceleration for the current state, reused when the inputs are unchanged.
@@ -223,6 +227,7 @@ impl AccelCache {
                 vel: &s.vel,
                 mass: &s.mass,
                 charge: &s.charge,
+                radius: &s.radius,
                 pinned: &s.pinned,
             },
             forces,
@@ -240,6 +245,7 @@ impl AccelCache {
                 at.vel,
                 at.mass,
                 at.charge,
+                at.radius,
                 at.pinned,
                 &mut self.acc,
             )?;
@@ -252,6 +258,7 @@ impl AccelCache {
             }
             copy_into(&mut self.mass, at.mass);
             copy_into(&mut self.charge, at.charge);
+            copy_into(&mut self.radius, at.radius);
             copy_into(&mut self.pinned, at.pinned);
         }
         Ok(&self.acc)
@@ -270,6 +277,7 @@ struct At<'a> {
     vel: &'a [Vec3],
     mass: &'a [f64],
     charge: &'a [f64],
+    radius: &'a [f64],
     pinned: &'a [bool],
 }
 
@@ -457,6 +465,7 @@ impl Integrator for Rk4 {
                 &self.vs,
                 &s.mass,
                 &s.charge,
+                &s.radius,
                 &s.pinned,
                 &mut self.acc,
             )?;
@@ -589,6 +598,7 @@ impl Dopri5 {
         forces: &ForceSet,
         mass: &[f64],
         charge: &[f64],
+        radius: &[f64],
         pinned: &[bool],
         h: f64,
     ) -> Result<()> {
@@ -617,6 +627,7 @@ impl Dopri5 {
                     &self.vs,
                     mass,
                     charge,
+                    radius,
                     pinned,
                     &mut self.kv[i],
                 )?;
@@ -628,6 +639,7 @@ impl Dopri5 {
                     vel: &self.vs,
                     mass,
                     charge,
+                    radius,
                     pinned,
                 };
                 let acc = self.cache.get_at(&at, forces)?;
@@ -736,6 +748,7 @@ impl Dopri5 {
         forces: &ForceSet,
         mass: &[f64],
         charge: &[f64],
+        radius: &[f64],
         pinned: &[bool],
         direction: f64,
         rtol: f64,
@@ -787,6 +800,7 @@ impl Dopri5 {
             &self.vs,
             mass,
             charge,
+            radius,
             pinned,
             &mut self.kv[1],
         )?;
@@ -817,7 +831,7 @@ impl Dopri5 {
 impl Integrator for Dopri5 {
     fn step(&mut self, s: &mut State, forces: &ForceSet, dt: f64) -> Result<()> {
         self.begin(s, forces)?;
-        self.attempt(forces, &s.mass, &s.charge, &s.pinned, dt)?;
+        self.attempt(forces, &s.mass, &s.charge, &s.radius, &s.pinned, dt)?;
         self.commit(s, s.t + dt);
         Ok(())
     }
