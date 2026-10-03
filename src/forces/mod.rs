@@ -13,6 +13,7 @@ mod drives;
 mod em;
 mod orbital;
 mod springs;
+mod tree;
 
 pub use central::{
     HarmonicTrap, HenonHeiles, HernquistPotential, PlummerPotential, PowerLaw, Yukawa,
@@ -22,6 +23,7 @@ pub use drives::PeriodicForce;
 pub use em::{Coulomb, ElectricField, FieldFunctions, MagneticField};
 pub use orbital::{J2Oblateness, PostNewtonian};
 pub use springs::{DampedSpring, ModulatedSpring, SpringNetwork};
+pub use tree::TreeGravity;
 
 /// Value of a tunable force parameter.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -189,6 +191,7 @@ pub enum BuiltinForce {
     ElectricField(ElectricField),
     MagneticField(MagneticField),
     Coulomb(Coulomb),
+    TreeGravity(TreeGravity),
 }
 
 impl BuiltinForce {
@@ -215,6 +218,7 @@ impl BuiltinForce {
             BuiltinForce::ElectricField(f) => Box::new(f),
             BuiltinForce::MagneticField(f) => Box::new(f),
             BuiltinForce::Coulomb(f) => Box::new(f),
+            BuiltinForce::TreeGravity(f) => Box::new(f),
         }
     }
 }

@@ -119,6 +119,8 @@ y, py = ps.poincare_section(w, 0.01, 200_000, ps.Event.coordinate(0, "x", direct
 
 **Forces**:
 - Basics: `UniformField(g)`, `NewtonianGravity(G, softening)` (direct O(N²), Plummer softening),
+  `TreeGravity(G, softening, theta=0.5, quadrupole=False)` (Barnes-Hut, O(N log N): rms force error 9e-4 at θ = 0.5 and
+  20× faster than direct summation at N = 10⁵, 69× at θ = 1; `cargo run --release --example tree_gravity`),
   `LinearDrag(gamma)` (`a = -γv`), `QuadraticDrag(c)` (`F = -c|v|v`).
 - Springs: `Spring(i, j, k, rest_length)`, `AnchorSpring(i, anchor, k, rest_length=0)`,
   `DampedSpring(i, j, k, rest_length, c)` (dashpot along the bond), `ModulatedSpring(i, to, k, depth, omega,
