@@ -15,6 +15,8 @@ Quick start::
 from ._core import (
     INTEGRATORS,
     AnchorSpring,
+    BodyGravity,
+    BodySpring,
     Coulomb,
     CustomForce,
     DampedSpring,
@@ -36,6 +38,8 @@ from ._core import (
     PostNewtonian,
     PowerLaw,
     QuadraticDrag,
+    RigidSystem,
+    RigidTrajectory,
     SoftContact,
     Spring,
     SpringNetwork,
@@ -53,7 +57,14 @@ from .analysis import (
     relative_energy_error,
     tabulate_pair,
 )
-from .geometry import box_walls
+from .geometry import (
+    box_walls,
+    inertia_box,
+    inertia_cylinder,
+    inertia_ellipsoid,
+    inertia_sphere,
+    quaternion_from_axis_angle,
+)
 from .io import (
     TrajectoryWriter,
     load_checkpoint,
@@ -65,6 +76,8 @@ from .io import (
 __all__ = [
     "INTEGRATORS",
     "AnchorSpring",
+    "BodyGravity",
+    "BodySpring",
     "Coulomb",
     "CustomForce",
     "DampedSpring",
@@ -86,6 +99,8 @@ __all__ = [
     "PostNewtonian",
     "PowerLaw",
     "QuadraticDrag",
+    "RigidSystem",
+    "RigidTrajectory",
     "SoftContact",
     "Spring",
     "SpringNetwork",
@@ -97,9 +112,14 @@ __all__ = [
     "World",
     "Yukawa",
     "box_walls",
+    "inertia_box",
+    "inertia_cylinder",
+    "inertia_ellipsoid",
+    "inertia_sphere",
     "load_checkpoint",
     "load_trajectory",
     "poincare_section",
+    "quaternion_from_axis_angle",
     "radial_distribution",
     "relative_energy_error",
     "save_checkpoint",
