@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "Classical mechanics simulation engine with Python bindings"
 license = "MIT"
+repository = "https://github.com/Ren-shi/notebook_automation"
+readme = "README.md"
+keywords = ["physics", "simulation", "n-body", "symplectic", "integrator"]
+categories = ["science", "simulation"]
+exclude = ["/notebooks/", "/backlog/", "/python/", "/tests/python/", "/.github/", "/scripts/"]
 
 [lib]
 name = "physim"

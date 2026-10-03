@@ -37,7 +37,9 @@ def test_user_defined_composition_and_splitting():
     ref = oscillator("yoshida4")
     w.run(0.01, 300, record_every=300)
     ref.run(0.01, 300, record_every=300)
-    assert np.array_equal(w.positions, ref.positions)
+    # The same scheme up to the last bit of the weights: yoshida4 computes 2^(1/3) with cbrt,
+    # and `2 ** (1 / 3)` (pow) is not correctly rounded on every platform (it differs on Windows).
+    np.testing.assert_allclose(w.positions, ref.positions, rtol=0, atol=1e-14)
 
     w = oscillator()
     w.use_splitting([("drift", 0.5), ("kick", 1.0), ("drift", 0.5)], order=2, name="dkd")

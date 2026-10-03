@@ -3,19 +3,42 @@ requires = ["maturin>=1.5,<2"]
 build-backend = "maturin"
 
 [project]
-name = "physim"
-version = "0.1.0"
+# The import name is `physim`; the distribution is `physim-engine` because `physim` is taken on PyPI.
+name = "physim-engine"
+# The version comes from Cargo.toml (single source of truth), via maturin.
+dynamic = ["version"]
 description = "Classical mechanics simulation engine (Rust core, Python front end)"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.9"
 dependencies = ["numpy>=1.21"]
+keywords = ["physics", "simulation", "n-body", "symplectic", "molecular-dynamics", "rust"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.urls]
+Repository = "https://github.com/Ren-shi/notebook_automation"
+Changelog = "https://github.com/Ren-shi/notebook_automation/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 notebooks = ["matplotlib", "jupyter"]
 plot = ["matplotlib"]
 plot3d = ["matplotlib", "plotly"]
+io = ["h5py"]
 test = ["pytest"]
 
 [tool.maturin]
 features = ["python"]
 python-source = "python"
 module-name = "physim._core"
+# Keep the source distribution small: the engine, the package, the tests and the docs it needs.
+include = [{ path = "LICENSE", format = "sdist" }, { path = "CHANGELOG.md", format = "sdist" }]
+exclude = ["notebooks/**", "backlog/**", "benches/**", "examples/**", "target/**"]
