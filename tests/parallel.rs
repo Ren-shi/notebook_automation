@@ -118,3 +118,24 @@ fn per_particle_forces_are_unchanged_in_parallel() {
         assert_eq!(*a, expected);
     }
 }
+
+#[test]
+fn particle_mesh_does_not_depend_on_thread_count() {
+    let run = |threads: usize, periodic: bool| {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            let mut w = cluster(500);
+            w.forces.clear();
+            let center = Vec3::new(0.5, 0.5, 0.5);
+            w.add_force(ParticleMesh::new(1.0, 16, 2.0, center, periodic, None));
+            w.run(1e-3, 3, 3).unwrap();
+            w.state.pos
+        })
+    };
+    for periodic in [false, true] {
+        assert_eq!(run(1, periodic), run(4, periodic));
+    }
+}

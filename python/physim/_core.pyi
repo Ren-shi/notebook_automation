@@ -209,6 +209,7 @@ Force = Union[
     UniformField,
     NewtonianGravity,
     TreeGravity,
+    ParticleMesh,
     SoftContact,
     LennardJones,
     Morse,
@@ -442,3 +443,52 @@ class RigidSystem:
     def angular_momenta(self) -> NDArray[np.float64]: ...
     @property
     def angular_velocities(self) -> NDArray[np.float64]: ...
+
+class ParticleMesh:
+    def __init__(
+        self,
+        box_size: float,
+        cells: int = 64,
+        G: float = 1.0,
+        center: Optional[ArrayLike] = None,
+        periodic: bool = False,
+        softening: Optional[float] = None,
+    ) -> None: ...
+    @property
+    def spacing(self) -> float: ...
+
+class WaveEquation:
+    u: NDArray[np.float64]
+    v: NDArray[np.float64]
+    t: float
+    def __init__(self, shape: Sequence[int], spacing: float, c: float = 1.0, boundary: str = "dirichlet") -> None: ...
+    @property
+    def axes(self) -> list[NDArray[np.float64]]: ...
+    @property
+    def max_stable_dt(self) -> float: ...
+    def step(self, dt: float, n: int = 1) -> None: ...
+    def energy(self) -> float: ...
+
+class HeatEquation:
+    u: NDArray[np.float64]
+    t: float
+    def __init__(
+        self,
+        shape: Sequence[int],
+        spacing: float,
+        diffusivity: float = 1.0,
+        boundary: str = "neumann",
+        method: str = "crank_nicolson",
+    ) -> None: ...
+    @property
+    def axes(self) -> list[NDArray[np.float64]]: ...
+    @property
+    def max_explicit_dt(self) -> float: ...
+    @property
+    def last_iterations(self) -> int: ...
+    def step(self, dt: float, n: int = 1) -> None: ...
+    def total(self) -> float: ...
+
+def solve_poisson(
+    f: ArrayLike, spacing: float, boundary: str = "periodic", phi: Optional[ArrayLike] = None
+) -> NDArray[np.float64]: ...

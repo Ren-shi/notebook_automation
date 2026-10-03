@@ -28,6 +28,8 @@ Forces
    :members:
 .. autoclass:: physim.TreeGravity
    :members:
+.. autoclass:: physim.ParticleMesh
+   :members:
 .. autoclass:: physim.Spring
    :members:
 .. autoclass:: physim.AnchorSpring
@@ -90,6 +92,15 @@ Rigid bodies
    :members:
 .. autoclass:: physim.BodySpring
    :members:
+
+Fields on grids
+---------------
+
+.. autoclass:: physim.WaveEquation
+   :members:
+.. autoclass:: physim.HeatEquation
+   :members:
+.. autofunction:: physim.solve_poisson
 
 Scenarios
 ---------

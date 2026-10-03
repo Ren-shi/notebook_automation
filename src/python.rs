@@ -22,6 +22,7 @@ use crate::state::State;
 use crate::vec3::Vec3;
 use crate::world::{Frame, Recorder, RunOptions, Trajectory, World};
 
+mod fields;
 mod rigid;
 
 impl From<SimError> for PyErr {
@@ -1071,6 +1072,7 @@ fn build_force(force: &Bound<'_, PyAny>) -> PyResult<Box<dyn Force>> {
         PyLennardJones,
         PyMorse,
         PyTabulatedPair,
+        fields::PyParticleMesh,
         PyFieldForce,
         PyCustomForce
     );
@@ -1261,6 +1263,15 @@ fn describe_force<'py>(
                 None => d.set_item("box", py.None())?,
             }
         }
+        Some(BuiltinForce::ParticleMesh(f)) => {
+            d.set_item("type", "ParticleMesh")?;
+            d.set_item("box_size", f.box_size)?;
+            d.set_item("cells", f.cells)?;
+            d.set_item("G", f.g)?;
+            d.set_item("center", v(f.center))?;
+            d.set_item("periodic", f.periodic)?;
+            d.set_item("softening", f.softening)?;
+        }
         Some(BuiltinForce::HenonHeiles(f)) => {
             d.set_item("type", "HenonHeiles")?;
             d.set_item("lam", f.lambda)?;
@@ -1293,7 +1304,8 @@ fn builtin_from_description(desc: &Bound<'_, PyDict>) -> PyResult<BuiltinForce> 
         .get_item("type")?
         .ok_or_else(|| PyValueError::new_err("force description has no \"type\""))?
         .extract()?;
-    const BUILTIN: [&str; 26] = [
+    const BUILTIN: [&str; 27] = [
+        "ParticleMesh",
         "LennardJones",
         "Morse",
         "TabulatedPair",
@@ -3003,6 +3015,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFieldForce>()?;
     m.add_class::<PyCustomForce>()?;
     rigid::register(m)?;
+    fields::register(m)?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

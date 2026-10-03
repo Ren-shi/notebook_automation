@@ -232,6 +232,7 @@ pub enum BuiltinForce {
     TreeGravity(TreeGravity),
     SoftContact(SoftContact),
     PairPotential(PairPotential),
+    ParticleMesh(crate::fields::pm::ParticleMesh),
 }
 
 impl BuiltinForce {
@@ -261,6 +262,7 @@ impl BuiltinForce {
             BuiltinForce::TreeGravity(f) => Box::new(f),
             BuiltinForce::SoftContact(f) => Box::new(f),
             BuiltinForce::PairPotential(f) => Box::new(f),
+            BuiltinForce::ParticleMesh(f) => Box::new(f),
         }
     }
 }

@@ -11,6 +11,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Fields on grids: wave equation (leapfrog), heat equation (explicit, Crank–Nicolson), Poisson (FFT, conjugate
+  gradients) in 1–3 dimensions with Dirichlet, Neumann or periodic boundaries; particle-mesh gravity (isolated or
+  periodic) as a force.
 - Packaging: wheels for Linux (x86_64, aarch64), macOS (x86_64, arm64) and Windows (x64) and a source
   distribution, tested on Python 3.9 and 3.13 without a Rust toolchain; PyPI publishing on version tags;
   MIT `LICENSE`; this changelog.
