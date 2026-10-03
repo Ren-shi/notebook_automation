@@ -4,8 +4,10 @@
 //! - [`State`]: positions, velocities, masses and time.
 //! - [`Force`]: anything that adds accelerations (and optionally a potential).
 //! - [`Integrator`]: a time-stepping scheme.
-//! - [`World`]: ties them together and records [`Trajectory`]s.
+//! - [`World`]: ties them together and records [`Trajectory`]s, with fixed steps
+//!   ([`World::run`]) or adaptive ones ([`World::run_adaptive`]).
 
+pub mod adaptive;
 pub mod checkpoint;
 pub mod constraints;
 pub mod error;
@@ -20,6 +22,7 @@ pub mod world;
 #[cfg(feature = "python")]
 mod python;
 
+pub use adaptive::{AdaptiveOptions, AdaptiveOutcome, AdaptiveRun, AdaptiveStats, Output};
 pub use checkpoint::{Checkpoint, SavedForce};
 pub use constraints::{Anchor, ConstraintId, Constraints, Rod};
 pub use error::{Result, SimError};

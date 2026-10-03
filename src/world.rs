@@ -378,23 +378,42 @@ impl World {
     }
 
     /// Passes the current state to `recorder`. Nothing is passed if computing the energies fails.
-    fn emit(&self, recorder: &mut dyn Recorder, energies: bool) -> Result<()> {
+    pub(crate) fn emit(&self, recorder: &mut dyn Recorder, energies: bool) -> Result<()> {
+        let s = &self.state;
+        self.emit_at(recorder, energies, s.t, &s.pos, &s.vel)
+    }
+
+    /// Passes the given state (with this world's masses and tensions) to `recorder`.
+    pub(crate) fn emit_at(
+        &self,
+        recorder: &mut dyn Recorder,
+        energies: bool,
+        t: f64,
+        pos: &[Vec3],
+        vel: &[Vec3],
+    ) -> Result<()> {
+        let mass = &self.state.mass;
         let (kinetic, potential) = if energies {
-            (Some(self.kinetic_energy()), Some(self.potential_energy()?))
+            let kinetic = vel
+                .iter()
+                .zip(mass)
+                .map(|(v, m)| 0.5 * m * v.norm_squared())
+                .sum();
+            (Some(kinetic), Some(self.forces.potential(t, pos, mass)?))
         } else {
             (None, None)
         };
         recorder.frame(&Frame {
-            t: self.state.t,
-            pos: &self.state.pos,
-            vel: &self.state.vel,
+            t,
+            pos,
+            vel,
             kinetic,
             potential,
             tension: &self.tension,
         })
     }
 
-    fn event_values(&self, events: &[Event]) -> Result<Vec<f64>> {
+    pub(crate) fn event_values(&self, events: &[Event]) -> Result<Vec<f64>> {
         let s = &self.state;
         events
             .iter()

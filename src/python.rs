@@ -9,6 +9,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
+use crate::adaptive::{AdaptiveOptions, Output};
 use crate::checkpoint::{Checkpoint, SavedForce};
 use crate::constraints::{Anchor, ConstraintId, Constraints, Rod};
 use crate::error::{Result as SimResult, SimError};
@@ -17,7 +18,7 @@ use crate::forces::{self, BuiltinForce, Force, ForceId, Param};
 use crate::integrators;
 use crate::state::State;
 use crate::vec3::Vec3;
-use crate::world::{Frame, Recorder, RunFailure, RunOptions, Trajectory, World};
+use crate::world::{Frame, Recorder, RunOptions, Trajectory, World};
 
 impl From<SimError> for PyErr {
     fn from(e: SimError) -> PyErr {
@@ -826,6 +827,74 @@ impl Recorder for ChunkSink {
     }
 }
 
+/// Runs `drive` with a recorder that keeps frames in memory, or with one that streams
+/// them to `sink` in chunks, and returns the Trajectory. On error the exception carries the
+/// frames recorded so far as its ``trajectory`` attribute.
+#[allow(clippy::too_many_arguments)]
+fn record_run(
+    py: Python<'_>,
+    n: usize,
+    energies: bool,
+    reserve: usize,
+    sink: Option<Py<PyAny>>,
+    chunk_size: usize,
+    metadata: Py<PyDict>,
+    drive: impl FnOnce(&mut dyn Recorder) -> SimResult<Option<usize>> + Send,
+) -> PyResult<PyTrajectory> {
+    let (result, trajectory) = match sink {
+        None => {
+            let mut traj = Trajectory::new(n, energies);
+            traj.reserve(reserve);
+            let result = py.detach(|| drive(&mut traj));
+            (result.map(|term| traj.terminated_by = term), traj)
+        }
+        Some(sink) => {
+            if !sink.bind(py).is_callable() || chunk_size == 0 {
+                return Err(PyValueError::new_err(
+                    "sink must be callable and chunk_size at least 1",
+                ));
+            }
+            let mut buffer = Trajectory::new(n, energies);
+            buffer.reserve(chunk_size);
+            let mut recorder = ChunkSink {
+                sink,
+                buffer,
+                chunk_size,
+                metadata: metadata.clone_ref(py),
+            };
+            let result = py.detach(|| {
+                let outcome = drive(&mut recorder);
+                // Hand over what is buffered even if the run failed.
+                if let Ok(term) = outcome {
+                    recorder.buffer.terminated_by = term;
+                }
+                let b = &recorder.buffer;
+                let flushed =
+                    if b.n_frames() > 0 || !b.events.is_empty() || b.terminated_by.is_some() {
+                        recorder.flush()
+                    } else {
+                        Ok(())
+                    };
+                outcome.and_then(|term| flushed.map(|()| term))
+            });
+            let mut summary = Trajectory::new(n, energies);
+            (result.map(|term| summary.terminated_by = term), summary)
+        }
+    };
+    let trajectory = PyTrajectory::from_rust(py, trajectory, metadata)?;
+    match result {
+        Ok(()) => Ok(trajectory),
+        Err(error) => {
+            let err = PyErr::from(error);
+            if let Ok(partial) = Py::new(py, trajectory) {
+                // Some exception types reject new attributes; the error still propagates.
+                let _ = err.value(py).setattr("trajectory", partial);
+            }
+            Err(err)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // World
 
@@ -1060,7 +1129,13 @@ impl PyWorld {
         chunk_size: usize,
     ) -> PyResult<PyTrajectory> {
         let events = events.unwrap_or_default();
-        let metadata = self.run_metadata(py, dt, steps, record_every, energies, &events)?;
+        let metadata = self.run_metadata(py, energies, &events)?;
+        {
+            let d = metadata.bind(py);
+            d.set_item("dt", dt)?;
+            d.set_item("steps", steps)?;
+            d.set_item("record_every", record_every)?;
+        }
         let events: Vec<Event> = events.iter().map(|e| e.build(py)).collect();
         let options = RunOptions {
             record_every,
@@ -1068,57 +1143,110 @@ impl PyWorld {
             energies,
         };
         let world = &mut self.inner;
+        let reserve = steps.checked_div(record_every).map_or(0, |f| f + 2);
         let n = world.state.len();
-        let (result, trajectory) = match sink {
-            None => match py.detach(|| world.run_with_options(dt, steps, &options)) {
-                Ok(traj) => (Ok(()), traj),
-                Err(RunFailure { error, trajectory }) => (Err(error), *trajectory),
+        record_run(
+            py,
+            n,
+            energies,
+            reserve,
+            sink,
+            chunk_size,
+            metadata,
+            |recorder| world.run_into(dt, steps, &options, recorder),
+        )
+    }
+
+    /// Integrates to ``t_end`` with adaptive Dormand-Prince 5(4) steps, keeping the
+    /// estimated local error of every position and velocity component below
+    /// ``atol + rtol * |value|``. The world's own integrator is not used, and constraints
+    /// are not supported. ``t_end`` may lie before the current time (integrating backwards).
+    ///
+    /// Frames are recorded at the initial state and every accepted step, or, if ``times``
+    /// is given, exactly at those times (from the method's continuous extension, at no
+    /// extra cost; they must be ordered and lie within the run). ``events``, ``energies``,
+    /// ``sink`` and ``chunk_size`` work as in :meth:`run`; events are located on the
+    /// continuous extension.
+    ///
+    /// The returned trajectory's ``metadata["adaptive"]`` holds the settings and the work
+    /// done: accepted and rejected steps and force evaluations.
+    ///
+    /// Adaptive Runge-Kutta is not symplectic: on conservative problems the energy error
+    /// grows slowly with time instead of staying bounded. It pays off when the needed step
+    /// varies a lot (eccentric orbits, close encounters, transients).
+    #[pyo3(signature = (t_end, *, rtol = 1e-9, atol = 1e-12, times = None, events = None, energies = true, first_step = None, max_step = None, max_steps = 10_000_000, sink = None, chunk_size = 1024))]
+    #[allow(clippy::too_many_arguments)]
+    fn run_adaptive(
+        &mut self,
+        py: Python<'_>,
+        t_end: f64,
+        rtol: f64,
+        atol: f64,
+        times: Option<Vec<f64>>,
+        events: Option<Vec<PyRef<'_, PyEvent>>>,
+        energies: bool,
+        first_step: Option<f64>,
+        max_step: Option<f64>,
+        max_steps: usize,
+        sink: Option<Py<PyAny>>,
+        chunk_size: usize,
+    ) -> PyResult<PyTrajectory> {
+        let events = events.unwrap_or_default();
+        let metadata = self.run_metadata(py, energies, &events)?;
+        let settings = PyDict::new(py);
+        settings.set_item("t_end", t_end)?;
+        settings.set_item("rtol", rtol)?;
+        settings.set_item("atol", atol)?;
+        settings.set_item("first_step", first_step)?;
+        settings.set_item("max_step", max_step)?;
+        settings.set_item("max_steps", max_steps)?;
+        settings.set_item("times", times.is_some())?;
+        metadata.bind(py).set_item("integrator", "dopri5")?;
+        metadata.bind(py).set_item("adaptive", &settings)?;
+        let events: Vec<Event> = events.iter().map(|e| e.build(py)).collect();
+        let has_times = times.is_some();
+        let times = times.unwrap_or_default();
+        let options = AdaptiveOptions {
+            rtol,
+            atol,
+            first_step,
+            max_step: max_step.unwrap_or(f64::INFINITY),
+            max_steps,
+            output: if has_times {
+                Output::Times(&times)
+            } else {
+                Output::Steps
             },
-            Some(sink) => {
-                if !sink.bind(py).is_callable() || chunk_size == 0 {
-                    return Err(PyValueError::new_err(
-                        "sink must be callable and chunk_size at least 1",
-                    ));
-                }
-                let mut buffer = Trajectory::new(n, energies);
-                buffer.reserve(chunk_size);
-                let mut recorder = ChunkSink {
-                    sink,
-                    buffer,
-                    chunk_size,
-                    metadata: metadata.clone_ref(py),
-                };
-                let result = py.detach(|| {
-                    let outcome = world.run_into(dt, steps, &options, &mut recorder);
-                    // Hand over what is buffered even if the run failed.
-                    if let Ok(term) = outcome {
-                        recorder.buffer.terminated_by = term;
-                    }
-                    let b = &recorder.buffer;
-                    let flushed =
-                        if b.n_frames() > 0 || !b.events.is_empty() || b.terminated_by.is_some() {
-                            recorder.flush()
-                        } else {
-                            Ok(())
-                        };
-                    outcome.and_then(|term| flushed.map(|()| term))
-                });
-                let mut summary = Trajectory::new(n, energies);
-                (result.map(|term| summary.terminated_by = term), summary)
-            }
+            events: &events,
+            energies,
         };
-        let trajectory = PyTrajectory::from_rust(py, trajectory, metadata)?;
-        match result {
-            Ok(()) => Ok(trajectory),
-            Err(error) => {
-                let err = PyErr::from(error);
-                if let Ok(partial) = Py::new(py, trajectory) {
-                    // Some exception types reject new attributes; the error still propagates.
-                    let _ = err.value(py).setattr("trajectory", partial);
-                }
-                Err(err)
-            }
+        let reserve = match options.output {
+            Output::Times(t) => t.len(),
+            Output::Steps => 0,
+        };
+        let world = &mut self.inner;
+        let n = world.state.len();
+        let mut stats = None;
+        let result = record_run(
+            py,
+            n,
+            energies,
+            reserve,
+            sink,
+            chunk_size,
+            metadata.clone_ref(py),
+            |recorder| {
+                let outcome = world.run_adaptive_into(t_end, &options, recorder)?;
+                stats = Some(outcome.stats);
+                Ok(outcome.terminated_by)
+            },
+        );
+        if let Some(s) = stats {
+            settings.set_item("accepted", s.accepted)?;
+            settings.set_item("rejected", s.rejected)?;
+            settings.set_item("evaluations", s.evaluations)?;
         }
+        result
     }
 
     /// Everything needed to continue this simulation later, bit for bit, as a dict of
@@ -1349,9 +1477,6 @@ impl PyWorld {
     fn run_metadata(
         &self,
         py: Python<'_>,
-        dt: f64,
-        steps: usize,
-        record_every: usize,
         energies: bool,
         events: &[PyRef<'_, PyEvent>],
     ) -> PyResult<Py<PyDict>> {
@@ -1359,9 +1484,6 @@ impl PyWorld {
         let d = PyDict::new(py);
         d.set_item("engine_version", env!("CARGO_PKG_VERSION"))?;
         d.set_item("integrator", w.integrator().name())?;
-        d.set_item("dt", dt)?;
-        d.set_item("steps", steps)?;
-        d.set_item("record_every", record_every)?;
         d.set_item("energies", energies)?;
         d.set_item("t0", w.state.t)?;
         d.set_item("n_particles", w.state.len())?;
