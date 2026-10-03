@@ -780,6 +780,118 @@ impl PySoftContact {
     }
 }
 
+fn period_from(box_: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Vec3>> {
+    box_.map(|b| match b.extract::<f64>() {
+        Ok(l) => Ok(Vec3::new(l, l, l)),
+        Err(_) => extract_vec3(b, "box"),
+    })
+    .transpose()
+}
+
+fn checked_pair(p: forces::PairPotential) -> PyResult<forces::PairPotential> {
+    // Validate by evaluating on an empty system.
+    p.potential(0.0, &[], &[])?;
+    Ok(p)
+}
+
+/// Lennard-Jones ``4 epsilon [(sigma/r)^12 - (sigma/r)^6]`` between every pair closer than
+/// ``cutoff`` (shifted to zero there if ``shift``), optionally in the periodic box ``box``
+/// (side lengths: a number or a 3-vector; minimum image, coordinates need not be wrapped).
+/// O(N) via cell lists and Verlet neighbour lists.
+#[pyclass(frozen, name = "LennardJones", module = "physim")]
+struct PyLennardJones(forces::PairPotential);
+
+#[pymethods]
+impl PyLennardJones {
+    #[new]
+    #[pyo3(signature = (epsilon = 1.0, sigma = 1.0, cutoff = 2.5, shift = true, r#box = None))]
+    fn new(
+        epsilon: f64,
+        sigma: f64,
+        cutoff: f64,
+        shift: bool,
+        r#box: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
+        Ok(Self(checked_pair(forces::PairPotential::new(
+            forces::PairKind::LennardJones { epsilon, sigma },
+            cutoff,
+            shift,
+            period_from(r#box)?,
+        ))?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Morse ``depth [(1 - exp(-a (r - r0)))^2 - 1]`` between every pair closer than ``cutoff``;
+/// ``shift`` and ``box`` as for :class:`LennardJones`.
+#[pyclass(frozen, name = "Morse", module = "physim")]
+struct PyMorse(forces::PairPotential);
+
+#[pymethods]
+impl PyMorse {
+    #[new]
+    #[pyo3(signature = (depth, a, r0, cutoff, shift = true, r#box = None))]
+    fn new(
+        depth: f64,
+        a: f64,
+        r0: f64,
+        cutoff: f64,
+        shift: bool,
+        r#box: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
+        Ok(Self(checked_pair(forces::PairPotential::new(
+            forces::PairKind::Morse { depth, a, r0 },
+            cutoff,
+            shift,
+            period_from(r#box)?,
+        ))?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// A pair potential given as a table: ``V`` at equally spaced ``r`` (``r_min``, step ``dr``),
+/// with ``dV`` its derivative at the same points (see :func:`physim.tabulate_pair` to build
+/// one from any vectorised Python function). Cubic Hermite interpolation, so forces are
+/// continuous; evaluated in Rust with no Python calls. ``cutoff``, ``shift``, ``box`` as for
+/// :class:`LennardJones`.
+#[pyclass(frozen, name = "TabulatedPair", module = "physim")]
+struct PyTabulatedPair(forces::PairPotential);
+
+#[pymethods]
+impl PyTabulatedPair {
+    #[new]
+    #[pyo3(signature = (r_min, dr, V, dV, cutoff, shift = true, r#box = None))]
+    #[allow(non_snake_case, clippy::too_many_arguments)]
+    fn new(
+        r_min: f64,
+        dr: f64,
+        V: Vec<f64>,
+        dV: Vec<f64>,
+        cutoff: f64,
+        shift: bool,
+        r#box: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Self> {
+        Ok(Self(checked_pair(forces::PairPotential::new(
+            forces::PairKind::Table {
+                r_min,
+                dr,
+                v: V,
+                dv: dV,
+            },
+            cutoff,
+            shift,
+            period_from(r#box)?,
+        ))?))
+    }
+    fn __repr__(&self) -> String {
+        format!("TabulatedPair(cutoff={})", self.0.cutoff)
+    }
+}
+
 simple_spec!(
     PyDampedSpring,
     PyModulatedSpring,
@@ -797,7 +909,10 @@ simple_spec!(
     PyMagneticField,
     PyCoulomb,
     PyTreeGravity,
-    PySoftContact
+    PySoftContact,
+    PyLennardJones,
+    PyMorse,
+    PyTabulatedPair
 );
 
 /// A force defined in Python, for prototyping new physics without recompiling.
@@ -948,6 +1063,9 @@ fn build_force(force: &Bound<'_, PyAny>) -> PyResult<Box<dyn Force>> {
         PyCoulomb,
         PyTreeGravity,
         PySoftContact,
+        PyLennardJones,
+        PyMorse,
+        PyTabulatedPair,
         PyFieldForce,
         PyCustomForce
     );
@@ -1105,6 +1223,39 @@ fn describe_force<'py>(
                 },
             )?;
         }
+        Some(BuiltinForce::PairPotential(f)) => {
+            match &f.kind {
+                forces::PairKind::LennardJones { epsilon, sigma } => {
+                    d.set_item("type", "LennardJones")?;
+                    d.set_item("epsilon", epsilon)?;
+                    d.set_item("sigma", sigma)?;
+                }
+                forces::PairKind::Morse { depth, a, r0 } => {
+                    d.set_item("type", "Morse")?;
+                    d.set_item("depth", depth)?;
+                    d.set_item("a", a)?;
+                    d.set_item("r0", r0)?;
+                }
+                forces::PairKind::Table {
+                    r_min,
+                    dr,
+                    v: vt,
+                    dv,
+                } => {
+                    d.set_item("type", "TabulatedPair")?;
+                    d.set_item("r_min", r_min)?;
+                    d.set_item("dr", dr)?;
+                    d.set_item("V", vt.clone())?;
+                    d.set_item("dV", dv.clone())?;
+                }
+            }
+            d.set_item("cutoff", f.cutoff)?;
+            d.set_item("shift", f.shift)?;
+            match f.period {
+                Some(l) => d.set_item("box", v(l))?,
+                None => d.set_item("box", py.None())?,
+            }
+        }
         Some(BuiltinForce::HenonHeiles(f)) => {
             d.set_item("type", "HenonHeiles")?;
             d.set_item("lam", f.lambda)?;
@@ -1137,7 +1288,10 @@ fn builtin_from_description(desc: &Bound<'_, PyDict>) -> PyResult<BuiltinForce> 
         .get_item("type")?
         .ok_or_else(|| PyValueError::new_err("force description has no \"type\""))?
         .extract()?;
-    const BUILTIN: [&str; 23] = [
+    const BUILTIN: [&str; 26] = [
+        "LennardJones",
+        "Morse",
+        "TabulatedPair",
         "SoftContact",
         "TreeGravity",
         "HenonHeiles",
@@ -1627,6 +1781,30 @@ fn describe_scheme<'py>(py: Python<'py>, scheme: &Scheme) -> PyResult<Bound<'py,
                 .collect();
             d.set_item("ops", ops)?;
         }
+        Scheme::Langevin {
+            temperature,
+            friction,
+            seed,
+            counter,
+        } => {
+            d.set_item("kind", "langevin")?;
+            d.set_item("temperature", temperature)?;
+            d.set_item("friction", friction)?;
+            d.set_item("seed", seed)?;
+            d.set_item("counter", counter)?;
+        }
+        Scheme::NoseHoover {
+            temperature,
+            tau,
+            xi,
+            eta,
+        } => {
+            d.set_item("kind", "nose_hoover")?;
+            d.set_item("temperature", temperature)?;
+            d.set_item("tau", tau)?;
+            d.set_item("xi", xi)?;
+            d.set_item("eta", eta)?;
+        }
     }
     Ok(d)
 }
@@ -1637,6 +1815,25 @@ fn scheme_from_description(d: &Bound<'_, PyDict>) -> PyResult<Scheme> {
             .ok_or_else(|| PyValueError::new_err(format!("integrator scheme has no {k:?}")))
     };
     let kind: String = field("kind")?.extract()?;
+    match kind.as_str() {
+        "langevin" => {
+            return Ok(Scheme::Langevin {
+                temperature: field("temperature")?.extract()?,
+                friction: field("friction")?.extract()?,
+                seed: field("seed")?.extract()?,
+                counter: field("counter")?.extract()?,
+            })
+        }
+        "nose_hoover" => {
+            return Ok(Scheme::NoseHoover {
+                temperature: field("temperature")?.extract()?,
+                tau: field("tau")?.extract()?,
+                xi: field("xi")?.extract()?,
+                eta: field("eta")?.extract()?,
+            })
+        }
+        _ => {}
+    }
     let name: String = field("name")?.extract()?;
     let order: u32 = field("order")?.extract()?;
     match kind.as_str() {
@@ -1885,6 +2082,44 @@ impl PyWorld {
     #[getter]
     fn integrator(&self) -> String {
         self.inner.integrator().name().to_string()
+    }
+
+    /// Switches to Langevin dynamics at ``temperature`` with friction rate ``friction``
+    /// (BAOAB splitting; k_B = 1). Random numbers are reproducible from ``seed`` and restart
+    /// exactly from checkpoints.
+    #[pyo3(signature = (temperature, friction = 1.0, seed = 1))]
+    fn use_langevin(&mut self, temperature: f64, friction: f64, seed: u64) -> PyResult<()> {
+        self.inner
+            .set_integrator(Box::new(integrators::Langevin::new(
+                temperature,
+                friction,
+                seed,
+            )?));
+        Ok(())
+    }
+
+    /// Switches to a Nosé-Hoover thermostat at ``temperature`` with relaxation time ``tau``.
+    /// ``total_energy() + thermostat_energy()`` is conserved.
+    #[pyo3(signature = (temperature, tau = 1.0))]
+    fn use_nose_hoover(&mut self, temperature: f64, tau: f64) -> PyResult<()> {
+        self.inner
+            .set_integrator(Box::new(integrators::NoseHoover::new(temperature, tau)?));
+        Ok(())
+    }
+
+    /// Instantaneous temperature ``Σ m v² / (3 N)`` (k_B = 1) over unpinned, massive particles.
+    fn temperature(&self) -> f64 {
+        self.inner.temperature()
+    }
+
+    /// Pressure ``(2 K + W) / (3 volume)``, with ``W`` the virial of the pair potentials.
+    fn pressure(&self, volume: f64) -> PyResult<f64> {
+        Ok(self.inner.pressure(volume)?)
+    }
+
+    /// Energy stored in a thermostat's variables (Nosé-Hoover); zero otherwise.
+    fn thermostat_energy(&self) -> f64 {
+        self.inner.thermostat_energy()
     }
 
     /// Switches to a composition of velocity Verlet substeps of ``weights[k] * dt`` (the
@@ -2729,6 +2964,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCoulomb>()?;
     m.add_class::<PyTreeGravity>()?;
     m.add_class::<PySoftContact>()?;
+    m.add_class::<PyLennardJones>()?;
+    m.add_class::<PyMorse>()?;
+    m.add_class::<PyTabulatedPair>()?;
     m.add_class::<PyFieldForce>()?;
     m.add_class::<PyCustomForce>()?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;

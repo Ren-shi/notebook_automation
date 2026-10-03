@@ -10,11 +10,13 @@ use crate::vec3::Vec3;
 mod boris;
 mod gauss;
 mod splitting;
+mod thermostat;
 mod wisdom_holman;
 
 pub use boris::Boris;
 pub use gauss::GaussLegendre;
 pub use splitting::{Composition, Op, Scheme, Splitting};
+pub use thermostat::{Langevin, NoseHoover};
 pub use wisdom_holman::WisdomHolman;
 
 pub trait Integrator: Send + Sync {
@@ -30,6 +32,12 @@ pub trait Integrator: Send + Sync {
     /// checkpoints). Built-in integrators are rebuilt from their name and return `None`.
     fn scheme(&self) -> Option<Scheme> {
         None
+    }
+
+    /// For thermostats, the energy stored in the thermostat's own variables, so that
+    /// `K + U + thermostat_energy` is conserved (Nosé-Hoover). Zero otherwise.
+    fn thermostat_energy(&self, _state: &State) -> f64 {
+        0.0
     }
 
     /// Advance `state` by `dt` subject to distance `constraints` (see

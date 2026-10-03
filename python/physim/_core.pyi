@@ -145,6 +145,39 @@ class TreeGravity:
 class SoftContact:
     def __init__(self, k: float, damping: float = 0.0, law: str = "linear") -> None: ...
 
+class LennardJones:
+    def __init__(
+        self,
+        epsilon: float = 1.0,
+        sigma: float = 1.0,
+        cutoff: float = 2.5,
+        shift: bool = True,
+        box: Optional[Union[float, ArrayLike]] = None,
+    ) -> None: ...
+
+class Morse:
+    def __init__(
+        self,
+        depth: float,
+        a: float,
+        r0: float,
+        cutoff: float,
+        shift: bool = True,
+        box: Optional[Union[float, ArrayLike]] = None,
+    ) -> None: ...
+
+class TabulatedPair:
+    def __init__(
+        self,
+        r_min: float,
+        dr: float,
+        V: Sequence[float],
+        dV: Sequence[float],
+        cutoff: float,
+        shift: bool = True,
+        box: Optional[Union[float, ArrayLike]] = None,
+    ) -> None: ...
+
 class CustomForce:
     def __init__(
         self,
@@ -177,6 +210,9 @@ Force = Union[
     NewtonianGravity,
     TreeGravity,
     SoftContact,
+    LennardJones,
+    Morse,
+    TabulatedPair,
     Spring,
     AnchorSpring,
     LinearDrag,
@@ -285,6 +321,11 @@ class World:
     def collisions(self) -> Optional[dict[str, Any]]: ...
     @property
     def collision_count(self) -> int: ...
+    def use_langevin(self, temperature: float, friction: float = 1.0, seed: int = 1) -> None: ...
+    def use_nose_hoover(self, temperature: float, tau: float = 1.0) -> None: ...
+    def temperature(self) -> float: ...
+    def pressure(self, volume: float) -> float: ...
+    def thermostat_energy(self) -> float: ...
     def use_composition(self, weights: Sequence[float], order: int, name: str = "composition") -> None: ...
     def use_splitting(
         self, ops: Sequence[tuple[str, float]], order: int, name: str = "splitting"

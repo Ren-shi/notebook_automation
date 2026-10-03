@@ -622,6 +622,39 @@ impl World {
         )
     }
 
+    /// Instantaneous temperature `Σ m v² / (3 N_free)` (k_B = 1), over particles that are
+    /// neither pinned nor massless.
+    pub fn temperature(&self) -> f64 {
+        let s = &self.state;
+        let (mut twice_k, mut n) = (0.0, 0usize);
+        for i in 0..s.len() {
+            if !s.pinned[i] && s.mass[i] > 0.0 {
+                twice_k += s.mass[i] * s.vel[i].norm_squared();
+                n += 1;
+            }
+        }
+        if n == 0 {
+            0.0
+        } else {
+            twice_k / (3 * n) as f64
+        }
+    }
+
+    /// Pressure `(2 K + W) / (3 V)` in a volume `volume`, with `W` the virial of the forces
+    /// that provide one (pair potentials).
+    pub fn pressure(&self, volume: f64) -> Result<f64> {
+        if !(volume > 0.0 && volume.is_finite()) {
+            return invalid(format!("volume must be positive, got {volume}"));
+        }
+        let w = self.forces.virial(&self.state.pos)?;
+        Ok((2.0 * self.kinetic_energy() + w) / (3.0 * volume))
+    }
+
+    /// Energy held by a thermostat's own variables (see [`Integrator::thermostat_energy`]).
+    pub fn thermostat_energy(&self) -> f64 {
+        self.integrator.thermostat_energy(&self.state)
+    }
+
     pub fn total_energy(&self) -> Result<f64> {
         Ok(self.kinetic_energy() + self.potential_energy()?)
     }

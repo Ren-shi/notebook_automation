@@ -32,13 +32,52 @@ pub enum Scheme {
         order: u32,
         ops: Vec<Op>,
     },
+    /// The Langevin thermostat with its random-number counter.
+    Langevin {
+        temperature: f64,
+        friction: f64,
+        seed: u64,
+        counter: u64,
+    },
+    /// The Nosé-Hoover thermostat with its state.
+    NoseHoover {
+        temperature: f64,
+        tau: f64,
+        xi: f64,
+        eta: f64,
+    },
 }
 
 impl Scheme {
     /// Builds the integrator. Names of built-in integrators are reserved.
     pub fn build(&self) -> Result<Box<dyn Integrator>> {
+        match *self {
+            Scheme::Langevin {
+                temperature,
+                friction,
+                seed,
+                counter,
+            } => {
+                let mut l = super::Langevin::new(temperature, friction, seed)?;
+                l.counter = counter;
+                return Ok(Box::new(l));
+            }
+            Scheme::NoseHoover {
+                temperature,
+                tau,
+                xi,
+                eta,
+            } => {
+                let mut nh = super::NoseHoover::new(temperature, tau)?;
+                nh.xi = xi;
+                nh.eta = eta;
+                return Ok(Box::new(nh));
+            }
+            _ => {}
+        }
         let name = match self {
             Scheme::Composition { name, .. } | Scheme::Splitting { name, .. } => name,
+            _ => unreachable!("handled above"),
         };
         if super::by_name(name).is_ok() {
             return invalid(format!(
@@ -54,6 +93,7 @@ impl Scheme {
             Scheme::Splitting { name, order, ops } => {
                 Box::new(Splitting::new(name, *order, ops.clone())?)
             }
+            _ => unreachable!("handled above"),
         })
     }
 }

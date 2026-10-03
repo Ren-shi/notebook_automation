@@ -103,6 +103,14 @@ e = 0.5 and `rtol=1e-10`, so 1.6e-6 after 10 000 orbits), whereas `yoshida4` at 
 (1e-12). Use adaptive steps for transients, close encounters and moderately long runs with widely varying time
 scales; use a fixed-step symplectic integrator for very long integrations of smooth conservative motion.
 
+**Molecular dynamics**: pair potentials with a cutoff — `LennardJones(epsilon, sigma, cutoff=2.5, shift=True,
+box=L)`, `Morse(depth, a, r0, cutoff)`, and `TabulatedPair` (any `V(r)`, e.g. from `ps.tabulate_pair(f, r_min, r_max)`,
+evaluated in Rust) — in an optional periodic box (minimum image; coordinates are not wrapped, so diffusion is easy to
+measure). Neighbours come from cell lists and Verlet lists with a skin; results are identical whether a list is fresh
+or reused, so restarts stay bit-exact. Thermostats: `w.use_langevin(T, friction, seed)` (BAOAB, reproducible
+counter-based noise) and `w.use_nose_hoover(T, tau)` (`total_energy() + thermostat_energy()` is conserved).
+Observables: `w.temperature()`, `w.pressure(volume)` (virial), `ps.radial_distribution(positions, box)`.
+
 **Collisions and contact**: particles get a size with `add_particle(..., radius=r)` or `w.radii = [...]`.
 - Hard collisions: `w.set_collisions(restitution=1.0, walls=ps.box_walls(lo, hi))` makes spheres bounce off each
   other and off planar walls (`(normal, offset)` pairs). Each contact is found inside the step (swept spheres on a uniform
