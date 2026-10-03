@@ -13,7 +13,9 @@ mod drives;
 mod orbital;
 mod springs;
 
-pub use central::{HarmonicTrap, HernquistPotential, PlummerPotential, PowerLaw, Yukawa};
+pub use central::{
+    HarmonicTrap, HenonHeiles, HernquistPotential, PlummerPotential, PowerLaw, Yukawa,
+};
 pub use closure::ClosureForce;
 pub use drives::PeriodicForce;
 pub use orbital::{J2Oblateness, PostNewtonian};
@@ -52,6 +54,24 @@ pub trait Force: Send + Sync {
     }
 
     fn name(&self) -> String;
+
+    /// Adds the Jacobian-vector product of this force's accelerations to `out`:
+    /// `out_i += Σ_j (∂a_i/∂x_j · dpos_j + ∂a_i/∂v_j · dvel_j)`. Used by the variational
+    /// equations (Lyapunov exponents). Returns `Ok(false)` if not implemented, in which case
+    /// [`ForceSet::jacobian_vector`] uses central finite differences instead.
+    #[allow(clippy::too_many_arguments)]
+    fn jacobian_vector(
+        &self,
+        _t: f64,
+        _pos: &[Vec3],
+        _vel: &[Vec3],
+        _mass: &[f64],
+        _dpos: &[Vec3],
+        _dvel: &[Vec3],
+        _out: &mut [Vec3],
+    ) -> Result<bool> {
+        Ok(false)
+    }
 
     /// For the built-in forces, a copy that can be saved and rebuilt (see
     /// [`BuiltinForce`]). Forces defined elsewhere return `None` and must be supplied
@@ -100,6 +120,7 @@ pub enum BuiltinForce {
     PeriodicForce(PeriodicForce),
     PostNewtonian(PostNewtonian),
     J2Oblateness(J2Oblateness),
+    HenonHeiles(HenonHeiles),
 }
 
 impl BuiltinForce {
@@ -122,6 +143,7 @@ impl BuiltinForce {
             BuiltinForce::PeriodicForce(f) => Box::new(f),
             BuiltinForce::PostNewtonian(f) => Box::new(f),
             BuiltinForce::J2Oblateness(f) => Box::new(f),
+            BuiltinForce::HenonHeiles(f) => Box::new(f),
         }
     }
 }
@@ -301,6 +323,40 @@ impl ForceSet {
         Ok(())
     }
 
+    /// Overwrites `out` with the directional derivative of the total acceleration along
+    /// `(dpos, dvel)`: analytic where a force provides it, central finite differences
+    /// otherwise (relative accuracy ~1e-10). Pinned particles get zero.
+    #[allow(clippy::too_many_arguments)]
+    pub fn jacobian_vector(
+        &self,
+        t: f64,
+        pos: &[Vec3],
+        vel: &[Vec3],
+        mass: &[f64],
+        pinned: &[bool],
+        dpos: &[Vec3],
+        dvel: &[Vec3],
+        out: &mut Vec<Vec3>,
+    ) -> Result<()> {
+        let n = pos.len();
+        out.clear();
+        out.resize(n, Vec3::ZERO);
+        let mut fd: Option<FiniteDifference> = None;
+        for (_, f) in &self.forces {
+            if f.jacobian_vector(t, pos, vel, mass, dpos, dvel, out)? {
+                continue;
+            }
+            let fd = fd.get_or_insert_with(|| FiniteDifference::new(pos, vel, dpos, dvel));
+            fd.add(f.as_ref(), t, mass, out)?;
+        }
+        for (o, &p) in out.iter_mut().zip(pinned) {
+            if p {
+                *o = Vec3::ZERO;
+            }
+        }
+        Ok(())
+    }
+
     /// Sum of the potentials of all conservative forces (non-conservative ones are skipped).
     pub fn potential(&self, t: f64, pos: &[Vec3], mass: &[f64]) -> Result<f64> {
         let mut total = 0.0;
@@ -308,6 +364,64 @@ impl ForceSet {
             total += f.potential(t, pos, mass)?.unwrap_or(0.0);
         }
         Ok(total)
+    }
+}
+
+/// Central differences of single forces along one direction, with shared perturbed states.
+struct FiniteDifference {
+    eps: f64,
+    plus: (Vec<Vec3>, Vec<Vec3>),
+    minus: (Vec<Vec3>, Vec<Vec3>),
+    a_plus: Vec<Vec3>,
+    a_minus: Vec<Vec3>,
+}
+
+impl FiniteDifference {
+    fn new(pos: &[Vec3], vel: &[Vec3], dpos: &[Vec3], dvel: &[Vec3]) -> Self {
+        let max = |v: &[Vec3]| v.iter().map(|x| x.norm()).fold(0.0, f64::max);
+        let size = 1.0 + max(pos).max(max(vel));
+        let dir = max(dpos).max(max(dvel));
+        // ~cbrt(machine epsilon) relative step, optimal for central differences.
+        let eps = if dir > 0.0 { 6e-6 * size / dir } else { 0.0 };
+        let shift = |sign: f64| {
+            (
+                pos.iter()
+                    .zip(dpos)
+                    .map(|(x, d)| *x + *d * (sign * eps))
+                    .collect(),
+                vel.iter()
+                    .zip(dvel)
+                    .map(|(v, d)| *v + *d * (sign * eps))
+                    .collect(),
+            )
+        };
+        Self {
+            eps,
+            plus: shift(1.0),
+            minus: shift(-1.0),
+            a_plus: Vec::new(),
+            a_minus: Vec::new(),
+        }
+    }
+
+    fn add(&mut self, f: &dyn Force, t: f64, mass: &[f64], out: &mut [Vec3]) -> Result<()> {
+        if self.eps == 0.0 {
+            return Ok(());
+        }
+        let n = out.len();
+        for (buf, (p, v)) in [
+            (&mut self.a_plus, &self.plus),
+            (&mut self.a_minus, &self.minus),
+        ] {
+            buf.clear();
+            buf.resize(n, Vec3::ZERO);
+            f.accumulate(t, p, v, mass, buf)?;
+        }
+        let scale = 0.5 / self.eps;
+        for ((o, a), b) in out.iter_mut().zip(&self.a_plus).zip(&self.a_minus) {
+            *o += (*a - *b) * scale;
+        }
+        Ok(())
     }
 }
 
@@ -351,6 +465,11 @@ fn vector(name: &str, value: Param) -> Result<Vec3> {
     }
 }
 
+/// Directional derivative of the spring force `k (1 - L/r) d` along `δd`.
+fn spring_jvp(k: f64, rest_length: f64, d: Vec3, r: f64, dd: Vec3) -> Vec3 {
+    dd * (k * (1.0 - rest_length / r)) + d * (k * rest_length * d.dot(dd) / (r * r * r))
+}
+
 /// Shifts index `i` down if it is above a removed particle.
 fn shift(i: &mut usize, removed: usize) {
     if *i > removed {
@@ -365,6 +484,19 @@ pub struct UniformField {
 }
 
 impl Force for UniformField {
+    fn jacobian_vector(
+        &self,
+        _t: f64,
+        _pos: &[Vec3],
+        _vel: &[Vec3],
+        _mass: &[f64],
+        _dpos: &[Vec3],
+        _dvel: &[Vec3],
+        _out: &mut [Vec3],
+    ) -> Result<bool> {
+        Ok(true) // independent of the state
+    }
+
     fn accumulate(
         &self,
         _t: f64,
@@ -447,6 +579,32 @@ impl NewtonianGravity {
 }
 
 impl Force for NewtonianGravity {
+    fn jacobian_vector(
+        &self,
+        _t: f64,
+        pos: &[Vec3],
+        _vel: &[Vec3],
+        mass: &[f64],
+        dpos: &[Vec3],
+        _dvel: &[Vec3],
+        out: &mut [Vec3],
+    ) -> Result<bool> {
+        // δ(d/s³) = δd/s³ - 3 d (d·δd)/s⁵ for d = x_j - x_i, s² = |d|² + ε².
+        let eps2 = self.softening * self.softening;
+        for i in 0..pos.len() {
+            for j in (i + 1)..pos.len() {
+                let d = pos[j] - pos[i];
+                let dd = dpos[j] - dpos[i];
+                let s2 = d.norm_squared() + eps2;
+                let inv_s3 = 1.0 / (s2 * s2.sqrt());
+                let w = (dd - d * (3.0 * d.dot(dd) / s2)) * (self.g * inv_s3);
+                out[i] += w * mass[j];
+                out[j] -= w * mass[i];
+            }
+        }
+        Ok(true)
+    }
+
     fn accumulate(
         &self,
         _t: f64,
@@ -514,6 +672,29 @@ pub struct Spring {
 }
 
 impl Force for Spring {
+    fn jacobian_vector(
+        &self,
+        _t: f64,
+        pos: &[Vec3],
+        _vel: &[Vec3],
+        mass: &[f64],
+        dpos: &[Vec3],
+        _dvel: &[Vec3],
+        out: &mut [Vec3],
+    ) -> Result<bool> {
+        check_index(self.i, pos.len(), "Spring")?;
+        check_index(self.j, pos.len(), "Spring")?;
+        let d = pos[self.j] - pos[self.i];
+        let r = d.norm();
+        if r > 0.0 {
+            let dd = dpos[self.j] - dpos[self.i];
+            let df = spring_jvp(self.k, self.rest_length, d, r, dd);
+            out[self.i] += df / mass[self.i];
+            out[self.j] -= df / mass[self.j];
+        }
+        Ok(true)
+    }
+
     fn accumulate(
         &self,
         _t: f64,
@@ -591,6 +772,32 @@ pub struct AnchorSpring {
 }
 
 impl Force for AnchorSpring {
+    fn jacobian_vector(
+        &self,
+        _t: f64,
+        pos: &[Vec3],
+        _vel: &[Vec3],
+        mass: &[f64],
+        dpos: &[Vec3],
+        _dvel: &[Vec3],
+        out: &mut [Vec3],
+    ) -> Result<bool> {
+        check_index(self.i, pos.len(), "AnchorSpring")?;
+        let d = self.anchor - pos[self.i];
+        let dd = -dpos[self.i];
+        let df = if self.rest_length == 0.0 {
+            dd * self.k
+        } else {
+            let r = d.norm();
+            if r == 0.0 {
+                return Ok(true);
+            }
+            spring_jvp(self.k, self.rest_length, d, r, dd)
+        };
+        out[self.i] += df / mass[self.i];
+        Ok(true)
+    }
+
     fn accumulate(
         &self,
         _t: f64,
@@ -663,6 +870,22 @@ pub struct LinearDrag {
 }
 
 impl Force for LinearDrag {
+    fn jacobian_vector(
+        &self,
+        _t: f64,
+        _pos: &[Vec3],
+        _vel: &[Vec3],
+        _mass: &[f64],
+        _dpos: &[Vec3],
+        dvel: &[Vec3],
+        out: &mut [Vec3],
+    ) -> Result<bool> {
+        for (o, d) in out.iter_mut().zip(dvel) {
+            *o -= *d * self.gamma;
+        }
+        Ok(true)
+    }
+
     fn accumulate(
         &self,
         _t: f64,

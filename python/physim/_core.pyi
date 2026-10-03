@@ -117,6 +117,9 @@ class J2Oblateness:
         G: float = 1.0,
     ) -> None: ...
 
+class HenonHeiles:
+    def __init__(self, lam: float = 1.0, center: Optional[ArrayLike] = None) -> None: ...
+
 class CustomForce:
     def __init__(
         self,
@@ -202,6 +205,16 @@ class World:
         sink: Optional[Callable[[Trajectory], Any]] = None,
         chunk_size: int = 1024,
     ) -> Trajectory: ...
+    def lyapunov(
+        self,
+        dt: float,
+        steps: int,
+        n: int = 1,
+        *,
+        renormalize_every: int = 1,
+        record_every: int = 100,
+        seed: int = 1,
+    ) -> dict[str, NDArray[np.float64]]: ...
     def use_composition(self, weights: Sequence[float], order: int, name: str = "composition") -> None: ...
     def use_splitting(
         self, ops: Sequence[tuple[str, float]], order: int, name: str = "splitting"

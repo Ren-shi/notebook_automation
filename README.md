@@ -102,6 +102,20 @@ e = 0.5 and `rtol=1e-10`, so 1.6e-6 after 10 000 orbits), whereas `yoshida4` at 
 (1e-12). Use adaptive steps for transients, close encounters and moderately long runs with widely varying time
 scales; use a fixed-step symplectic integrator for very long integrations of smooth conservative motion.
 
+**Chaos indicators**: `w.lyapunov(dt, steps, n=1)` integrates the variational equations with the world's own
+integrator (tangent vectors ride along as extra pseudo-particles whose acceleration is the Jacobian-vector product
+`∂a/∂x·δx + ∂a/∂v·δv`: analytic for most built-in forces, finite differences otherwise) and returns the `n` largest
+Lyapunov exponents (Benettin's method, QR re-orthonormalisation), their running estimates, and MEGNO `⟨Y⟩` (→ 2 for
+regular motion, grows like `λt/2` for chaos). `ps.poincare_section(w, dt, steps, event)` returns the states at every
+crossing of a section, located to ~1e-12 of a step. On Hénon-Heiles (`ps.HenonHeiles()`) at E = 1/6 the chaotic sea
+gives λ ≈ 0.1 while regular orbits give λ → 0 and ⟨Y⟩ = 2.00; the full spectrum comes in ± pairs summing to 1e-16.
+
+```python
+out = w.lyapunov(0.01, 200_000, n=1)          # out["exponents"], out["running"], out["mean_megno"]
+y, py = ps.poincare_section(w, 0.01, 200_000, ps.Event.coordinate(0, "x", direction=1),
+                            coordinates=lambda p, v: (p[:, 0, 1], v[:, 0, 1]))
+```
+
 **Forces**:
 - Basics: `UniformField(g)`, `NewtonianGravity(G, softening)` (direct O(N²), Plummer softening),
   `LinearDrag(gamma)` (`a = -γv`), `QuadraticDrag(c)` (`F = -c|v|v`).
@@ -113,6 +127,7 @@ scales; use a fixed-step symplectic integrator for very long integrations of smo
 - External central potentials about `center` (per unit mass, acting on every particle): `PowerLaw(k, n)`
   (`Φ = k rⁿ`, `k ln r` for `n = 0`), `Yukawa(k, length)` (`-k e^{-r/λ}/r`), `PlummerPotential(GM, a)`,
   `HernquistPotential(GM, a)`, `HarmonicTrap(omega)` (scalar or per-axis frequencies).
+- `HenonHeiles(lam=1, center)`: the Hénon-Heiles potential in the xy-plane, the standard chaos test bed.
 - Drives: `PeriodicForce(i, amplitude, omega, phase=0)` (`F = A cos(ωt + φ)` on particle `i`).
 - Orbital perturbations from a central particle, used alongside `NewtonianGravity`: `PostNewtonian(central, c)`
   (first post-Newtonian GR correction, test-particle limit; gives the `6πGM/(c²a(1−e²))` periapsis advance) and
@@ -259,6 +274,7 @@ src/
   integrators.rs  Integrator trait and schemes
   world.rs        World (state + forces + integrator), run loop, Recorder, Trajectory
   adaptive.rs     adaptive Dormand-Prince run loop (error control, dense output)
+  chaos.rs        variational equations, Lyapunov exponents, MEGNO
   events.rs       event functions and crossing detection
   constraints.rs  rigid rods and the RATTLE projections
   checkpoint.rs   save/restore a World

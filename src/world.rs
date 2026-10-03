@@ -44,6 +44,10 @@ impl World {
         self.integrator.as_ref()
     }
 
+    pub(crate) fn integrator_mut(&mut self) -> &mut dyn Integrator {
+        self.integrator.as_mut()
+    }
+
     pub fn set_integrator(&mut self, integrator: Box<dyn Integrator>) {
         self.integrator = integrator;
     }

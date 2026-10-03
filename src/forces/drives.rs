@@ -16,6 +16,19 @@ pub struct PeriodicForce {
 }
 
 impl Force for PeriodicForce {
+    fn jacobian_vector(
+        &self,
+        _t: f64,
+        _pos: &[Vec3],
+        _vel: &[Vec3],
+        _mass: &[f64],
+        _dpos: &[Vec3],
+        _dvel: &[Vec3],
+        _out: &mut [Vec3],
+    ) -> Result<bool> {
+        Ok(true) // independent of the state
+    }
+
     fn accumulate(
         &self,
         t: f64,

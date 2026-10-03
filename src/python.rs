@@ -10,6 +10,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::adaptive::{AdaptiveOptions, Output};
+use crate::chaos::LyapunovOptions;
 use crate::checkpoint::{Checkpoint, SavedForce};
 use crate::constraints::{Anchor, ConstraintId, Constraints, Rod};
 use crate::error::{Result as SimResult, SimError};
@@ -578,6 +579,27 @@ impl PyJ2Oblateness {
     }
 }
 
+/// Hénon-Heiles potential ``Φ = ½(x² + y²) + lam (x² y - y³/3)`` per unit mass in the
+/// xy-plane about ``center``, acting on every particle (``lam = 1`` is the classic system).
+#[pyclass(frozen, name = "HenonHeiles", module = "physim")]
+struct PyHenonHeiles(forces::HenonHeiles);
+
+#[pymethods]
+impl PyHenonHeiles {
+    #[new]
+    #[pyo3(signature = (lam = 1.0, center = None))]
+    fn new(lam: f64, center: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let center = center.map_or(Ok(Vec3::ZERO), |c| extract_vec3(c, "center"))?;
+        Ok(Self(validated(forces::HenonHeiles {
+            center,
+            lambda: lam,
+        })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
 simple_spec!(
     PyDampedSpring,
     PyModulatedSpring,
@@ -589,7 +611,8 @@ simple_spec!(
     PyHarmonicTrap,
     PyPeriodicForce,
     PyPostNewtonian,
-    PyJ2Oblateness
+    PyJ2Oblateness,
+    PyHenonHeiles
 );
 
 /// A force defined in Python, for prototyping new physics without recompiling.
@@ -734,6 +757,7 @@ fn build_force(force: &Bound<'_, PyAny>) -> PyResult<Box<dyn Force>> {
         PyPeriodicForce,
         PyPostNewtonian,
         PyJ2Oblateness,
+        PyHenonHeiles,
         PyCustomForce
     );
     Err(PyValueError::new_err(format!(
@@ -858,6 +882,11 @@ fn describe_force<'py>(
             d.set_item("c", f.c)?;
             d.set_item("G", f.g)?;
         }
+        Some(BuiltinForce::HenonHeiles(f)) => {
+            d.set_item("type", "HenonHeiles")?;
+            d.set_item("lam", f.lambda)?;
+            d.set_item("center", v(f.center))?;
+        }
         Some(BuiltinForce::J2Oblateness(f)) => {
             d.set_item("type", "J2Oblateness")?;
             d.set_item("central", f.central)?;
@@ -885,7 +914,8 @@ fn builtin_from_description(desc: &Bound<'_, PyDict>) -> PyResult<BuiltinForce> 
         .get_item("type")?
         .ok_or_else(|| PyValueError::new_err("force description has no \"type\""))?
         .extract()?;
-    const BUILTIN: [&str; 17] = [
+    const BUILTIN: [&str; 18] = [
+        "HenonHeiles",
         "UniformField",
         "NewtonianGravity",
         "Spring",
@@ -1614,6 +1644,52 @@ impl PyWorld {
         Ok(())
     }
 
+    /// Takes ``steps`` steps of size ``dt`` while integrating the variational equations, and
+    /// returns Lyapunov exponents and MEGNO as a dict:
+    ///
+    /// - ``exponents`` (n,): final estimates, largest first, per unit time;
+    /// - ``t`` (F,) and ``running`` (F, n): estimates every ``record_every`` steps;
+    /// - ``megno`` and ``mean_megno`` (F,): MEGNO ``Y(t)`` and its average ``<Y>(t)``, which
+    ///   tends to 2 for quasi-periodic motion and grows like ``λ t / 2`` for chaos.
+    ///
+    /// The tangent vectors are integrated by the world's integrator together with the state
+    /// (the world advances as in :meth:`run`) and re-orthonormalised every
+    /// ``renormalize_every`` steps (Benettin's method). Not available with rods or
+    /// ``wisdom_holman``.
+    #[pyo3(signature = (dt, steps, n = 1, *, renormalize_every = 1, record_every = 100, seed = 1))]
+    #[allow(clippy::too_many_arguments)]
+    fn lyapunov<'py>(
+        &mut self,
+        py: Python<'py>,
+        dt: f64,
+        steps: usize,
+        n: usize,
+        renormalize_every: usize,
+        record_every: usize,
+        seed: u64,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let options = LyapunovOptions {
+            n_exponents: n,
+            renormalize_every,
+            record_every,
+            seed,
+        };
+        let world = &mut self.inner;
+        let run = py.detach(|| world.lyapunov(dt, steps, &options))?;
+        let d = PyDict::new(py);
+        let k = run.exponents.len().max(n);
+        let flat: Vec<f64> = run.running.iter().flatten().copied().collect();
+        d.set_item("exponents", PyArray1::from_vec(py, run.exponents))?;
+        d.set_item("t", PyArray1::from_vec(py, run.t))?;
+        d.set_item(
+            "running",
+            PyArray1::from_vec(py, flat).reshape([run.running.len(), k])?,
+        )?;
+        d.set_item("megno", PyArray1::from_vec(py, run.megno))?;
+        d.set_item("mean_megno", PyArray1::from_vec(py, run.mean_megno))?;
+        Ok(d)
+    }
+
     /// ``{"name": ..., "order": ..., "symplectic": ...}`` for the current integrator.
     #[getter]
     fn integrator_info<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -2264,6 +2340,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPeriodicForce>()?;
     m.add_class::<PyPostNewtonian>()?;
     m.add_class::<PyJ2Oblateness>()?;
+    m.add_class::<PyHenonHeiles>()?;
     m.add_class::<PyCustomForce>()?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
