@@ -2,6 +2,7 @@
 //! per-particle accelerations. Implement [`Force`] to add new physics in Rust.
 
 use crate::error::{invalid, Result};
+use crate::parallel;
 use crate::vec3::Vec3;
 
 /// Value of a tunable force parameter.
@@ -266,9 +267,7 @@ impl Force for UniformField {
         _mass: &[f64],
         acc: &mut [Vec3],
     ) -> Result<()> {
-        for a in acc {
-            *a += self.g;
-        }
+        parallel::for_each_indexed(acc, |_, a| *a += self.g);
         Ok(())
     }
 
@@ -304,6 +303,39 @@ pub struct NewtonianGravity {
     pub softening: f64,
 }
 
+impl NewtonianGravity {
+    /// Adds the interactions of pairs `(i, j)` with `lo <= i < hi`, `i < j`.
+    /// `acc` holds particles `n - acc.len()..n`: the whole system, or `lo..n` for a block buffer.
+    fn accumulate_rows(&self, lo: usize, hi: usize, pos: &[Vec3], mass: &[f64], acc: &mut [Vec3]) {
+        let eps2 = self.softening * self.softening;
+        let offset = pos.len() - acc.len();
+        for i in lo..hi {
+            let mut ai = Vec3::ZERO;
+            for j in (i + 1)..pos.len() {
+                let d = pos[j] - pos[i];
+                let r2 = d.norm_squared() + eps2;
+                let inv_r3 = 1.0 / (r2 * r2.sqrt());
+                let s = self.g * inv_r3;
+                ai += d * (s * mass[j]);
+                acc[j - offset] -= d * (s * mass[i]);
+            }
+            acc[i - offset] += ai;
+        }
+    }
+
+    fn potential_rows(&self, lo: usize, hi: usize, pos: &[Vec3], mass: &[f64]) -> f64 {
+        let eps2 = self.softening * self.softening;
+        let mut u = 0.0;
+        for i in lo..hi {
+            for j in (i + 1)..pos.len() {
+                let r = ((pos[j] - pos[i]).norm_squared() + eps2).sqrt();
+                u -= self.g * mass[i] * mass[j] / r;
+            }
+        }
+        u
+    }
+}
+
 impl Force for NewtonianGravity {
     fn accumulate(
         &self,
@@ -313,30 +345,28 @@ impl Force for NewtonianGravity {
         mass: &[f64],
         acc: &mut [Vec3],
     ) -> Result<()> {
-        let eps2 = self.softening * self.softening;
-        for i in 0..pos.len() {
-            for j in (i + 1)..pos.len() {
-                let d = pos[j] - pos[i];
-                let r2 = d.norm_squared() + eps2;
-                let inv_r3 = 1.0 / (r2 * r2.sqrt());
-                let s = self.g * inv_r3;
-                acc[i] += d * (s * mass[j]);
-                acc[j] -= d * (s * mass[i]);
-            }
+        let blocks = parallel::pair_blocks(pos.len());
+        if blocks.len() == 1 {
+            self.accumulate_rows(0, pos.len(), pos, mass, acc);
+            return Ok(());
         }
+        // Each block of rows writes its own buffer (every pair is computed once, i < j);
+        // the buffers are then added in block order, so results do not depend on threads.
+        // Rows i >= lo only touch particles >= lo, so a block's buffer covers lo..n.
+        let partials = parallel::map_blocks(&blocks, |lo, hi| {
+            let mut buf = vec![Vec3::ZERO; pos.len() - lo];
+            self.accumulate_rows(lo, hi, pos, mass, &mut buf);
+            (lo, buf)
+        });
+        parallel::add_partials(acc, &partials);
         Ok(())
     }
 
     fn potential(&self, _t: f64, pos: &[Vec3], mass: &[f64]) -> Result<Option<f64>> {
-        let eps2 = self.softening * self.softening;
-        let mut u = 0.0;
-        for i in 0..pos.len() {
-            for j in (i + 1)..pos.len() {
-                let r = ((pos[j] - pos[i]).norm_squared() + eps2).sqrt();
-                u -= self.g * mass[i] * mass[j] / r;
-            }
-        }
-        Ok(Some(u))
+        let blocks = parallel::pair_blocks(pos.len());
+        let partials =
+            parallel::map_blocks(&blocks, |lo, hi| self.potential_rows(lo, hi, pos, mass));
+        Ok(Some(partials.iter().sum()))
     }
 
     fn name(&self) -> String {
@@ -519,9 +549,7 @@ impl Force for LinearDrag {
         _mass: &[f64],
         acc: &mut [Vec3],
     ) -> Result<()> {
-        for (a, v) in acc.iter_mut().zip(vel) {
-            *a -= *v * self.gamma;
-        }
+        parallel::for_each_indexed(acc, |i, a| *a -= vel[i] * self.gamma);
         Ok(())
     }
 
