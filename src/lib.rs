@@ -18,6 +18,7 @@ pub mod events;
 pub mod forces;
 pub mod integrators;
 mod parallel;
+mod rng;
 pub mod state;
 pub mod vec3;
 pub mod world;
@@ -35,9 +36,9 @@ pub use events::{Direction, Event, EventFunction, EventHit};
 pub use forces::{
     AnchorSpring, BuiltinForce, ClosureForce, ContactLaw, Coulomb, DampedSpring, ElectricField,
     FieldFunctions, Force, ForceId, ForceSet, HarmonicTrap, HenonHeiles, HernquistPotential,
-    J2Oblateness, LinearDrag, MagneticField, ModulatedSpring, NewtonianGravity, Param,
-    PeriodicForce, PlummerPotential, PostNewtonian, PowerLaw, QuadraticDrag, SoftContact, Spring,
-    SpringNetwork, TreeGravity, UniformField, Yukawa,
+    J2Oblateness, LinearDrag, MagneticField, ModulatedSpring, NewtonianGravity, PairKind,
+    PairPotential, Param, PeriodicForce, PlummerPotential, PostNewtonian, PowerLaw, QuadraticDrag,
+    SoftContact, Spring, SpringNetwork, TreeGravity, UniformField, Yukawa,
 };
 pub use integrators::Integrator;
 pub use state::State;

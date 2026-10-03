@@ -13,6 +13,7 @@ mod contact;
 mod drives;
 mod em;
 mod orbital;
+mod pair;
 mod springs;
 mod tree;
 
@@ -24,6 +25,7 @@ pub use contact::{ContactLaw, SoftContact};
 pub use drives::PeriodicForce;
 pub use em::{Coulomb, ElectricField, FieldFunctions, MagneticField};
 pub use orbital::{J2Oblateness, PostNewtonian};
+pub use pair::{PairKind, PairPotential};
 pub use springs::{DampedSpring, ModulatedSpring, SpringNetwork};
 pub use tree::TreeGravity;
 
@@ -170,6 +172,12 @@ pub trait Force: Send + Sync {
         self.accumulate_charged(t, pos, vel, mass, charge, acc)
     }
 
+    /// The virial `Σ_pairs r_ij · F_ij` of a pairwise force (positive when repulsive), for the
+    /// pressure `P = (2 K + W) / (3 V)`. `None` for forces that do not provide it.
+    fn virial(&self, _pos: &[Vec3]) -> Result<Option<f64>> {
+        Ok(None)
+    }
+
     /// For the built-in forces, a copy that can be saved and rebuilt (see
     /// [`BuiltinForce`]). Forces defined elsewhere return `None` and must be supplied
     /// again when a checkpoint is loaded.
@@ -223,6 +231,7 @@ pub enum BuiltinForce {
     Coulomb(Coulomb),
     TreeGravity(TreeGravity),
     SoftContact(SoftContact),
+    PairPotential(PairPotential),
 }
 
 impl BuiltinForce {
@@ -251,6 +260,7 @@ impl BuiltinForce {
             BuiltinForce::Coulomb(f) => Box::new(f),
             BuiltinForce::TreeGravity(f) => Box::new(f),
             BuiltinForce::SoftContact(f) => Box::new(f),
+            BuiltinForce::PairPotential(f) => Box::new(f),
         }
     }
 }
@@ -511,6 +521,15 @@ impl ForceSet {
             }
         }
         Ok(())
+    }
+
+    /// Total virial of the forces that provide one (see [`Force::virial`]).
+    pub fn virial(&self, pos: &[Vec3]) -> Result<f64> {
+        let mut total = 0.0;
+        for (_, f) in &self.forces {
+            total += f.virial(pos)?.unwrap_or(0.0);
+        }
+        Ok(total)
     }
 
     /// Sum of the potentials of all conservative forces (non-conservative ones are skipped).
