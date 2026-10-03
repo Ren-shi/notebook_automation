@@ -43,7 +43,7 @@ def test_custom_force_matches_builtin():
     b = custom.run(dt=1e-3, steps=2000, record_every=100)
     np.testing.assert_allclose(b.pos, a.pos, rtol=1e-10, atol=1e-12)
     np.testing.assert_allclose(b.energy, a.energy, rtol=1e-10)
-    assert custom.forces == ["py_gravity"]
+    assert list(custom.forces.values()) == ["py_gravity"]
 
 
 def test_energy_conservation_diagnostic():

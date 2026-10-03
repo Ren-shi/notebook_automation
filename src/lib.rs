@@ -18,10 +18,10 @@ mod python;
 
 pub use error::{Result, SimError};
 pub use forces::{
-    AnchorSpring, Force, ForceSet, LinearDrag, NewtonianGravity, QuadraticDrag, Spring,
-    UniformField,
+    AnchorSpring, Force, ForceId, ForceSet, LinearDrag, NewtonianGravity, Param, QuadraticDrag,
+    Spring, UniformField,
 };
 pub use integrators::Integrator;
 pub use state::State;
 pub use vec3::Vec3;
-pub use world::{Trajectory, World};
+pub use world::{RunFailure, Trajectory, World};

@@ -7,12 +7,13 @@ use numpy::{
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use crate::error::{Result as SimResult, SimError};
-use crate::forces::{self, Force};
+use crate::forces::{self, Force, ForceId, Param};
 use crate::integrators;
 use crate::vec3::Vec3;
-use crate::world::{Trajectory, World};
+use crate::world::{RunFailure, Trajectory, World};
 
 impl From<SimError> for PyErr {
     fn from(e: SimError) -> PyErr {
@@ -490,19 +491,85 @@ impl PyWorld {
         Ok(self.inner.add_particle(pos, vel, mass)?)
     }
 
-    fn add_force(&mut self, force: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.inner.forces.add(build_force(force)?);
+    /// Removes particle ``i``; higher indices shift down by one and index-based forces
+    /// (springs) are renumbered. Fails while a force still refers to particle ``i``.
+    fn remove_particle(&mut self, i: usize) -> PyResult<()> {
+        Ok(self.inner.remove_particle(i)?)
+    }
+
+    /// Pins particle ``i`` in place (it still exerts forces), or releases it with ``pinned=False``.
+    #[pyo3(signature = (i, pinned = true))]
+    fn pin(&mut self, i: usize, pinned: bool) -> PyResult<()> {
+        Ok(self.inner.pin(i, pinned)?)
+    }
+
+    /// Boolean mask of pinned particles, shape (N,).
+    #[getter]
+    fn pinned<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<bool>> {
+        PyArray1::from_slice(py, &self.inner.state.pinned)
+    }
+
+    /// Adds a force and returns its id, for use with ``remove_force``, ``replace_force``,
+    /// ``force_params`` and ``set_force_params``.
+    fn add_force(&mut self, force: &Bound<'_, PyAny>) -> PyResult<ForceId> {
+        Ok(self.inner.forces.add(build_force(force)?))
+    }
+
+    fn remove_force(&mut self, id: ForceId) -> PyResult<()> {
+        self.inner.remove_force(id)?;
         Ok(())
+    }
+
+    /// Replaces force ``id`` with ``force``, keeping its id.
+    fn replace_force(&mut self, id: ForceId, force: &Bound<'_, PyAny>) -> PyResult<()> {
+        self.inner.forces.replace(id, build_force(force)?)?;
+        Ok(())
+    }
+
+    /// Current tunable parameters of force ``id`` as a dict.
+    fn force_params<'py>(&self, py: Python<'py>, id: ForceId) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        for (name, value) in self.inner.forces.get(id)?.params() {
+            match value {
+                Param::Scalar(x) => dict.set_item(name, x)?,
+                Param::Vector(v) => dict.set_item(name, vec3_to_array(py, v))?,
+            }
+        }
+        Ok(dict)
+    }
+
+    /// Changes parameters of force ``id``, e.g. ``set_force_params(g_id, G=2.0)``.
+    /// Either all changes apply or none do.
+    #[pyo3(signature = (id, **params))]
+    fn set_force_params(
+        &mut self,
+        id: ForceId,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<()> {
+        let mut values = Vec::new();
+        for (name, value) in params.into_iter().flat_map(|d| d.iter()) {
+            let name: String = name.extract()?;
+            let value = match value.extract::<f64>() {
+                Ok(x) => Param::Scalar(x),
+                Err(_) => Param::Vector(extract_vec3(&value, &name)?),
+            };
+            values.push((name, value));
+        }
+        Ok(self.inner.set_force_params(id, &values)?)
     }
 
     fn clear_forces(&mut self) {
         self.inner.forces.clear();
     }
 
-    /// Names of the forces acting on the system.
+    /// Forces acting on the system as ``{id: name}``.
     #[getter]
-    fn forces(&self) -> Vec<String> {
-        self.inner.forces.iter().map(|f| f.name()).collect()
+    fn forces(&self) -> std::collections::BTreeMap<ForceId, String> {
+        self.inner
+            .forces
+            .iter()
+            .map(|(id, f)| (id, f.name()))
+            .collect()
     }
 
     #[getter]
@@ -516,7 +583,19 @@ impl PyWorld {
         Ok(())
     }
 
-    /// Takes ``n`` steps of size ``dt``.
+    /// ``{"name": ..., "order": ..., "symplectic": ...}`` for the current integrator.
+    #[getter]
+    fn integrator_info<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let i = self.inner.integrator();
+        let dict = PyDict::new(py);
+        dict.set_item("name", i.name())?;
+        dict.set_item("order", i.order())?;
+        dict.set_item("symplectic", i.symplectic())?;
+        Ok(dict)
+    }
+
+    /// Takes ``n`` steps of size ``dt``. If a step fails, the world is left at the last
+    /// completed step.
     #[pyo3(signature = (dt, n = 1))]
     fn step(&mut self, py: Python<'_>, dt: f64, n: usize) -> PyResult<()> {
         let world = &mut self.inner;
@@ -526,6 +605,9 @@ impl PyWorld {
 
     /// Takes ``steps`` steps of size ``dt`` and returns a Trajectory containing the
     /// initial state, every ``record_every``-th step, and the final state.
+    ///
+    /// If a step fails, the world is left at the last completed step and the exception
+    /// carries the frames recorded so far as its ``trajectory`` attribute.
     #[pyo3(signature = (dt, steps, record_every = 1))]
     fn run(
         &mut self,
@@ -535,8 +617,19 @@ impl PyWorld {
         record_every: usize,
     ) -> PyResult<PyTrajectory> {
         let world = &mut self.inner;
-        let traj = py.detach(|| world.run(dt, steps, record_every))?;
-        PyTrajectory::from_rust(py, traj)
+        match py.detach(|| world.run(dt, steps, record_every)) {
+            Ok(traj) => PyTrajectory::from_rust(py, traj),
+            Err(RunFailure { error, trajectory }) => {
+                let err = PyErr::from(error);
+                if let Ok(partial) =
+                    PyTrajectory::from_rust(py, *trajectory).and_then(|t| Py::new(py, t))
+                {
+                    // Some exception types reject new attributes; the error still propagates.
+                    let _ = err.value(py).setattr("trajectory", partial);
+                }
+                Err(err)
+            }
+        }
     }
 
     #[getter]
@@ -569,23 +662,26 @@ impl PyWorld {
     }
     #[setter]
     fn set_velocities(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        self.inner.state.vel = extract_vecs(value, self.inner.state.len(), "velocities")?;
-        Ok(())
+        let vel = extract_vecs(value, self.inner.state.len(), "velocities")?;
+        Ok(self.inner.set_velocities(vel)?)
     }
 
     #[getter]
     fn masses<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.inner.state.mass)
     }
+    #[setter]
+    fn set_masses(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let arr = as_f64_array(value)?;
+        let arr: PyReadonlyArray1<'_, f64> = arr
+            .extract()
+            .map_err(|_| PyValueError::new_err("masses: expected a 1D array"))?;
+        Ok(self.inner.set_masses(arr.as_array().to_vec())?)
+    }
 
     /// Current total acceleration of every particle, shape (N, 3).
     fn accelerations<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let s = &self.inner.state;
-        let mut acc = Vec::new();
-        self.inner
-            .forces
-            .accelerations(s.t, &s.pos, &s.vel, &s.mass, &mut acc)?;
-        vecs_to_array(py, &acc)
+        vecs_to_array(py, &self.inner.accelerations()?)
     }
 
     fn kinetic_energy(&self) -> f64 {
@@ -612,7 +708,7 @@ impl PyWorld {
         format!(
             "World(n_particles={}, forces={:?}, integrator={:?}, t={})",
             self.inner.state.len(),
-            self.forces(),
+            self.forces().into_values().collect::<Vec<_>>(),
             self.integrator(),
             self.inner.state.t
         )

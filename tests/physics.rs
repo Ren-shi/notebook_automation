@@ -132,7 +132,8 @@ fn drag_dissipates_energy() {
 fn invalid_input_is_rejected() {
     assert!(World::with_integrator("nope").is_err());
     let mut w = World::with_integrator("verlet").unwrap();
-    assert!(w.add_particle(Vec3::ZERO, Vec3::ZERO, 0.0).is_err());
+    assert!(w.add_particle(Vec3::ZERO, Vec3::ZERO, -1.0).is_err());
+    assert!(w.add_particle(Vec3::ZERO, Vec3::ZERO, f64::NAN).is_err());
     w.add_particle(Vec3::ZERO, Vec3::ZERO, 1.0).unwrap();
     w.add_force(Spring {
         i: 0,

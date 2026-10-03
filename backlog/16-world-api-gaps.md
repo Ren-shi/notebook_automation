@@ -1,6 +1,12 @@
 # 16 · World API gaps: particle and force management
 
-**Priority:** P1 · **Size:** S · **Area:** Core
+**Priority:** P1 · **Size:** S · **Area:** Core · **Status: Done**
+
+> **Done.** Implemented as described below, with one design choice: removing a particle that a force still
+> uses is refused (rather than deleting the force), and higher indices are renumbered. Force parameters are
+> changed with `set_force_params(id, name=value)`, all-or-nothing. Pinned particles have zero velocity and
+> acceleration, so every integrator keeps them fixed exactly. A failed step rolls the world back to the last
+> completed step. Tests: `tests/world_api.rs`, `tests/python/test_world_api.py`.
 
 ## Why
 Some basic operations are missing, which gets in the way of exploratory work:

@@ -56,6 +56,17 @@ The symplectic schemes are only symplectic for velocity-independent forces; pref
 `QuadraticDrag(c)` (`F = -c|v|v`), and `CustomForce` (below). Conservative forces report a potential, so
 `traj.energy` and `w.total_energy()` include them.
 
+**Managing a world**:
+- `add_force` returns an id. Use it with `remove_force(id)`, `replace_force(id, force)`, `force_params(id)` and
+  `set_force_params(id, G=2.0)` to sweep a parameter without rebuilding the world. `w.forces` is `{id: name}`.
+- `remove_particle(i)` shifts higher indices down and renumbers springs; it refuses while a force still uses particle `i`.
+- `w.masses = [...]` changes masses. A mass of `0` makes a test particle: it feels gravity but does not source it.
+  Springs and quadratic drag reject massless particles.
+- `w.pin(i)` fixes a particle in place (it still exerts forces); `w.pin(i, False)` releases it.
+- If a step fails (an exception in a `CustomForce`, or the state becoming non-finite), the world rolls back to
+  the last completed step. From `run`, the exception carries the frames recorded so far as `err.trajectory`.
+- `w.integrator_info` gives the integrator's name, order and whether it is symplectic.
+
 **Diagnostics**: `kinetic_energy()`, `potential_energy()`, `total_energy()`, `momentum()`,
 `angular_momentum()`, `center_of_mass()`, `accelerations()`; trajectories record `t`, `pos`, `vel`,
 `kinetic`, `potential`, `energy`.
