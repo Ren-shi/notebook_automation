@@ -76,12 +76,16 @@ impl World {
             constraints,
         } = checkpoint;
         let n = state.pos.len();
-        if [state.vel.len(), state.mass.len(), state.pinned.len()] != [n, n, n] {
+        let lengths = [
+            state.vel.len(),
+            state.mass.len(),
+            state.charge.len(),
+            state.pinned.len(),
+        ];
+        if lengths != [n; 4] {
             return invalid(format!(
-                "inconsistent checkpoint: {n} positions, {} velocities, {} masses, {} pinned flags",
-                state.vel.len(),
-                state.mass.len(),
-                state.pinned.len()
+                "inconsistent checkpoint: {n} positions, {} velocities, {} masses, {} charges, {} pinned flags",
+                lengths[0], lengths[1], lengths[2], lengths[3]
             ));
         }
         let mut world = World::new(match integrator_scheme {
@@ -111,6 +115,7 @@ impl World {
         }
         // Pinning zeroes velocities; a valid checkpoint already has them at zero.
         world.set_velocities(state.vel)?;
+        world.set_charges(state.charge)?;
         constraints.validate(&world.state)?;
         world.tension = vec![0.0; constraints.len()];
         world.constraints = constraints;

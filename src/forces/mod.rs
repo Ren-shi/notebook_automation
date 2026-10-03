@@ -10,6 +10,7 @@ use crate::vec3::Vec3;
 mod central;
 mod closure;
 mod drives;
+mod em;
 mod orbital;
 mod springs;
 
@@ -18,6 +19,7 @@ pub use central::{
 };
 pub use closure::ClosureForce;
 pub use drives::PeriodicForce;
+pub use em::{Coulomb, ElectricField, FieldFunctions, MagneticField};
 pub use orbital::{J2Oblateness, PostNewtonian};
 pub use springs::{DampedSpring, ModulatedSpring, SpringNetwork};
 
@@ -73,6 +75,69 @@ pub trait Force: Send + Sync {
         Ok(false)
     }
 
+    /// [`Force::accumulate`] with the particles' charges available. Forces that act on charge
+    /// (fields, Coulomb) implement this; the default ignores the charges.
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_charged(
+        &self,
+        t: f64,
+        pos: &[Vec3],
+        vel: &[Vec3],
+        mass: &[f64],
+        _charge: &[f64],
+        acc: &mut [Vec3],
+    ) -> Result<()> {
+        self.accumulate(t, pos, vel, mass, acc)
+    }
+
+    /// [`Force::potential`] with the particles' charges available.
+    fn potential_charged(
+        &self,
+        t: f64,
+        pos: &[Vec3],
+        mass: &[f64],
+        _charge: &[f64],
+    ) -> Result<Option<f64>> {
+        self.potential(t, pos, mass)
+    }
+
+    /// [`Force::jacobian_vector`] with the particles' charges available.
+    #[allow(clippy::too_many_arguments)]
+    fn jacobian_vector_charged(
+        &self,
+        t: f64,
+        pos: &[Vec3],
+        vel: &[Vec3],
+        mass: &[f64],
+        _charge: &[f64],
+        dpos: &[Vec3],
+        dvel: &[Vec3],
+        out: &mut [Vec3],
+    ) -> Result<bool> {
+        self.jacobian_vector(t, pos, vel, mass, dpos, dvel, out)
+    }
+
+    /// For magnetic forces (`a = (q/m) v × B`): adds the field `B` at each particle's
+    /// position to `out` and returns `true`; the Boris integrator rotates velocities about it
+    /// and takes the rest of the force from [`Force::accumulate_electric`]. Others return `false`.
+    fn magnetic_field(&self, _t: f64, _pos: &[Vec3], _out: &mut [Vec3]) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// The force without its magnetic `v × B` part (all of it for non-magnetic forces).
+    #[allow(clippy::too_many_arguments)]
+    fn accumulate_electric(
+        &self,
+        t: f64,
+        pos: &[Vec3],
+        vel: &[Vec3],
+        mass: &[f64],
+        charge: &[f64],
+        acc: &mut [Vec3],
+    ) -> Result<()> {
+        self.accumulate_charged(t, pos, vel, mass, charge, acc)
+    }
+
     /// For the built-in forces, a copy that can be saved and rebuilt (see
     /// [`BuiltinForce`]). Forces defined elsewhere return `None` and must be supplied
     /// again when a checkpoint is loaded.
@@ -121,6 +186,9 @@ pub enum BuiltinForce {
     PostNewtonian(PostNewtonian),
     J2Oblateness(J2Oblateness),
     HenonHeiles(HenonHeiles),
+    ElectricField(ElectricField),
+    MagneticField(MagneticField),
+    Coulomb(Coulomb),
 }
 
 impl BuiltinForce {
@@ -144,6 +212,9 @@ impl BuiltinForce {
             BuiltinForce::PostNewtonian(f) => Box::new(f),
             BuiltinForce::J2Oblateness(f) => Box::new(f),
             BuiltinForce::HenonHeiles(f) => Box::new(f),
+            BuiltinForce::ElectricField(f) => Box::new(f),
+            BuiltinForce::MagneticField(f) => Box::new(f),
+            BuiltinForce::Coulomb(f) => Box::new(f),
         }
     }
 }
@@ -301,19 +372,21 @@ impl ForceSet {
 
     /// Overwrites `acc` with the total acceleration of every particle.
     /// Pinned particles get zero acceleration (they still exert forces on others).
+    #[allow(clippy::too_many_arguments)]
     pub fn accelerations(
         &self,
         t: f64,
         pos: &[Vec3],
         vel: &[Vec3],
         mass: &[f64],
+        charge: &[f64],
         pinned: &[bool],
         acc: &mut Vec<Vec3>,
     ) -> Result<()> {
         acc.clear();
         acc.resize(pos.len(), Vec3::ZERO);
         for (_, f) in &self.forces {
-            f.accumulate(t, pos, vel, mass, acc)?;
+            f.accumulate_charged(t, pos, vel, mass, charge, acc)?;
         }
         for (a, &p) in acc.iter_mut().zip(pinned) {
             if p {
@@ -333,6 +406,7 @@ impl ForceSet {
         pos: &[Vec3],
         vel: &[Vec3],
         mass: &[f64],
+        charge: &[f64],
         pinned: &[bool],
         dpos: &[Vec3],
         dvel: &[Vec3],
@@ -343,11 +417,11 @@ impl ForceSet {
         out.resize(n, Vec3::ZERO);
         let mut fd: Option<FiniteDifference> = None;
         for (_, f) in &self.forces {
-            if f.jacobian_vector(t, pos, vel, mass, dpos, dvel, out)? {
+            if f.jacobian_vector_charged(t, pos, vel, mass, charge, dpos, dvel, out)? {
                 continue;
             }
             let fd = fd.get_or_insert_with(|| FiniteDifference::new(pos, vel, dpos, dvel));
-            fd.add(f.as_ref(), t, mass, out)?;
+            fd.add(f.as_ref(), t, mass, charge, out)?;
         }
         for (o, &p) in out.iter_mut().zip(pinned) {
             if p {
@@ -357,11 +431,50 @@ impl ForceSet {
         Ok(())
     }
 
+    /// For the Boris integrator: overwrites `acc` with the accelerations without the magnetic
+    /// `v × B` parts and `b` with the total magnetic field at each particle. Fails if a force
+    /// other than a magnetic one depends on velocity. Pinned particles get zeros.
+    #[allow(clippy::too_many_arguments)]
+    pub fn electric_and_magnetic(
+        &self,
+        t: f64,
+        pos: &[Vec3],
+        vel: &[Vec3],
+        mass: &[f64],
+        charge: &[f64],
+        pinned: &[bool],
+        acc: &mut Vec<Vec3>,
+        b: &mut Vec<Vec3>,
+    ) -> Result<()> {
+        let n = pos.len();
+        acc.clear();
+        acc.resize(n, Vec3::ZERO);
+        b.clear();
+        b.resize(n, Vec3::ZERO);
+        for (_, f) in &self.forces {
+            let magnetic = f.magnetic_field(t, pos, b)?;
+            if !magnetic && f.velocity_dependent() {
+                return invalid(format!(
+                    "boris: {} depends on velocity but is not a magnetic field",
+                    f.name()
+                ));
+            }
+            f.accumulate_electric(t, pos, vel, mass, charge, acc)?;
+        }
+        for ((a, bi), &p) in acc.iter_mut().zip(b.iter_mut()).zip(pinned) {
+            if p {
+                *a = Vec3::ZERO;
+                *bi = Vec3::ZERO;
+            }
+        }
+        Ok(())
+    }
+
     /// Sum of the potentials of all conservative forces (non-conservative ones are skipped).
-    pub fn potential(&self, t: f64, pos: &[Vec3], mass: &[f64]) -> Result<f64> {
+    pub fn potential(&self, t: f64, pos: &[Vec3], mass: &[f64], charge: &[f64]) -> Result<f64> {
         let mut total = 0.0;
         for (_, f) in &self.forces {
-            total += f.potential(t, pos, mass)?.unwrap_or(0.0);
+            total += f.potential_charged(t, pos, mass, charge)?.unwrap_or(0.0);
         }
         Ok(total)
     }
@@ -404,7 +517,14 @@ impl FiniteDifference {
         }
     }
 
-    fn add(&mut self, f: &dyn Force, t: f64, mass: &[f64], out: &mut [Vec3]) -> Result<()> {
+    fn add(
+        &mut self,
+        f: &dyn Force,
+        t: f64,
+        mass: &[f64],
+        charge: &[f64],
+        out: &mut [Vec3],
+    ) -> Result<()> {
         if self.eps == 0.0 {
             return Ok(());
         }
@@ -415,7 +535,7 @@ impl FiniteDifference {
         ] {
             buf.clear();
             buf.resize(n, Vec3::ZERO);
-            f.accumulate(t, p, v, mass, buf)?;
+            f.accumulate_charged(t, p, v, mass, charge, buf)?;
         }
         let scale = 0.5 / self.eps;
         for ((o, a), b) in out.iter_mut().zip(&self.a_plus).zip(&self.a_minus) {
@@ -545,10 +665,28 @@ pub struct NewtonianGravity {
     pub softening: f64,
 }
 
-impl NewtonianGravity {
+/// Pairwise inverse-square interaction shared by gravity and Coulomb: particle `i` gets
+/// `coef · src_j · resp_i · d / s³` from each `j`, with `d = x_j - x_i` and
+/// `s² = |d|² + softening²` (and the opposite from `i` on `j`). Gravity: `coef = G`,
+/// `src = m`, `resp = 1`. Coulomb: `coef = -k`, `src = q`, `resp = q/m`. Direct O(N²) sum,
+/// split into deterministic parallel blocks for large N.
+pub(crate) struct InverseSquare {
+    pub coef: f64,
+    pub softening: f64,
+}
+
+impl InverseSquare {
     /// Adds the interactions of pairs `(i, j)` with `lo <= i < hi`, `i < j`.
     /// `acc` holds particles `n - acc.len()..n`: the whole system, or `lo..n` for a block buffer.
-    fn accumulate_rows(&self, lo: usize, hi: usize, pos: &[Vec3], mass: &[f64], acc: &mut [Vec3]) {
+    fn rows(
+        &self,
+        lo: usize,
+        hi: usize,
+        pos: &[Vec3],
+        src: &[f64],
+        resp: &(impl Fn(usize) -> f64 + Sync),
+        acc: &mut [Vec3],
+    ) {
         let eps2 = self.softening * self.softening;
         let offset = pos.len() - acc.len();
         for i in lo..hi {
@@ -557,24 +695,85 @@ impl NewtonianGravity {
                 let d = pos[j] - pos[i];
                 let r2 = d.norm_squared() + eps2;
                 let inv_r3 = 1.0 / (r2 * r2.sqrt());
-                let s = self.g * inv_r3;
-                ai += d * (s * mass[j]);
-                acc[j - offset] -= d * (s * mass[i]);
+                let s = self.coef * inv_r3;
+                ai += d * (s * src[j]);
+                acc[j - offset] -= d * (s * src[i]) * resp(j);
             }
-            acc[i - offset] += ai;
+            acc[i - offset] += ai * resp(i);
         }
     }
 
-    fn potential_rows(&self, lo: usize, hi: usize, pos: &[Vec3], mass: &[f64]) -> f64 {
+    pub(crate) fn accumulate(
+        &self,
+        pos: &[Vec3],
+        src: &[f64],
+        resp: impl Fn(usize) -> f64 + Sync,
+        acc: &mut [Vec3],
+    ) {
+        let blocks = parallel::pair_blocks(pos.len());
+        if blocks.len() == 1 {
+            self.rows(0, pos.len(), pos, src, &resp, acc);
+            return;
+        }
+        // Each block of rows writes its own buffer (every pair is computed once, i < j);
+        // the buffers are then added in block order, so results do not depend on threads.
+        // Rows i >= lo only touch particles >= lo, so a block's buffer covers lo..n.
+        let partials = parallel::map_blocks(&blocks, |lo, hi| {
+            let mut buf = vec![Vec3::ZERO; pos.len() - lo];
+            self.rows(lo, hi, pos, src, &resp, &mut buf);
+            (lo, buf)
+        });
+        parallel::add_partials(acc, &partials);
+    }
+
+    /// `-coef Σ_{i<j} src_i src_j / s`.
+    pub(crate) fn potential(&self, pos: &[Vec3], src: &[f64]) -> f64 {
         let eps2 = self.softening * self.softening;
-        let mut u = 0.0;
-        for i in lo..hi {
+        let blocks = parallel::pair_blocks(pos.len());
+        let partials = parallel::map_blocks(&blocks, |lo, hi| {
+            let mut u = 0.0;
+            for i in lo..hi {
+                for j in (i + 1)..pos.len() {
+                    let r = ((pos[j] - pos[i]).norm_squared() + eps2).sqrt();
+                    u -= self.coef * src[i] * src[j] / r;
+                }
+            }
+            u
+        });
+        partials.iter().sum()
+    }
+
+    /// Directional derivative of the accelerations along `dpos`.
+    pub(crate) fn jacobian_vector(
+        &self,
+        pos: &[Vec3],
+        src: &[f64],
+        resp: impl Fn(usize) -> f64,
+        dpos: &[Vec3],
+        out: &mut [Vec3],
+    ) {
+        // δ(d/s³) = δd/s³ - 3 d (d·δd)/s⁵ for d = x_j - x_i.
+        let eps2 = self.softening * self.softening;
+        for i in 0..pos.len() {
             for j in (i + 1)..pos.len() {
-                let r = ((pos[j] - pos[i]).norm_squared() + eps2).sqrt();
-                u -= self.g * mass[i] * mass[j] / r;
+                let d = pos[j] - pos[i];
+                let dd = dpos[j] - dpos[i];
+                let s2 = d.norm_squared() + eps2;
+                let inv_s3 = 1.0 / (s2 * s2.sqrt());
+                let w = (dd - d * (3.0 * d.dot(dd) / s2)) * (self.coef * inv_s3);
+                out[i] += w * (src[j] * resp(i));
+                out[j] -= w * (src[i] * resp(j));
             }
         }
-        u
+    }
+}
+
+impl NewtonianGravity {
+    fn kernel(&self) -> InverseSquare {
+        InverseSquare {
+            coef: self.g,
+            softening: self.softening,
+        }
     }
 }
 
@@ -589,19 +788,7 @@ impl Force for NewtonianGravity {
         _dvel: &[Vec3],
         out: &mut [Vec3],
     ) -> Result<bool> {
-        // δ(d/s³) = δd/s³ - 3 d (d·δd)/s⁵ for d = x_j - x_i, s² = |d|² + ε².
-        let eps2 = self.softening * self.softening;
-        for i in 0..pos.len() {
-            for j in (i + 1)..pos.len() {
-                let d = pos[j] - pos[i];
-                let dd = dpos[j] - dpos[i];
-                let s2 = d.norm_squared() + eps2;
-                let inv_s3 = 1.0 / (s2 * s2.sqrt());
-                let w = (dd - d * (3.0 * d.dot(dd) / s2)) * (self.g * inv_s3);
-                out[i] += w * mass[j];
-                out[j] -= w * mass[i];
-            }
-        }
+        self.kernel().jacobian_vector(pos, mass, |_| 1.0, dpos, out);
         Ok(true)
     }
 
@@ -613,28 +800,12 @@ impl Force for NewtonianGravity {
         mass: &[f64],
         acc: &mut [Vec3],
     ) -> Result<()> {
-        let blocks = parallel::pair_blocks(pos.len());
-        if blocks.len() == 1 {
-            self.accumulate_rows(0, pos.len(), pos, mass, acc);
-            return Ok(());
-        }
-        // Each block of rows writes its own buffer (every pair is computed once, i < j);
-        // the buffers are then added in block order, so results do not depend on threads.
-        // Rows i >= lo only touch particles >= lo, so a block's buffer covers lo..n.
-        let partials = parallel::map_blocks(&blocks, |lo, hi| {
-            let mut buf = vec![Vec3::ZERO; pos.len() - lo];
-            self.accumulate_rows(lo, hi, pos, mass, &mut buf);
-            (lo, buf)
-        });
-        parallel::add_partials(acc, &partials);
+        self.kernel().accumulate(pos, mass, |_| 1.0, acc);
         Ok(())
     }
 
     fn potential(&self, _t: f64, pos: &[Vec3], mass: &[f64]) -> Result<Option<f64>> {
-        let blocks = parallel::pair_blocks(pos.len());
-        let partials =
-            parallel::map_blocks(&blocks, |lo, hi| self.potential_rows(lo, hi, pos, mass));
-        Ok(Some(partials.iter().sum()))
+        Ok(Some(self.kernel().potential(pos, mass)))
     }
 
     fn name(&self) -> String {

@@ -81,7 +81,15 @@ impl Integrator for GaussLegendre {
     fn step(&mut self, s: &mut State, forces: &ForceSet, dt: f64) -> Result<()> {
         let n = s.len();
         // Initial guess: every stage slope equals the slope at the start.
-        forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, &mut self.acc)?;
+        forces.accelerations(
+            s.t,
+            &s.pos,
+            &s.vel,
+            &s.mass,
+            &s.charge,
+            &s.pinned,
+            &mut self.acc,
+        )?;
         for i in 0..self.stages {
             self.kx[i].clone_from(&s.vel);
             self.kv[i].clone_from(&self.acc);
@@ -106,6 +114,7 @@ impl Integrator for GaussLegendre {
                     &self.xs,
                     &self.vs,
                     &s.mass,
+                    &s.charge,
                     &s.pinned,
                     &mut self.acc,
                 )?;

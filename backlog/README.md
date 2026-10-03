@@ -14,7 +14,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 06 | ~~[Save, load and stream simulation data](06-save-load-and-streaming.md)~~ **Done** | Core | P1 | M | — |
 | 07 | ~~[Holonomic constraints (SHAKE/RATTLE)](07-constraints.md)~~ **Done** | Physics | P1 | M | — |
 | 08 | ~~[Adaptive time stepping](08-adaptive-time-stepping.md)~~ **Done** | Integrators | P2 | M | 05 |
-| 09 | [Charged particles: Lorentz force and Boris pusher](09-lorentz-force-boris.md) | Physics | P2 | M | — |
+| 09 | ~~[Charged particles: Lorentz force and Boris pusher](09-lorentz-force-boris.md)~~ **Done** | Physics | P2 | M | — |
 | 10 | [Tree gravity (Barnes–Hut)](10-barnes-hut.md) | Performance | P2 | L | 02, 04 |
 | 11 | [Collisions and contact](11-collisions.md) | Physics | P2 | L | 05 |
 | 12 | [Molecular dynamics: pair potentials, periodic boxes, thermostats](12-molecular-dynamics.md) | Physics | P2 | L | 04 |

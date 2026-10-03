@@ -176,10 +176,14 @@ fn analytic_jacobians_match_finite_differences() {
         numeric.add(Box::new(Opaque(f())));
         let (mut a, mut b) = (Vec::new(), Vec::new());
         analytic
-            .jacobian_vector(0.7, &pos, &vel, &mass, &pinned, &dpos, &dvel, &mut a)
+            .jacobian_vector(
+                0.7, &pos, &vel, &mass, &[0.0; 4], &pinned, &dpos, &dvel, &mut a,
+            )
             .unwrap();
         numeric
-            .jacobian_vector(0.7, &pos, &vel, &mass, &pinned, &dpos, &dvel, &mut b)
+            .jacobian_vector(
+                0.7, &pos, &vel, &mass, &[0.0; 4], &pinned, &dpos, &dvel, &mut b,
+            )
             .unwrap();
         let scale = b.iter().map(|x| x.norm()).fold(1e-3, f64::max);
         for (x, y) in a.iter().zip(&b) {

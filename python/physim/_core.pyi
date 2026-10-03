@@ -120,6 +120,23 @@ class J2Oblateness:
 class HenonHeiles:
     def __init__(self, lam: float = 1.0, center: Optional[ArrayLike] = None) -> None: ...
 
+class ElectricField:
+    def __init__(self, E: ArrayLike) -> None: ...
+
+class MagneticField:
+    def __init__(self, B: ArrayLike) -> None: ...
+
+class Coulomb:
+    def __init__(self, k: float = 1.0, softening: float = 0.0) -> None: ...
+
+class FieldForce:
+    def __init__(
+        self,
+        E: Optional[Callable[[float, NDArray[np.float64]], ArrayLike]] = None,
+        B: Optional[Callable[[float, NDArray[np.float64]], ArrayLike]] = None,
+        name: str = "FieldForce",
+    ) -> None: ...
+
 class CustomForce:
     def __init__(
         self,
@@ -147,7 +164,31 @@ class Event:
     @staticmethod
     def separation(i: int, j: int, distance: float, direction: int = 0, terminal: bool = False) -> Event: ...
 
-Force = UniformField | NewtonianGravity | Spring | AnchorSpring | LinearDrag | QuadraticDrag | CustomForce
+Force = Union[
+    UniformField,
+    NewtonianGravity,
+    Spring,
+    AnchorSpring,
+    LinearDrag,
+    QuadraticDrag,
+    DampedSpring,
+    ModulatedSpring,
+    SpringNetwork,
+    PowerLaw,
+    Yukawa,
+    PlummerPotential,
+    HernquistPotential,
+    HarmonicTrap,
+    HenonHeiles,
+    PeriodicForce,
+    PostNewtonian,
+    J2Oblateness,
+    ElectricField,
+    MagneticField,
+    Coulomb,
+    FieldForce,
+    CustomForce,
+]
 
 class IntegratorInfo(TypedDict):
     name: str
@@ -160,6 +201,7 @@ class World:
     positions: NDArray[np.float64]
     velocities: NDArray[np.float64]
     masses: NDArray[np.float64]
+    charges: NDArray[np.float64]
     @property
     def pinned(self) -> NDArray[np.bool_]: ...
     @property
@@ -169,7 +211,9 @@ class World:
     @property
     def integrator_info(self) -> IntegratorInfo: ...
     def __init__(self, integrator: str = "verlet") -> None: ...
-    def add_particle(self, pos: ArrayLike, vel: Optional[ArrayLike] = None, mass: float = 1.0) -> int: ...
+    def add_particle(
+        self, pos: ArrayLike, vel: Optional[ArrayLike] = None, mass: float = 1.0, charge: float = 0.0
+    ) -> int: ...
     def remove_particle(self, i: int) -> None: ...
     def pin(self, i: int, pinned: bool = True) -> None: ...
     def add_force(self, force: Force) -> int: ...

@@ -600,6 +600,132 @@ impl PyHenonHeiles {
     }
 }
 
+/// Uniform electric field: ``a = (q/m) E`` on every charged particle.
+#[pyclass(frozen, name = "ElectricField", module = "physim")]
+struct PyElectricField(forces::ElectricField);
+
+#[pymethods]
+impl PyElectricField {
+    #[new]
+    #[pyo3(signature = (E))]
+    #[allow(non_snake_case)]
+    fn new(E: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(forces::ElectricField {
+            e: extract_vec3(E, "E")?,
+        }))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Uniform magnetic field: ``a = (q/m) v × B`` on every charged particle. Use the ``boris``
+/// integrator to conserve kinetic energy exactly.
+#[pyclass(frozen, name = "MagneticField", module = "physim")]
+struct PyMagneticField(forces::MagneticField);
+
+#[pymethods]
+impl PyMagneticField {
+    #[new]
+    #[pyo3(signature = (B))]
+    #[allow(non_snake_case)]
+    fn new(B: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self(forces::MagneticField {
+            b: extract_vec3(B, "B")?,
+        }))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Pairwise Coulomb interaction ``U = k Σ q_i q_j / sqrt(r² + softening²)`` (like charges
+/// repel); same O(N²) parallel pair loop as ``NewtonianGravity``.
+#[pyclass(frozen, name = "Coulomb", module = "physim")]
+struct PyCoulomb(forces::Coulomb);
+
+#[pymethods]
+impl PyCoulomb {
+    #[new]
+    #[pyo3(signature = (k = 1.0, softening = 0.0))]
+    fn new(k: f64, softening: f64) -> PyResult<Self> {
+        Ok(Self(validated(forces::Coulomb { k, softening })?))
+    }
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        builtin_repr(py, &self.0)
+    }
+}
+
+/// Electric and/or magnetic fields given by Python functions ``E(t, pos)`` and
+/// ``B(t, pos)``, each returning an ``(N, 3)`` array of the field at every particle position.
+/// The Lorentz force ``a = (q/m)(E + v × B)`` follows, and ``boris`` rotates about ``B``
+/// exactly. Like ``CustomForce`` it cannot be saved in checkpoints.
+#[pyclass(frozen, name = "FieldForce", module = "physim")]
+struct PyFieldForce {
+    e: Option<Py<PyAny>>,
+    b: Option<Py<PyAny>>,
+    name: String,
+}
+
+#[pymethods]
+impl PyFieldForce {
+    #[new]
+    #[pyo3(signature = (E = None, B = None, name = "FieldForce"))]
+    #[allow(non_snake_case)]
+    fn new(
+        E: Option<&Bound<'_, PyAny>>,
+        B: Option<&Bound<'_, PyAny>>,
+        name: &str,
+    ) -> PyResult<Self> {
+        if E.is_none() && B.is_none() {
+            return Err(PyValueError::new_err("FieldForce needs E, B or both"));
+        }
+        if E.is_some_and(|f| !f.is_callable()) || B.is_some_and(|f| !f.is_callable()) {
+            return Err(PyValueError::new_err(
+                "E and B must be callables E(t, pos) -> (N, 3)",
+            ));
+        }
+        Ok(Self {
+            e: E.map(|f| f.clone().unbind()),
+            b: B.map(|f| f.clone().unbind()),
+            name: name.to_string(),
+        })
+    }
+    fn __repr__(&self) -> String {
+        format!("FieldForce({})", self.name)
+    }
+}
+
+/// Wraps a Python field function `f(t, pos) -> (N, 3)` as a Rust field closure.
+fn python_field(
+    f: Py<PyAny>,
+    what: String,
+) -> impl Fn(f64, &[Vec3], &mut [Vec3]) -> SimResult<()> + Send + Sync + 'static {
+    move |t, pos, out| {
+        Python::attach(|py| -> PyResult<()> {
+            let value = f.bind(py).call1((t, vecs_to_array(py, pos)?))?;
+            for (o, x) in out.iter_mut().zip(extract_vecs(&value, pos.len(), &what)?) {
+                *o += x;
+            }
+            Ok(())
+        })
+        .map_err(SimError::Python)
+    }
+}
+
+impl PyForceSpec for PyFieldForce {
+    fn build(&self, py: Python<'_>) -> Box<dyn Force> {
+        let mut f = forces::FieldFunctions::new(self.name.clone());
+        if let Some(e) = &self.e {
+            f = f.electric(python_field(e.clone_ref(py), format!("{} E", self.name)));
+        }
+        if let Some(b) = &self.b {
+            f = f.magnetic(python_field(b.clone_ref(py), format!("{} B", self.name)));
+        }
+        Box::new(f)
+    }
+}
+
 simple_spec!(
     PyDampedSpring,
     PyModulatedSpring,
@@ -612,7 +738,10 @@ simple_spec!(
     PyPeriodicForce,
     PyPostNewtonian,
     PyJ2Oblateness,
-    PyHenonHeiles
+    PyHenonHeiles,
+    PyElectricField,
+    PyMagneticField,
+    PyCoulomb
 );
 
 /// A force defined in Python, for prototyping new physics without recompiling.
@@ -758,6 +887,10 @@ fn build_force(force: &Bound<'_, PyAny>) -> PyResult<Box<dyn Force>> {
         PyPostNewtonian,
         PyJ2Oblateness,
         PyHenonHeiles,
+        PyElectricField,
+        PyMagneticField,
+        PyCoulomb,
+        PyFieldForce,
         PyCustomForce
     );
     Err(PyValueError::new_err(format!(
@@ -882,6 +1015,19 @@ fn describe_force<'py>(
             d.set_item("c", f.c)?;
             d.set_item("G", f.g)?;
         }
+        Some(BuiltinForce::ElectricField(f)) => {
+            d.set_item("type", "ElectricField")?;
+            d.set_item("E", v(f.e))?;
+        }
+        Some(BuiltinForce::MagneticField(f)) => {
+            d.set_item("type", "MagneticField")?;
+            d.set_item("B", v(f.b))?;
+        }
+        Some(BuiltinForce::Coulomb(f)) => {
+            d.set_item("type", "Coulomb")?;
+            d.set_item("k", f.k)?;
+            d.set_item("softening", f.softening)?;
+        }
         Some(BuiltinForce::HenonHeiles(f)) => {
             d.set_item("type", "HenonHeiles")?;
             d.set_item("lam", f.lambda)?;
@@ -914,8 +1060,11 @@ fn builtin_from_description(desc: &Bound<'_, PyDict>) -> PyResult<BuiltinForce> 
         .get_item("type")?
         .ok_or_else(|| PyValueError::new_err("force description has no \"type\""))?
         .extract()?;
-    const BUILTIN: [&str; 18] = [
+    const BUILTIN: [&str; 21] = [
         "HenonHeiles",
+        "ElectricField",
+        "MagneticField",
+        "Coulomb",
         "UniformField",
         "NewtonianGravity",
         "Spring",
@@ -1450,20 +1599,28 @@ impl PyWorld {
         })
     }
 
-    /// Adds a particle and returns its index.
-    #[pyo3(signature = (pos, vel = None, mass = 1.0))]
+    /// Adds a particle (optionally charged) and returns its index.
+    #[pyo3(signature = (pos, vel = None, mass = 1.0, charge = 0.0))]
     fn add_particle(
         &mut self,
         pos: &Bound<'_, PyAny>,
         vel: Option<&Bound<'_, PyAny>>,
         mass: f64,
+        charge: f64,
     ) -> PyResult<usize> {
         let pos = extract_vec3(pos, "pos")?;
         let vel = vel
             .map(|v| extract_vec3(v, "vel"))
             .transpose()?
             .unwrap_or(Vec3::ZERO);
-        Ok(self.inner.add_particle(pos, vel, mass)?)
+        if !charge.is_finite() {
+            return Err(PyValueError::new_err(format!(
+                "charge must be finite, got {charge}"
+            )));
+        }
+        let i = self.inner.add_particle(pos, vel, mass)?;
+        self.inner.set_charge(i, charge)?;
+        Ok(i)
     }
 
     /// Removes particle ``i``; higher indices shift down by one and index-based forces
@@ -1874,6 +2031,7 @@ impl PyWorld {
         d.set_item("positions", vecs_to_array(py, &s.pos)?)?;
         d.set_item("velocities", vecs_to_array(py, &s.vel)?)?;
         d.set_item("masses", PyArray1::from_slice(py, &s.mass))?;
+        d.set_item("charges", PyArray1::from_slice(py, &s.charge))?;
         d.set_item("pinned", PyArray1::from_slice(py, &s.pinned))?;
         d.set_item("integrator", self.inner.integrator().name())?;
         let scheme = self.inner.integrator().scheme();
@@ -1922,6 +2080,11 @@ impl PyWorld {
             pos: extract_vecs(&positions, n, "positions")?,
             vel: extract_vecs(&get("velocities")?, n, "velocities")?,
             mass: extract_f64s(&get("masses")?, "masses")?,
+            // Checkpoints from before charges existed have none: all neutral.
+            charge: match checkpoint.get_item("charges")? {
+                Some(c) => extract_f64s(&c, "charges")?,
+                None => vec![0.0; n],
+            },
             pinned: pinned.as_array().to_vec(),
         };
         let mut forces = Vec::new();
@@ -2057,6 +2220,20 @@ impl PyWorld {
         Ok(self.inner.set_masses(arr.as_array().to_vec())?)
     }
 
+    /// Electric charge of every particle, shape (N,).
+    #[getter]
+    fn charges<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_slice(py, &self.inner.state.charge)
+    }
+    #[setter]
+    fn set_charges(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let arr = as_f64_array(value)?;
+        let arr: PyReadonlyArray1<'_, f64> = arr
+            .extract()
+            .map_err(|_| PyValueError::new_err("charges: expected a 1D array"))?;
+        Ok(self.inner.set_charges(arr.as_array().to_vec())?)
+    }
+
     /// Current total acceleration of every particle, shape (N, 3).
     fn accelerations<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         vecs_to_array(py, &self.inner.accelerations()?)
@@ -2109,6 +2286,7 @@ impl PyWorld {
         d.set_item("t0", w.state.t)?;
         d.set_item("n_particles", w.state.len())?;
         d.set_item("masses", w.state.mass.clone())?;
+        d.set_item("charges", w.state.charge.clone())?;
         d.set_item("pinned", w.state.pinned.clone())?;
         d.set_item("forces", describe_forces(py, w)?)?;
         d.set_item("constraints", describe_constraints(py, &w.constraints)?)?;
@@ -2341,6 +2519,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPostNewtonian>()?;
     m.add_class::<PyJ2Oblateness>()?;
     m.add_class::<PyHenonHeiles>()?;
+    m.add_class::<PyElectricField>()?;
+    m.add_class::<PyMagneticField>()?;
+    m.add_class::<PyCoulomb>()?;
+    m.add_class::<PyFieldForce>()?;
     m.add_class::<PyCustomForce>()?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

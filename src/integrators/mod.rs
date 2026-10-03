@@ -7,10 +7,12 @@ use crate::forces::ForceSet;
 use crate::state::State;
 use crate::vec3::Vec3;
 
+mod boris;
 mod gauss;
 mod splitting;
 mod wisdom_holman;
 
+pub use boris::Boris;
 pub use gauss::GaussLegendre;
 pub use splitting::{Composition, Op, Scheme, Splitting};
 pub use wisdom_holman::WisdomHolman;
@@ -64,6 +66,7 @@ pub const NAMES: &[&str] = &[
     "gauss4",
     "gauss6",
     "wisdom_holman",
+    "boris",
 ];
 
 pub fn by_name(name: &str) -> Result<Box<dyn Integrator>> {
@@ -80,6 +83,7 @@ pub fn by_name(name: &str) -> Result<Box<dyn Integrator>> {
         "gauss4" => Box::new(GaussLegendre::order4()),
         "gauss6" => Box::new(GaussLegendre::order6()),
         "wisdom_holman" => Box::new(WisdomHolman::default()),
+        "boris" => Box::new(Boris::default()),
         "rk4" => Box::new(Rk4::default()),
         "dopri5" | "dormand_prince" => Box::new(Dopri5::default()),
         _ => {
@@ -98,7 +102,15 @@ pub struct ExplicitEuler {
 
 impl Integrator for ExplicitEuler {
     fn step(&mut self, s: &mut State, forces: &ForceSet, dt: f64) -> Result<()> {
-        forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, &mut self.acc)?;
+        forces.accelerations(
+            s.t,
+            &s.pos,
+            &s.vel,
+            &s.mass,
+            &s.charge,
+            &s.pinned,
+            &mut self.acc,
+        )?;
         for ((x, v), a) in s.pos.iter_mut().zip(s.vel.iter_mut()).zip(&self.acc) {
             *x += *v * dt;
             *v += *a * dt;
@@ -125,7 +137,15 @@ pub struct SymplecticEuler {
 
 impl Integrator for SymplecticEuler {
     fn step(&mut self, s: &mut State, forces: &ForceSet, dt: f64) -> Result<()> {
-        forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, &mut self.acc)?;
+        forces.accelerations(
+            s.t,
+            &s.pos,
+            &s.vel,
+            &s.mass,
+            &s.charge,
+            &s.pinned,
+            &mut self.acc,
+        )?;
         for ((x, v), a) in s.pos.iter_mut().zip(s.vel.iter_mut()).zip(&self.acc) {
             *v += *a * dt;
             *x += *v * dt;
@@ -162,9 +182,14 @@ struct AccelCache {
     /// Only compared when the forces are velocity-dependent.
     vel: Vec<Vec3>,
     mass: Vec<f64>,
+    charge: Vec<f64>,
     pinned: Vec<bool>,
     /// Number of times the forces were actually evaluated.
     evaluations: u64,
+}
+
+fn same_scalars(a: &[f64], b: &[f64]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_bits() == y.to_bits())
 }
 
 fn same_bits(a: &[Vec3], b: &[Vec3]) -> bool {
@@ -185,11 +210,8 @@ impl AccelCache {
             && (!forces.velocity_dependent() || same_bits(&self.vel, at.vel))
             && self.pinned == at.pinned
             && self.mass.len() == at.mass.len()
-            && self
-                .mass
-                .iter()
-                .zip(at.mass)
-                .all(|(a, b)| a.to_bits() == b.to_bits())
+            && same_scalars(&self.mass, at.mass)
+            && same_scalars(&self.charge, at.charge)
     }
 
     /// Acceleration for the current state, reused when the inputs are unchanged.
@@ -200,6 +222,7 @@ impl AccelCache {
                 pos: &s.pos,
                 vel: &s.vel,
                 mass: &s.mass,
+                charge: &s.charge,
                 pinned: &s.pinned,
             },
             forces,
@@ -211,7 +234,15 @@ impl AccelCache {
         if !self.hit(at, forces) {
             self.valid = false;
             self.evaluations += 1;
-            forces.accelerations(at.t, at.pos, at.vel, at.mass, at.pinned, &mut self.acc)?;
+            forces.accelerations(
+                at.t,
+                at.pos,
+                at.vel,
+                at.mass,
+                at.charge,
+                at.pinned,
+                &mut self.acc,
+            )?;
             self.valid = true;
             self.forces_version = forces.version();
             self.t = at.t;
@@ -220,6 +251,7 @@ impl AccelCache {
                 copy_into(&mut self.vel, at.vel);
             }
             copy_into(&mut self.mass, at.mass);
+            copy_into(&mut self.charge, at.charge);
             copy_into(&mut self.pinned, at.pinned);
         }
         Ok(&self.acc)
@@ -237,6 +269,7 @@ struct At<'a> {
     pos: &'a [Vec3],
     vel: &'a [Vec3],
     mass: &'a [f64],
+    charge: &'a [f64],
     pinned: &'a [bool],
 }
 
@@ -423,6 +456,7 @@ impl Integrator for Rk4 {
                 &self.xs,
                 &self.vs,
                 &s.mass,
+                &s.charge,
                 &s.pinned,
                 &mut self.acc,
             )?;
@@ -554,6 +588,7 @@ impl Dopri5 {
         &mut self,
         forces: &ForceSet,
         mass: &[f64],
+        charge: &[f64],
         pinned: &[bool],
         h: f64,
     ) -> Result<()> {
@@ -576,7 +611,15 @@ impl Dopri5 {
             let t = self.t0 + DP_C[i] * h;
             if i < 6 {
                 self.direct_evaluations += 1;
-                forces.accelerations(t, &self.xs, &self.vs, mass, pinned, &mut self.kv[i])?;
+                forces.accelerations(
+                    t,
+                    &self.xs,
+                    &self.vs,
+                    mass,
+                    charge,
+                    pinned,
+                    &mut self.kv[i],
+                )?;
             } else {
                 // The new state: cached, so the next step's first stage is free.
                 let at = At {
@@ -584,6 +627,7 @@ impl Dopri5 {
                     pos: &self.xs,
                     vel: &self.vs,
                     mass,
+                    charge,
                     pinned,
                 };
                 let acc = self.cache.get_at(&at, forces)?;
@@ -686,10 +730,12 @@ impl Dopri5 {
 
     /// Initial step guess (Hairer's algorithm): one extra force evaluation. `direction`
     /// is +1 or -1. Call after [`Dopri5::begin`].
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn initial_step(
         &mut self,
         forces: &ForceSet,
         mass: &[f64],
+        charge: &[f64],
         pinned: &[bool],
         direction: f64,
         rtol: f64,
@@ -740,6 +786,7 @@ impl Dopri5 {
             &self.xs,
             &self.vs,
             mass,
+            charge,
             pinned,
             &mut self.kv[1],
         )?;
@@ -770,7 +817,7 @@ impl Dopri5 {
 impl Integrator for Dopri5 {
     fn step(&mut self, s: &mut State, forces: &ForceSet, dt: f64) -> Result<()> {
         self.begin(s, forces)?;
-        self.attempt(forces, &s.mass, &s.pinned, dt)?;
+        self.attempt(forces, &s.mass, &s.charge, &s.pinned, dt)?;
         self.commit(s, s.t + dt);
         Ok(())
     }

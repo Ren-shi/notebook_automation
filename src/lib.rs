@@ -30,10 +30,11 @@ pub use constraints::{Anchor, ConstraintId, Constraints, Rod};
 pub use error::{Result, SimError};
 pub use events::{Direction, Event, EventFunction, EventHit};
 pub use forces::{
-    AnchorSpring, BuiltinForce, ClosureForce, DampedSpring, Force, ForceId, ForceSet, HarmonicTrap,
-    HenonHeiles, HernquistPotential, J2Oblateness, LinearDrag, ModulatedSpring, NewtonianGravity,
-    Param, PeriodicForce, PlummerPotential, PostNewtonian, PowerLaw, QuadraticDrag, Spring,
-    SpringNetwork, UniformField, Yukawa,
+    AnchorSpring, BuiltinForce, ClosureForce, Coulomb, DampedSpring, ElectricField, FieldFunctions,
+    Force, ForceId, ForceSet, HarmonicTrap, HenonHeiles, HernquistPotential, J2Oblateness,
+    LinearDrag, MagneticField, ModulatedSpring, NewtonianGravity, Param, PeriodicForce,
+    PlummerPotential, PostNewtonian, PowerLaw, QuadraticDrag, Spring, SpringNetwork, UniformField,
+    Yukawa,
 };
 pub use integrators::Integrator;
 pub use state::State;

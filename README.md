@@ -69,6 +69,7 @@ CI (`.github/workflows/ci.yml`) runs all of the above plus `cargo fmt --check` a
 | `blanes_moan4` | 4 | yes | Blanes & Moan (2002) 6-stage splitting: 6 evaluations, error 190× below `yoshida4` at equal cost |
 | `gauss2`, `gauss4`, `gauss6` | 2, 4, 6 | yes | Gauss-Legendre implicit RK (`gauss2` = implicit midpoint): symplectic and symmetric even with velocity-dependent forces, conserve quadratic invariants exactly; fixed-point iteration, so several evaluations per stage |
 | `wisdom_holman` | 2 | yes | Wisdom-Holman for planetary systems (particle 0 is the star; needs one `NewtonianGravity`, no pins): error ∝ planet/star mass ratio |
+| `boris` | 2 | no (volume-preserving) | Boris pusher for charged particles: exact rotation about B, so `|v|` is conserved to round-off in a pure magnetic field; non-magnetic forces must not depend on velocity |
 
 The explicit symplectic schemes are only symplectic for velocity-independent forces; with drag prefer `rk4` or
 `dopri5`, and for Hamiltonian velocity-dependent forces (e.g. magnetic) the `gauss*` schemes. Aliases:
@@ -128,12 +129,16 @@ y, py = ps.poincare_section(w, 0.01, 200_000, ps.Event.coordinate(0, "x", direct
   (`Φ = k rⁿ`, `k ln r` for `n = 0`), `Yukawa(k, length)` (`-k e^{-r/λ}/r`), `PlummerPotential(GM, a)`,
   `HernquistPotential(GM, a)`, `HarmonicTrap(omega)` (scalar or per-axis frequencies).
 - `HenonHeiles(lam=1, center)`: the Hénon-Heiles potential in the xy-plane, the standard chaos test bed.
+- Electromagnetism (charges set with `add_particle(..., charge=q)` or `w.charges = [...]`): `ElectricField(E)`,
+  `MagneticField(B)` (`a = (q/m)(E + v × B)`), `Coulomb(k=1, softening=0)` (pairwise, same parallel pair loop as
+  gravity), and `FieldForce(E=f, B=g)` for fields given as Python functions `f(t, pos) -> (N, 3)`.
 - Drives: `PeriodicForce(i, amplitude, omega, phase=0)` (`F = A cos(ωt + φ)` on particle `i`).
 - Orbital perturbations from a central particle, used alongside `NewtonianGravity`: `PostNewtonian(central, c)`
   (first post-Newtonian GR correction, test-particle limit; gives the `6πGM/(c²a(1−e²))` periapsis advance) and
   `J2Oblateness(central, J2, radius, axis)` (oblate central body; momentum-conserving).
 - `CustomForce` (below) for Python prototypes; in Rust, `ClosureForce::per_particle(name, |t, r, v, m| ...)` or
-  `ClosureForce::new(...)` turns a closure into a force without writing a struct.
+  `ClosureForce::new(...)` turns a closure into a force without writing a struct; `FieldFunctions` does the same for
+  E and B fields.
 
 Conservative forces report a potential, so `traj.energy` and `w.total_energy()` include them. Every built-in force
 is saved in checkpoints and run metadata, and its scalar and vector parameters can be changed with
