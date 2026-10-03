@@ -1,4 +1,4 @@
-from typing import Any, Callable, Optional, Sequence, TypedDict
+from typing import Any, Callable, Optional, Sequence, TypedDict, Union
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -13,6 +13,7 @@ class Trajectory:
     kinetic: Optional[NDArray[np.float64]]  # (F,), None if the run skipped energies
     potential: Optional[NDArray[np.float64]]  # (F,)
     energy: Optional[NDArray[np.float64]]  # (F,)
+    tension: NDArray[np.float64]  # (F, C) constraint tensions
     n_particles: int
     n_frames: int
     event_t: NDArray[np.float64]  # (K,)
@@ -29,6 +30,7 @@ class Trajectory:
         kinetic: Optional[ArrayLike] = None,
         potential: Optional[ArrayLike] = None,
         *,
+        tension: Optional[ArrayLike] = None,
         event_t: Optional[ArrayLike] = None,
         event_index: Optional[Sequence[int]] = None,
         event_pos: Optional[ArrayLike] = None,
@@ -129,6 +131,13 @@ class World:
         sink: Optional[Callable[[Trajectory], Any]] = None,
         chunk_size: int = 1024,
     ) -> Trajectory: ...
+    def add_rod(self, i: int, to: Union[int, ArrayLike], length: Optional[float] = None) -> int: ...
+    def remove_constraint(self, id: int) -> None: ...
+    def clear_constraints(self) -> None: ...
+    @property
+    def constraints(self) -> dict[int, str]: ...
+    def constraint_tensions(self) -> NDArray[np.float64]: ...
+    constraint_tolerance: float
     def checkpoint(self) -> dict[str, Any]: ...
     @staticmethod
     def from_checkpoint(

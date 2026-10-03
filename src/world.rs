@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::constraints::{self, Anchor, ConstraintId, Constraints, Rod};
 use crate::error::{invalid, Result, SimError};
 use crate::events::{Event, EventHit};
 use crate::forces::{Force, ForceId, ForceSet, Param};
@@ -7,13 +8,18 @@ use crate::integrators::{self, Integrator};
 use crate::state::State;
 use crate::vec3::Vec3;
 
-/// A simulation: particle state + forces + time integrator.
+/// A simulation: particle state + forces + constraints + time integrator.
 pub struct World {
     pub state: State,
     pub forces: ForceSet,
+    /// Rigid rods, enforced with RATTLE (needs the `verlet` or `yoshida4` integrator).
+    pub constraints: Constraints,
     integrator: Box<dyn Integrator>,
+    /// Tension in each constraint at the end of the last step.
+    pub(crate) tension: Vec<f64>,
     /// State before the current step, restored if the step fails.
     backup: State,
+    backup_tension: Vec<f64>,
 }
 
 impl World {
@@ -21,8 +27,11 @@ impl World {
         Self {
             state: State::new(),
             forces: ForceSet::new(),
+            constraints: Constraints::new(),
             integrator,
+            tension: Vec::new(),
             backup: State::new(),
+            backup_tension: Vec::new(),
         }
     }
 
@@ -50,14 +59,16 @@ impl World {
     /// refer to particles by index are renumbered. Fails if a force refers to particle `i`.
     pub fn remove_particle(&mut self, i: usize) -> Result<()> {
         self.check_particle(i)?;
-        let users = self.forces.referencing(i);
+        let mut users = self.forces.referencing(i);
+        users.extend(self.constraints.referencing(i));
         if !users.is_empty() {
             return invalid(format!(
-                "cannot remove particle {i}: still used by {}; remove those forces first",
+                "cannot remove particle {i}: still used by {}; remove those first",
                 users.join(", ")
             ));
         }
         self.forces.particle_removed(i);
+        self.constraints.particle_removed(i);
         self.state.remove_particle(i);
         Ok(())
     }
@@ -71,7 +82,11 @@ impl World {
             ));
         }
         masses.iter().try_for_each(|&m| check_mass(m))?;
-        self.state.mass = masses;
+        let old = std::mem::replace(&mut self.state.mass, masses);
+        if let Err(e) = self.constraints.validate(&self.state) {
+            self.state.mass = old;
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -111,6 +126,57 @@ impl World {
         Ok(())
     }
 
+    /// Adds a rigid rod keeping particle `i` at a fixed distance from `anchor` (another
+    /// particle or a fixed point) and returns its id. `length` defaults to the current
+    /// distance; if given, it must match the current distance to the constraint tolerance.
+    ///
+    /// Velocity components along the rod are removed in the first step.
+    pub fn add_rod(
+        &mut self,
+        i: usize,
+        anchor: Anchor,
+        length: Option<f64>,
+    ) -> Result<ConstraintId> {
+        let mut rod = Rod {
+            i,
+            anchor,
+            length: 1.0,
+        };
+        // Index and mass checks first, so `separation` cannot index out of range.
+        constraints::check_rod(&rod, &self.state)?;
+        let current = rod.separation(&self.state.pos).norm();
+        rod.length = length.unwrap_or(current);
+        constraints::check_rod(&rod, &self.state)?;
+        if (current / rod.length - 1.0).abs() > self.constraints.tolerance.max(1e-12) {
+            return invalid(format!(
+                "{}: particles are {current} apart but the length is {}; place them first",
+                rod.name(),
+                rod.length
+            ));
+        }
+        let id = self.constraints.add(rod);
+        self.tension = vec![0.0; self.constraints.len()];
+        Ok(id)
+    }
+
+    pub fn remove_constraint(&mut self, id: ConstraintId) -> Result<Rod> {
+        let rod = self.constraints.remove(id)?;
+        self.tension = vec![0.0; self.constraints.len()];
+        Ok(rod)
+    }
+
+    pub fn clear_constraints(&mut self) {
+        self.constraints.clear();
+        self.tension.clear();
+    }
+
+    /// Tension in each constraint (in [`Constraints::iter`] order) at the end of the last
+    /// step: the force pulling the rod's ends together, negative when the rod pushes them
+    /// apart. Zero before the first step.
+    pub fn constraint_tensions(&self) -> &[f64] {
+        &self.tension
+    }
+
     pub fn add_force(&mut self, force: impl Force + 'static) -> ForceId {
         self.forces.add(Box::new(force))
     }
@@ -136,7 +202,16 @@ impl World {
             }
         }
         self.backup.clone_from(&self.state);
-        let result = self.integrator.step(&mut self.state, &self.forces, dt).and_then(|()| {
+        self.backup_tension.clone_from(&self.tension);
+        let result = Self::integrate(
+            self.integrator.as_mut(),
+            &self.forces,
+            &self.constraints,
+            &mut self.state,
+            &mut self.tension,
+            dt,
+        )
+        .and_then(|()| {
             let finite = self.state.pos.iter().chain(&self.state.vel).all(|v| {
                 v.x.is_finite() && v.y.is_finite() && v.z.is_finite()
             });
@@ -151,8 +226,27 @@ impl World {
         });
         if result.is_err() {
             std::mem::swap(&mut self.state, &mut self.backup);
+            std::mem::swap(&mut self.tension, &mut self.backup_tension);
         }
         result
+    }
+
+    /// One integrator step, constrained when there are constraints.
+    fn integrate(
+        integrator: &mut dyn Integrator,
+        forces: &ForceSet,
+        constraints: &Constraints,
+        state: &mut State,
+        tension: &mut Vec<f64>,
+        dt: f64,
+    ) -> Result<()> {
+        if constraints.is_empty() {
+            tension.clear();
+            integrator.step(state, forces, dt)
+        } else {
+            constraints.validate(state)?;
+            integrator.step_constrained(state, forces, constraints, tension, dt)
+        }
     }
 
     /// Takes `steps` steps of size `dt`, recording the initial state, every
@@ -240,9 +334,11 @@ impl World {
         let mut last_recorded = self.state.t;
         let mut g = self.event_values(events)?;
         let mut start = State::new();
+        let mut start_tension = Vec::new();
         for k in 1..=steps {
             if !events.is_empty() {
                 start.clone_from(&self.state);
+                start_tension.clone_from(&self.tension);
             }
             let stepped = self.step(dt).and_then(|()| {
                 if events.is_empty() {
@@ -265,6 +361,7 @@ impl World {
                     if !events.is_empty() && self.state.t != start.t {
                         // The step itself succeeded but event handling failed: undo it too.
                         self.state.clone_from(&start);
+                        self.tension.clone_from(&start_tension);
                     }
                     if last_recorded != self.state.t {
                         let _ = self.emit(recorder, energies);
@@ -293,6 +390,7 @@ impl World {
             vel: &self.state.vel,
             kinetic,
             potential,
+            tension: &self.tension,
         })
     }
 
@@ -324,13 +422,13 @@ impl World {
         }
         let mut hits = Vec::with_capacity(fired.len());
         for e in fired {
-            let (theta, state) = self.locate(&events[e], start, g0[e], g1[e], dt)?;
-            hits.push((theta, e, state));
+            let (theta, state, tension) = self.locate(&events[e], start, g0[e], g1[e], dt)?;
+            hits.push((theta, e, state, tension));
         }
         hits.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let stop = hits.iter().position(|(_, e, _)| events[*e].terminal);
+        let stop = hits.iter().position(|(_, e, _, _)| events[*e].terminal);
         let keep = stop.map_or(hits.len(), |s| s + 1);
-        for (_, e, state) in hits.drain(..).take(keep) {
+        for (_, e, state, tension) in hits.drain(..).take(keep) {
             recorder.event(EventHit {
                 event: e,
                 t: state.t,
@@ -339,6 +437,7 @@ impl World {
             })?;
             if events[e].terminal {
                 self.state = state;
+                self.tension = tension;
                 return Ok(Some(e));
             }
         }
@@ -355,7 +454,7 @@ impl World {
         g0: f64,
         g1: f64,
         dt: f64,
-    ) -> Result<(f64, State)> {
+    ) -> Result<(f64, State, Vec<f64>)> {
         const TOLERANCE: f64 = 1e-12;
         let (mut lo, mut f_lo, mut hi, mut f_hi) = (0.0, g0, 1.0, g1);
         let mut last_side = 0;
@@ -370,7 +469,7 @@ impl World {
                     break; // bracket cannot shrink further in floating point
                 }
             }
-            let s = self.advance(start, theta * dt)?;
+            let (s, _) = self.advance(start, theta * dt)?;
             let f = event.function.value(s.t, &s.pos, &s.vel, &s.mass)?;
             if f * f_lo > 0.0 {
                 (lo, f_lo) = (theta, f);
@@ -386,14 +485,24 @@ impl World {
                 last_side = 1;
             }
         }
-        Ok((hi, self.advance(start, hi * dt)?))
+        let (state, tension) = self.advance(start, hi * dt)?;
+        Ok((hi, state, tension))
     }
 
-    /// The integrator's solution after a step of `h` from `start` (the world is unchanged).
-    fn advance(&mut self, start: &State, h: f64) -> Result<State> {
+    /// The integrator's solution after a step of `h` from `start`, and the constraint
+    /// tensions there (the world is unchanged).
+    fn advance(&mut self, start: &State, h: f64) -> Result<(State, Vec<f64>)> {
         let mut s = start.clone();
-        self.integrator.step(&mut s, &self.forces, h)?;
-        Ok(s)
+        let mut tension = Vec::new();
+        Self::integrate(
+            self.integrator.as_mut(),
+            &self.forces,
+            &self.constraints,
+            &mut s,
+            &mut tension,
+            h,
+        )?;
+        Ok((s, tension))
     }
 
     pub fn kinetic_energy(&self) -> f64 {
@@ -484,6 +593,8 @@ pub struct Frame<'a> {
     /// `None` when the run does not compute energies.
     pub kinetic: Option<f64>,
     pub potential: Option<f64>,
+    /// Tension in each constraint (see [`World::constraint_tensions`]).
+    pub tension: &'a [f64],
 }
 
 /// Receives the output of [`World::run_into`] as it is produced: write it to disk, reduce it
@@ -509,6 +620,9 @@ pub struct Trajectory {
     pub energies: bool,
     pub kinetic: Vec<f64>,
     pub potential: Vec<f64>,
+    /// Constraint tensions, frame-major: `n_constraints` values per frame.
+    pub n_constraints: usize,
+    pub tension: Vec<f64>,
     /// Events detected during the run, in time order.
     pub events: Vec<EventHit>,
     /// The terminal event that stopped the run, if any.
@@ -565,6 +679,7 @@ impl Trajectory {
         self.vel.clear();
         self.kinetic.clear();
         self.potential.clear();
+        self.tension.clear();
         self.events.clear();
         self.terminated_by = None;
     }
@@ -579,6 +694,15 @@ impl Recorder for Trajectory {
                 self.n_particles
             ));
         }
+        if self.t.is_empty() {
+            self.n_constraints = f.tension.len();
+        } else if f.tension.len() != self.n_constraints {
+            return invalid(format!(
+                "frame has {} constraints, trajectory expects {}",
+                f.tension.len(),
+                self.n_constraints
+            ));
+        }
         if self.energies {
             match (f.kinetic, f.potential) {
                 (Some(k), Some(u)) => {
@@ -588,6 +712,7 @@ impl Recorder for Trajectory {
                 _ => return invalid("trajectory records energies but the frame has none"),
             }
         }
+        self.tension.extend_from_slice(f.tension);
         self.t.push(f.t);
         self.pos.extend_from_slice(f.pos);
         self.vel.extend_from_slice(f.vel);

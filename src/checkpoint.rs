@@ -6,6 +6,7 @@
 //! the integrators keep no history between steps other than caches of values they would
 //! otherwise recompute identically.
 
+use crate::constraints::Constraints;
 use crate::error::{invalid, Result};
 use crate::forces::{BuiltinForce, Force, ForceId, ForceSet};
 use crate::state::State;
@@ -31,6 +32,8 @@ pub struct Checkpoint {
     pub forces: Vec<(ForceId, SavedForce)>,
     /// The id the next added force will get.
     pub next_force_id: ForceId,
+    /// Rigid rods, with their ids and the solver settings.
+    pub constraints: Constraints,
 }
 
 impl World {
@@ -50,6 +53,7 @@ impl World {
                 })
                 .collect(),
             next_force_id: self.forces.next_id(),
+            constraints: self.constraints.clone(),
         }
     }
 
@@ -64,6 +68,7 @@ impl World {
             integrator,
             forces,
             next_force_id,
+            constraints,
         } = checkpoint;
         let n = state.pos.len();
         if [state.vel.len(), state.mass.len(), state.pinned.len()] != [n, n, n] {
@@ -98,6 +103,9 @@ impl World {
         }
         // Pinning zeroes velocities; a valid checkpoint already has them at zero.
         world.set_velocities(state.vel)?;
+        constraints.validate(&world.state)?;
+        world.tension = vec![0.0; constraints.len()];
+        world.constraints = constraints;
         Ok(world)
     }
 }

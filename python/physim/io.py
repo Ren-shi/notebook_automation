@@ -34,19 +34,20 @@ PathLike = Union[str, "os.PathLike[str]"]
 
 _CHECKPOINT_ARRAYS = ("positions", "velocities", "masses", "pinned")
 
-# name: (dtype, per-row shape given n_particles)
+# name: (dtype, per-row shape given n_particles and n_constraints)
 _FIELDS = {
-    "t": (np.float64, lambda n: ()),
-    "pos": (np.float64, lambda n: (n, 3)),
-    "vel": (np.float64, lambda n: (n, 3)),
-    "kinetic": (np.float64, lambda n: ()),
-    "potential": (np.float64, lambda n: ()),
-    "event_t": (np.float64, lambda n: ()),
-    "event_index": (np.int64, lambda n: ()),
-    "event_pos": (np.float64, lambda n: (n, 3)),
-    "event_vel": (np.float64, lambda n: (n, 3)),
+    "t": (np.float64, lambda n, c: ()),
+    "pos": (np.float64, lambda n, c: (n, 3)),
+    "vel": (np.float64, lambda n, c: (n, 3)),
+    "kinetic": (np.float64, lambda n, c: ()),
+    "potential": (np.float64, lambda n, c: ()),
+    "tension": (np.float64, lambda n, c: (c,)),
+    "event_t": (np.float64, lambda n, c: ()),
+    "event_index": (np.int64, lambda n, c: ()),
+    "event_pos": (np.float64, lambda n, c: (n, 3)),
+    "event_vel": (np.float64, lambda n, c: (n, 3)),
 }
-_FRAME_FIELDS = ("t", "pos", "vel", "kinetic", "potential")
+_FRAME_FIELDS = ("t", "pos", "vel", "kinetic", "potential", "tension")
 _EVENT_FIELDS = ("event_t", "event_index", "event_pos", "event_vel")
 
 
@@ -125,6 +126,7 @@ class TrajectoryWriter:
             _h5py()
         self._metadata = dict(metadata) if metadata is not None else None
         self._n: Optional[int] = None
+        self._c = 0
         self._energies: Optional[bool] = None
         self._terminated_by: Optional[int] = None
         self._counts = {k: 0 for k in _FIELDS}
@@ -152,8 +154,9 @@ class TrajectoryWriter:
         if self._closed:
             raise ValueError("TrajectoryWriter is closed")
         energies = chunk.kinetic is not None
+        c = chunk.tension.shape[1]
         if self._n is None:
-            self._open(chunk.n_particles, energies)
+            self._open(chunk.n_particles, c, energies)
             if self._metadata is None:
                 self._metadata = dict(chunk.metadata)
         elif (chunk.n_particles, energies) != (self._n, self._energies):
@@ -161,9 +164,11 @@ class TrajectoryWriter:
                 f"chunk has {chunk.n_particles} particles (energies={energies}); "
                 f"this file has {self._n} (energies={self._energies})"
             )
+        elif c != self._c and chunk.n_frames > 0:
+            raise ValueError(f"chunk has {c} constraints; this file has {self._c}")
         for name in _FRAME_FIELDS + _EVENT_FIELDS:
             value = getattr(chunk, name)
-            if value is not None:
+            if value is not None and name in self._fields():
                 self._append(name, np.ascontiguousarray(value, dtype=_FIELDS[name][0]))
         if chunk.terminated_by is not None:
             self._terminated_by = chunk.terminated_by
@@ -174,7 +179,7 @@ class TrajectoryWriter:
             return
         self._closed = True
         if self._n is None:
-            self._open(0, True)  # an empty but valid file
+            self._open(0, 0, True)  # an empty but valid file
         if self._format == "hdf5":
             # A dataset rather than an attribute: attributes are limited to 64 KiB.
             self._h5.create_dataset("metadata", data=self._metadata_json())
@@ -186,22 +191,23 @@ class TrajectoryWriter:
     # -- internals ----------------------------------------------------------
 
     def _fields(self):
-        return [
-            k for k in _FIELDS if self._energies or k not in ("kinetic", "potential")
-        ]
+        skip = set() if self._energies else {"kinetic", "potential"}
+        if self._c == 0:
+            skip.add("tension")  # nothing to store, and HDF5 rejects zero-width chunks
+        return [k for k in _FIELDS if k not in skip]
 
     def _metadata_json(self) -> str:
         return json.dumps(self._metadata or {})
 
-    def _open(self, n: int, energies: bool) -> None:
-        self._n, self._energies = n, energies
+    def _open(self, n: int, c: int, energies: bool) -> None:
+        self._n, self._c, self._energies = n, c, energies
         if self._format == "hdf5":
             h5py = _h5py()
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._h5 = h5py.File(self.path, "w")
             for name in self._fields():
                 dtype, row = _FIELDS[name]
-                shape = row(n)
+                shape = row(n, c)
                 self._h5.create_dataset(
                     name,
                     shape=(0,) + shape,
@@ -238,7 +244,7 @@ class TrajectoryWriter:
                     header = {
                         "descr": np.lib.format.dtype_to_descr(np.dtype(dtype)),
                         "fortran_order": False,
-                        "shape": (self._counts[name],) + row(self._n),
+                        "shape": (self._counts[name],) + row(self._n, self._c),
                     }
                     with zf.open(name + ".npy", "w", force_zip64=True) as out:
                         np.lib.format.write_array_header_1_0(out, header)
@@ -290,6 +296,7 @@ def load_trajectory(path: PathLike) -> Trajectory:
         arrays["vel"],
         arrays.get("kinetic"),
         arrays.get("potential"),
+        tension=arrays.get("tension"),
         event_t=arrays["event_t"],
         event_index=[int(i) for i in arrays["event_index"]],
         event_pos=arrays["event_pos"],

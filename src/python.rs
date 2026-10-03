@@ -10,6 +10,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use crate::checkpoint::{Checkpoint, SavedForce};
+use crate::constraints::{Anchor, ConstraintId, Constraints, Rod};
 use crate::error::{Result as SimResult, SimError};
 use crate::events::{self, Direction, Event, EventFunction};
 use crate::forces::{self, BuiltinForce, Force, ForceId, Param};
@@ -490,6 +491,52 @@ fn builtin_from_description(desc: &Bound<'_, PyDict>) -> PyResult<BuiltinForce> 
         .ok_or_else(|| PyValueError::new_err(format!("{kind} is not a built-in force")))
 }
 
+/// ``[{"id": id, "i": i, "j": j, "length": L}, ...]``; a rod to a fixed point has
+/// ``"anchor": [x, y, z]`` in place of ``"j"``.
+fn describe_constraints<'py>(py: Python<'py>, c: &Constraints) -> PyResult<Bound<'py, PyList>> {
+    let list = PyList::empty(py);
+    for (id, r) in c.iter() {
+        let d = PyDict::new(py);
+        d.set_item("id", id)?;
+        d.set_item("i", r.i)?;
+        match r.anchor {
+            Anchor::Particle(j) => d.set_item("j", j)?,
+            Anchor::Point(p) => d.set_item("anchor", p.to_array().to_vec())?,
+        }
+        d.set_item("length", r.length)?;
+        list.append(d)?;
+    }
+    Ok(list)
+}
+
+fn rod_from_description(desc: &Bound<'_, PyDict>) -> PyResult<(ConstraintId, Rod)> {
+    let field = |k: &str| -> PyResult<Bound<'_, PyAny>> {
+        desc.get_item(k)?
+            .ok_or_else(|| PyValueError::new_err(format!("constraint description has no {k:?}")))
+    };
+    let anchor = match desc.get_item("j")? {
+        Some(j) => Anchor::Particle(j.extract()?),
+        None => Anchor::Point(extract_vec3(&field("anchor")?, "anchor")?),
+    };
+    let rod = Rod {
+        i: field("i")?.extract()?,
+        anchor,
+        length: field("length")?.extract()?,
+    };
+    Ok((field("id")?.extract()?, rod))
+}
+
+/// `d[key]` if present and not None.
+fn optional<'py, T: for<'a> FromPyObject<'a, 'py>>(
+    d: &Bound<'py, PyDict>,
+    key: &str,
+) -> PyResult<Option<T>> {
+    match d.get_item(key)? {
+        Some(v) if !v.is_none() => Ok(Some(v.extract().map_err(Into::into)?)),
+        _ => Ok(None),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Trajectory
 
@@ -512,6 +559,9 @@ struct PyTrajectory {
     potential: Option<Py<PyArray1<f64>>>,
     #[pyo3(get)]
     energy: Option<Py<PyArray1<f64>>>,
+    /// Tension in each constraint, (F, C): the force pulling each rod's ends together.
+    #[pyo3(get)]
+    tension: Py<PyArray2<f64>>,
     #[pyo3(get)]
     n_particles: usize,
     /// Time of each detected event, (K,).
@@ -556,7 +606,11 @@ impl PyTrajectory {
         } else {
             (None, None, None)
         };
+        let tension = PyArray1::from_vec(py, tr.tension)
+            .reshape([tr.t.len(), tr.n_constraints])?
+            .unbind();
         Ok(Self {
+            tension,
             event_t: PyArray1::from_vec(py, tr.events.iter().map(|h| h.t).collect()).unbind(),
             event_index: PyArray1::from_vec(py, tr.events.iter().map(|h| h.event as i64).collect())
                 .unbind(),
@@ -629,8 +683,8 @@ impl PyTrajectory {
     /// Builds a trajectory from arrays, e.g. ones loaded from a file.
     #[new]
     #[pyo3(signature = (
-        t, pos, vel, kinetic = None, potential = None, *, event_t = None, event_index = None,
-        event_pos = None, event_vel = None, terminated_by = None, metadata = None
+        t, pos, vel, kinetic = None, potential = None, *, tension = None, event_t = None,
+        event_index = None, event_pos = None, event_vel = None, terminated_by = None, metadata = None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn py_new(
@@ -640,6 +694,7 @@ impl PyTrajectory {
         vel: &Bound<'_, PyAny>,
         kinetic: Option<&Bound<'_, PyAny>>,
         potential: Option<&Bound<'_, PyAny>>,
+        tension: Option<&Bound<'_, PyAny>>,
         event_t: Option<&Bound<'_, PyAny>>,
         event_index: Option<Vec<usize>>,
         event_pos: Option<&Bound<'_, PyAny>>,
@@ -667,6 +722,21 @@ impl PyTrajectory {
                     "kinetic and potential need one value per frame",
                 ));
             }
+        }
+        if let Some(tension) = tension {
+            let arr = as_f64_array(tension)?;
+            let arr: PyReadonlyArray2<'_, f64> = arr.extract().map_err(|_| {
+                PyValueError::new_err("tension: expected a 2D array (frames, constraints)")
+            })?;
+            if arr.shape()[0] != tr.n_frames() {
+                return Err(PyValueError::new_err(format!(
+                    "tension: expected {} rows, got {}",
+                    tr.n_frames(),
+                    arr.shape()[0]
+                )));
+            }
+            tr.n_constraints = arr.shape()[1];
+            tr.tension = arr.as_array().iter().copied().collect();
         }
         let event_t = event_t
             .map(|e| extract_f64s(e, "event_t"))
@@ -862,6 +932,63 @@ impl PyWorld {
         self.inner.forces.clear();
     }
 
+    /// Adds a rigid rod (RATTLE constraint) from particle ``i`` to ``to``: another particle's
+    /// index, or a fixed point ``[x, y, z]``. ``length`` defaults to the current distance.
+    /// Returns the constraint's id. Needs the ``verlet`` or ``yoshida4`` integrator.
+    #[pyo3(signature = (i, to, length = None))]
+    fn add_rod(
+        &mut self,
+        i: usize,
+        to: &Bound<'_, PyAny>,
+        length: Option<f64>,
+    ) -> PyResult<ConstraintId> {
+        let anchor = match to.extract::<usize>() {
+            Ok(j) => Anchor::Particle(j),
+            Err(_) => Anchor::Point(extract_vec3(to, "to")?),
+        };
+        Ok(self.inner.add_rod(i, anchor, length)?)
+    }
+
+    fn remove_constraint(&mut self, id: ConstraintId) -> PyResult<()> {
+        self.inner.remove_constraint(id)?;
+        Ok(())
+    }
+
+    fn clear_constraints(&mut self) {
+        self.inner.clear_constraints();
+    }
+
+    /// Constraints as ``{id: name}``.
+    #[getter]
+    fn constraints(&self) -> std::collections::BTreeMap<ConstraintId, String> {
+        self.inner
+            .constraints
+            .iter()
+            .map(|(id, r)| (id, r.name()))
+            .collect()
+    }
+
+    /// Tension in each constraint (in ``constraints`` order) at the end of the last step:
+    /// the force pulling the rod's ends together, negative when it pushes them apart.
+    fn constraint_tensions<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        PyArray1::from_slice(py, self.inner.constraint_tensions())
+    }
+
+    /// Relative tolerance of the constraint solver (default 1e-10): rod lengths are held to
+    /// ``length * (1 ± tolerance)``.
+    #[getter]
+    fn constraint_tolerance(&self) -> f64 {
+        self.inner.constraints.tolerance
+    }
+    #[setter]
+    fn set_constraint_tolerance(&mut self, tol: f64) -> PyResult<()> {
+        if !(tol > 0.0 && tol.is_finite()) {
+            return Err(PyValueError::new_err("tolerance must be positive"));
+        }
+        self.inner.constraints.tolerance = tol;
+        Ok(())
+    }
+
     /// Forces acting on the system as ``{id: name}``.
     #[getter]
     fn forces(&self) -> std::collections::BTreeMap<ForceId, String> {
@@ -1012,6 +1139,11 @@ impl PyWorld {
         d.set_item("integrator", self.inner.integrator().name())?;
         d.set_item("forces", describe_forces(py, &self.inner)?)?;
         d.set_item("next_force_id", self.inner.forces.next_id())?;
+        let c = &self.inner.constraints;
+        d.set_item("constraints", describe_constraints(py, c)?)?;
+        d.set_item("next_constraint_id", c.next_id())?;
+        d.set_item("constraint_tolerance", c.tolerance)?;
+        d.set_item("constraint_max_iterations", c.max_iterations)?;
         Ok(d)
     }
 
@@ -1091,11 +1223,33 @@ impl PyWorld {
             };
             forces.push((id, saved));
         }
+        let mut rods = Vec::new();
+        if let Some(list) = checkpoint.get_item("constraints")? {
+            for desc in list.try_iter()? {
+                let desc = desc?;
+                let desc = desc.cast::<PyDict>().map_err(|_| {
+                    PyValueError::new_err("each constraint in a checkpoint must be a dict")
+                })?;
+                rods.push(rod_from_description(desc)?);
+            }
+        }
+        let default_next = rods.iter().map(|(id, _)| id + 1).max().unwrap_or(0);
+        let mut constraints = Constraints::from_parts(
+            rods,
+            optional(checkpoint, "next_constraint_id")?.unwrap_or(default_next),
+        )?;
+        if let Some(tol) = optional(checkpoint, "constraint_tolerance")? {
+            constraints.tolerance = tol;
+        }
+        if let Some(n) = optional(checkpoint, "constraint_max_iterations")? {
+            constraints.max_iterations = n;
+        }
         let checkpoint = Checkpoint {
             state,
             integrator: get("integrator")?.extract()?,
             forces,
             next_force_id: get("next_force_id")?.extract()?,
+            constraints,
         };
         let inner = World::from_checkpoint(checkpoint, |id, _| {
             let k = external
@@ -1214,6 +1368,7 @@ impl PyWorld {
         d.set_item("masses", w.state.mass.clone())?;
         d.set_item("pinned", w.state.pinned.clone())?;
         d.set_item("forces", describe_forces(py, w)?)?;
+        d.set_item("constraints", describe_constraints(py, &w.constraints)?)?;
         let names: Vec<String> = events.iter().map(|e| e.name()).collect();
         d.set_item("events", names)?;
         Ok(d.unbind())
