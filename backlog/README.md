@@ -11,7 +11,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 03 | ~~[Reuse forces between Verlet steps](03-verlet-force-caching.md)~~ **Done** | Performance | P1 | S | 02 |
 | 04 | ~~[Parallel force evaluation](04-parallel-forces.md)~~ **Done** | Performance | P1 | M | 02 |
 | 05 | ~~[Event detection and stopping conditions](05-event-detection.md)~~ **Done** | Core | P1 | M | — |
-| 06 | [Save, load and stream simulation data](06-save-load-and-streaming.md) | Core | P1 | M | — |
+| 06 | ~~[Save, load and stream simulation data](06-save-load-and-streaming.md)~~ **Done** | Core | P1 | M | — |
 | 07 | [Holonomic constraints (SHAKE/RATTLE)](07-constraints.md) | Physics | P1 | M | — |
 | 08 | [Adaptive time stepping](08-adaptive-time-stepping.md) | Integrators | P2 | M | 05 |
 | 09 | [Charged particles: Lorentz force and Boris pusher](09-lorentz-force-boris.md) | Physics | P2 | M | — |

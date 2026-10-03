@@ -24,8 +24,16 @@ from ._core import (
     Trajectory,
     UniformField,
     World,
+    __version__,
 )
 from .analysis import relative_energy_error
+from .io import (
+    TrajectoryWriter,
+    load_checkpoint,
+    load_trajectory,
+    save_checkpoint,
+    save_trajectory,
+)
 
 __all__ = [
     "INTEGRATORS",
@@ -37,7 +45,13 @@ __all__ = [
     "QuadraticDrag",
     "Spring",
     "Trajectory",
+    "TrajectoryWriter",
     "UniformField",
     "World",
+    "__version__",
+    "load_checkpoint",
+    "load_trajectory",
     "relative_energy_error",
+    "save_checkpoint",
+    "save_trajectory",
 ]

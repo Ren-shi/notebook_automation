@@ -3,18 +3,20 @@
 use numpy::ndarray::ArrayView2;
 use numpy::{
     PyArray1, PyArray2, PyArray3, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,
-    PyUntypedArrayMethods,
+    PyReadonlyArray3, PyUntypedArrayMethods,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
+use crate::checkpoint::{Checkpoint, SavedForce};
 use crate::error::{Result as SimResult, SimError};
 use crate::events::{self, Direction, Event, EventFunction};
-use crate::forces::{self, Force, ForceId, Param};
+use crate::forces::{self, BuiltinForce, Force, ForceId, Param};
 use crate::integrators;
+use crate::state::State;
 use crate::vec3::Vec3;
-use crate::world::{RunFailure, Trajectory, World};
+use crate::world::{Frame, Recorder, RunFailure, RunOptions, Trajectory, World};
 
 impl From<SimError> for PyErr {
     fn from(e: SimError) -> PyErr {
@@ -396,11 +398,106 @@ fn build_force(force: &Bound<'_, PyAny>) -> PyResult<Box<dyn Force>> {
     )))
 }
 
+/// ``{"id": id, "type": "Spring", "i": 0, ...}``: the constructor name and keyword
+/// arguments of a built-in force, or ``{"id": id, "type": "external", "name": ...}``.
+fn describe_force<'py>(
+    py: Python<'py>,
+    id: ForceId,
+    force: &dyn Force,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("id", id)?;
+    let v = |v: Vec3| v.to_array().to_vec();
+    match force.builtin() {
+        None => {
+            d.set_item("type", "external")?;
+            d.set_item("name", force.name())?;
+        }
+        Some(BuiltinForce::UniformField(f)) => {
+            d.set_item("type", "UniformField")?;
+            d.set_item("g", v(f.g))?;
+        }
+        Some(BuiltinForce::NewtonianGravity(f)) => {
+            d.set_item("type", "NewtonianGravity")?;
+            d.set_item("G", f.g)?;
+            d.set_item("softening", f.softening)?;
+        }
+        Some(BuiltinForce::Spring(f)) => {
+            d.set_item("type", "Spring")?;
+            d.set_item("i", f.i)?;
+            d.set_item("j", f.j)?;
+            d.set_item("k", f.k)?;
+            d.set_item("rest_length", f.rest_length)?;
+        }
+        Some(BuiltinForce::AnchorSpring(f)) => {
+            d.set_item("type", "AnchorSpring")?;
+            d.set_item("i", f.i)?;
+            d.set_item("anchor", v(f.anchor))?;
+            d.set_item("k", f.k)?;
+            d.set_item("rest_length", f.rest_length)?;
+        }
+        Some(BuiltinForce::LinearDrag(f)) => {
+            d.set_item("type", "LinearDrag")?;
+            d.set_item("gamma", f.gamma)?;
+        }
+        Some(BuiltinForce::QuadraticDrag(f)) => {
+            d.set_item("type", "QuadraticDrag")?;
+            d.set_item("c", f.c)?;
+        }
+    }
+    Ok(d)
+}
+
+fn describe_forces<'py>(py: Python<'py>, world: &World) -> PyResult<Bound<'py, PyList>> {
+    let list = PyList::empty(py);
+    for (id, f) in world.forces.iter() {
+        list.append(describe_force(py, id, f)?)?;
+    }
+    Ok(list)
+}
+
+/// Inverse of [`describe_force`] for built-in forces: calls the constructor named by "type".
+fn builtin_from_description(desc: &Bound<'_, PyDict>) -> PyResult<BuiltinForce> {
+    let py = desc.py();
+    let kind: String = desc
+        .get_item("type")?
+        .ok_or_else(|| PyValueError::new_err("force description has no \"type\""))?
+        .extract()?;
+    const BUILTIN: [&str; 6] = [
+        "UniformField",
+        "NewtonianGravity",
+        "Spring",
+        "AnchorSpring",
+        "LinearDrag",
+        "QuadraticDrag",
+    ];
+    if !BUILTIN.contains(&kind.as_str()) {
+        return Err(PyValueError::new_err(format!(
+            "unknown force type {kind:?}"
+        )));
+    }
+    let kwargs = desc.copy()?;
+    kwargs.del_item("type")?;
+    if kwargs.contains("id")? {
+        kwargs.del_item("id")?;
+    }
+    let obj = py
+        .import("physim._core")?
+        .getattr(kind.as_str())?
+        .call((), Some(&kwargs))?;
+    build_force(&obj)?
+        .builtin()
+        .ok_or_else(|| PyValueError::new_err(format!("{kind} is not a built-in force")))
+}
+
 // ---------------------------------------------------------------------------
 // Trajectory
 
 /// Recorded frames of a run: ``t`` (F,), ``pos``/``vel`` (F, N, 3),
-/// ``kinetic``/``potential``/``energy`` (F,).
+/// ``kinetic``/``potential``/``energy`` (F,) or None if the run skipped energies.
+///
+/// ``metadata`` describes the run (engine version, integrator, dt, forces...). It is
+/// saved with the trajectory by :func:`physim.save_trajectory`.
 #[pyclass(frozen, name = "Trajectory", module = "physim")]
 struct PyTrajectory {
     #[pyo3(get)]
@@ -410,11 +507,11 @@ struct PyTrajectory {
     #[pyo3(get)]
     vel: Py<PyArray3<f64>>,
     #[pyo3(get)]
-    kinetic: Py<PyArray1<f64>>,
+    kinetic: Option<Py<PyArray1<f64>>>,
     #[pyo3(get)]
-    potential: Py<PyArray1<f64>>,
+    potential: Option<Py<PyArray1<f64>>>,
     #[pyo3(get)]
-    energy: Py<PyArray1<f64>>,
+    energy: Option<Py<PyArray1<f64>>>,
     #[pyo3(get)]
     n_particles: usize,
     /// Time of each detected event, (K,).
@@ -431,12 +528,13 @@ struct PyTrajectory {
     /// Index of the terminal event that stopped the run, or None.
     #[pyo3(get)]
     terminated_by: Option<usize>,
+    #[pyo3(get)]
+    metadata: Py<PyDict>,
 }
 
 impl PyTrajectory {
-    fn from_rust(py: Python<'_>, tr: Trajectory) -> PyResult<Self> {
+    fn from_rust(py: Python<'_>, tr: Trajectory, metadata: Py<PyDict>) -> PyResult<Self> {
         let shape = [tr.n_frames(), tr.n_particles, 3];
-        let energy = tr.total_energy();
         let event_shape = [tr.events.len(), tr.n_particles, 3];
         let event_pos: Vec<Vec3> = tr
             .events
@@ -448,6 +546,16 @@ impl PyTrajectory {
             .iter()
             .flat_map(|h| h.vel.iter().copied())
             .collect();
+        let (kinetic, potential, energy) = if tr.energies {
+            let energy = tr.total_energy();
+            (
+                Some(PyArray1::from_vec(py, tr.kinetic).unbind()),
+                Some(PyArray1::from_vec(py, tr.potential).unbind()),
+                Some(PyArray1::from_vec(py, energy).unbind()),
+            )
+        } else {
+            (None, None, None)
+        };
         Ok(Self {
             event_t: PyArray1::from_vec(py, tr.events.iter().map(|h| h.t).collect()).unbind(),
             event_index: PyArray1::from_vec(py, tr.events.iter().map(|h| h.event as i64).collect())
@@ -466,16 +574,133 @@ impl PyTrajectory {
                 .reshape(shape)?
                 .unbind(),
             t: PyArray1::from_vec(py, tr.t).unbind(),
-            kinetic: PyArray1::from_vec(py, tr.kinetic).unbind(),
-            potential: PyArray1::from_vec(py, tr.potential).unbind(),
-            energy: PyArray1::from_vec(py, energy).unbind(),
+            kinetic,
+            potential,
+            energy,
             n_particles: tr.n_particles,
+            metadata,
         })
     }
 }
 
+fn extract_f64s(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<f64>> {
+    let arr = as_f64_array(obj)?;
+    let arr: PyReadonlyArray1<'_, f64> = arr
+        .extract()
+        .map_err(|_| PyValueError::new_err(format!("{what}: expected a 1D array")))?;
+    Ok(arr.as_array().to_vec())
+}
+
+/// A ``(frames, n_particles, 3)`` array as frame-major vectors.
+fn extract_frames(
+    obj: &Bound<'_, PyAny>,
+    frames: Option<usize>,
+    n_particles: Option<usize>,
+    what: &str,
+) -> PyResult<(usize, usize, Vec<Vec3>)> {
+    let arr = as_f64_array(obj)?;
+    let arr: PyReadonlyArray3<'_, f64> = arr.extract().map_err(|_| {
+        PyValueError::new_err(format!(
+            "{what}: expected a 3D array (frames, particles, 3)"
+        ))
+    })?;
+    let shape = arr.shape().to_vec();
+    if shape[2] != 3
+        || frames.is_some_and(|f| f != shape[0])
+        || n_particles.is_some_and(|n| n != shape[1])
+    {
+        return Err(PyValueError::new_err(format!(
+            "{what}: expected shape ({}, {}, 3), got {shape:?}",
+            frames.map_or("F".into(), |f| f.to_string()),
+            n_particles.map_or("N".into(), |n| n.to_string()),
+        )));
+    }
+    let vecs = arr
+        .as_array()
+        .rows()
+        .into_iter()
+        .map(|r| Vec3::new(r[0], r[1], r[2]))
+        .collect();
+    Ok((shape[0], shape[1], vecs))
+}
+
 #[pymethods]
 impl PyTrajectory {
+    /// Builds a trajectory from arrays, e.g. ones loaded from a file.
+    #[new]
+    #[pyo3(signature = (
+        t, pos, vel, kinetic = None, potential = None, *, event_t = None, event_index = None,
+        event_pos = None, event_vel = None, terminated_by = None, metadata = None
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn py_new(
+        py: Python<'_>,
+        t: &Bound<'_, PyAny>,
+        pos: &Bound<'_, PyAny>,
+        vel: &Bound<'_, PyAny>,
+        kinetic: Option<&Bound<'_, PyAny>>,
+        potential: Option<&Bound<'_, PyAny>>,
+        event_t: Option<&Bound<'_, PyAny>>,
+        event_index: Option<Vec<usize>>,
+        event_pos: Option<&Bound<'_, PyAny>>,
+        event_vel: Option<&Bound<'_, PyAny>>,
+        terminated_by: Option<usize>,
+        metadata: Option<Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let t = extract_f64s(t, "t")?;
+        let (_, n, pos) = extract_frames(pos, Some(t.len()), None, "pos")?;
+        let (_, _, vel) = extract_frames(vel, Some(t.len()), Some(n), "vel")?;
+        let mut tr = Trajectory::new(n, kinetic.is_some() || potential.is_some());
+        tr.t = t;
+        tr.pos = pos;
+        tr.vel = vel;
+        if tr.energies {
+            let (Some(k), Some(u)) = (kinetic, potential) else {
+                return Err(PyValueError::new_err(
+                    "give both kinetic and potential, or neither",
+                ));
+            };
+            tr.kinetic = extract_f64s(k, "kinetic")?;
+            tr.potential = extract_f64s(u, "potential")?;
+            if tr.kinetic.len() != tr.n_frames() || tr.potential.len() != tr.n_frames() {
+                return Err(PyValueError::new_err(
+                    "kinetic and potential need one value per frame",
+                ));
+            }
+        }
+        let event_t = event_t
+            .map(|e| extract_f64s(e, "event_t"))
+            .transpose()?
+            .unwrap_or_default();
+        let k = event_t.len();
+        let event_index = event_index.unwrap_or_default();
+        let empty = || vec![Vec3::ZERO; 0];
+        let event_pos = match event_pos {
+            Some(e) => extract_frames(e, Some(k), Some(n), "event_pos")?.2,
+            None => empty(),
+        };
+        let event_vel = match event_vel {
+            Some(e) => extract_frames(e, Some(k), Some(n), "event_vel")?.2,
+            None => empty(),
+        };
+        if event_index.len() != k || event_pos.len() != k * n || event_vel.len() != k * n {
+            return Err(PyValueError::new_err(
+                "event_t, event_index, event_pos and event_vel must all be given, one entry per event",
+            ));
+        }
+        tr.events = (0..k)
+            .map(|e| crate::events::EventHit {
+                event: event_index[e],
+                t: event_t[e],
+                pos: event_pos[e * n..(e + 1) * n].to_vec(),
+                vel: event_vel[e * n..(e + 1) * n].to_vec(),
+            })
+            .collect();
+        tr.terminated_by = terminated_by;
+        let metadata = metadata.unwrap_or_else(|| PyDict::new(py)).unbind();
+        Self::from_rust(py, tr, metadata)
+    }
+
     #[getter]
     fn n_frames(&self, py: Python<'_>) -> usize {
         self.t.bind(py).len()
@@ -489,6 +714,45 @@ impl PyTrajectory {
             self.n_frames(py),
             self.n_particles
         )
+    }
+}
+
+/// Collects frames into chunks of `chunk_size` and passes each to a Python callable.
+struct ChunkSink {
+    sink: Py<PyAny>,
+    buffer: Trajectory,
+    chunk_size: usize,
+    metadata: Py<PyDict>,
+}
+
+impl ChunkSink {
+    fn flush(&mut self) -> SimResult<()> {
+        let mut empty = Trajectory::new(self.buffer.n_particles, self.buffer.energies);
+        empty.reserve(self.chunk_size);
+        let chunk = std::mem::replace(&mut self.buffer, empty);
+        Python::attach(|py| -> PyResult<()> {
+            let chunk = Py::new(
+                py,
+                PyTrajectory::from_rust(py, chunk, self.metadata.clone_ref(py))?,
+            )?;
+            self.sink.bind(py).call1((chunk,))?;
+            Ok(())
+        })
+        .map_err(SimError::Python)
+    }
+}
+
+impl Recorder for ChunkSink {
+    fn frame(&mut self, frame: &Frame<'_>) -> SimResult<()> {
+        self.buffer.frame(frame)?;
+        if self.buffer.n_frames() >= self.chunk_size {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    fn event(&mut self, hit: crate::events::EventHit) -> SimResult<()> {
+        self.buffer.event(hit)
     }
 }
 
@@ -647,7 +911,16 @@ impl PyWorld {
     ///
     /// ``events`` is a list of :class:`Event`; detected events are returned in the
     /// trajectory's ``event_*`` arrays, and a terminal event stops the run at that moment.
-    #[pyo3(signature = (dt, steps, record_every = 1, events = None))]
+    ///
+    /// ``energies=False`` skips the per-frame kinetic and potential energy (the potential is
+    /// a full force pass, O(N²) for gravity), which makes recording every step cheap.
+    ///
+    /// With ``sink``, recorded frames and events are not kept: every ``chunk_size`` frames
+    /// they are passed to ``sink(chunk)`` as a Trajectory (e.g. a
+    /// :class:`physim.TrajectoryWriter`), so memory stays flat however long the run. The
+    /// returned Trajectory then holds no frames, only ``terminated_by`` and ``metadata``.
+    #[pyo3(signature = (dt, steps, record_every = 1, events = None, *, energies = true, sink = None, chunk_size = 1024))]
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &mut self,
         py: Python<'_>,
@@ -655,26 +928,183 @@ impl PyWorld {
         steps: usize,
         record_every: usize,
         events: Option<Vec<PyRef<'_, PyEvent>>>,
+        energies: bool,
+        sink: Option<Py<PyAny>>,
+        chunk_size: usize,
     ) -> PyResult<PyTrajectory> {
-        let events: Vec<Event> = events
-            .unwrap_or_default()
-            .iter()
-            .map(|e| e.build(py))
-            .collect();
+        let events = events.unwrap_or_default();
+        let metadata = self.run_metadata(py, dt, steps, record_every, energies, &events)?;
+        let events: Vec<Event> = events.iter().map(|e| e.build(py)).collect();
+        let options = RunOptions {
+            record_every,
+            events: &events,
+            energies,
+        };
         let world = &mut self.inner;
-        match py.detach(|| world.run_with_events(dt, steps, record_every, &events)) {
-            Ok(traj) => PyTrajectory::from_rust(py, traj),
-            Err(RunFailure { error, trajectory }) => {
+        let n = world.state.len();
+        let (result, trajectory) = match sink {
+            None => match py.detach(|| world.run_with_options(dt, steps, &options)) {
+                Ok(traj) => (Ok(()), traj),
+                Err(RunFailure { error, trajectory }) => (Err(error), *trajectory),
+            },
+            Some(sink) => {
+                if !sink.bind(py).is_callable() || chunk_size == 0 {
+                    return Err(PyValueError::new_err(
+                        "sink must be callable and chunk_size at least 1",
+                    ));
+                }
+                let mut buffer = Trajectory::new(n, energies);
+                buffer.reserve(chunk_size);
+                let mut recorder = ChunkSink {
+                    sink,
+                    buffer,
+                    chunk_size,
+                    metadata: metadata.clone_ref(py),
+                };
+                let result = py.detach(|| {
+                    let outcome = world.run_into(dt, steps, &options, &mut recorder);
+                    // Hand over what is buffered even if the run failed.
+                    if let Ok(term) = outcome {
+                        recorder.buffer.terminated_by = term;
+                    }
+                    let b = &recorder.buffer;
+                    let flushed =
+                        if b.n_frames() > 0 || !b.events.is_empty() || b.terminated_by.is_some() {
+                            recorder.flush()
+                        } else {
+                            Ok(())
+                        };
+                    outcome.and_then(|term| flushed.map(|()| term))
+                });
+                let mut summary = Trajectory::new(n, energies);
+                (result.map(|term| summary.terminated_by = term), summary)
+            }
+        };
+        let trajectory = PyTrajectory::from_rust(py, trajectory, metadata)?;
+        match result {
+            Ok(()) => Ok(trajectory),
+            Err(error) => {
                 let err = PyErr::from(error);
-                if let Ok(partial) =
-                    PyTrajectory::from_rust(py, *trajectory).and_then(|t| Py::new(py, t))
-                {
+                if let Ok(partial) = Py::new(py, trajectory) {
                     // Some exception types reject new attributes; the error still propagates.
                     let _ = err.value(py).setattr("trajectory", partial);
                 }
                 Err(err)
             }
         }
+    }
+
+    /// Everything needed to continue this simulation later, bit for bit, as a dict of
+    /// arrays and plain values. Save it with :func:`physim.save_checkpoint`.
+    /// ``CustomForce`` functions cannot be stored: they appear as
+    /// ``{"type": "external", "name": ...}`` and must be passed again on restore.
+    fn checkpoint<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let s = &self.inner.state;
+        let d = PyDict::new(py);
+        d.set_item("format", "physim-checkpoint")?;
+        d.set_item("format_version", 1)?;
+        d.set_item("engine_version", env!("CARGO_PKG_VERSION"))?;
+        d.set_item("t", s.t)?;
+        d.set_item("positions", vecs_to_array(py, &s.pos)?)?;
+        d.set_item("velocities", vecs_to_array(py, &s.vel)?)?;
+        d.set_item("masses", PyArray1::from_slice(py, &s.mass))?;
+        d.set_item("pinned", PyArray1::from_slice(py, &s.pinned))?;
+        d.set_item("integrator", self.inner.integrator().name())?;
+        d.set_item("forces", describe_forces(py, &self.inner)?)?;
+        d.set_item("next_force_id", self.inner.forces.next_id())?;
+        Ok(d)
+    }
+
+    /// Rebuilds a World from :meth:`checkpoint` output. ``custom_forces`` maps the name or
+    /// id of each force stored as ``"external"`` to the force to use, e.g.
+    /// ``{"precession": CustomForce(...)}``.
+    #[staticmethod]
+    #[pyo3(signature = (checkpoint, custom_forces = None))]
+    fn from_checkpoint(
+        py: Python<'_>,
+        checkpoint: &Bound<'_, PyDict>,
+        custom_forces: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let get = |key: &str| -> PyResult<Bound<'_, PyAny>> {
+            checkpoint
+                .get_item(key)?
+                .ok_or_else(|| PyValueError::new_err(format!("checkpoint has no {key:?}")))
+        };
+        if let Some(f) = checkpoint.get_item("format")? {
+            if f.extract::<String>()? != "physim-checkpoint" {
+                return Err(PyValueError::new_err("not a physim checkpoint"));
+            }
+        }
+        let positions = get("positions")?;
+        let n = as_f64_array(&positions)?.len()?;
+        let pinned: PyReadonlyArray1<'_, bool> = py
+            .import("numpy")?
+            .call_method1("asarray", (get("pinned")?, "bool"))?
+            .extract()?;
+        let state = State {
+            t: get("t")?.extract()?,
+            pos: extract_vecs(&positions, n, "positions")?,
+            vel: extract_vecs(&get("velocities")?, n, "velocities")?,
+            mass: extract_f64s(&get("masses")?, "masses")?,
+            pinned: pinned.as_array().to_vec(),
+        };
+        let mut forces = Vec::new();
+        let mut external = Vec::new();
+        for desc in get("forces")?.try_iter()? {
+            let desc = desc?;
+            let desc = desc
+                .cast::<PyDict>()
+                .map_err(|_| PyValueError::new_err("each force in a checkpoint must be a dict"))?;
+            let id: ForceId = desc
+                .get_item("id")?
+                .ok_or_else(|| PyValueError::new_err("force description has no \"id\""))?
+                .extract()?;
+            let kind: String = desc
+                .get_item("type")?
+                .map(|k| k.extract())
+                .transpose()?
+                .unwrap_or_default();
+            let saved = if kind == "external" {
+                let name: String = desc
+                    .get_item("name")?
+                    .map(|k| k.extract())
+                    .transpose()?
+                    .unwrap_or_default();
+                // Look the force up now, while we hold the GIL.
+                let supplied = match custom_forces {
+                    None => None,
+                    Some(c) => match c.get_item(id)? {
+                        Some(f) => Some(f),
+                        None => c.get_item(&name)?,
+                    },
+                };
+                let Some(supplied) = supplied else {
+                    return Err(PyValueError::new_err(format!(
+                        "the checkpoint uses force {name:?} (id {id}), which cannot be saved; \
+                         pass it as custom_forces={{{name:?}: ...}}"
+                    )));
+                };
+                external.push((id, build_force(&supplied)?));
+                SavedForce::External { name }
+            } else {
+                SavedForce::Builtin(builtin_from_description(desc)?)
+            };
+            forces.push((id, saved));
+        }
+        let checkpoint = Checkpoint {
+            state,
+            integrator: get("integrator")?.extract()?,
+            forces,
+            next_force_id: get("next_force_id")?.extract()?,
+        };
+        let inner = World::from_checkpoint(checkpoint, |id, _| {
+            let k = external
+                .iter()
+                .position(|(i, _)| *i == id)
+                .expect("supplied above");
+            Ok(external.swap_remove(k).1)
+        })?;
+        Ok(Self { inner })
     }
 
     #[getter]
@@ -757,6 +1187,36 @@ impl PyWorld {
             self.integrator(),
             self.inner.state.t
         )
+    }
+}
+
+impl PyWorld {
+    /// Describes a run for ``Trajectory.metadata``.
+    fn run_metadata(
+        &self,
+        py: Python<'_>,
+        dt: f64,
+        steps: usize,
+        record_every: usize,
+        energies: bool,
+        events: &[PyRef<'_, PyEvent>],
+    ) -> PyResult<Py<PyDict>> {
+        let w = &self.inner;
+        let d = PyDict::new(py);
+        d.set_item("engine_version", env!("CARGO_PKG_VERSION"))?;
+        d.set_item("integrator", w.integrator().name())?;
+        d.set_item("dt", dt)?;
+        d.set_item("steps", steps)?;
+        d.set_item("record_every", record_every)?;
+        d.set_item("energies", energies)?;
+        d.set_item("t0", w.state.t)?;
+        d.set_item("n_particles", w.state.len())?;
+        d.set_item("masses", w.state.mass.clone())?;
+        d.set_item("pinned", w.state.pinned.clone())?;
+        d.set_item("forces", describe_forces(py, w)?)?;
+        let names: Vec<String> = events.iter().map(|e| e.name()).collect();
+        d.set_item("events", names)?;
+        Ok(d.unbind())
     }
 }
 
@@ -973,5 +1433,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyQuadraticDrag>()?;
     m.add_class::<PyCustomForce>()?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

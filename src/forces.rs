@@ -1,6 +1,8 @@
 //! Forces act on the whole system at once: each one adds its contribution to the
 //! per-particle accelerations. Implement [`Force`] to add new physics in Rust.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::error::{invalid, Result};
 use crate::parallel;
 use crate::vec3::Vec3;
@@ -39,6 +41,13 @@ pub trait Force: Send + Sync {
 
     fn name(&self) -> String;
 
+    /// For the built-in forces, a copy that can be saved and rebuilt (see
+    /// [`BuiltinForce`]). Forces defined elsewhere return `None` and must be supplied
+    /// again when a checkpoint is loaded.
+    fn builtin(&self) -> Option<BuiltinForce> {
+        None
+    }
+
     /// Current values of the tunable parameters.
     fn params(&self) -> Vec<(&'static str, Param)> {
         Vec::new()
@@ -59,16 +68,56 @@ pub trait Force: Send + Sync {
     fn particle_removed(&mut self, _removed: usize) {}
 }
 
+/// A built-in force, as plain data: what checkpoints store.
+#[derive(Debug, Clone)]
+pub enum BuiltinForce {
+    UniformField(UniformField),
+    NewtonianGravity(NewtonianGravity),
+    Spring(Spring),
+    AnchorSpring(AnchorSpring),
+    LinearDrag(LinearDrag),
+    QuadraticDrag(QuadraticDrag),
+}
+
+impl BuiltinForce {
+    pub fn into_force(self) -> Box<dyn Force> {
+        match self {
+            BuiltinForce::UniformField(f) => Box::new(f),
+            BuiltinForce::NewtonianGravity(f) => Box::new(f),
+            BuiltinForce::Spring(f) => Box::new(f),
+            BuiltinForce::AnchorSpring(f) => Box::new(f),
+            BuiltinForce::LinearDrag(f) => Box::new(f),
+            BuiltinForce::QuadraticDrag(f) => Box::new(f),
+        }
+    }
+}
+
 /// Identifies a force within a [`ForceSet`]; stays valid until that force is removed.
 pub type ForceId = usize;
 
+/// A value no force set has used before, so a cached acceleration can never be
+/// mistaken for one computed by a different set (e.g. after `world.forces` is replaced).
+fn fresh_version() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// The collection of forces acting on a system.
-#[derive(Default)]
 pub struct ForceSet {
     forces: Vec<(ForceId, Box<dyn Force>)>,
     next_id: ForceId,
-    /// Bumped on every change to the set or to a force's parameters.
+    /// Changed on every change to the set or to a force's parameters.
     version: u64,
+}
+
+impl Default for ForceSet {
+    fn default() -> Self {
+        Self {
+            forces: Vec::new(),
+            next_id: 0,
+            version: fresh_version(),
+        }
+    }
 }
 
 impl ForceSet {
@@ -79,7 +128,7 @@ impl ForceSet {
     pub fn add(&mut self, force: Box<dyn Force>) -> ForceId {
         let id = self.next_id;
         self.next_id += 1;
-        self.version += 1;
+        self.version = fresh_version();
         self.forces.push((id, force));
         id
     }
@@ -93,14 +142,14 @@ impl ForceSet {
 
     pub fn remove(&mut self, id: ForceId) -> Result<Box<dyn Force>> {
         let p = self.position(id)?;
-        self.version += 1;
+        self.version = fresh_version();
         Ok(self.forces.remove(p).1)
     }
 
     /// Swaps in a new force under the same id and evaluation order.
     pub fn replace(&mut self, id: ForceId, force: Box<dyn Force>) -> Result<Box<dyn Force>> {
         let p = self.position(id)?;
-        self.version += 1;
+        self.version = fresh_version();
         Ok(std::mem::replace(&mut self.forces[p].1, force))
     }
 
@@ -112,7 +161,7 @@ impl ForceSet {
     /// Sets several parameters of one force; on any error, already-applied ones are rolled back.
     pub fn set_params(&mut self, id: ForceId, values: &[(String, Param)]) -> Result<()> {
         let p = self.position(id)?;
-        self.version += 1;
+        self.version = fresh_version();
         let force = &mut self.forces[p].1;
         let old = force.params();
         for (k, (name, value)) in values.iter().enumerate() {
@@ -128,8 +177,31 @@ impl ForceSet {
         Ok(())
     }
 
+    /// Rebuilds a set with the given ids, e.g. from a checkpoint. Later [`ForceSet::add`]
+    /// calls hand out ids from `next_id`.
+    pub fn from_parts(forces: Vec<(ForceId, Box<dyn Force>)>, next_id: ForceId) -> Result<Self> {
+        for (k, (id, _)) in forces.iter().enumerate() {
+            if *id >= next_id {
+                return invalid(format!("force id {id} is not below next_id {next_id}"));
+            }
+            if forces[..k].iter().any(|(other, _)| other == id) {
+                return invalid(format!("duplicate force id {id}"));
+            }
+        }
+        Ok(Self {
+            forces,
+            next_id,
+            version: fresh_version(),
+        })
+    }
+
+    /// The id the next [`ForceSet::add`] will return.
+    pub fn next_id(&self) -> ForceId {
+        self.next_id
+    }
+
     pub fn clear(&mut self) {
-        self.version += 1;
+        self.version = fresh_version();
         self.forces.clear();
     }
 
@@ -165,7 +237,7 @@ impl ForceSet {
     }
 
     pub(crate) fn particle_removed(&mut self, removed: usize) {
-        self.version += 1;
+        self.version = fresh_version();
         for (_, f) in &mut self.forces {
             f.particle_removed(removed);
         }
@@ -281,6 +353,10 @@ impl Force for UniformField {
         "UniformField".into()
     }
 
+    fn builtin(&self) -> Option<BuiltinForce> {
+        Some(BuiltinForce::UniformField(self.clone()))
+    }
+
     fn params(&self) -> Vec<(&'static str, Param)> {
         vec![("g", Param::Vector(self.g))]
     }
@@ -373,6 +449,10 @@ impl Force for NewtonianGravity {
         "NewtonianGravity".into()
     }
 
+    fn builtin(&self) -> Option<BuiltinForce> {
+        Some(BuiltinForce::NewtonianGravity(self.clone()))
+    }
+
     fn params(&self) -> Vec<(&'static str, Param)> {
         vec![
             ("G", Param::Scalar(self.g)),
@@ -433,6 +513,10 @@ impl Force for Spring {
 
     fn name(&self) -> String {
         format!("Spring({}, {})", self.i, self.j)
+    }
+
+    fn builtin(&self) -> Option<BuiltinForce> {
+        Some(BuiltinForce::Spring(self.clone()))
     }
 
     fn params(&self) -> Vec<(&'static str, Param)> {
@@ -507,6 +591,10 @@ impl Force for AnchorSpring {
         format!("AnchorSpring({})", self.i)
     }
 
+    fn builtin(&self) -> Option<BuiltinForce> {
+        Some(BuiltinForce::AnchorSpring(self.clone()))
+    }
+
     fn params(&self) -> Vec<(&'static str, Param)> {
         vec![
             ("anchor", Param::Vector(self.anchor)),
@@ -561,6 +649,10 @@ impl Force for LinearDrag {
         "LinearDrag".into()
     }
 
+    fn builtin(&self) -> Option<BuiltinForce> {
+        Some(BuiltinForce::LinearDrag(self.clone()))
+    }
+
     fn params(&self) -> Vec<(&'static str, Param)> {
         vec![("gamma", Param::Scalar(self.gamma))]
     }
@@ -609,6 +701,10 @@ impl Force for QuadraticDrag {
 
     fn name(&self) -> String {
         "QuadraticDrag".into()
+    }
+
+    fn builtin(&self) -> Option<BuiltinForce> {
+        Some(BuiltinForce::QuadraticDrag(self.clone()))
     }
 
     fn params(&self) -> Vec<(&'static str, Param)> {

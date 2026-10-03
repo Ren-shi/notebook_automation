@@ -1,17 +1,18 @@
-from typing import Callable, Optional, Sequence, TypedDict
+from typing import Any, Callable, Optional, Sequence, TypedDict
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 INTEGRATORS: list[str]
+__version__: str
 
 class Trajectory:
     t: NDArray[np.float64]  # (F,)
     pos: NDArray[np.float64]  # (F, N, 3)
     vel: NDArray[np.float64]  # (F, N, 3)
-    kinetic: NDArray[np.float64]  # (F,)
-    potential: NDArray[np.float64]  # (F,)
-    energy: NDArray[np.float64]  # (F,)
+    kinetic: Optional[NDArray[np.float64]]  # (F,), None if the run skipped energies
+    potential: Optional[NDArray[np.float64]]  # (F,)
+    energy: Optional[NDArray[np.float64]]  # (F,)
     n_particles: int
     n_frames: int
     event_t: NDArray[np.float64]  # (K,)
@@ -19,6 +20,22 @@ class Trajectory:
     event_pos: NDArray[np.float64]  # (K, N, 3)
     event_vel: NDArray[np.float64]  # (K, N, 3)
     terminated_by: Optional[int]
+    metadata: dict[str, Any]
+    def __init__(
+        self,
+        t: ArrayLike,
+        pos: ArrayLike,
+        vel: ArrayLike,
+        kinetic: Optional[ArrayLike] = None,
+        potential: Optional[ArrayLike] = None,
+        *,
+        event_t: Optional[ArrayLike] = None,
+        event_index: Optional[Sequence[int]] = None,
+        event_pos: Optional[ArrayLike] = None,
+        event_vel: Optional[ArrayLike] = None,
+        terminated_by: Optional[int] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None: ...
     def __len__(self) -> int: ...
 
 class UniformField:
@@ -102,8 +119,21 @@ class World:
     def clear_forces(self) -> None: ...
     def step(self, dt: float, n: int = 1) -> None: ...
     def run(
-        self, dt: float, steps: int, record_every: int = 1, events: Optional[Sequence[Event]] = None
+        self,
+        dt: float,
+        steps: int,
+        record_every: int = 1,
+        events: Optional[Sequence[Event]] = None,
+        *,
+        energies: bool = True,
+        sink: Optional[Callable[[Trajectory], Any]] = None,
+        chunk_size: int = 1024,
     ) -> Trajectory: ...
+    def checkpoint(self) -> dict[str, Any]: ...
+    @staticmethod
+    def from_checkpoint(
+        checkpoint: dict[str, Any], custom_forces: Optional[dict[Any, Any]] = None
+    ) -> World: ...
     def accelerations(self) -> NDArray[np.float64]: ...
     def kinetic_energy(self) -> float: ...
     def potential_energy(self) -> float: ...
