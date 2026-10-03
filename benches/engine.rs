@@ -101,7 +101,8 @@ fn integrators(c: &mut Criterion) {
     g.finish();
 }
 
-/// Cost of recording frames: 1 000 steps of a 1 000-particle chain, recording every step vs only the ends.
+/// Cost of recording frames: 1 000 steps of a 1 000-particle chain, recording every step vs
+/// only the ends, with and without per-frame energies.
 fn recording(c: &mut Criterion) {
     let mut g = c.benchmark_group("run_chain1k_1000steps");
     g.sample_size(20);
@@ -115,6 +116,14 @@ fn recording(c: &mut Criterion) {
             },
         );
     }
+    g.bench_function("record_every/1/no_energies", |b| {
+        let mut w = chain(1_000, "verlet");
+        let options = RunOptions {
+            energies: false,
+            ..RunOptions::default()
+        };
+        b.iter(|| w.run_with_options(1e-3, 1_000, &options).unwrap());
+    });
     g.finish();
 }
 

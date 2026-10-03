@@ -100,6 +100,31 @@ itself. `direction` is +1 (rising), -1 (falling) or 0 (either); a terminal event
 at the event. Built-in events (`radial_velocity`, `coordinate`, `separation`) run in Rust at no per-step Python cost.
 Two crossings of one event within a single step are not detected, so keep `dt` small compared with event spacing.
 
+**Saving, loading and streaming**:
+```python
+ps.save_checkpoint(w, "run.npz")                     # state, forces (with ids), integrator
+w2 = ps.load_checkpoint("run.npz", custom_forces={"precession": precession})
+# continuing w2 gives exactly the same numbers as continuing w
+
+ps.save_trajectory(traj, "orbit.h5")                 # or .npz; includes events and traj.metadata
+traj = ps.load_trajectory("orbit.h5")
+
+with ps.TrajectoryWriter("long.h5") as out:          # stream to disk: memory stays flat
+    w.run(dt, 10_000_000, sink=out, energies=False)
+```
+- Restarting from a checkpoint is bit-for-bit identical to never having stopped. `CustomForce` functions cannot be
+  saved: they are stored by name and must be passed again via `custom_forces` (by name or force id).
+- `traj.metadata` records the engine version, integrator, `dt`, `record_every`, masses and every force's
+  parameters; it is stored with saved trajectories as JSON.
+- `run(..., sink=f, chunk_size=1024)` passes recorded frames and events to `f` in chunks (as `Trajectory`
+  objects) instead of keeping them; any callable works. A 10⁷-frame run streams to `.h5` or `.npz` at a constant
+  ~30–50 MB of memory.
+- `run(..., energies=False)` skips the per-frame kinetic and potential energy. The potential is a full force pass
+  (O(N²) for gravity), so this makes recording every step nearly free for N-body runs.
+- `.npz` needs nothing extra; `.h5` needs `h5py` and can be read in slices (`h5py.File(p)["pos"][a:b]`) when a
+  file is larger than memory. In Rust, `World::checkpoint`/`from_checkpoint` and `World::run_into` with a
+  `Recorder` are the same features.
+
 **Parallelism**: direct-sum gravity and per-particle forces use all CPU cores (rayon, `parallel` feature, on by
 default). Work is split into blocks that depend only on N, so results are bit-identical for any thread count and
 with the feature off. Set `RAYON_NUM_THREADS` to limit threads. Small systems (under ~360 bodies for gravity) run
@@ -107,7 +132,7 @@ on one thread, avoiding overhead.
 
 **Diagnostics**: `kinetic_energy()`, `potential_energy()`, `total_energy()`, `momentum()`,
 `angular_momentum()`, `center_of_mass()`, `accelerations()`; trajectories record `t`, `pos`, `vel`,
-`kinetic`, `potential`, `energy`.
+`kinetic`, `potential`, `energy` (the last three are `None` with `energies=False`).
 
 ## Testing a new idea
 
@@ -164,10 +189,13 @@ src/
   state.rs        positions, velocities, masses, time; conserved quantities
   forces.rs       Force trait, ForceSet, built-in forces
   integrators.rs  Integrator trait and schemes
-  world.rs        World (state + forces + integrator) and Trajectory recording
+  world.rs        World (state + forces + integrator), run loop, Recorder, Trajectory
+  events.rs       event functions and crossing detection
+  checkpoint.rs   save/restore a World
+  parallel.rs     deterministic block-parallel helpers
   python.rs       PyO3 bindings (feature "python")
 scripts/          developer tools (notebook runner)
-python/physim/    Python package (re-exports the extension, analysis helpers, type stubs)
+python/physim/    Python package (re-exports the extension, file I/O, analysis helpers, type stubs)
 tests/            Rust tests; tests/python for the bindings
 benches/          Rust (criterion) and Python benchmarks
 notebooks/        examples

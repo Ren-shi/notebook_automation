@@ -181,24 +181,64 @@ impl World {
         record_every: usize,
         events: &[Event],
     ) -> std::result::Result<Trajectory, RunFailure> {
-        let mut traj = Trajectory::new(self.state.len());
-        let fail = |error, trajectory| RunFailure {
-            error,
-            trajectory: Box::new(trajectory),
-        };
+        self.run_with_options(
+            dt,
+            steps,
+            &RunOptions {
+                record_every,
+                events,
+                energies: true,
+            },
+        )
+    }
+
+    /// [`World::run_with_events`] with all options, collecting frames in memory.
+    pub fn run_with_options(
+        &mut self,
+        dt: f64,
+        steps: usize,
+        options: &RunOptions<'_>,
+    ) -> std::result::Result<Trajectory, RunFailure> {
+        let mut traj = Trajectory::new(self.state.len(), options.energies);
+        if let Some(frames) = steps.checked_div(options.record_every) {
+            traj.reserve(frames + 2);
+        }
+        match self.run_into(dt, steps, options, &mut traj) {
+            Ok(terminated_by) => {
+                traj.terminated_by = terminated_by;
+                Ok(traj)
+            }
+            Err(error) => Err(RunFailure {
+                error,
+                trajectory: Box::new(traj),
+            }),
+        }
+    }
+
+    /// The run loop behind [`World::run`]: hands every recorded frame and event to
+    /// `recorder` instead of keeping them, so memory stays flat however long the run.
+    /// Returns the index of the terminal event that stopped the run, if any.
+    ///
+    /// On error the world is left at the last completed step, and that step has been
+    /// recorded (unless recording itself failed).
+    pub fn run_into(
+        &mut self,
+        dt: f64,
+        steps: usize,
+        options: &RunOptions<'_>,
+        recorder: &mut dyn Recorder,
+    ) -> Result<Option<usize>> {
+        let RunOptions {
+            record_every,
+            events,
+            energies,
+        } = *options;
         if record_every == 0 {
-            return Err(fail(
-                SimError::Invalid("record_every must be at least 1".into()),
-                traj,
-            ));
+            return invalid("record_every must be at least 1");
         }
-        if let Err(e) = traj.record(self) {
-            return Err(fail(e, traj));
-        }
-        let mut g = match self.event_values(events) {
-            Ok(g) => g,
-            Err(e) => return Err(fail(e, traj)),
-        };
+        self.emit(recorder, energies)?;
+        let mut last_recorded = self.state.t;
+        let mut g = self.event_values(events)?;
         let mut start = State::new();
         for k in 1..=steps {
             if !events.is_empty() {
@@ -206,42 +246,54 @@ impl World {
             }
             let stepped = self.step(dt).and_then(|()| {
                 if events.is_empty() {
-                    return Ok(false);
+                    return Ok(None);
                 }
                 let g_new = self.event_values(events)?;
-                let terminated =
-                    self.handle_crossings(events, &start, &g, &g_new, dt, &mut traj)?;
+                let terminated = self.handle_crossings(events, &start, &g, &g_new, dt, recorder)?;
                 g = g_new;
                 Ok(terminated)
             });
             match stepped {
-                Ok(true) => {
-                    if traj.t.last() != Some(&self.state.t) {
-                        if let Err(e) = traj.record(self) {
-                            return Err(fail(e, traj));
-                        }
+                Ok(Some(e)) => {
+                    if last_recorded != self.state.t {
+                        self.emit(recorder, energies)?;
                     }
-                    return Ok(traj);
+                    return Ok(Some(e));
                 }
-                Ok(false) => {}
+                Ok(None) => {}
                 Err(e) => {
                     if !events.is_empty() && self.state.t != start.t {
                         // The step itself succeeded but event handling failed: undo it too.
                         self.state.clone_from(&start);
                     }
-                    if traj.t.last() != Some(&self.state.t) {
-                        let _ = traj.record(self);
+                    if last_recorded != self.state.t {
+                        let _ = self.emit(recorder, energies);
                     }
-                    return Err(fail(e, traj));
+                    return Err(e);
                 }
             }
             if k % record_every == 0 || k == steps {
-                if let Err(e) = traj.record(self) {
-                    return Err(fail(e, traj));
-                }
+                self.emit(recorder, energies)?;
+                last_recorded = self.state.t;
             }
         }
-        Ok(traj)
+        Ok(None)
+    }
+
+    /// Passes the current state to `recorder`. Nothing is passed if computing the energies fails.
+    fn emit(&self, recorder: &mut dyn Recorder, energies: bool) -> Result<()> {
+        let (kinetic, potential) = if energies {
+            (Some(self.kinetic_energy()), Some(self.potential_energy()?))
+        } else {
+            (None, None)
+        };
+        recorder.frame(&Frame {
+            t: self.state.t,
+            pos: &self.state.pos,
+            vel: &self.state.vel,
+            kinetic,
+            potential,
+        })
     }
 
     fn event_values(&self, events: &[Event]) -> Result<Vec<f64>> {
@@ -254,7 +306,7 @@ impl World {
 
     /// Locates the events that fired during the step from `start` (values `g0`) to the
     /// current state (values `g1`) and records them in time order. Returns `true` if a
-    /// terminal event fired, in which case the world is left at that event.
+    /// terminal event fired, its index; the world is then left at that event.
     fn handle_crossings(
         &mut self,
         events: &[Event],
@@ -262,13 +314,13 @@ impl World {
         g0: &[f64],
         g1: &[f64],
         dt: f64,
-        traj: &mut Trajectory,
-    ) -> Result<bool> {
+        recorder: &mut dyn Recorder,
+    ) -> Result<Option<usize>> {
         let fired: Vec<usize> = (0..events.len())
             .filter(|&e| events[e].triggers(g0[e], g1[e]))
             .collect();
         if fired.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         let mut hits = Vec::with_capacity(fired.len());
         for e in fired {
@@ -279,19 +331,18 @@ impl World {
         let stop = hits.iter().position(|(_, e, _)| events[*e].terminal);
         let keep = stop.map_or(hits.len(), |s| s + 1);
         for (_, e, state) in hits.drain(..).take(keep) {
-            traj.events.push(EventHit {
+            recorder.event(EventHit {
                 event: e,
                 t: state.t,
                 pos: state.pos.clone(),
                 vel: state.vel.clone(),
-            });
+            })?;
             if events[e].terminal {
-                traj.terminated_by = Some(e);
                 self.state = state;
-                return Ok(true);
+                return Ok(Some(e));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     /// Finds the fraction `theta` of the step at which `event` crosses zero, by stepping
@@ -402,6 +453,50 @@ impl From<RunFailure> for SimError {
     }
 }
 
+/// Options for [`World::run_with_options`] and [`World::run_into`].
+#[derive(Clone, Copy)]
+pub struct RunOptions<'a> {
+    /// Record every `record_every`-th step (the initial and final states are always recorded).
+    pub record_every: usize,
+    /// Events to detect; see [`World::run_with_events`].
+    pub events: &'a [Event],
+    /// Compute kinetic and potential energy for each frame. The potential is a full pass over
+    /// the forces (O(N²) for gravity), so turning this off makes frequent recording cheap.
+    pub energies: bool,
+}
+
+impl Default for RunOptions<'_> {
+    fn default() -> Self {
+        Self {
+            record_every: 1,
+            events: &[],
+            energies: true,
+        }
+    }
+}
+
+/// One recorded frame. The slices borrow the world's state, so copy what you keep.
+#[derive(Debug, Clone, Copy)]
+pub struct Frame<'a> {
+    pub t: f64,
+    pub pos: &'a [Vec3],
+    pub vel: &'a [Vec3],
+    /// `None` when the run does not compute energies.
+    pub kinetic: Option<f64>,
+    pub potential: Option<f64>,
+}
+
+/// Receives the output of [`World::run_into`] as it is produced: write it to disk, reduce it
+/// on the fly, or collect it (as [`Trajectory`] does). An error stops the run.
+pub trait Recorder {
+    fn frame(&mut self, frame: &Frame<'_>) -> Result<()>;
+
+    /// An event detected during the run, in time order. Ignored by default.
+    fn event(&mut self, _hit: EventHit) -> Result<()> {
+        Ok(())
+    }
+}
+
 /// Recorded frames of a run. Positions and velocities are stored frame-major:
 /// particle `p` of frame `f` is at index `f * n_particles + p`.
 #[derive(Debug, Clone, Default)]
@@ -410,6 +505,8 @@ pub struct Trajectory {
     pub t: Vec<f64>,
     pub pos: Vec<Vec3>,
     pub vel: Vec<Vec3>,
+    /// Whether energies were recorded; if not, `kinetic` and `potential` stay empty.
+    pub energies: bool,
     pub kinetic: Vec<f64>,
     pub potential: Vec<f64>,
     /// Events detected during the run, in time order.
@@ -419,9 +516,10 @@ pub struct Trajectory {
 }
 
 impl Trajectory {
-    pub fn new(n_particles: usize) -> Self {
+    pub fn new(n_particles: usize, energies: bool) -> Self {
         Self {
             n_particles,
+            energies,
             ..Default::default()
         }
     }
@@ -430,17 +528,7 @@ impl Trajectory {
         self.t.len()
     }
 
-    /// Appends the current state. Nothing is appended if computing the energies fails.
-    fn record(&mut self, world: &World) -> Result<()> {
-        let potential = world.potential_energy()?;
-        self.t.push(world.state.t);
-        self.pos.extend_from_slice(&world.state.pos);
-        self.vel.extend_from_slice(&world.state.vel);
-        self.kinetic.push(world.kinetic_energy());
-        self.potential.push(potential);
-        Ok(())
-    }
-
+    /// Kinetic plus potential energy per frame (empty if energies were not recorded).
     pub fn total_energy(&self) -> Vec<f64> {
         self.kinetic
             .iter()
@@ -452,5 +540,62 @@ impl Trajectory {
     /// Positions of frame `f`.
     pub fn frame_pos(&self, f: usize) -> &[Vec3] {
         &self.pos[f * self.n_particles..(f + 1) * self.n_particles]
+    }
+
+    /// Makes room for `frames` more frames, so recording does not repeatedly reallocate and
+    /// copy. Capped at 1 GiB of positions and velocities: a long run that stops early on a
+    /// terminal event should not claim memory it never uses.
+    pub fn reserve(&mut self, frames: usize) {
+        const CAP_BYTES: usize = 1 << 30;
+        let per_frame = 2 * self.n_particles.max(1) * std::mem::size_of::<Vec3>();
+        let frames = frames.min(CAP_BYTES / per_frame);
+        self.t.reserve(frames);
+        self.pos.reserve(frames * self.n_particles);
+        self.vel.reserve(frames * self.n_particles);
+        if self.energies {
+            self.kinetic.reserve(frames);
+            self.potential.reserve(frames);
+        }
+    }
+
+    /// Removes all frames and events, keeping `n_particles` and `energies`.
+    pub fn clear(&mut self) {
+        self.t.clear();
+        self.pos.clear();
+        self.vel.clear();
+        self.kinetic.clear();
+        self.potential.clear();
+        self.events.clear();
+        self.terminated_by = None;
+    }
+}
+
+impl Recorder for Trajectory {
+    fn frame(&mut self, f: &Frame<'_>) -> Result<()> {
+        if f.pos.len() != self.n_particles || f.vel.len() != self.n_particles {
+            return invalid(format!(
+                "frame has {} particles, trajectory expects {}",
+                f.pos.len(),
+                self.n_particles
+            ));
+        }
+        if self.energies {
+            match (f.kinetic, f.potential) {
+                (Some(k), Some(u)) => {
+                    self.kinetic.push(k);
+                    self.potential.push(u);
+                }
+                _ => return invalid("trajectory records energies but the frame has none"),
+            }
+        }
+        self.t.push(f.t);
+        self.pos.extend_from_slice(f.pos);
+        self.vel.extend_from_slice(f.vel);
+        Ok(())
+    }
+
+    fn event(&mut self, hit: EventHit) -> Result<()> {
+        self.events.push(hit);
+        Ok(())
     }
 }

@@ -6,3 +6,4 @@ matplotlib
 nbformat
 nbclient
 ipykernel
+h5py
