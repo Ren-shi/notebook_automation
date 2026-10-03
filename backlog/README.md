@@ -27,7 +27,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 19 | ~~[More built-in forces](19-more-forces.md)~~ **Done** | Physics | P2 | M | — |
 | 20 | [Fields and continua](20-fields-and-continua.md) | Physics | P3 | L | — |
 | 21 | ~~[Packaging and release](21-packaging-and-release.md)~~ **Done** | Tooling | P3 | S | 01 |
-| 22 | [Documentation](22-documentation.md) | Usability | P3 | M | — |
+| 22 | ~~[Documentation](22-documentation.md)~~ **Done** | Usability | P3 | M | — |
 | 23 | [Equations of motion from a Lagrangian or Hamiltonian](23-lagrangian-input.md) | Usability | P2 | L | 17 |
 | 24 | [Ensembles and parameter sweeps](24-ensembles-and-sweeps.md) | Analysis | P2 | M | — |
 | 25 | [Periodic orbits: finding and continuation](25-periodic-orbits.md) | Analysis | P2 | M | 18 |

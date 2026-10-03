@@ -18,9 +18,9 @@ traj.pos.shape                      # (frames, particles, 3)
 ps.relative_energy_error(traj)      # (E - E0) / |E0| per frame
 ```
 
-See [`notebooks/01_getting_started.ipynb`](notebooks/01_getting_started.ipynb) for integrator comparisons,
-measured convergence orders, a Python-defined force checked against an analytic precession rate, and a
-many-particle wave example.
+See [`notebooks/`](notebooks/) for worked examples: integrator comparisons and measured convergence orders
+(`01_getting_started`), an N-body star cluster, chaos in the three-body problem, a driven oscillator's route to
+chaos, and charged particles in a magnetic bottle.
 
 ## Install
 
@@ -58,6 +58,15 @@ pytest tests/python              # Python binding tests
 python scripts/run_notebooks.py  # execute the example notebooks, fail on any error
 ```
 
+## Documentation
+
+The documentation site (user guide, theory notes on every integrator and force, the example notebooks, and the Python
+and Rust API references) builds from [`docs/`](docs/) in CI and is published to GitHub Pages on each release:
+
+```bash
+pip install -r docs/requirements.txt && sphinx-build -W -b html docs docs/_build/html
+```
+
 ## Benchmarks
 
 ```bash
@@ -71,6 +80,8 @@ CI (`.github/workflows/ci.yml`) runs all of the above plus `cargo fmt --check` a
 `cargo clippy --all-targets --features python -- -D warnings` on every push and pull request.
 
 ## What's included
+
+<!-- guide:start -->
 
 **Integrators** (`World(integrator=...)`, switchable at any time via `w.integrator = "rk4"`):
 
@@ -282,7 +293,11 @@ on one thread, avoiding overhead.
 `angular_momentum()`, `center_of_mass()`, `accelerations()`; trajectories record `t`, `pos`, `vel`,
 `kinetic`, `potential`, `energy` (the last three are `None` with `energies=False`).
 
+<!-- guide:end -->
+
 ## Testing a new idea
+
+The full guide (validation checks, porting, benchmarking) is [`docs/new-ideas.md`](docs/new-ideas.md); in short:
 
 ### 1. Prototype in Python
 
@@ -303,7 +318,7 @@ so this is convenient but slow.
 
 ### 2. Port it to Rust for speed
 
-Implement the `Force` trait in `src/forces.rs`:
+Implement the `Force` trait in a new file under `src/forces/` (and `pub use` it from `src/forces/mod.rs`):
 
 ```rust
 pub struct MyForce { pub beta: f64 }
@@ -322,8 +337,8 @@ Then expose it to Python in `src/python.rs`: add a `#[pyclass]` wrapper with an 
 (copy `PyLinearDrag`), list it in `build_force` and the `#[pymodule]`, and export it from
 `python/physim/__init__.py`. Run `maturin develop --release`.
 
-New integrators work the same way: implement `Integrator` in `src/integrators.rs` and register a name in
-`integrators::by_name`.
+New integrators work the same way: implement `Integrator` in `src/integrators/` and register a name in
+`integrators::by_name` and `NAMES`.
 
 ## Roadmap
 
@@ -335,8 +350,8 @@ Planned work lives in [`backlog/`](backlog/README.md), one file per item with pr
 src/
   vec3.rs         3-vector math
   state.rs        positions, velocities, masses, time; conserved quantities
-  forces.rs       Force trait, ForceSet, built-in forces
-  integrators.rs  Integrator trait and schemes
+  forces/         Force trait, ForceSet, built-in forces (central, springs, em, pair, tree, contact, ...)
+  integrators/    Integrator trait and schemes (splitting, gauss, wisdom_holman, boris, thermostat)
   world.rs        World (state + forces + integrator), run loop, Recorder, Trajectory
   adaptive.rs     adaptive Dormand-Prince run loop (error control, dense output)
   chaos.rs        variational equations, Lyapunov exponents, MEGNO
@@ -352,6 +367,7 @@ python/physim/    Python package (re-exports the extension, file I/O, analysis h
 tests/            Rust tests; tests/python for the bindings
 benches/          Rust (criterion) and Python benchmarks
 examples/         standalone Rust programs (cargo run --release --example <name>)
-notebooks/        examples
+notebooks/        example notebooks (also rendered in the docs)
+docs/             documentation site (Sphinx): guide, theory notes, API reference
 backlog/          planned work
 ```

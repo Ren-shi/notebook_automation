@@ -110,6 +110,7 @@ impl PyUniformField {
             g: extract_vec3(g, "g")?,
         }))
     }
+    /// The acceleration ``g`` applied to every particle.
     #[getter]
     fn g<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         vec3_to_array(py, self.0.g)
@@ -138,10 +139,12 @@ impl PyNewtonianGravity {
     fn new(G: f64, softening: f64) -> Self {
         Self(forces::NewtonianGravity { g: G, softening })
     }
+    /// Gravitational constant ``G``.
     #[getter(G)]
     fn g(&self) -> f64 {
         self.0.g
     }
+    /// Plummer softening length: the force uses ``r² + softening²``.
     #[getter]
     fn softening(&self) -> f64 {
         self.0.softening
@@ -1393,21 +1396,28 @@ fn optional<'py, T: for<'a> FromPyObject<'a, 'py>>(
 /// saved with the trajectory by :func:`physim.save_trajectory`.
 #[pyclass(frozen, name = "Trajectory", module = "physim")]
 struct PyTrajectory {
+    /// Recorded times, shape ``(F,)``.
     #[pyo3(get)]
     t: Py<PyArray1<f64>>,
+    /// Positions, shape ``(F, N, 3)``.
     #[pyo3(get)]
     pos: Py<PyArray3<f64>>,
+    /// Velocities, shape ``(F, N, 3)``.
     #[pyo3(get)]
     vel: Py<PyArray3<f64>>,
+    /// Kinetic energy per frame ``(F,)``, or ``None`` when run with ``energies=False``.
     #[pyo3(get)]
     kinetic: Option<Py<PyArray1<f64>>>,
+    /// Potential energy per frame ``(F,)``, or ``None`` when run with ``energies=False``.
     #[pyo3(get)]
     potential: Option<Py<PyArray1<f64>>>,
+    /// Total energy per frame ``(F,)``, or ``None`` when run with ``energies=False``.
     #[pyo3(get)]
     energy: Option<Py<PyArray1<f64>>>,
     /// Tension in each constraint, (F, C): the force pulling each rod's ends together.
     #[pyo3(get)]
     tension: Py<PyArray2<f64>>,
+    /// Number of particles.
     #[pyo3(get)]
     n_particles: usize,
     /// Time of each detected event, (K,).
@@ -1416,14 +1426,16 @@ struct PyTrajectory {
     /// Which event (index into the ``events`` list) fired, (K,).
     #[pyo3(get)]
     event_index: Py<PyArray1<i64>>,
-    /// Positions and velocities at each event, (K, N, 3).
+    /// Positions at each event, (K, N, 3).
     #[pyo3(get)]
     event_pos: Py<PyArray3<f64>>,
+    /// Velocities at each event, shape ``(K, N, 3)``.
     #[pyo3(get)]
     event_vel: Py<PyArray3<f64>>,
     /// Index of the terminal event that stopped the run, or None.
     #[pyo3(get)]
     terminated_by: Option<usize>,
+    /// Description of the run: engine version, integrator, time step, forces, constraints.
     #[pyo3(get)]
     metadata: Py<PyDict>,
 }
@@ -1617,6 +1629,7 @@ impl PyTrajectory {
         Self::from_rust(py, tr, metadata)
     }
 
+    /// Number of recorded frames.
     #[getter]
     fn n_frames(&self, py: Python<'_>) -> usize {
         self.t.bind(py).len()
@@ -1967,6 +1980,7 @@ impl PyWorld {
         Ok(self.inner.forces.add(build_force(force)?))
     }
 
+    /// Removes the force with this id (as returned by :meth:`add_force`).
     fn remove_force(&mut self, id: ForceId) -> PyResult<()> {
         self.inner.remove_force(id)?;
         Ok(())
@@ -2010,6 +2024,7 @@ impl PyWorld {
         Ok(self.inner.set_force_params(id, &values)?)
     }
 
+    /// Removes all forces.
     fn clear_forces(&mut self) {
         self.inner.forces.clear();
     }
@@ -2031,11 +2046,13 @@ impl PyWorld {
         Ok(self.inner.add_rod(i, anchor, length)?)
     }
 
+    /// Removes the constraint with this id (as returned by :meth:`add_rod`).
     fn remove_constraint(&mut self, id: ConstraintId) -> PyResult<()> {
         self.inner.remove_constraint(id)?;
         Ok(())
     }
 
+    /// Removes all constraints.
     fn clear_constraints(&mut self) {
         self.inner.clear_constraints();
     }
@@ -2081,6 +2098,7 @@ impl PyWorld {
             .collect()
     }
 
+    /// Name of the current integrator; assign a name from ``INTEGRATORS`` to switch.
     #[getter]
     fn integrator(&self) -> String {
         self.inner.integrator().name().to_string()
@@ -2545,6 +2563,7 @@ impl PyWorld {
         Ok(Self { inner })
     }
 
+    /// Current simulation time; assignable.
     #[getter]
     fn t(&self) -> f64 {
         self.inner.state.t
@@ -2554,11 +2573,13 @@ impl PyWorld {
         self.inner.state.t = t;
     }
 
+    /// Number of particles.
     #[getter]
     fn n_particles(&self) -> usize {
         self.inner.state.len()
     }
 
+    /// Positions, shape ``(N, 3)``; assignable.
     #[getter]
     fn positions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         vecs_to_array(py, &self.inner.state.pos)
@@ -2569,6 +2590,7 @@ impl PyWorld {
         Ok(())
     }
 
+    /// Velocities, shape ``(N, 3)``; assignable.
     #[getter]
     fn velocities<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
         vecs_to_array(py, &self.inner.state.vel)
@@ -2579,6 +2601,7 @@ impl PyWorld {
         Ok(self.inner.set_velocities(vel)?)
     }
 
+    /// Masses, shape ``(N,)``; assignable.
     #[getter]
     fn masses<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_slice(py, &self.inner.state.mass)
@@ -2680,15 +2703,19 @@ impl PyWorld {
         vecs_to_array(py, &self.inner.accelerations()?)
     }
 
+    /// Kinetic energy ``Σ ½ m v²``.
     fn kinetic_energy(&self) -> f64 {
         self.inner.kinetic_energy()
     }
+    /// Potential energy of the conservative forces (forces without a potential are skipped).
     fn potential_energy(&self) -> PyResult<f64> {
         Ok(self.inner.potential_energy()?)
     }
+    /// Kinetic plus potential energy.
     fn total_energy(&self) -> PyResult<f64> {
         Ok(self.inner.total_energy()?)
     }
+    /// Total linear momentum ``Σ m v``.
     fn momentum<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         vec3_to_array(py, self.inner.state.momentum())
     }
@@ -2696,6 +2723,7 @@ impl PyWorld {
     fn angular_momentum<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         vec3_to_array(py, self.inner.state.angular_momentum())
     }
+    /// Mass-weighted mean position.
     fn center_of_mass<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         vec3_to_array(py, self.inner.state.center_of_mass())
     }
@@ -2859,6 +2887,7 @@ impl PyEvent {
         })
     }
 
+    /// The event's name, used in trajectories and error messages.
     #[getter]
     fn name(&self) -> String {
         match &self.spec {
@@ -2869,6 +2898,7 @@ impl PyEvent {
         }
     }
 
+    /// Crossing direction: ``+1`` increasing, ``-1`` decreasing, ``0`` both.
     #[getter(direction)]
     fn direction_sign(&self) -> i32 {
         match self.direction {
@@ -2878,6 +2908,7 @@ impl PyEvent {
         }
     }
 
+    /// Whether the event stops the run when it fires.
     #[getter]
     fn terminal(&self) -> bool {
         self.terminal
