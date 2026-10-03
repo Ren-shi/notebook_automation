@@ -48,7 +48,7 @@ pub struct ExplicitEuler {
 
 impl Integrator for ExplicitEuler {
     fn step(&mut self, s: &mut State, forces: &ForceSet, dt: f64) -> Result<()> {
-        forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &mut self.acc)?;
+        forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, &mut self.acc)?;
         for ((x, v), a) in s.pos.iter_mut().zip(s.vel.iter_mut()).zip(&self.acc) {
             *x += *v * dt;
             *v += *a * dt;
@@ -75,7 +75,7 @@ pub struct SymplecticEuler {
 
 impl Integrator for SymplecticEuler {
     fn step(&mut self, s: &mut State, forces: &ForceSet, dt: f64) -> Result<()> {
-        forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &mut self.acc)?;
+        forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, &mut self.acc)?;
         for ((x, v), a) in s.pos.iter_mut().zip(s.vel.iter_mut()).zip(&self.acc) {
             *v += *a * dt;
             *x += *v * dt;
@@ -96,13 +96,13 @@ impl Integrator for SymplecticEuler {
 
 /// One kick-drift-kick leapfrog substep of length `h`.
 fn kdk(s: &mut State, forces: &ForceSet, acc: &mut Vec<Vec3>, h: f64) -> Result<()> {
-    forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, acc)?;
+    forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, acc)?;
     for ((x, v), a) in s.pos.iter_mut().zip(s.vel.iter_mut()).zip(acc.iter()) {
         *v += *a * (0.5 * h);
         *x += *v * h;
     }
     s.t += h;
-    forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, acc)?;
+    forces.accelerations(s.t, &s.pos, &s.vel, &s.mass, &s.pinned, acc)?;
     for (v, a) in s.vel.iter_mut().zip(acc.iter()) {
         *v += *a * (0.5 * h);
     }
@@ -200,6 +200,7 @@ impl Integrator for Rk4 {
                 &self.xs,
                 &self.vs,
                 &s.mass,
+                &s.pinned,
                 &mut self.acc,
             )?;
             for p in 0..n {

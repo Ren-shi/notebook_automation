@@ -1,5 +1,7 @@
 # physim
 
+[![CI](https://github.com/Ren-shi/notebook_automation/actions/workflows/ci.yml/badge.svg)](https://github.com/Ren-shi/notebook_automation/actions/workflows/ci.yml)
+
 A classical-mechanics engine for point particles: the time stepping and forces run in **Rust**, and
 **Python** (via [PyO3](https://pyo3.rs) and [maturin](https://www.maturin.rs)) sets up systems and analyses results.
 
@@ -26,7 +28,7 @@ Requires a Rust toolchain and Python ≥ 3.9.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install maturin numpy matplotlib pytest jupyter
+pip install -r requirements-dev.txt jupyter
 maturin develop --release        # builds the Rust extension into the venv; rerun after Rust changes
 ```
 
@@ -35,7 +37,11 @@ maturin develop --release        # builds the Rust extension into the venv; reru
 ```bash
 cargo test --release             # Rust physics tests (convergence orders, conservation laws)
 pytest tests/python              # Python binding tests
+python scripts/run_notebooks.py  # execute the example notebooks, fail on any error
 ```
+
+CI (`.github/workflows/ci.yml`) runs all of the above plus `cargo fmt --check` and
+`cargo clippy --all-targets --features python -- -D warnings` on every push and pull request.
 
 ## What's included
 
@@ -55,6 +61,17 @@ The symplectic schemes are only symplectic for velocity-independent forces; pref
 `Spring(i, j, k, rest_length)`, `AnchorSpring(i, anchor, k, rest_length=0)`, `LinearDrag(gamma)` (`a = -γv`),
 `QuadraticDrag(c)` (`F = -c|v|v`), and `CustomForce` (below). Conservative forces report a potential, so
 `traj.energy` and `w.total_energy()` include them.
+
+**Managing a world**:
+- `add_force` returns an id. Use it with `remove_force(id)`, `replace_force(id, force)`, `force_params(id)` and
+  `set_force_params(id, G=2.0)` to sweep a parameter without rebuilding the world. `w.forces` is `{id: name}`.
+- `remove_particle(i)` shifts higher indices down and renumbers springs; it refuses while a force still uses particle `i`.
+- `w.masses = [...]` changes masses. A mass of `0` makes a test particle: it feels gravity but does not source it.
+  Springs and quadratic drag reject massless particles.
+- `w.pin(i)` fixes a particle in place (it still exerts forces); `w.pin(i, False)` releases it.
+- If a step fails (an exception in a `CustomForce`, or the state becoming non-finite), the world rolls back to
+  the last completed step. From `run`, the exception carries the frames recorded so far as `err.trajectory`.
+- `w.integrator_info` gives the integrator's name, order and whether it is symplectic.
 
 **Diagnostics**: `kinetic_energy()`, `potential_energy()`, `total_energy()`, `momentum()`,
 `angular_momentum()`, `center_of_mass()`, `accelerations()`; trajectories record `t`, `pos`, `vel`,
@@ -103,6 +120,10 @@ Then expose it to Python in `src/python.rs`: add a `#[pyclass]` wrapper with an 
 New integrators work the same way: implement `Integrator` in `src/integrators.rs` and register a name in
 `integrators::by_name`.
 
+## Roadmap
+
+Planned work lives in [`backlog/`](backlog/README.md), one file per item with priority, scope and acceptance criteria.
+
 ## Layout
 
 ```
@@ -113,7 +134,9 @@ src/
   integrators.rs  Integrator trait and schemes
   world.rs        World (state + forces + integrator) and Trajectory recording
   python.rs       PyO3 bindings (feature "python")
+scripts/          developer tools (notebook runner)
 python/physim/    Python package (re-exports the extension, analysis helpers, type stubs)
 tests/            Rust tests; tests/python for the bindings
 notebooks/        examples
+backlog/          planned work
 ```

@@ -7,6 +7,8 @@ pub struct State {
     pub pos: Vec<Vec3>,
     pub vel: Vec<Vec3>,
     pub mass: Vec<f64>,
+    /// Pinned particles never move but still exert forces.
+    pub pinned: Vec<bool>,
 }
 
 impl State {
@@ -19,7 +21,16 @@ impl State {
         self.pos.push(pos);
         self.vel.push(vel);
         self.mass.push(mass);
+        self.pinned.push(false);
         self.pos.len() - 1
+    }
+
+    /// Removes particle `i`; particles above it shift down by one index.
+    pub fn remove_particle(&mut self, i: usize) {
+        self.pos.remove(i);
+        self.vel.remove(i);
+        self.mass.remove(i);
+        self.pinned.remove(i);
     }
 
     pub fn len(&self) -> usize {
