@@ -1,0 +1,8 @@
+# Everything needed to build, test and run the notebooks locally or in CI.
+maturin>=1.5,<2
+numpy>=1.21
+pytest
+matplotlib
+nbformat
+nbclient
+ipykernel

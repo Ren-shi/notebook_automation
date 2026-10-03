@@ -6,7 +6,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 
 | # | Item | Area | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 01 | [Continuous integration](01-continuous-integration.md) | Tooling | P1 | S | — |
+| 01 | ~~[Continuous integration](01-continuous-integration.md)~~ **Done** | Tooling | P1 | S | — |
 | 02 | [Benchmarks](02-benchmarks.md) | Tooling | P1 | S | — |
 | 03 | [Reuse forces between Verlet steps](03-verlet-force-caching.md) | Performance | P1 | S | 02 |
 | 04 | [Parallel force evaluation](04-parallel-forces.md) | Performance | P1 | M | 02 |

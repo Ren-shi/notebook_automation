@@ -1,6 +1,11 @@
 # 01 · Continuous integration
 
-**Priority:** P1 · **Size:** S · **Area:** Tooling
+**Priority:** P1 · **Size:** S · **Area:** Tooling · **Status: Done**
+
+> **Done.** `.github/workflows/ci.yml` has two jobs on every push and pull request: **Rust** (fmt, clippy with
+> `-D warnings`, `cargo test --release`) and **Python** (build with maturin, `pytest tests/python`, execute
+> notebooks via `scripts/run_notebooks.py`). Dependencies are pinned in `requirements-dev.txt`; cargo and pip
+> are cached. Multi-platform wheels are left to item 21.
 
 ## Why
 Nothing checks the build automatically. Every later item changes numerics, and a silent regression in

@@ -1,5 +1,7 @@
 # physim
 
+[![CI](https://github.com/Ren-shi/notebook_automation/actions/workflows/ci.yml/badge.svg)](https://github.com/Ren-shi/notebook_automation/actions/workflows/ci.yml)
+
 A classical-mechanics engine for point particles: the time stepping and forces run in **Rust**, and
 **Python** (via [PyO3](https://pyo3.rs) and [maturin](https://www.maturin.rs)) sets up systems and analyses results.
 
@@ -26,7 +28,7 @@ Requires a Rust toolchain and Python ≥ 3.9.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install maturin numpy matplotlib pytest jupyter
+pip install -r requirements-dev.txt jupyter
 maturin develop --release        # builds the Rust extension into the venv; rerun after Rust changes
 ```
 
@@ -35,7 +37,11 @@ maturin develop --release        # builds the Rust extension into the venv; reru
 ```bash
 cargo test --release             # Rust physics tests (convergence orders, conservation laws)
 pytest tests/python              # Python binding tests
+python scripts/run_notebooks.py  # execute the example notebooks, fail on any error
 ```
+
+CI (`.github/workflows/ci.yml`) runs all of the above plus `cargo fmt --check` and
+`cargo clippy --all-targets --features python -- -D warnings` on every push and pull request.
 
 ## What's included
 
@@ -128,6 +134,7 @@ src/
   integrators.rs  Integrator trait and schemes
   world.rs        World (state + forces + integrator) and Trajectory recording
   python.rs       PyO3 bindings (feature "python")
+scripts/          developer tools (notebook runner)
 python/physim/    Python package (re-exports the extension, analysis helpers, type stubs)
 tests/            Rust tests; tests/python for the bindings
 notebooks/        examples
