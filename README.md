@@ -40,6 +40,15 @@ pytest tests/python              # Python binding tests
 python scripts/run_notebooks.py  # execute the example notebooks, fail on any error
 ```
 
+## Benchmarks
+
+```bash
+cargo bench --bench engine           # Rust engine (criterion); reports in target/criterion/
+python benches/python_overhead.py    # Python call overhead and CustomForce cost
+```
+
+Baseline numbers and what they imply are in [`backlog/02-benchmarks.md`](backlog/02-benchmarks.md).
+
 CI (`.github/workflows/ci.yml`) runs all of the above plus `cargo fmt --check` and
 `cargo clippy --all-targets --features python -- -D warnings` on every push and pull request.
 
@@ -137,6 +146,7 @@ src/
 scripts/          developer tools (notebook runner)
 python/physim/    Python package (re-exports the extension, analysis helpers, type stubs)
 tests/            Rust tests; tests/python for the bindings
+benches/          Rust (criterion) and Python benchmarks
 notebooks/        examples
 backlog/          planned work
 ```
