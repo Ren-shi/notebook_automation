@@ -28,14 +28,24 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 20 | [Fields and continua](20-fields-and-continua.md) | Physics | P3 | L | — |
 | 21 | [Packaging and release](21-packaging-and-release.md) | Tooling | P3 | S | 01 |
 | 22 | [Documentation](22-documentation.md) | Usability | P3 | M | — |
+| 23 | [Equations of motion from a Lagrangian or Hamiltonian](23-lagrangian-input.md) | Usability | P2 | L | 17 |
+| 24 | [Ensembles and parameter sweeps](24-ensembles-and-sweeps.md) | Analysis | P2 | M | — |
+| 25 | [Periodic orbits: finding and continuation](25-periodic-orbits.md) | Analysis | P2 | M | 18 |
+| 26 | [Conserved-quantity monitors](26-conserved-quantity-monitors.md) | Analysis | P2 | S | — |
+| 27 | [Rotating reference frames](27-rotating-frames.md) | Physics | P3 | S | — |
+| 28 | [Richer constraints](28-richer-constraints.md) | Physics | P3 | L | 07 |
+| 29 | [Variable mass](29-variable-mass.md) | Physics | P3 | S | — |
+| 30 | [Special-relativistic particle dynamics](30-special-relativity.md) | Physics | P3 | M | 09 |
+| 31 | [Seeded, reproducible randomness](31-seeded-randomness.md) | Core | P2 | S | — |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - Gravity is direct O(N²) summation, so practical up to a few thousand bodies.
 - `verlet`/`yoshida4` are only symplectic for velocity-independent forces; use `rk4` with drag.
-- No constraints: a pendulum is a stiff `AnchorSpring`, which forces a small time step.
-- `World::run` keeps every recorded frame in memory.
+- Rods (item 07) need `verlet` or `yoshida4`; long chains use an iterative solver (~43 ms/step at 1 000 links).
 - `CustomForce` costs one Python call per force evaluation.
 
 Finished items stay in the table, struck through and marked **Done**, with a note at the top of their file.
+
+Items 23–31 were added after the original plan and are deferred: finish 08–22 first.
 
 To add an item: copy any file, give it the next number, and add a row to the table.
