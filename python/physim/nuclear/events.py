@@ -38,6 +38,7 @@ from .rates import (
     beam_energy_at,
     channels,
     cm_acceptance,
+    coulex_for,
     energy_cut,
     energy_sigma,
     spot_sigma_mm,
@@ -78,7 +79,7 @@ def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
     array = Array.from_experiment(experiment)
     beam = beam_ion(experiment)
     species = [beam]
-    for ch in channels(layers):
+    for ch in channels(layers, experiment):
         if ch.nuclide.name not in species:
             species.append(ch.nuclide.name)
     materials: list = []
@@ -110,7 +111,7 @@ def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
     z1 = experiment.beam.Z
     pps = experiment.beam.particles_per_second
     chan_cfg, used = [], []
-    for ch in channels(layers):
+    for ch in channels(layers, experiment):
         acc = cm_acceptance(experiment, layers, ch, array, theta_floor)
         if acc is None:
             continue
@@ -121,9 +122,16 @@ def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
         m1, m2 = data.nuclide(beam).atomic_mass_u, ch.nuclide.atomic_mass_u
         e_cm = max(e_mid * m2 / (m1 + m2), 1e-6)
         rate = pps * ch.atoms_per_cm2 * 4 * math.pi * (k / (4 * e_cm)) ** 2 * (1 / u_min - 1 / u_max) * 1e-26
-        chan_cfg.append({"layer": ch.layer, "target": species.index(ch.nuclide.name),
-                         "atoms_per_cm2": ch.atoms_per_cm2, "k": k, "u_min": u_min, "u_max": u_max,
-                         "probability": max(rate, 1e-300)})
+        cfg = {"layer": ch.layer, "target": species.index(ch.nuclide.name), "atoms_per_cm2": ch.atoms_per_cm2,
+               "k": k, "u_min": u_min, "u_max": u_max, "probability": max(rate, 1e-300)}
+        if ch.excitation is not None:
+            # Excitation probability every 0.25° (from the Coulex at mid-layer, as for the analytic rates).
+            p = np.asarray(coulex_for(experiment, ch, layers).probability(np.linspace(0.0, 180.0, 721)))
+            # Picked as often as elastic scattering on the same nuclei (the weights carry P), so the rare
+            # inelastic events get as many samples as the elastic ones.
+            cfg.update(excitation=ch.excitation.energy_mev, excite_recoil=ch.excitation.excite == "target",
+                       p_table=p.tolist())
+        chan_cfg.append(cfg)
         used.append(ch)
     if not chan_cfg:
         raise ValueError("no detector can see any scattered particle or recoil: nothing to simulate")

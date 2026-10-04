@@ -86,6 +86,30 @@ Each sample is weighted by the excitation cross section. The weighted mean is th
 weighted spread is the Doppler broadening, to which the γ detector's resolution is added in quadrature. The state is
 assumed to decay after leaving the target, isotropically; lifetimes and γ angular distributions are not modelled.
 
+## Rates, spectra, app and report
+
+A Coulomb-excitation setup adds excitation channels next to the elastic ones (`rates.channels`):
+
+- target excitation: the main nuclide of the target;
+- projectile excitation: the beam on every nuclide of the target and backing.
+
+Each excitation channel works like an elastic one:
+
+- **Kinematics** use Q = −E*.
+- **Cross section:** Rutherford's at each depth times P(θ). P is computed once, at the beam energy in the middle of
+  the layer, because it changes slowly through a thin target.
+- **Event generator:** the excitation channel is picked as often as the elastic one, the masses include E*, and
+  each event's weight is multiplied by P(θ*) from a table every 0.25°. The rare inelastic events therefore get as
+  many samples as the elastic ones.
+- **Expected peaks:** Coulomb-excitation peaks are always listed, however weak.
+
+The app has an **Excitation and γ rays** tab (P(θ), events per detector, the Doppler table). The report adds a
+Coulomb-excitation section and `gamma.csv`.
+
+For `coulex_ni58` (0.1 pnA of 30 MeV ¹⁶O on 0.5 mg/cm² ⁵⁸Ni): the CD records 1.28 excitations per second next to
+660 elastic counts. The simulated rates agree with the analytic ones within 1.5σ for every channel and detector,
+at 0.7% statistical error from 2 × 10⁶ events.
+
 ## Checks
 
 | Check | Reference | Tolerance | Test |
@@ -97,4 +121,6 @@ assumed to decay after leaving the target, isotropically; lifetimes and γ angul
 | Scaling | P ∝ B exactly; projectile vs target excitation in the same orbit ∝ (Z₂/Z₁)² | 1e-12 | `test_scaling_with_b_and_with_the_exciting_charge` |
 | Safe distance | Closest approach equals the safe distance at the largest safe angle | 1e-9 | `test_safe_distance` |
 | Doppler formula | Four-vector Lorentz boost | 1e-12 | `test_doppler_formula_is_a_lorentz_boost` |
-| Against GOSIA and a published measurement | Requested from the user (`tests/reference/nuclear/pending/coulex_*.md`) | — | — |
+| Monte Carlo against analytic rates, every channel and detector of `coulex_ni58` | `Rates` | 4σ | `test_monte_carlo_rates_agree_with_analytic_rates[coulex_ni58]` |
+| Inelastic peak below the elastic one by the kinematic difference | `TwoBody` with and without E* | 10% | `test_coulomb_excitation_in_the_report` |
+| Against GOSIA and a published measurement | Requested from the user (`tests/reference/nuclear/pending/coulex_gosia.md`) | — | `validation.coulex_vs_gosia` (pending) |

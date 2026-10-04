@@ -9,7 +9,8 @@
 //! 3. slow the beam to that depth, with straggling;
 //! 4. draw the CM scattering angle, restricted to the range of angles the detectors can see,
 //!    half the time from the Rutherford cross section and half the time flat in ln sin²(θ*/2),
-//!    and weight the event so rates stay absolute;
+//!    and weight the event so rates stay absolute (for Coulomb excitation, also by the excitation
+//!    probability P(θ*));
 //! 5. two-body kinematics for the ejectile and the recoil;
 //! 6. slow each outgoing particle through the rest of the target and backing, find the first
 //!    detector face it crosses, and apply that detector's response (dead layer, punch-through,
@@ -59,6 +60,27 @@ pub struct Channel {
     pub u_max: f64,
     /// Relative probability of picking this channel (normalised internally).
     pub probability: f64,
+    /// Excitation energy left in the recoil (`excite_recoil`) or in the ejectile, MeV; 0 for
+    /// elastic scattering.
+    pub excitation: f64,
+    pub excite_recoil: bool,
+    /// Excitation probability P(θ*) on equally spaced CM angles from 0° to 180° (Coulomb
+    /// excitation); empty for elastic scattering. Event weights are multiplied by it.
+    pub p_table: Vec<f64>,
+}
+
+impl Channel {
+    /// The excitation probability at CM angle `theta_cm` (radians), 1 for elastic scattering.
+    fn excitation_probability(&self, theta_cm: f64) -> f64 {
+        let n = self.p_table.len();
+        if n < 2 {
+            return 1.0;
+        }
+        let x = (theta_cm / PI).clamp(0.0, 1.0) * (n - 1) as f64;
+        let i = (x as usize).min(n - 2);
+        let f = x - i as f64;
+        self.p_table[i] + f * (self.p_table[i + 1] - self.p_table[i])
+    }
 }
 
 /// Everything the generator needs. Tables are indexed `species × materials + material`.
@@ -151,6 +173,11 @@ impl Generator {
         for c in &self.channels {
             if c.layer >= self.layers.len() || c.target >= ns {
                 return Err("a channel refers to an unknown layer or species".into());
+            }
+            if c.excitation < 0.0 || c.p_table.iter().any(|p| !(p.is_finite() && *p >= 0.0)) {
+                return Err(
+                    "channel excitation energies and probabilities must not be negative".into(),
+                );
             }
             if !(0.0 < c.u_min && c.u_min < c.u_max && c.u_max <= 1.0)
                 || c.probability.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
@@ -252,8 +279,13 @@ impl Generator {
             depth += dz;
         }
         let (m1, m2) = (self.masses[self.beam], self.masses[ch.target]);
-        let Some(tb) = TwoBody::new(m1, m2, m1, m2, e) else {
-            return; // the beam stopped before reaching this depth
+        let (m3, m4) = if ch.excite_recoil {
+            (m1, m2 + ch.excitation)
+        } else {
+            (m1 + ch.excitation, m2)
+        };
+        let Some(tb) = TwoBody::new(m1, m2, m3, m4, e) else {
+            return; // the beam stopped before this depth, or is below the excitation threshold
         };
         let (u0, u1) = (ch.u_min, ch.u_max);
         // Draw u = sin²(θ*/2) half the time from Rutherford's 1/u² (most events at forward angles,
@@ -270,7 +302,8 @@ impl Generator {
         let p = 0.5 * f + 0.5 / (u * b);
         let theta_cm = 2.0 * u.sqrt().min(1.0).asin();
         let phi = TAU * d.uniform();
-        let weight = self.rate(ch, tb.cm_energy()) * f / p / (total as f64 * ch.probability / norm);
+        let weight = self.rate(ch, tb.cm_energy()) * f / p * ch.excitation_probability(theta_cm)
+            / (total as f64 * ch.probability / norm);
         let normal = Vec3::new(st, 0.0, ct);
         let stack: f64 = self.layers.iter().map(|l| l.thickness).sum();
         let cap = self.max_path_factor * stack;
@@ -435,6 +468,9 @@ impl Generator {
                 u_min,
                 u_max,
                 probability: 1.0,
+                excitation: 0.0,
+                excite_recoil: true,
+                p_table: Vec::new(),
             }],
             materials: 2,
             tables,

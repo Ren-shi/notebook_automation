@@ -12,7 +12,7 @@ b_up = "0.0695 e2b2"
 [beam]
 nuclide = "16O"
 energy = "30 MeV"
-current = "1 pnA"
+current = "0.1 pnA"
 
 [target]
 material = "58Ni"

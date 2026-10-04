@@ -50,12 +50,13 @@ First slice: elastic scattering (backlog items 33–42).
 | Monte Carlo spectra | ✅ | ✅ | 🟡 TRIM transmitted spectra requested | ✅ peak positions and widths vs analytic (5%); seeded, thread-independent | [Rates and events](rates-and-events.md) | 39 |
 | Beam-time report, CSV and ROOT export | ✅ | ✅ | 🟡 opening the ROOT file in ROOT requested (`pending/root_check.md`); ✅ uproot read-back | ✅ key numbers vs hand calculations (`test_nuclear_report.py`) | [Guide](../nuclear-setup.md) | 42 |
 
-Second slice: Coulomb excitation (backlog item 43, in progress).
+Second slice: Coulomb excitation (backlog item 43).
 
 | Capability | Engine | App | vs tools | vs literature | Page | Backlog |
 |---|---|---|---|---|---|---|
-| Coulomb excitation, first-order semiclassical | ✅ | ⬜ | 🟡 GOSIA requested (`pending/coulex_gosia.md`) | ✅ closed forms at 180° (1e-6), engine-orbit integration (5e-8), adiabatic cutoff; 🟡 measured data requested | [Theory](../theory/coulex.md) | 43 |
-| γ-ray Doppler shift and broadening | ✅ | ⬜ | — | ✅ Lorentz boost (1e-12) | [Theory](../theory/coulex.md) | 43 |
+| Coulomb excitation, first-order semiclassical | ✅ | ✅ | 🟡 GOSIA requested (`pending/coulex_gosia.md`) | ✅ closed forms at 180° (1e-6), engine-orbit integration (5e-8), adiabatic cutoff; 🟡 measured data requested | [Theory](../theory/coulex.md) | 43 |
+| γ-ray Doppler shift and broadening | ✅ | ✅ | — exact formula instead | ✅ Lorentz boost (1e-12) | [Theory](../theory/coulex.md) | 43 |
+| Coulomb-excitation rates and spectra | ✅ | ✅ | — | ✅ Monte Carlo against analytic rates per channel within 4σ (`coulex_ni58`) | [Theory](../theory/coulex.md) | 43 |
 
 Next slices: inelastic scattering through the nuclear interaction, then transfer reactions and fusion-evaporation.
 

@@ -117,6 +117,30 @@ def test_figures_and_command_line(tmp_path):
         assert (tmp_path / "out" / "figures" / f"{name}.pdf").exists()
 
 
+def test_coulomb_excitation_in_the_report(tmp_path):
+    rep = report.build(Experiment.example("coulex_ni58"), seed=1, events=20_000, validation=False)
+    x = rep.excitation
+    assert x["state"]["energy_kev"] == pytest.approx(1454.0)
+    assert len(x["doppler"]) == 3 * 4
+    paths = {p.name for p in rep.write(tmp_path, figures=False, root=False)}
+    assert "gamma.csv" in paths
+    text = (tmp_path / "report.html").read_text(encoding="utf-8")
+    assert "<h2>Coulomb excitation" in text and "B(E2↑)" in text and "Doppler shift" in text
+    # The inelastic peak sits below the elastic one by the kinematic difference at the CD's angles: less than
+    # E* for backscattered 16O, as the recoil takes part of Q.
+    from physim.nuclear.kinematics import TwoBody
+
+    peaks = {p["channel"]: p for p in rep.peaks if p["detector"] == "CD" and p["particle"] == "ejectile"}
+    el, inel = peaks["58Ni (target)"], peaks["58Ni (target), target excited to 1454 keV"]
+    theta = rep.detectors[0]["theta_mean_deg"]
+    e = 29.0  # MeV, mid-target
+    kin = (TwoBody("16O", "58Ni", e).at_lab(theta)[0].energy
+           - TwoBody("16O", "58Ni", e, excitation_mev=1.454).at_lab(theta)[0].energy)
+    assert el["mean_MeV"] - inel["mean_MeV"] == pytest.approx(kin, rel=0.1)
+    assert kin < 1.454
+    assert report.build(Experiment.example("alpha_on_gold"), events=10_000, validation=False).excitation is None
+
+
 def test_validation_status_in_the_report():
     rep = report.build(Experiment.example("alpha_on_gold"), events=10_000)
     rows = {r["capability"]: r for r in rep.register}

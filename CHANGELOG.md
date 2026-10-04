@@ -11,11 +11,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
-- Coulomb excitation (second slice of the nuclear planner, in progress):
+- Coulomb excitation (second slice of the nuclear planner):
   - `physim.nuclear.coulex.Coulex`: first-order semiclassical excitation probability and cross sections for E1, E2
     and E3, with the safe-distance check;
   - `physim.nuclear.gamma`: Doppler-shifted γ-ray energies and broadening per pair of particle and γ detector;
-  - setup files gain `[reaction] type = "coulex"` and `[[gamma_detectors]]`, with the example `coulex_ni58`.
+  - setup files gain `[reaction] type = "coulex"` and `[[gamma_detectors]]`, with the example `coulex_ni58`;
+  - excitation channels in rates, peaks and the Rust event generator (weighted by P(θ));
+  - the app's "Excitation and γ rays" tab, a report section with `gamma.csv`, and validation checks.
 - The experiment planner web app (NiceGUI): `physim app` opens the planner in the browser.
   - A setup panel with a detector table, a warnings banner, and tabs for geometry (3D), kinematics, rates and beam
     time (per-strip heat maps, parameter sweeps), energy loss, spectra, trajectories and the report.

@@ -31,6 +31,10 @@ PAGES = {
                    "and the exact Coulomb deflection."),
     "detectors": ("Validation: detector solid angles", ["Detector solid angles and response"],
                   "Solid angles against exact closed forms."),
+    "coulex": ("Validation: Coulomb excitation and γ rays",
+               ["Coulomb excitation, first-order semiclassical", "γ-ray Doppler shift and broadening"],
+               "First-order Coulomb excitation against its exact results (GOSIA requested), and the Doppler "
+               "formula against the Lorentz boost."),
     "rates-and-events": ("Validation: count rates and Monte Carlo spectra",
                          ["Count rates and beam time", "Monte Carlo spectra"],
                          "Rates against flux × target × cross section × solid angle, and simulated peaks against "

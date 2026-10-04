@@ -1,21 +1,42 @@
 # 43 · Inelastic scattering and Coulomb excitation (second slice)
 
-**Priority:** P2 · **Size:** L · **Area:** Nuclear planner · **Status: in progress**
+**Priority:** P2 · **Size:** L · **Area:** Nuclear planner · **Status: Done, except the GOSIA and published-data
+comparisons (the user)**
 
-> **Progress (2026-10-04).** The physics is done; integration into rates, events, app and report is next.
-> - **Done:**
->   - `physim.nuclear.coulex` (Coulomb excitation for E1, E2 and E3, safe distance, warnings);
->   - `physim.nuclear.gamma` (Doppler table);
->   - setup file `[reaction] type = "coulex"` and `[[gamma_detectors]]`, with the example `coulex_ni58`;
->   - `docs/theory/coulex.md`;
->   - `tests/python/test_nuclear_coulex.py` (18 tests).
->
->   Results so far: the closed forms at 180°, ξ = 0 hold to 4e-10; engine-orbit integration agrees to 5e-8; the
->   Doppler formula equals the four-vector boost to 1e-12. ¹⁶O on ⁵⁸Ni at 30 MeV: ξ = 0.84, P(170°) = 0.28%,
->   σ = 7.7 mb, Doppler shift +22 keV at 45° for CD events.
-> - **Next:** inelastic channels in `Rates`, peaks and the Rust event generator (Q = −E*, P(θ) as the event weight);
->   the inelastic lines and Doppler table in the app and report; validation checks in `physim.nuclear.validation`.
-> - **Waiting on the user:** GOSIA and a published measurement (`tests/reference/nuclear/pending/coulex_gosia.md`).
+> **Done** (`python/physim/nuclear/coulex.py`, `python/physim/nuclear/gamma.py`, the excitation channels in
+> `rates.py`, `events.py` and `src/nuclear/events.rs`, the γ tab in `planner.py` and `app.py`, the report section,
+> `examples/coulex_ni58.toml`, `docs/theory/coulex.md`, `tests/python/test_nuclear_coulex.py` and additions to the
+> events, planner, app, report and validation tests, `tests/nuclear_events.rs`).
+> - **Physics:** first-order semiclassical Coulomb excitation for E1, E2 and E3 from a 0⁺ ground state, along the
+>   symmetrised orbit, with Cline's safe distance and warnings for η and large P. Doppler-shifted γ energies and
+>   broadening per pair of particle and γ detector.
+> - **Setup file:** `[reaction] type = "coulex"` and `[[gamma_detectors]]`.
+> - **Integration:**
+>   - excitation channels in `Rates` (Q = −E*, Rutherford × P(θ)), with Coulomb-excitation peaks always listed;
+>   - the Rust generator (`Channel.excitation`, `excite_recoil`, `p_table` weighting events by P(θ*), sampled as
+>     often as elastic);
+>   - inelastic lines in the kinematics;
+>   - the app's "Excitation and γ rays" tab;
+>   - the report's Coulomb-excitation section and `gamma.csv`;
+>   - two register capabilities with validation checks and a notebook.
+> - **Results:**
+>   - The closed forms at θ = 180°, ξ = 0 hold to 4e-10.
+>   - Integration along engine orbits agrees to 5e-8.
+>   - The adiabatic cutoff falls monotonically with ξ, below 1% by ξ ≈ 6.
+>   - Scaling with B and with the exciting charge is exact.
+>   - The Doppler formula equals the four-vector boost to 1e-12.
+>   - Monte Carlo agrees with the analytic rates within 1.5σ for every channel of `coulex_ni58`, at 0.7% statistical
+>     error.
+>   - The safe-distance warning appears exactly at Cline's angle.
+>   - ¹⁶O on ⁵⁸Ni at 30 MeV: ξ = 0.88, total 5.9 mb, P(170°) = 0.28%, and the CD records 1.3 excitations per second
+>     at 0.1 pnA. Doppler shifts are ±22.5 keV at 45° and 135° for CD events, with 13–18 keV FWHM.
+> - **Waiting on the user:** GOSIA and a published measurement (`tests/reference/nuclear/pending/coulex_gosia.md`),
+>   which `validation.coulex_vs_gosia` reads as soon as the file exists.
+> - **Left out:**
+>   - multi-step excitation and reorientation;
+>   - nuclear-Coulomb interference;
+>   - γ angular distributions, lifetimes and feeding;
+>   - an ENSDF lookup of level data, which needs a download approval.
 
 > Refined 2026-10-04, after the elastic slice (33–42). What changed from the outline:
 > - Level data come from the setup file (the user types the state's energy and B(E2)); an ENSDF download is left

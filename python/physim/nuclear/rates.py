@@ -80,16 +80,31 @@ class StackLayer:
 
 @dataclass
 class Channel:
-    """Scattering on one kind of nucleus in one layer."""
+    """Scattering on one kind of nucleus in one layer: elastic, or (with ``excitation``) Coulomb excitation of a
+    state of the target nucleus or of the projectile."""
 
     layer: int
     layer_name: str
     nuclide: data.Nuclide
     atoms_per_cm2: float
+    #: The excited state (:class:`~physim.nuclear.experiment.Excitation`) for a Coulomb-excitation channel.
+    excitation: object = None
 
     @property
     def label(self) -> str:
-        return f"{self.nuclide.name} ({self.layer_name})"
+        base = f"{self.nuclide.name} ({self.layer_name})"
+        if self.excitation is None:
+            return base
+        e = self.excitation
+        return f"{base}, {e.excite} excited to {e.energy_mev * 1e3:g} keV"
+
+    @property
+    def kinematics_args(self) -> dict:
+        """Keyword arguments for :class:`~physim.nuclear.kinematics.TwoBody`: the excitation energy and where."""
+        if self.excitation is None:
+            return {}
+        return {"excitation_mev": self.excitation.energy_mev,
+                "excite": "recoil" if self.excitation.excite == "target" else "ejectile"}
 
 
 def stack(experiment) -> list:
@@ -101,10 +116,60 @@ def stack(experiment) -> list:
     return [StackLayer(name, mat, mat.areal_density_mg_cm2(th), mat.atoms_per_cm2(th)) for mat, th, name in layers]
 
 
-def channels(layers: list) -> list:
-    """One :class:`Channel` per nuclide per layer."""
-    return [Channel(i, lay.name, data.nuclide(key), n) for i, lay in enumerate(layers)
-            for key, n in lay.nuclides.items() if n > 0]
+def channels(layers: list, experiment=None) -> list:
+    """One elastic :class:`Channel` per nuclide per layer and, for a Coulomb-excitation setup, the excitation
+    channels: of the main nuclide of the target (target excitation), or of the beam by every nuclide (projectile
+    excitation)."""
+    out = [Channel(i, lay.name, data.nuclide(key), n) for i, lay in enumerate(layers)
+           for key, n in lay.nuclides.items() if n > 0]
+    exc = getattr(experiment, "excitation", None) if experiment is not None else None
+    if exc is not None:
+        if exc.excite == "target":
+            key, n = max(layers[0].nuclides.items(), key=lambda kv: kv[1])
+            out.append(Channel(0, layers[0].name, data.nuclide(key), n, exc))
+        else:
+            out += [Channel(i, lay.name, data.nuclide(key), n, exc) for i, lay in enumerate(layers)
+                    for key, n in lay.nuclides.items() if n > 0]
+    return out
+
+
+class _CoulexReaction:
+    """Coulomb excitation at one beam energy, shaped like :class:`~physim.nuclear.rutherford.Rutherford`:
+    ``kinematics`` (with Q = −E*) and ``cross_section_cm``. The excitation probability P(θ) is that of
+    ``coulex`` (at the middle of the layer); the Rutherford factor is at this energy."""
+
+    def __init__(self, beam: str, channel: Channel, energy: float, coulex):
+        self.kinematics = TwoBody(beam, channel.nuclide.name, energy, **channel.kinematics_args)
+        self._ruth = Rutherford(beam, channel.nuclide.name, energy)
+        self._coulex = coulex
+
+    def cross_section_cm(self, theta_cm):
+        return np.asarray(self._ruth.cross_section_cm(theta_cm)) * np.asarray(self._coulex.probability(theta_cm))
+
+
+@lru_cache(maxsize=64)
+def _coulex_at(beam: str, nuclide: str, energy: float, excite: str, e_star: float, multipolarity: str,
+               b_up: float):
+    from .coulex import Coulex
+
+    return Coulex(beam, nuclide, energy, excite=excite, energy=e_star, multipolarity=multipolarity, b_up=b_up)
+
+
+def coulex_for(experiment, channel: Channel, layers: Optional[list] = None):
+    """The :class:`~physim.nuclear.coulex.Coulex` of a channel, at the beam energy in the middle of its layer."""
+    layers = layers or stack(experiment)
+    e_mid = float(beam_energy_at(experiment, channel.layer, [layers[channel.layer].thickness / 2], layers)[0])
+    e = channel.excitation
+    return _coulex_at(beam_ion(experiment), channel.nuclide.name, round(e_mid, 9), e.excite, e.energy_mev,
+                      e.multipolarity, e.b_up_e2fm)
+
+
+def reaction_at(experiment, channel: Channel, energy: float, layers: Optional[list] = None):
+    """The reaction of a channel at one beam energy: an object with ``kinematics`` and ``cross_section_cm``."""
+    beam = beam_ion(experiment)
+    if channel.excitation is None:
+        return Rutherford(beam, channel.nuclide.name, energy)
+    return _CoulexReaction(beam, channel, energy, coulex_for(experiment, channel, layers))
 
 
 def beam_ion(experiment) -> str:
@@ -247,7 +312,7 @@ def cm_acceptance(experiment, layers: list, channel: Channel, array: Optional[Ar
         if e <= 0:
             continue
         try:
-            tb = TwoBody(beam_ion(experiment), channel.nuclide.name, float(e))
+            tb = TwoBody(beam_ion(experiment), channel.nuclide.name, float(e), **channel.kinematics_args)
         except ValueError:
             continue
         for pt in (tb.at_cm(grid), tb.recoil_for(grid)):
@@ -321,7 +386,7 @@ class Rates:
         self.experiment = experiment
         self.array = Array.from_experiment(experiment)
         self.layers = stack(experiment)
-        self.channels = channels(self.layers)
+        self.channels = channels(self.layers, experiment)
         self.beam = beam_ion(experiment)
         self.particles_per_second = experiment.beam.particles_per_second
         self.beam_time_s = _q(experiment.run.beam_time).to("s")
@@ -356,8 +421,8 @@ class Rates:
                     if e <= 0:
                         continue
                     try:
-                        ruth = Rutherford(self.beam, ch.nuclide.name, float(e))
-                    except ValueError:  # below threshold (cannot happen for elastic) or no energy left
+                        ruth = reaction_at(self.experiment, ch, float(e), self.layers)
+                    except ValueError:  # below the excitation threshold, or no energy left
                         continue
                     for p in PARTICLES:
                         for sigma, _ in self._branches(ruth, theta, p):
@@ -448,10 +513,13 @@ class Rates:
 
     def peaks(self, detector: str, segment: Optional[tuple] = None, min_share: float = 1e-3) -> list:
         """Expected peaks in a detector (or one segment): one per channel, particle and kinematic branch carrying
-        at least ``min_share`` of the detector's rate, strongest first."""
+        at least ``min_share`` of the detector's rate (Coulomb-excitation peaks always), strongest first."""
         peaks = self._all_peaks(detector, segment)
         total = sum(pk.rate for pk in peaks)
-        return [pk for pk in peaks if total > 0 and pk.rate >= min_share * total]
+        excited = {ch.label for ch in self.channels if ch.excitation is not None}
+        # Coulomb-excitation peaks are what the experiment is for: always listed, however weak.
+        return [pk for pk in peaks if total > 0 and (pk.rate >= min_share * total or (pk.channel in excited
+                                                                                        and pk.rate > 0))]
 
     def _all_peaks(self, detector: str, segment) -> list:
         key = (detector, None if segment is None else tuple(segment))
@@ -494,7 +562,11 @@ class Rates:
             for j, e in enumerate(es):
                 if e <= 0:
                     continue
-                branches = self._branches(Rutherford(self.beam, ch.nuclide.name, float(e)), theta, particle)
+                try:
+                    reac = reaction_at(self.experiment, ch, float(e), self.layers)
+                except ValueError:
+                    continue
+                branches = self._branches(reac, theta, particle)
                 if branch < len(branches):
                     sigma[j], energy[j] = branches[branch]
             weight = np.where(np.isnan(energy), 0.0, sigma * dom[None, :])
@@ -547,7 +619,7 @@ class Rates:
                 continue
 
             def lab(energy):
-                pt = TwoBody(self.beam, ch.nuclide.name, energy).at_lab(theta, particle)[branch]
+                pt = TwoBody(self.beam, ch.nuclide.name, energy, **ch.kinematics_args).at_lab(theta, particle)[branch]
                 return float(pt.energy) if pt is not None else math.nan
 
             h = 1e-4 * e
@@ -584,8 +656,12 @@ class Rates:
             acc = cm_acceptance(self.experiment, self.layers, ch, self.array, self.theta_floor)
             if acc is None:
                 continue
-            ruth = Rutherford(self.beam, ch.nuclide.name, self.experiment.beam.energy_mev)
-            for w in ruth.warnings(theta_cm_max=acc[1]):
+            if ch.excitation is not None:
+                found = coulex_for(self.experiment, ch, self.layers).warnings(theta_cm_max=acc[1])
+            else:
+                found = Rutherford(self.beam, ch.nuclide.name, self.experiment.beam.energy_mev).warnings(
+                    theta_cm_max=acc[1])
+            for w in found:
                 text = f"{ch.label}: {w}"
                 if text not in seen:
                     seen.add(text)

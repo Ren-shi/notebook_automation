@@ -41,6 +41,8 @@ CAPABILITIES = (
     "Detector solid angles and response",
     "Count rates and beam time",
     "Monte Carlo spectra",
+    "Coulomb excitation, first-order semiclassical",
+    "γ-ray Doppler shift and broadening",
 )
 
 
@@ -642,6 +644,73 @@ def spectra_vs_trim(ref):
         ok &= d_mean <= 0.01 and d_sigma <= 0.20
         worst = max(worst, d_mean / 0.01, d_sigma / 0.20)
     return bool(ok), worst, len(rows), "", {}
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Coulomb excitation and γ rays
+
+
+@check("Coulomb excitation, first-order semiclassical", "literature", "Exact results of the first-order theory: the "
+       "orbit integrals at θ = 180°, ξ = 0 (2, 2/3, 4/15 for E1, E2, E3) and the closed-form P(180°) for "
+       "¹⁶O + ⁵⁸Ni (2⁺)", "1e-6")
+def coulex_closed_form(ref):
+    from .coulex import HBARC_MEV_FM, Coulex, orbit_integrals
+    from .rutherford import E2_MEV_FM
+
+    worst = 0.0
+    for lam, exact in ((1, 2.0), (2, 2 / 3), (3, 4 / 15)):
+        worst = max(worst, float(np.max(np.abs(orbit_integrals(lam, 1.0, 0.0) / exact - 1))))
+    c = Coulex("16O", "58Ni", 30.0, energy=1e-9, b_up=695.0)
+    pref = (4 * math.pi * 8 * E2_MEV_FM / (HBARC_MEV_FM * 5)) ** 2 * c.b_up / 5
+    closed = pref * (2 / 3) ** 2 * (5 / (4 * math.pi)) / (c.beta * c.a**2) ** 2
+    got = c.probability(180.0, exact=True)
+    worst = max(worst, abs(got / closed - 1))
+    plot = {"x": ["I(E1)", "I(E2)", "I(E3)", "P(180°)"], "physim": [
+        float(orbit_integrals(1, 1.0, 0.0)[0].real), float(orbit_integrals(2, 1.0, 0.0)[0].real),
+        float(orbit_integrals(3, 1.0, 0.0)[0].real), got], "reference": [2.0, 2 / 3, 4 / 15, closed],
+        "categorical": True}
+    return worst <= 1e-6, worst, 4, f"worst {worst:.1e}", plot
+
+
+@check("Coulomb excitation, first-order semiclassical", "tool", "GOSIA (or CLX), first order, ¹⁶O + ⁵⁸Ni at 30 MeV "
+       "(requested in pending/coulex_gosia.md)", "2% in P(θ)")
+def coulex_vs_gosia(ref):
+    path = _file(ref, "coulex_gosia.csv")
+    if path is None:
+        return None, math.nan, 0, "coulex_gosia.csv not yet produced (GOSIA run requested)", {}
+    from .coulex import Coulex
+
+    rows = read_reference(path)[1]
+    ours, theirs, xs = [], [], []
+    for r in rows:
+        c = Coulex(r["beam"], r["target"], float(r["beam_energy_mev"]), energy=float(r["state_mev"]),
+                   b_up=f"{r['b_e2_e2b2']} e2b2")
+        ours.append(c.probability(float(r["theta_cm_deg"]), exact=True))
+        theirs.append(float(r["probability"]))
+        xs.append(float(r["theta_cm_deg"]))
+    worst = float(np.max(_rel(ours, theirs)))
+    plot = {"x": xs, "physim": ours, "reference": theirs, "xlabel": "CM angle (deg)",
+            "ylabel": "excitation probability", "logy": True}
+    return worst <= 0.02, worst, len(rows), f"worst {worst:.2%}", plot
+
+
+@check("γ-ray Doppler shift and broadening", "literature", "Lorentz boost of the photon four-vector (relativistic "
+       "Doppler formula with aberration), 50 random velocities and angles", "1e-12")
+def doppler_lorentz(ref):
+    from .gamma import doppler_energy
+
+    rng = np.random.default_rng(7)
+    beta = rng.uniform(0.0, 0.5, 50)
+    cos_rest = rng.uniform(-1.0, 1.0, 50)
+    gam = 1 / np.sqrt(1 - beta**2)
+    e_lab = gam * (1 + beta * cos_rest)
+    cos_lab = (cos_rest + beta) / (1 + beta * cos_rest)
+    got = doppler_energy(1.0, beta, cos_lab)
+    worst = float(np.max(np.abs(got / e_lab - 1)))
+    order = np.argsort(cos_lab)
+    plot = {"x": cos_lab[order], "physim": got[order], "reference": e_lab[order], "xlabel": "cos α (lab)",
+            "ylabel": "E_γ / E₀"}
+    return worst <= 1e-12, worst, 50, f"worst {worst:.1e}", plot
 
 
 # ---------------------------------------------------------------------------------------------------------------

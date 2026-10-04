@@ -111,6 +111,17 @@ def test_warnings_banner_and_explain_texts():
     assert set(EXPLAIN) == set(TABS)
 
 
+def test_gamma_tab():
+    assert Planner.example("alpha_on_gold").gamma() == {
+        "available": False, "reason": 'The setup has no excited state ([reaction] type = "coulex").'}
+    g = Planner.example("coulex_ni58").gamma()
+    assert g["available"] and g["max_safe_angle"] == 180.0
+    assert set(g["rates"]) == {"CD", "DSSD-L", "DSSD-R"} and all(v > 0 for v in g["rates"].values())
+    assert len(g["doppler"]) == 12
+    labels = [c["label"] for c in Planner.example("coulex_ni58").kinematics()["curves"]]
+    assert any("58Ni* 1454 keV" in lab for lab in labels)
+
+
 def test_energy_loss_tab():
     p = Planner.example("oxygen_on_lead_array")
     el = p.energy_loss()
