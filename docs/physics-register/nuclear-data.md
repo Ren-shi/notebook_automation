@@ -33,6 +33,7 @@ Backlog item 34 · module `physim.nuclear.data` · tests `tests/python/test_nucl
 | α-particle and proton nuclear masses | CODATA 2018 | 0.2 keV (α), 1 eV (p) | pass | `test_masses_in_other_units` |
 | Standard atomic weights of all 84 natural elements with Z ≤ 92 | NIST standard atomic weights | inside the published interval or 1σ | 82 pass; Se 1.5σ, Hg 2.4σ (see limitations) | `test_atomic_weights_from_isotopes_agree_with_nist` |
 | Areal densities and atoms/cm² for Au, C, Si, CH₂, CD₂ | Hand calculation | 1e-4 relative | pass | `test_gold`, `test_carbon_and_silicon`, `test_polyethylene_and_deuterated_polyethylene` |
+| Nuclear masses of 47 nuclides, ¹H to ²³⁸U | LISE++ `isotope_mass` (`tests/reference/nuclear/masses_lise.csv`, `scripts/lise_reference.py`) | 2 keV, or the AME2020 uncertainty if larger; AME2020 estimates (⁷⁸Ni, 990 keV off) skipped | 46 pass, worst 57% of the allowed deviation (¹⁰⁰Sn 135 keV of its 240 keV; ²³⁸U 1.1 keV) | `validation.masses_vs_lise` via `test_every_check_passes_or_waits_for_its_reference` |
 | Every data file has its source and licence recorded | `data/SOURCES.md` | — | pass | `test_every_data_file_has_its_source_recorded` |
 
 Validated 2026-10-04.

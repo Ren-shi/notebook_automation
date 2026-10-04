@@ -7,4 +7,5 @@ __pycache__/
 .pytest_cache/
 docs/_build/
 docs/examples/
+docs/validation/
 docs/jupyter_execute/

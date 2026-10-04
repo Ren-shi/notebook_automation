@@ -1,0 +1,13 @@
+# tool: LISE++ (LISEcute, Qt build), Kinematic calculator (relativistic), "Scattering" mode, Rutherford plots
+# produced by: Ren-shi (screenshots), transcribed 2026-10-04
+# settings: 4He 5 MeV/u (20 MeV) on 197Au, target 0.1 micron, reaction at the "middle" of the target, CM angle 50 deg.
+#   Cross sections are LISE++'s printed values. d0 and b(60 deg) were read off LISE++'s plots (about 2% precision);
+#   the grazing angle is LISE++'s printed value (180 deg: below the Coulomb barrier).
+#   LISE++ evaluates at the beam energy slowed to mid-target (19.989 MeV); physim's check uses the full 20 MeV, and
+#   the 0.1% tolerance covers the difference (0.03% at 20 MeV, 0.07% at 19.989 MeV).
+quantity,beam,target,beam_energy_mev,theta_cm_deg,value,unit,rel_tol
+cross_section_cm,4He,197Au,20,50,2640.611,mb/sr,0.001
+cross_section_lab,4He,197Au,20,50,2711.374,mb/sr,0.001
+grazing_angle,4He,197Au,20,,180,deg,0
+head_on_distance,4He,197Au,20,,11.6,fm,0.02
+impact_parameter,4He,197Au,20,60,10.1,fm,0.02

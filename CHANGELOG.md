@@ -11,6 +11,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Validation suite for the nuclear planner:
+  - `physim.nuclear.validation`: one tool comparison and one literature comparison per physics-register capability,
+    with `run()`, `report()` and plots; a test keeps the register's ✅ marks honest and checks that broken formulas
+    are caught.
+  - Validation notebooks in the docs; a LISE++ nuclear-mass reference.
+  - `physim.nuclear.export`: `trim_in` and `trim_in_for` write SRIM `TRIM.IN` files, and `lise_settings` lists
+    LISE++ inputs with physim's own values.
 - Count rates, beam time and Monte Carlo spectra for the nuclear planner:
   - `physim.nuclear.rates.Rates`: rates per detector, strip and channel (ejectile and recoil, target and backing),
     counts in the run, beam time for N counts, expected peaks with their widths broken down, and warnings.

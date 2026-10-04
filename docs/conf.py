@@ -42,11 +42,11 @@ html_title = f"physim {release}"
 
 
 def _copy_notebooks(app):
-    """Copy the example notebooks into the source tree so Sphinx can include them."""
-    dest = HERE / "examples"
-    dest.mkdir(exist_ok=True)
-    for nb in sorted((ROOT / "notebooks").glob("*.ipynb")):
-        shutil.copy2(nb, dest / nb.name)
+    """Copy the example and validation notebooks into the source tree so Sphinx can include them."""
+    for src, dest in ((ROOT / "notebooks", HERE / "examples"), (ROOT / "notebooks" / "validation", HERE / "validation")):
+        dest.mkdir(exist_ok=True)
+        for nb in sorted(src.glob("*.ipynb")):
+            shutil.copy2(nb, dest / nb.name)
 
 
 def setup(app):
