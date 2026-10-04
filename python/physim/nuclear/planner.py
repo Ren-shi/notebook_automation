@@ -307,7 +307,7 @@ class Planner:
         out = [Warning("error", "setup", p) for p in self.problems]
         for text in self._rates().warnings():
             level = "warning" if any(k in text for k in ("pile-up", "not Rutherford", "Mott", "stops inside",
-                                                         "records nothing", "beam path", "blocks")) else "note"
+                                                         "records nothing", "beam path", "blocks", "hides")) else "note"
             source = "rates" if ("counts" in text or "collects" in text or "records" in text) else "physics"
             out.append(Warning(level, source, text))
         order = {"error": 0, "warning": 1, "note": 2}

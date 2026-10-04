@@ -42,6 +42,10 @@ from .stopping import Stopping
 MAX_RATE = 5000.0
 #: Smallest lab angle counted, degrees: Rutherford's cross section diverges at 0°.
 THETA_FLOOR = 0.5
+#: Quadrature order over the face of a detector partly hidden behind another. The shadow's edge makes the integrand
+#: jump, so the rate converges only slowly with the order: 48 is within 0.5% of the exact visible solid angle of a
+#: disc half hidden by a smaller one (12 can be off by a few percent).
+SHADOW_ORDER = 48
 #: Lowest energy (MeV) a particle must leave the reaction with to be followed, unless a detector threshold is lower
 #: still. Rutherford's cross section diverges for distant collisions, which send recoils out at almost 90° with
 #: almost no energy; they never leave the target or reach a measurable signal.
@@ -395,6 +399,9 @@ class Rates:
         #: Particles leaving the reaction with less energy than this (MeV) are not counted (see :func:`energy_cut`).
         self.min_energy = energy_cut(experiment) if min_energy is None else min_energy
         self._depth_points, self._order = depth_points, order
+        #: Detectors partly hidden behind others: integrated on a finer grid, as the edge of the shadow cuts across
+        #: the face (fully hidden ones simply count nothing).
+        self._partly_hidden = {behind for (_, behind), frac in self.array.shadowing().items() if frac < 1 - 1e-6}
         self.rows = self._compute()
         self._peak_cache: dict = {}
 
@@ -403,16 +410,24 @@ class Rates:
         th = self.layers[layer].thickness
         return (x + 1) / 2 * th, w / 2
 
+    def _order_for(self, g) -> int:
+        """Quadrature order per segment: finer for a partly hidden detector, so the face as a whole is sampled about
+        as finely as ``SHADOW_ORDER`` over one segment (its many segments already make the grid fine)."""
+        if g.name not in self._partly_hidden:
+            return self._order
+        return max(self._order, math.ceil(SHADOW_ORDER / math.sqrt(len(g.segments))))
+
     def _compute(self) -> list:
         rows = []
         for g in self.array:
             segs = g.segments
-            parts = [g.directions(seg, self._order) for seg in segs]
+            parts = [g.directions(seg, self._order_for(g)) for seg in segs]
             dirs = np.concatenate([p[0] for p in parts])
             dom = np.concatenate([p[1] for p in parts])
             index = np.repeat(np.arange(len(segs)), [len(p[1]) for p in parts])
             theta = angles(dirs)[0]
-            dom = np.where(theta >= self.theta_floor, dom, 0.0)
+            # Directions that meet another detector first never reach this one.
+            dom = np.where((theta >= self.theta_floor) & self.array.visible(g.name, dirs), dom, 0.0)
             for ch in self.channels:
                 zs, wz = self._depth_nodes(ch.layer)
                 es = beam_energy_at(self.experiment, ch.layer, zs, self.layers)
@@ -569,9 +584,11 @@ class Rates:
         exp, layers = self.experiment, self.layers
         g = self.array[detector]
         setup = exp.detectors[[x.name for x in self.array].index(detector)]
+        if detector in self._partly_hidden and segment is None:
+            order = max(order, SHADOW_ORDER)
         dirs, dom = g.directions(segment, order)
         theta = angles(dirs)[0]
-        dom = np.where(theta >= self.theta_floor, dom, 0.0)
+        dom = np.where((theta >= self.theta_floor) & self.array.visible(detector, dirs), dom, 0.0)
         lay = layers[ch.layer]
         zs = (np.arange(n_depth) + 0.5) / n_depth * lay.thickness
         es = beam_energy_at(exp, ch.layer, zs, layers)
@@ -700,11 +717,16 @@ class Rates:
                     seen.add(text)
                     out.append(text)
         hours = self.beam_time_s / 3600
+        shadows = self.array.shadowing()
         for name, r in self.per_detector().items():
             if r > max_rate:
                 out.append(f"{name} counts {r:.3g} per second, above {max_rate:.0f}/s: expect pile-up and dead time "
                            f"(and radiation damage at forward angles). Lower the beam current or move it back.")
-            if r == 0:
+            hidden_by = [front for (front, behind), frac in shadows.items() if behind == name and frac >= 1 - 1e-6]
+            if r == 0 and hidden_by:
+                out.append(f"{name} records nothing: {hidden_by[0]} stops every particle before it gets there. Move "
+                           f"one of them, or remove {name}.")
+            elif r == 0:
                 out.append(f"{name} records nothing: no scattered particle reaches it above its threshold.")
             elif self.counts_wanted is not None and r * self.beam_time_s < self.counts_wanted:
                 need = self.counts_wanted / r / 3600

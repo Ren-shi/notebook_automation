@@ -10,6 +10,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
 
 ## Unreleased
 
+### Fixed
+- A particle detector hidden behind another no longer reports counts in the analytic rates, peaks and beam times.
+  - The integral leaves out directions that meet another detector first, as the event generator always did.
+  - A partly hidden detector is integrated on a finer grid, so the shadow's edge is resolved within 0.5%.
+  - A fully hidden detector's warning names the detector in front, and shadowing is now a warning, not a note.
+
 ### Changed
 - The planner app draws its Matplotlib figures off screen (Agg). The report builds them in a worker thread, where
   the on-screen backend could fail.

@@ -114,6 +114,32 @@ def test_warnings():
     assert any("A135 collects" in x and "need" in x for x in w)
 
 
+def half_hidden() -> Experiment:
+    """coulex_ni58 with a large pad behind the edge of the CD, which hides about half of it."""
+    d = Experiment.example("coulex_ni58").to_dict()
+    d["detectors"].append({"name": "P", "shape": "circle", "theta": "127 deg", "distance": "60 mm",
+                           "radius": "12 mm", "thickness": "300 um", "resolution": "50 keV", "threshold": "500 keV"})
+    return Experiment.from_dict(d)
+
+
+def test_hidden_detectors_count_only_what_reaches_them():
+    exp = half_hidden()
+    r = Rates(exp)
+    frac = r.array.shadowing()[("CD", "P")]
+    assert 0.3 < frac < 0.7
+    # Without the CD, P counts more, by about the hidden share (the cross section varies a little over its face).
+    d = exp.to_dict()
+    d["detectors"] = [x for x in d["detectors"] if x["name"] != "CD"]
+    alone = Rates(Experiment.from_dict(d)).rate("P", counted=False)
+    assert r.rate("P", counted=False) == pytest.approx(alone * (1 - frac), rel=0.1)
+    # Entirely behind the CD: nothing, and the warning says why.
+    d = exp.to_dict()
+    d["detectors"][-1].update(theta="150 deg", distance="50 mm", radius="5 mm")
+    r = Rates(Experiment.from_dict(d))
+    assert r.rate("P", counted=False) == 0 and r.peaks("P") == []
+    assert any(w.startswith("P records nothing: CD stops every particle") for w in r.warnings())
+
+
 def test_distant_collisions_are_cut_by_energy():
     """Rutherford's cross section diverges for distant collisions, which send almost-90° recoils out with almost no
     energy: they are left out below the lowest threshold, so rates stay finite."""
@@ -131,7 +157,8 @@ def test_distant_collisions_are_cut_by_energy():
     lambda: Experiment.example("oxygen_on_lead_array"),
     lambda: tilted(),
     lambda: Experiment.example("coulex_ni58"),
-], ids=["alpha_on_gold", "oxygen_on_lead_array", "tilted_30deg", "coulex_ni58"])
+    lambda: half_hidden(),
+], ids=["alpha_on_gold", "oxygen_on_lead_array", "tilted_30deg", "coulex_ni58", "half_hidden"])
 def test_monte_carlo_rates_agree_with_analytic_rates(make):
     exp = make()
     r = Rates(exp)
