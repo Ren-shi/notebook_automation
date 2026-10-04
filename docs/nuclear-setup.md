@@ -204,6 +204,40 @@ current sets the absolute scale. `energy_spread` and `spot_size` (both FWHM) ent
 widths. The same `seed` always gives the same events. {doc}`theory/events` explains the method and
 {doc}`physics-register/rates-and-events` how it is checked.
 
+## The beam-time report and data files
+
+One command writes the report and every table:
+
+```bash
+python -m physim.nuclear.report my_setup.toml -o my-report --seed 1
+```
+
+From Python, `physim.nuclear.report.build(exp, seed=1).write("my-report")` does the same. The folder then holds:
+
+- **`report.html`**: the whole report on one page, with figures embedded. It covers the setup, every warning, the
+  detector table, kinematics, expected peaks, energy loss, simulated spectra, the validation status of each model,
+  data sources and references to cite. Print it from the browser ("Save as PDF") for the PDF version; the page has
+  print styles.
+- **`figures/`**: the geometry, coverage, kinematics and spectra figures, as PNG (200 dpi) and PDF.
+- **`setup.toml`**: the setup the report was made from. With the same seed it reproduces every number.
+- **`events.root`** (when `uproot` is installed: `pip install physim-engine[root]`), for analysis in ROOT. It holds:
+  - the simulated particles as a TTree `events`, one branch per column (detector, strip, energies, angles, depth,
+    weight);
+  - a TH1D `spectrum_<detector>` per detector, in counts for the planned run, with Monte Carlo errors;
+  - the setup file, as `setup`.
+
+  In ROOT: `events->Draw("measured", "weight*(detector==2 && counted)")` or `spectrum_A45->Fit("gaus")`. See
+  `physim.nuclear.rootio`.
+- **CSV tables**, with units in the column names:
+
+| File | One row per | Columns |
+|---|---|---|
+| `detectors.csv` | detector | `theta_min_deg`, `theta_max_deg`, `theta_mean_deg`, `phi_min_deg`, `phi_max_deg`, `solid_angle_msr`, `dsigma_domega_lab_mb_sr` (scattered beam on the main target nuclide at the mean angle, mid-target energy), `rate_per_s` (counted above threshold), `rate_all_per_s` (everything reaching the face), `mc_rate_per_s` and `mc_rate_error_per_s` (Monte Carlo), `counts_in_run`, `beam_time_s` (for `counts_wanted`), `relative_error` |
+| `strips.csv` | strip or ring–sector | `detector`, `segment_i`, `segment_j`, `rate_per_s` |
+| `peaks.csv` | expected peak | `detector`, `channel` (nuclide and layer), `particle` (ejectile or recoil), `branch`, `mean_MeV`, `fwhm_keV`, `rate_per_s`, `above_threshold` |
+| `kinematics.csv` | lab angle, 0–180° in 1° steps | `theta_lab_deg`, then `E_<particle>_MeV` for the scattered beam and the recoil of every target nuclide (higher-energy solution; empty past the maximum angle) |
+| `energy_loss.csv` | layer | `layer`, `material`, `thickness_mg_cm2`, `energy_in_MeV`, `energy_out_MeV`, `loss_MeV`, `straggling_fwhm_MeV` (beam) |
+
 ## When something is wrong
 
 The planner reads the whole file and lists every problem at once, each naming the field:

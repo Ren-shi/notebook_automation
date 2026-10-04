@@ -156,6 +156,12 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.planner
    :members:
 
+.. automodule:: physim.nuclear.report
+   :members:
+
+.. automodule:: physim.nuclear.rootio
+   :members:
+
 .. automodule:: physim.nuclear.app
    :members: figure_geometry, figure_kinematics, figure_strips, figure_energy_loss, figure_spectra,
       figure_trajectories, figure_sweep, report_zip, main

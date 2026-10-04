@@ -12,6 +12,7 @@
     ev = simulate(exp)
     plot.spectra(ev)         # measured-energy spectrum of each detector
     plot.theta_energy(ev)    # measured energy against lab angle
+    plot.kinematics(Planner(exp).kinematics())   # E against θ for every ejectile and recoil
 """
 
 from __future__ import annotations
@@ -137,4 +138,26 @@ def theta_energy(events, detector=None, *, bins=(180, 200), ax=None, figsize=(7,
     ax.set_ylabel("measured energy (MeV)")
     ax.set_title(detector or "all detectors", fontsize=9, loc="left")
     tidy(ax)
+    return ax
+
+
+def kinematics(kin, *, ax=None, figsize=(7, 4)):
+    """Lab energy against lab angle for every ejectile and recoil, with each detector's angular coverage shaded.
+    ``kin`` is :meth:`physim.nuclear.planner.Planner.kinematics`. Returns the axes."""
+    plt = _plt()
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+    for i, d in enumerate(kin["detectors"]):
+        lo, hi = d["theta_range"]
+        ax.axvspan(lo, hi, color=color(i), alpha=0.12, lw=0)
+        ax.text(0.5 * (lo + hi), 1.0, d["name"], transform=ax.get_xaxis_transform(), ha="center", va="bottom",
+                fontsize=7, color=color(i))
+    for c in kin["curves"]:
+        ok = np.asarray(c["theta"]) <= c["max_angle"] + 1e-9  # a recoil left at rest has no direction
+        ax.plot(np.asarray(c["theta"])[ok], np.asarray(c["energy"])[ok], lw=1.4, ls="-" if c["particle"] == "ejectile" else "--", label=c["label"])
+    ax.set_xlim(0, 180)
+    ax.set_ylim(bottom=0)
+    ax.set_xlabel("lab angle θ (deg)")
+    ax.set_ylabel("energy (MeV)")
+    tidy(ax, legend=True)
     return ax
