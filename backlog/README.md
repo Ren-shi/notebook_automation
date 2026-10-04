@@ -38,6 +38,17 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 30 | [Special-relativistic particle dynamics](30-special-relativity.md) | Physics | P3 | M | 09 |
 | 31 | [Seeded, reproducible randomness](31-seeded-randomness.md) | Core | P2 | S | — |
 | 32 | ~~[Quantum mechanics: the Schrödinger equation on a grid](32-quantum-mechanics.md)~~ **Done** | Physics | P3 | L | 20 |
+| 33 | [Experiment definition: the setup file](33-experiment-definition.md) | Nuclear planner | P1 | M | — |
+| 34 | [Nuclear and material data](34-nuclear-and-material-data.md) | Nuclear planner | P1 | M | — |
+| 35 | [Two-body reaction kinematics](35-reaction-kinematics.md) | Nuclear planner | P1 | M | 34 |
+| 36 | [Stopping power and energy loss](36-stopping-power-and-energy-loss.md) | Nuclear planner | P1 | L | 34 |
+| 37 | [Rutherford scattering, closest approach and Coulomb trajectories](37-rutherford-scattering.md) | Nuclear planner | P1 | M | 34, 35 |
+| 38 | [Detector geometry and response](38-detector-geometry-and-response.md) | Nuclear planner | P1 | M | 33, 36 |
+| 39 | [Count rates, beam time and the Monte Carlo event generator](39-rates-and-event-generator.md) | Nuclear planner | P1 | L | 31, 35–38 |
+| 40 | [Validation suite against SRIM, LISE++ and literature](40-validation-suite.md) | Nuclear planner | P1 | M | 33 |
+| 41 | [Experiment planner web app](41-planner-web-app.md) | Nuclear planner | P1 | L | 33, 35–39 |
+| 42 | [Beam-time report and data exports](42-report-and-exports.md) | Nuclear planner | P1 | M | 33, 39 |
+| 43 | [Inelastic scattering and Coulomb excitation (second slice)](43-inelastic-scattering.md) | Nuclear planner | P2 | L | 33–42 |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - `NewtonianGravity` is direct O(N²); `TreeGravity` (item 10) is O(N log N) but its per-interaction cost is not yet
@@ -52,5 +63,26 @@ Known limits of the current engine (worth keeping in mind until the items above 
 Finished items stay in the table, struck through and marked **Done**, with a note at the top of their file.
 
 Items 23–32 were added after the original plan and are deferred: finish 08–22 first.
+
+## Nuclear experiment planner (items 33–43)
+
+The next direction: a browser-based tool for planning nuclear physics experiments, aimed first at graduate students
+(who often do not want to write code) and later at undergraduates learning the physics. The user describes a beam,
+a target and a set of detectors; Physim returns kinematics, cross sections, energy loss, count rates, beam time and
+simulated spectra, and writes a **beam-time report** (the main deliverable) with CSV and ROOT exports.
+
+Physim brings together calculations that students currently spread across LISE++, SRIM and kinematics calculators.
+It does not replace those tools: each capability is checked against them first, then against published data, and the
+result is recorded in the [physics register](../docs/physics-register/README.md). Exports to SRIM and LISE++ formats
+let users cross-check any result in the trusted tool.
+
+Slices, one at a time:
+1. **Elastic scattering** (33–42), the first vertical slice. Suggested order: 33 and 34 → 35 → 36 and 37 → 38 →
+   31 and 39 → 40 throughout → 41 and 42 as the physics lands.
+2. Inelastic scattering and Coulomb excitation (43).
+3. Transfer reactions, then fusion-evaporation (not yet written up).
+
+Items 33–42 take priority over the deferred items 23–30. Item 31 (seeded randomness) is needed by 39 and moves up
+with them.
 
 To add an item: copy any file, give it the next number, and add a row to the table.
