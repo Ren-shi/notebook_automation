@@ -2,8 +2,11 @@
 
 **Priority:** P2 · **Size:** M · **Area:** Nuclear planner
 
-**Status: in progress.** The Windows installer is built and test-installed in CI. Still to do: the installer size
-from the first CI run, a test on a clean machine by someone else, and macOS.
+**Status: in progress.** The Windows installer is built and test-installed in CI. What remains:
+- a test on a clean machine by someone other than the author;
+- a first tagged release, so the installer appears on the releases page.
+
+**Size (first CI run, 2026-10-04):** the installer is 57 MB to download and 289 MB once installed.
 
 ## Why
 Many students who would use the planner have never installed Python. Today they follow the steps in
@@ -57,9 +60,12 @@ double-click removes that step.
 - Python 3.12.10, the last 3.12 release with Windows binaries; `build.py` pins it, and the workflow's Python must
   match (a test checks this).
 
-**macOS (later).** The same approach would use python-build-standalone in a `.app` bundle inside a `.dmg`. Without
-an Apple Developer ID ($99 per year) and notarisation, Gatekeeper blocks the app until the user right-clicks →
-Open. That cost is the user's decision, so macOS waits for it; `pip install` works there meanwhile.
+**Deferred by the user (2026-10-04): code signing and macOS.**
+- Unsigned, the installer shows SmartScreen's "Windows protected your PC". The install guide tells students to
+  click **More info → Run anyway**.
+- On macOS, `pip install` works meanwhile. A later bundle would use python-build-standalone in a `.app` inside a
+  `.dmg`. Without an Apple Developer ID ($99 per year) and notarisation, Gatekeeper would block it until the user
+  right-clicks → Open.
 
 ## Progress (2026-10-04)
 
@@ -79,5 +85,8 @@ Open. That cost is the user's decision, so macOS waits for it; `pip install` wor
   - `test_desktop_launch`: the log file, reuse of a running planner, and idle exit;
   - `test_ports`;
   - `test_installer_bundle_helpers`: the `._pth` edit, the icon, and the Python version matching the workflow.
+- **First CI run (#40):** the bundled Python imported everything from inside the bundle. With Python off the PATH,
+  the installed planner started and served all three examples, a second launch reused it, and the uninstaller
+  removed it.
 - **Checked by hand:** in a browser, an open tab keeps the planner running past `--idle-exit`; closing it stops
   the planner.
