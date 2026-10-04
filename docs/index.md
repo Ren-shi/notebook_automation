@@ -56,5 +56,6 @@ examples/08_quantum
 
 api/python
 api/rust
+physics-register/README
 changelog
 ```
