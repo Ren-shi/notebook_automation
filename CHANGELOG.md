@@ -17,6 +17,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - An "Explain" panel on every tab.
   - Install with `pip install physim-engine[app]`; step-by-step guide in `planner-app`. A new `physim` command
     (`physim app`, `physim report`).
+- Beam-time report and data exports (`physim.nuclear.report`, `python -m physim.nuclear.report setup.toml`):
+  - a self-contained HTML report with print styles for PDF;
+  - CSV tables with units in the column names;
+  - figures as PNG and PDF, and the setup file;
+  - the same setup and seed reproduce every number.
+
+  `plot.kinematics` draws E against θ with detector coverage. ROOT export waits on approval to add `uproot`.
 - `physim.nuclear.planner.Planner`: the planner app's model. It covers setup editing with validation, every result
   tab as plain data, warnings, "Explain" texts and one-parameter sweeps, so the web app (item 41, framework still
   to be chosen) is a thin layer over it.
