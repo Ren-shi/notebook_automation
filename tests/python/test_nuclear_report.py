@@ -123,3 +123,44 @@ def test_validation_status_in_the_report():
     assert rows["Rutherford cross section"]["literature"] == "pass"
     assert rows["Detector solid angles and response"]["tool"] == "none"
     assert rows["Count rates and beam time"]["tool"] in ("pending", "unchecked")
+
+
+def test_root_file_reads_back_unchanged(tmp_path):
+    pytest.importorskip("uproot")
+    import numpy as np
+
+    from physim.nuclear.events import simulate
+    from physim.nuclear.rootio import read_root, write_root
+
+    exp = Experiment.example("oxygen_on_lead_array")
+    ev = simulate(exp, 100_000, seed=5)
+    path = write_root(ev, tmp_path / "events.root", exp)
+    back = read_root(path)
+    assert set(back["events"]) == set(ev.columns)
+    for k, v in ev.columns.items():
+        assert np.array_equal(back["events"][k], np.asarray(v)), k
+    assert Experiment.from_toml(back["setup"]).to_dict() == exp.to_dict()
+    assert back["info"]["seed"] == 5 and back["info"]["n_events"] == 100_000
+    for name in ev.detectors:
+        counts, errors, edges = back["spectra"][name]
+        assert counts.sum() == pytest.approx(ev.counts(name), rel=1e-9)
+        w = ev["weight"][ev.select(name)] * ev.beam_time_s
+        # Errors are the Monte Carlo statistical errors, √Σw² per bin.
+        assert np.sqrt((errors**2).sum()) == pytest.approx(np.sqrt((w**2).sum()), rel=1e-9)
+        assert edges[0] == 0.0 and len(edges) == 401
+    # A Gaussian fit to the strongest peak recovers the analytic mean (as ROOT's Fit("gaus") would).
+    from physim.nuclear.rates import Rates
+
+    pk = Rates(exp).peaks("DSSD3")[0]
+    counts, errors, edges = back["spectra"]["DSSD3"]
+    centres = 0.5 * (edges[1:] + edges[:-1])
+    sel = np.abs(centres - pk.mean) < 3 * pk.sigma
+    mean = np.average(centres[sel], weights=counts[sel])
+    assert mean == pytest.approx(pk.mean, abs=0.1)
+
+
+def test_report_writes_the_root_file(tmp_path, alpha):
+    pytest.importorskip("uproot")
+    paths = alpha.write(tmp_path, figures=False)
+    assert tmp_path / "events.root" in paths
+    assert alpha.write(tmp_path / "no", figures=False, root=False)[-1].name == "setup.toml"

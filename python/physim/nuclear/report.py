@@ -5,7 +5,7 @@
     from physim.nuclear import Experiment, report
 
     rep = report.build(Experiment.example("oxygen_on_lead_array"), seed=1)
-    rep.write("my-report")        # report.html, CSV tables, figures (PNG and PDF), the setup file
+    rep.write("my-report")        # report.html, CSV tables, figures (PNG and PDF), setup file, events.root
 
 or from a terminal::
 
@@ -319,8 +319,9 @@ setup file and seed reproduce every number.</p>
 </body></html>
 """
 
-    def write(self, directory: Union[str, Path], figures: bool = True) -> list:
-        """report.html, the CSV tables, the figures (PNG and PDF) and the setup file, in ``directory``."""
+    def write(self, directory: Union[str, Path], figures: bool = True, root: Optional[bool] = None) -> list:
+        """report.html, the CSV tables, the figures (PNG and PDF), the setup file and, with ``uproot`` installed (or
+        ``root=True``), ``events.root`` with the simulated events and spectra (:mod:`physim.nuclear.rootio`)."""
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         paths = [d / "report.html"]
@@ -331,6 +332,18 @@ setup file and seed reproduce every number.</p>
         setup = d / "setup.toml"
         setup.write_text(self.experiment.to_toml(), encoding="utf-8")
         paths.append(setup)
+        if root is None:
+            try:
+                import uproot  # noqa: F401
+
+                root = True
+            except ImportError:
+                root = False
+        if root:
+            from .rootio import write_root
+
+            ev = self.planner.spectra(events=self.events, seed=self.seed)["events"]
+            paths.append(write_root(ev, d / "events.root", self.experiment))
         return paths
 
 
@@ -429,6 +442,7 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--events", type=int, default=200_000)
     ap.add_argument("--no-figures", action="store_true", help="skip the PNG/PDF figure files")
+    ap.add_argument("--no-root", action="store_true", help="skip events.root (written when uproot is installed)")
     args = ap.parse_args(argv)
     from .experiment import example_names
 
@@ -436,7 +450,8 @@ def main(argv: Optional[list] = None) -> int:
     import matplotlib
 
     matplotlib.use("Agg")
-    paths = build(exp, seed=args.seed, events=args.events).write(args.output, figures=not args.no_figures)
+    paths = build(exp, seed=args.seed, events=args.events).write(args.output, figures=not args.no_figures,
+                                                                 root=False if args.no_root else None)
     print(f"wrote {len(paths)} files to {args.output}/ (open report.html)")
     return 0
 

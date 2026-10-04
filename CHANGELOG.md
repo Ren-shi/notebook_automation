@@ -23,7 +23,10 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - figures as PNG and PDF, and the setup file;
   - the same setup and seed reproduce every number.
 
-  `plot.kinematics` draws E against θ with detector coverage. ROOT export waits on approval to add `uproot`.
+  - with `uproot` installed (`pip install physim-engine[root]`), `events.root`: an event TTree, TH1D spectra with
+    Monte Carlo errors, and the setup (`physim.nuclear.rootio`).
+
+  `plot.kinematics` draws E against θ with detector coverage.
 - `physim.nuclear.planner.Planner`: the planner app's model. It covers setup editing with validation, every result
   tab as plain data, warnings, "Explain" texts and one-parameter sweeps, so the web app (item 41, framework still
   to be chosen) is a thin layer over it.

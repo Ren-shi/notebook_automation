@@ -48,7 +48,7 @@ First slice: elastic scattering (backlog items 33–42).
 | Detector solid angles and response | ✅ | ✅ | — exact closed forms instead | ✅ closed forms to 1e-10, Monte Carlo | [Detectors](detectors.md) | 38 |
 | Count rates and beam time | ✅ | ✅ | 🟡 LISE++ cross sections at the detector angles requested | ✅ I n (dσ/dΩ) Ω within 1%; Monte Carlo within 4σ | [Rates and events](rates-and-events.md) | 39 |
 | Monte Carlo spectra | ✅ | ✅ | 🟡 TRIM transmitted spectra requested | ✅ peak positions and widths vs analytic (5%); seeded, thread-independent | [Rates and events](rates-and-events.md) | 39 |
-| Beam-time report, CSV and ROOT export | 🟡 report, CSV, figures; ROOT waits on `uproot` | ✅ | — | ✅ key numbers vs hand calculations (`test_nuclear_report.py`) | [Guide](../nuclear-setup.md) | 42 |
+| Beam-time report, CSV and ROOT export | ✅ | ✅ | 🟡 opening the ROOT file in ROOT requested (`pending/root_check.md`); ✅ uproot read-back | ✅ key numbers vs hand calculations (`test_nuclear_report.py`) | [Guide](../nuclear-setup.md) | 42 |
 
 Next slices: inelastic scattering and Coulomb excitation (43), then transfer reactions and fusion-evaporation.
 

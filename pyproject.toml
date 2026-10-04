@@ -37,6 +37,8 @@ notebooks = ["matplotlib", "jupyter"]
 plot = ["matplotlib"]
 plot3d = ["matplotlib", "plotly"]
 io = ["h5py"]
+# ROOT files of simulated events and spectra (physim.nuclear.rootio).
+root = ["uproot"]
 # The experiment planner app (physim app).
 app = ["nicegui", "matplotlib", "plotly"]
 test = ["pytest"]

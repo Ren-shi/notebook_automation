@@ -220,6 +220,14 @@ From Python, `physim.nuclear.report.build(exp, seed=1).write("my-report")` does 
   print styles.
 - **`figures/`**: the geometry, coverage, kinematics and spectra figures, as PNG (200 dpi) and PDF.
 - **`setup.toml`**: the setup the report was made from. With the same seed it reproduces every number.
+- **`events.root`** (when `uproot` is installed: `pip install physim-engine[root]`), for analysis in ROOT. It holds:
+  - the simulated particles as a TTree `events`, one branch per column (detector, strip, energies, angles, depth,
+    weight);
+  - a TH1D `spectrum_<detector>` per detector, in counts for the planned run, with Monte Carlo errors;
+  - the setup file, as `setup`.
+
+  In ROOT: `events->Draw("measured", "weight*(detector==2 && counted)")` or `spectrum_A45->Fit("gaus")`. See
+  `physim.nuclear.rootio`.
 - **CSV tables**, with units in the column names:
 
 | File | One row per | Columns |
