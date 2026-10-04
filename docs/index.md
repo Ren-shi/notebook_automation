@@ -37,6 +37,7 @@ theory/fields
 theory/quantum
 theory/kinematics
 theory/stopping
+theory/rutherford
 ```
 
 ```{toctree}
@@ -63,5 +64,6 @@ physics-register/README
 physics-register/nuclear-data
 physics-register/kinematics
 physics-register/stopping
+physics-register/rutherford
 changelog
 ```

@@ -42,7 +42,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 34 | ~~[Nuclear and material data](34-nuclear-and-material-data.md)~~ **Done** | Nuclear planner | P1 | M | — |
 | 35 | ~~[Two-body reaction kinematics](35-reaction-kinematics.md)~~ **Done** | Nuclear planner | P1 | M | 34 |
 | 36 | ~~[Stopping power and energy loss](36-stopping-power-and-energy-loss.md)~~ **Done** | Nuclear planner | P1 | L | 34 |
-| 37 | [Rutherford scattering, closest approach and Coulomb trajectories](37-rutherford-scattering.md) | Nuclear planner | P1 | M | 34, 35 |
+| 37 | ~~[Rutherford scattering, closest approach and Coulomb trajectories](37-rutherford-scattering.md)~~ **Done** | Nuclear planner | P1 | M | 34, 35 |
 | 38 | [Detector geometry and response](38-detector-geometry-and-response.md) | Nuclear planner | P1 | M | 33, 36 |
 | 39 | [Count rates, beam time and the Monte Carlo event generator](39-rates-and-event-generator.md) | Nuclear planner | P1 | L | 31, 35–38 |
 | 40 | [Validation suite against SRIM, LISE++ and literature](40-validation-suite.md) | Nuclear planner | P1 | M | 33 |

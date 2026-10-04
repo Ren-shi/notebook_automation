@@ -141,6 +141,9 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.stopping
    :members:
 
+.. automodule:: physim.nuclear.rutherford
+   :members:
+
 .. autofunction:: physim.nuclear.parse_nuclide
 .. autofunction:: physim.nuclear.parse_material
 
