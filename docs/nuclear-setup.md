@@ -66,6 +66,7 @@ a setup file should never leave the unit to guesswork.
 | Beam current (particles) | `ppA`, `pnA`, `puA` (or `pµA`) |
 | Beam current (electrical) | `epA`, `enA`, `euA` (or `eµA`) |
 | Time | `s`, `min`, `h`, `d` |
+| Density | `g/cm3`, `mg/cm3`, `kg/m3` |
 | Fraction | `%` |
 
 Particle current counts beam particles (1 pnA = 6.24 × 10⁹ particles/s). Electrical current is what a Faraday
@@ -108,11 +109,12 @@ distance **d** from the target. θ = 0° is straight downstream and θ = 180° s
 
 | Field | Required | Unit | Meaning |
 |---|---|---|---|
-| `material` | yes | — | An element (`"Au"`), an isotope (`"208Pb"`), a formula (`"CD2"`, `"C10H8O4"`; `D` and `T` mean deuterium and tritium) or a named material (`"Mylar"`, `"Kapton"`, `"Polyethylene"`). |
-| `thickness` | yes | areal density or length | Thickness along the target normal. |
+| `material` | yes | — | See [Materials](#materials). |
+| `thickness` | yes | areal density or length | Thickness along the target normal. A length needs a known density. |
+| `density` | no | density | Overrides the tabulated density, or supplies one for a formula. |
 | `tilt` | no | angle | Rotation of the target about the vertical (y) axis, between −90° and 90°. |
 
-`[target.backing]` takes `material` and `thickness` for a backing layer on the downstream side of the target.
+`[target.backing]` takes `material`, `thickness` and `density` for a backing layer on the downstream side of the target.
 
 ### `[[detectors]]`
 
@@ -130,6 +132,7 @@ Placement: give **either** `theta`, `distance` (and optionally `phi`), **or** `p
 | `rotation` | no | angle | Rotation of the detector about its own normal (turns the strips). |
 | `thickness` | yes | length or areal density | Active thickness; thinner than a particle's range means it punches through. |
 | `material` | no | — | Detector material; silicon (`"Si"`) if left out. |
+| `density` | no | density | Detector density, if not tabulated. |
 | `dead_layer` | no | length or areal density | Inactive entrance layer. |
 | `resolution` | no | energy | Energy resolution (FWHM). |
 | `threshold` | no | energy | Lowest energy recorded. |
@@ -148,6 +151,32 @@ Size, depending on the shape:
 |---|---|---|---|
 | `beam_time` | yes | time | How long the beam runs. |
 | `counts_wanted` | no | — | Counts needed per detector; the planner reports the beam time this takes. |
+
+## Materials
+
+A material can be written as:
+
+- **an element**, `"Au"`, with natural isotopic abundances;
+- **an isotope**, `"208Pb"`, meaning 100% of that isotope. Its density is the natural element's, scaled by
+  atomic mass, because the number of atoms per volume is the same;
+- **a formula**, `"CD2"`, `"C10H8O4"`, `"13CH4"`. `D` and `T` mean deuterium and tritium; unmarked elements have
+  natural abundances. Formulas have no tabulated density, so give `density` or write the thickness in `mg/cm2`;
+- **a named compound** from NIST's table of 48 materials, by its short name (`"Mylar"`, `"Polyethylene"`,
+  `"Polystyrene"`, `"PMMA"`, `"Teflon"`, `"PVC"`, `"CsI"`, `"LiF"`, `"GaAs"`, `"CdTe"`, `"Water"`, `"Air"`) or
+  its full NIST name. `"Kapton"` is accepted as the formula C₂₂H₁₀N₂O₅, without a density.
+
+Masses come from the AME2020 atomic mass evaluation, and abundances, densities and mean excitation energies from
+NIST. The source of every number is listed in `physim/nuclear/data/SOURCES.md`. Tabulated densities are those of the
+bulk material; NIST's carbon is graphite at 1.70 g/cm³. Thin foils can differ, so give `density` when you quote a
+thickness in µm and the difference matters. From Python, `physim.nuclear.data` gives the same data directly:
+
+```python
+from physim.nuclear import data
+
+data.q_value(["2H", "3H"], ["4He", "n"])          # 17.589 MeV
+data.material("CD2", density="1.06 g/cm3").atoms_per_cm2("200 ug/cm2")
+data.Material.enriched("C", {13: 0.99, 12: 0.01})   # isotopically enriched (Python only, for now)
+```
 
 ## When something is wrong
 

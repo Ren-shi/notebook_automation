@@ -34,7 +34,7 @@ First slice: elastic scattering (backlog items 33–42).
 | Capability | Engine | App | vs tools | vs literature | Page | Backlog |
 |---|---|---|---|---|---|---|
 | Experiment setup file | ✅ | ⬜ | — | — | [Guide](../nuclear-setup.md) | 33 |
-| Atomic masses and material data | ⬜ | ⬜ | — | ⬜ AME2020 Q-values | — | 34 |
+| Atomic masses and material data | ✅ | ⬜ | — | ✅ Q-values within 1 keV; atomic weights vs NIST | [Data](nuclear-data.md) | 34 |
 | Two-body reaction kinematics | ⬜ | ⬜ | ⬜ LISE++ | ⬜ analytic limit | — | 35 |
 | Stopping power and range | ⬜ | ⬜ | ⬜ SRIM | ⬜ NIST PSTAR/ASTAR | — | 36 |
 | Energy and angular straggling | ⬜ | ⬜ | ⬜ TRIM | ⬜ | — | 36 |

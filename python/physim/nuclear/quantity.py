@@ -21,6 +21,7 @@ UNITS: dict[str, dict[str, float]] = {
     "particle_current": {"pnA": 1.0, "ppA": 1e-3, "puA": 1e3, "pµA": 1e3},
     "electrical_current": {"enA": 1.0, "epA": 1e-3, "euA": 1e3, "eµA": 1e3},
     "time": {"h": 1.0, "s": 1.0 / 3600.0, "min": 1.0 / 60.0, "d": 24.0},
+    "density": {"g/cm3": 1.0, "mg/cm3": 1e-3, "kg/m3": 1e-3},
     "fraction": {"%": 1.0},
 }
 

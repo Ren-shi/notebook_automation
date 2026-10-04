@@ -58,5 +58,6 @@ examples/08_quantum
 api/python
 api/rust
 physics-register/README
+physics-register/nuclear-data
 changelog
 ```
