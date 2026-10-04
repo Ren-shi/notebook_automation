@@ -49,7 +49,33 @@ If the browser does not open, the log is in `%LOCALAPPDATA%\physim\planner.log`.
 `physim app` listens only on this computer (127.0.0.1). `--host 0.0.0.0` serves the local network too, for
 example to show the planner on a lab PC; anyone on that network can then open it.
 
-## A four-detector setup, step by step
+## The guided mode
+
+The planner opens in **Guided** mode: the left panel is a list of steps, in the order you would plan an experiment.
+
+1. **What do you want to measure?** Rutherford (elastic) scattering, or Coulomb excitation. **Start here** loads a
+   complete example of that kind, so every result is filled in from the start. You then change it one step at a
+   time.
+2. **Beam**, with the kinematics beside it.
+3. **Target**, with the energy loss.
+4. **Particle detectors**, with the geometry and kinematics.
+5. **γ-ray detectors** (Coulomb excitation only), with the excitation and Doppler results.
+6. **Rates and beam time**.
+7. **Spectra**.
+8. **Report**.
+
+In every step:
+- **The ? in each field** explains what the value is, a typical value, and what raising it does to the results.
+  Hover over it, or tap it on a touch screen.
+- **How to read this** opens every result. It says what to look for, using your setup's numbers: which detector
+  counts fastest, whether two peaks separate, how much beam time you need.
+- **Problems show in red inside the step.** **Next** stays greyed out until they are fixed. You can go back to any
+  step you have already reached by clicking its title.
+
+**Expert view** (top right) shows every input on the left and every result as tabs on the right, as in the
+walkthrough below. The browser remembers which mode you used last.
+
+## A four-detector setup in the expert view
 
 1. **Start from an example.** At the top right, pick *alpha_on_gold* in **Start from example**. The setup appears on
    the left and the results on the right.
@@ -79,7 +105,8 @@ example to show the planner on a lab PC; anyone on that network can then open it
      probability against angle, excitation events per detector, and the Doppler-shifted γ-ray energy and width
      for every pair of particle and γ detector.
 
-   Each tab ends with an **Explain** panel giving the formula, the assumptions and where they stop being valid.
+   Each tab opens with **How to read this** and ends with an **Explain** panel giving the formula, the assumptions
+   and where they stop being valid.
 7. **Try a sweep.** In *Rates and beam time*, under **Sweep one parameter**, choose *beam energy*, enter
    `4 MeV, 5 MeV, 6 MeV, 7 MeV`, and press *Run sweep* to see how the rate changes.
 8. **Save your setup.** **Save setup** downloads `setup.toml`, and **Load setup** opens it again later. The file is
@@ -87,6 +114,27 @@ example to show the planner on a lab PC; anyone on that network can then open it
 9. **Export the report.** In **Report**, press *Build and download the report*. You get a zip archive with
    `report.html` (open it in the browser, and print it to PDF if you need one), CSV tables, figures, the setup file
    and, if `root` was included in the install, `events.root` for ROOT.
+
+## A Coulomb-excitation plan
+
+The example *coulex_ni58* is a complete one. To build your own:
+
+1. Under **Reaction**, set *What happens in the target* to **Coulomb excitation**.
+2. Choose the **Excited nucleus**: the target, or the beam.
+3. Set the **Multipolarity**, usually E2.
+4. Enter the **State energy** (`1.454 MeV`) and **B(Eλ↑)** (`0.0695 e2b2` or `695 e2fm4`). Take both from ENSDF
+   for your nucleus. Until both are filled in, a red line names what is missing.
+5. **Particle detectors** are silicon detectors. They measure the scattered beam particles and recoils, so you know
+   each excited nucleus's direction and speed. Place them as in the elastic case: an annular detector at backward
+   angles catches backscattered beam, and strip detectors at forward angles catch the recoils.
+6. Under **γ-ray detectors** (germanium), **Add** a detector for each crystal, with its angle, distance, radius and
+   resolution. They appear in *Geometry* as dashed circles.
+7. Open **Excitation and γ rays**:
+   - **Excitation probability:** against angle, with the excitation events per particle detector.
+   - **Particle energies:** the energy of each particle at each particle detector's edges and centre, elastic and
+     after exciting the state. It also gives the speed β of the excited nucleus, which is what you need to correct
+     the γ-ray energies for the Doppler shift.
+   - **Doppler table:** the shifted γ-ray energy and peak width for every particle-detector and γ-detector pair.
 
 ## What it does not do yet
 

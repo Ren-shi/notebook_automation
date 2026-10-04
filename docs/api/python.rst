@@ -162,6 +162,9 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.planner
    :members:
 
+.. automodule:: physim.nuclear.guide
+   :members: Help, Step, help_for, steps_for, reading
+
 .. automodule:: physim.nuclear.report
    :members:
 

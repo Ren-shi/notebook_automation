@@ -122,6 +122,73 @@ def test_gamma_tab():
     assert any("58Ni* 1454 keV" in lab for lab in labels)
 
 
+def test_coulomb_excitation_is_editable(tmp_path):
+    """Everything a Coulomb-excitation setup needs can be set from the planner (and so from the app)."""
+    p = Planner.example("alpha_on_gold")
+    # Switching on Coulomb excitation fills in E2 excitation of the target; the state itself must be given.
+    assert not p.set("reaction", "type", "coulex")
+    assert any("'energy' is missing" in x for x in p.problems) and any("'b_up' is missing" in x for x in p.problems)
+    assert not p.set("reaction", "energy", "0.547 MeV")  # B(E2) still missing
+    assert p.set("reaction", "b_up", "0.3 e2b2")
+    assert p.experiment.excitation.multipolarity == "E2" and p.experiment.excitation.excite == "target"
+    assert p.gamma()["available"] and p.gamma()["doppler"] == []
+    # γ-ray detectors: add, edit, duplicate, remove.
+    assert p.add_gamma_detector(name="Ge1", theta="90 deg", distance="100 mm", radius="30 mm")
+    assert p.set("gamma detector 1", "theta", "120 deg")
+    assert p.duplicate_gamma_detector("Ge1", phi="180 deg")
+    assert [g.name for g in p.experiment.gamma_detectors] == ["Ge1", "Ge1-2"]
+    # Every particle detector that records excitation events is paired with both γ detectors.
+    pairs = {(r["particle_detector"], r["gamma_detector"]) for r in p.gamma()["doppler"]}
+    seen = {d for d, _ in pairs}
+    assert seen and pairs == {(d, g) for d in seen for g in ("Ge1", "Ge1-2")}
+    assert not p.set("gamma detector 2", "radius", "-1 mm") and p.problems
+    assert p.set("gamma detector 2", "radius", "30 mm")
+    # Back to elastic and again: the state's settings come back.
+    assert p.set("reaction", "type", "elastic") and p.experiment.excitation is None
+    assert p.set("reaction", "type", "coulex") and p.experiment.excitation.energy_mev == pytest.approx(0.547)
+    assert p.remove_gamma_detector(0) and p.remove_gamma_detector("Ge1-2")
+    assert "gamma_detectors" not in p.draft
+    p.save(tmp_path / "s.toml")
+    assert Planner.load(tmp_path / "s.toml").experiment.excitation.b_up == "0.3 e2b2"
+
+
+def test_gamma_detectors_in_the_geometry():
+    g = Planner.example("coulex_ni58").geometry()
+    assert [x["name"] for x in g["gamma_detectors"]] == ["Ge90", "Ge45", "Ge135", "Ge0"]
+    ge = g["gamma_detectors"][0]
+    # The outline is a circle of the crystal's radius around the detector centre, facing the target.
+    r = np.linalg.norm(ge["outline"] - ge["centre"], axis=1)
+    assert np.allclose(r, 35.0)
+    assert np.allclose((ge["outline"] - ge["centre"]) @ (ge["centre"] / 120.0), 0.0, atol=1e-9)
+    assert g["extent"] >= 1.25 * 150.0
+    assert Planner.example("alpha_on_gold").geometry()["gamma_detectors"] == []
+
+
+def test_particle_energies_for_coulomb_excitation():
+    """The energies each particle detector sees, against the elastic kinematic factor by hand."""
+    rows = Planner.example("coulex_ni58").gamma()["particles"]
+    by = {(r["detector"], r["particle"], r["where"]): r for r in rows}
+    assert {(d, w) for d, _, w in by} == {(d, w) for d in ("CD", "DSSD-L", "DSSD-R")
+                                         for w in ("min", "centre", "max")}
+    # The beam cannot reach backward angles as a recoil partner: no 58Ni rows in the CD.
+    assert not any(k[0] == "CD" and k[1] == "recoil" for k in by)
+    m1, m2, e = 16.0, 58.0, 30.0  # mass numbers are enough at the 1% level
+    for key, r in by.items():
+        assert r["difference_mev"] > 0  # exciting the state always costs energy at a fixed angle
+        assert 0 < r["beta_excited"] < 0.05
+        th = math.radians(r["theta_lab"])
+        if key[1] == "ejectile":
+            k = ((m1 * math.cos(th) + math.sqrt(m2**2 - (m1 * math.sin(th)) ** 2)) / (m1 + m2)) ** 2
+        else:
+            k = 4 * m1 * m2 / (m1 + m2) ** 2 * math.cos(th) ** 2
+        assert r["elastic_mev"] == pytest.approx(k * e, rel=0.01)
+    # Detecting the excited 58Ni itself: β follows from its own energy.
+    r = by[("DSSD-L", "recoil", "centre")]
+    m = 57.935 * 931.494
+    assert r["beta_excited"] == pytest.approx(math.sqrt(r["excited_mev"] * (r["excited_mev"] + 2 * m))
+                                              / (r["excited_mev"] + m), rel=1e-3)  # nuclear vs atomic mass
+
+
 def test_energy_loss_tab():
     p = Planner.example("oxygen_on_lead_array")
     el = p.energy_loss()

@@ -126,12 +126,23 @@ def _read_value(spec: _Field, raw: Any) -> Any:
             raise ValueError("must not be at the target (origin)")
         return qs
     # A quantity of one of the listed kinds.
-    q = raw if isinstance(raw, Quantity) else Quantity.parse(raw) if isinstance(raw, str) else None
+    kinds = kind.split("|")
+    q = raw if isinstance(raw, Quantity) else None
+    if isinstance(raw, str):
+        try:
+            q = Quantity.parse(raw)
+        except ValueError as err:  # say it with a unit that suits this field, not a generic length
+            units = ", ".join(u for k in kinds for u in _units_of(k))
+            if "has no unit" in str(err):
+                raise ValueError(f"'{raw.strip()}' has no unit; write it with one, e.g. "
+                                 f"'{raw.strip()} {_example_unit(kind)}'") from None
+            if "unknown unit" in str(err):
+                raise ValueError(f"{err}; use one of {units}") from None
+            raise ValueError(f"cannot read '{raw}' as a number with a unit, e.g. '1 {_example_unit(kind)}'") from None
     if q is None:
         if isinstance(raw, (int, float)) and not isinstance(raw, bool):
             raise ValueError(f"{raw!r} has no unit; write it as text with a unit, e.g. \"{raw} {_example_unit(kind)}\"")
         raise ValueError(f"must be a number with a unit, e.g. \"1 {_example_unit(kind)}\", got {raw!r}")
-    kinds = kind.split("|")
     if q.kind not in kinds:
         units = ", ".join(u for k in kinds for u in _units_of(k))
         raise ValueError(f"'{q}' has the wrong unit; use one of {units}")

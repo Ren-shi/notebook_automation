@@ -66,10 +66,12 @@ def test_the_app_serves_every_example():
                 time.sleep(0.5)
         for name in Planner.examples():
             # Building the page computes every tab on the server; an error there gives a 500.
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/?example={name}", timeout=120) as r:
-                assert r.status == 200
-                body = r.read().decode()
-            assert "physim" in body
+            for mode, marker in (("expert", "Rates and beam time"), ("guided", "What do you want to measure?")):
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/?example={name}&mode={mode}",
+                                            timeout=120) as r:
+                    assert r.status == 200
+                    body = r.read().decode()
+                assert "physim" in body and marker in body, (name, mode)
     finally:
         proc.terminate()
         proc.wait(timeout=30)

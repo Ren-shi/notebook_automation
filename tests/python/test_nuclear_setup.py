@@ -165,6 +165,11 @@ INVALID = [
     (_set(("beam", "energy"), "-5 MeV"), "beam: energy must be positive, got '-5 MeV'"),
     (_set(("beam", "energy"), "5 mm"), "beam: energy '5 mm' has the wrong unit; use one of MeV"),
     (_set(("beam", "current"), "1 nA"), "beam: current unknown unit 'nA'"),
+    # Text without a unit, or unreadable text: the example unit suits the field.
+    (_set(("beam", "energy"), "5.5"), "beam: energy '5.5' has no unit; write it with one, e.g. '5.5 MeV'"),
+    (_set(("beam", "energy"), "abc"), "beam: energy cannot read 'abc' as a number with a unit, e.g. '1 MeV'"),
+    (_set(("run", "beam_time"), "12"), "run: beam_time '12' has no unit; write it with one, e.g. '12 h'"),
+    (_set(("beam", "energy"), "5 MeVV"), "beam: energy unknown unit 'MeVV' in '5 MeVV'; use one of MeV,"),
     (_set(("beam", "charge_state"), 3), "beam: charge_state must be between 1 and 2 for 4He"),
     (_set(("beam", "enrgy"), "5 MeV"), "beam: unknown field 'enrgy'; did you mean 'energy'?"),
     (_set(("target", "material"), "gold"), "target: material cannot read 'gold' as a material"),
