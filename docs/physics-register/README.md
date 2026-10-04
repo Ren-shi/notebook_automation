@@ -12,7 +12,7 @@ records where each one stands.
 | Column | Meaning |
 |---|---|
 | **Engine** | Implemented and usable from Python. |
-| **App** | Available in the experiment planner web app, without writing code. |
+| **App** | Available in the experiment planner web app ({doc}`../planner-app`), without writing code; every tab is rendered by `tests/python/test_nuclear_app.py`. |
 | **vs tools** | Agrees with SRIM, LISE++ or another established code within the stated tolerance. |
 | **vs literature** | Agrees with published data or analytic results within the stated tolerance. |
 
@@ -37,17 +37,17 @@ First slice: elastic scattering (backlog items 33–42).
 
 | Capability | Engine | App | vs tools | vs literature | Page | Backlog |
 |---|---|---|---|---|---|---|
-| Experiment setup file | ✅ | ⬜ | — | — | [Guide](../nuclear-setup.md) | 33 |
-| Atomic masses and material data | ✅ | ⬜ | ✅ LISE++ masses, 46 nuclides, within 2 keV or the AME2020 uncertainty | ✅ Q-values within 1 keV; atomic weights vs NIST | [Data](nuclear-data.md) | 34 |
-| Two-body reaction kinematics | ✅ | ⬜ | 🟡 LISE++: 1 case passes, 8 requested | ✅ analytic limit, Lorentz boost, threshold | [Kinematics](kinematics.md) | 35 |
-| Stopping power and range | ✅ | ⬜ | ✅ LISE++ (1680 points, tolerances by regime); 🟡 SRIM requested | ✅ NIST CSDA ranges within 1% | [Stopping](stopping.md) | 36 |
-| Energy and angular straggling | ✅ | ⬜ | ✅ LISE++ ≥ 30 MeV/u (25%); 🟡 TRIM requested | ✅ Bohr and Highland formulas | [Stopping](stopping.md) | 36 |
-| Rutherford cross section | ✅ | ⬜ | ✅ LISE++ (1 case, 0.03%) | ✅ analytic, Geiger–Marsden 1913 | [Rutherford](rutherford.md) | 37 |
-| Distance of closest approach and validity checks | ✅ | ⬜ | ✅ LISE++ grazing angle (1 case) | 🟡 above-barrier data requested | [Rutherford](rutherford.md) | 37 |
-| Coulomb trajectories | ✅ | ⬜ | — exact closed form instead | ✅ analytic b(θ) to 1e-6° | [Rutherford](rutherford.md) | 37 |
-| Detector solid angles and response | ✅ | ⬜ | — exact closed forms instead | ✅ closed forms to 1e-10, Monte Carlo | [Detectors](detectors.md) | 38 |
-| Count rates and beam time | ✅ | ⬜ | 🟡 LISE++ cross sections at the detector angles requested | ✅ I n (dσ/dΩ) Ω within 1%; Monte Carlo within 4σ | [Rates and events](rates-and-events.md) | 39 |
-| Monte Carlo spectra | ✅ | ⬜ | 🟡 TRIM transmitted spectra requested | ✅ peak positions and widths vs analytic (5%); seeded, thread-independent | [Rates and events](rates-and-events.md) | 39 |
+| Experiment setup file | ✅ | ✅ | — | — | [Guide](../nuclear-setup.md) | 33 |
+| Atomic masses and material data | ✅ | ✅ | ✅ LISE++ masses, 46 nuclides, within 2 keV or the AME2020 uncertainty | ✅ Q-values within 1 keV; atomic weights vs NIST | [Data](nuclear-data.md) | 34 |
+| Two-body reaction kinematics | ✅ | ✅ | 🟡 LISE++: 1 case passes, 8 requested | ✅ analytic limit, Lorentz boost, threshold | [Kinematics](kinematics.md) | 35 |
+| Stopping power and range | ✅ | ✅ | ✅ LISE++ (1680 points, tolerances by regime); 🟡 SRIM requested | ✅ NIST CSDA ranges within 1% | [Stopping](stopping.md) | 36 |
+| Energy and angular straggling | ✅ | ✅ | ✅ LISE++ ≥ 30 MeV/u (25%); 🟡 TRIM requested | ✅ Bohr and Highland formulas | [Stopping](stopping.md) | 36 |
+| Rutherford cross section | ✅ | ✅ | ✅ LISE++ (1 case, 0.03%) | ✅ analytic, Geiger–Marsden 1913 | [Rutherford](rutherford.md) | 37 |
+| Distance of closest approach and validity checks | ✅ | ✅ | ✅ LISE++ grazing angle (1 case) | 🟡 above-barrier data requested | [Rutherford](rutherford.md) | 37 |
+| Coulomb trajectories | ✅ | ✅ | — exact closed form instead | ✅ analytic b(θ) to 1e-6° | [Rutherford](rutherford.md) | 37 |
+| Detector solid angles and response | ✅ | ✅ | — exact closed forms instead | ✅ closed forms to 1e-10, Monte Carlo | [Detectors](detectors.md) | 38 |
+| Count rates and beam time | ✅ | ✅ | 🟡 LISE++ cross sections at the detector angles requested | ✅ I n (dσ/dΩ) Ω within 1%; Monte Carlo within 4σ | [Rates and events](rates-and-events.md) | 39 |
+| Monte Carlo spectra | ✅ | ✅ | 🟡 TRIM transmitted spectra requested | ✅ peak positions and widths vs analytic (5%); seeded, thread-independent | [Rates and events](rates-and-events.md) | 39 |
 | Beam-time report, CSV and ROOT export | ⬜ | ⬜ | — | — | — | 42 |
 
 Next slices: inelastic scattering and Coulomb excitation (43), then transfer reactions and fusion-evaporation.

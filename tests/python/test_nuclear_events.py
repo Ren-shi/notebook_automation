@@ -37,8 +37,12 @@ def test_rust_kinematics_matches_python(beam, target, energy, ejectile, excitati
     for recoil in (False, True):
         theta, e = _core.nuclear_two_body([r.m1, r.m2, r.m3, r.m4], energy, th, recoil)
         ref = r.at_cm(th, "recoil" if recoil else "ejectile")
-        np.testing.assert_allclose(theta, ref.theta_lab, atol=1e-9)
-        np.testing.assert_allclose(e, ref.energy, rtol=1e-11, atol=1e-11)
+        # Kinetic energy is E − m: both sides round at the level of ε m, and platforms differ there.
+        m = max(r.m1, r.m2, r.m3, r.m4)
+        np.testing.assert_allclose(e, ref.energy, rtol=1e-11, atol=10 * np.finfo(float).eps * m)
+        # A particle left at rest (an elastic recoil at θ* = 180°) has no direction: compare angles elsewhere.
+        moving = ref.energy > 1e-9 * m
+        np.testing.assert_allclose(theta[moving], ref.theta_lab[moving], atol=1e-9)
 
 
 @pytest.mark.parametrize("ion, material, energy, thickness", [

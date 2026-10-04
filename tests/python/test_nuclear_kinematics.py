@@ -63,9 +63,12 @@ def test_energy_and_momentum_are_conserved(r):
         p3 = math.sqrt(ej.energy * (ej.energy + 2 * r.m3))
         p4 = math.sqrt(rec.energy * (rec.energy + 2 * r.m4))
         a3, a4 = math.radians(ej.theta_lab), math.radians(rec.theta_lab)
-        # p from kinetic energy loses digits for slow heavy recoils, hence 1e-9.
-        assert p3 * math.cos(a3) + p4 * math.cos(a4) == pytest.approx(p_beam, rel=1e-9)
-        assert p3 * math.sin(a3) == pytest.approx(p4 * math.sin(a4), rel=1e-9, abs=1e-9)
+        # p from the kinetic energy loses digits for slow heavy particles: T = E − m carries a rounding error of
+        # about ε m, so δp ≈ ε m² / p, which platforms round differently (e.g. 4e-7 MeV/c for a 0.8 keV ¹⁹⁷Au).
+        eps = np.finfo(float).eps
+        tol = 20 * eps * (r.m3**2 / max(p3, 1e-300) + r.m4**2 / max(p4, 1e-300))
+        assert p3 * math.cos(a3) + p4 * math.cos(a4) == pytest.approx(p_beam, rel=1e-9, abs=tol)
+        assert p3 * math.sin(a3) == pytest.approx(p4 * math.sin(a4), rel=1e-9, abs=tol)
 
 
 @pytest.mark.parametrize("beam, target", [("4He", "197Au"), ("1H", "12C"), ("12C", "1H"), ("16O", "4He")])

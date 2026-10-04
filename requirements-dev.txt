@@ -8,3 +8,4 @@ nbclient
 ipykernel
 h5py
 plotly
+nicegui

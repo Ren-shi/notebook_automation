@@ -46,9 +46,10 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 38 | ~~[Detector geometry and response](38-detector-geometry-and-response.md)~~ **Done** | Nuclear planner | P1 | M | 33, 36 |
 | 39 | ~~[Count rates, beam time and the Monte Carlo event generator](39-rates-and-event-generator.md)~~ **Done** | Nuclear planner | P1 | L | 31, 35–38 |
 | 40 | ~~[Validation suite against SRIM, LISE++ and literature](40-validation-suite.md)~~ **Done** (user-run references pending) | Nuclear planner | P1 | M | 33 |
-| 41 | [Experiment planner web app](41-planner-web-app.md) | Nuclear planner | P1 | L | 33, 35–39 |
+| 41 | ~~[Experiment planner web app](41-planner-web-app.md)~~ **Done** (student trial pending) | Nuclear planner | P1 | L | 33, 35–39 |
 | 42 | [Beam-time report and data exports](42-report-and-exports.md) | Nuclear planner | P1 | M | 33, 39 |
 | 43 | [Inelastic scattering and Coulomb excitation (second slice)](43-inelastic-scattering.md) | Nuclear planner | P2 | L | 33–42 |
+| 44 | [One-click installer for the planner app](44-one-click-installer.md) | Nuclear planner | P2 | M | 41 |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - `NewtonianGravity` is direct O(N²); `TreeGravity` (item 10) is O(N log N) but its per-interaction cost is not yet
