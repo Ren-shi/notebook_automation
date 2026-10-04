@@ -20,7 +20,7 @@ Z_OF = {s: z for z, s in enumerate(SYMBOLS) if z > 0}
 #: Common names for light nuclides, as (Z, A).
 NUCLIDE_ALIASES = {
     "p": (1, 1), "proton": (1, 1), "d": (1, 2), "deuteron": (1, 2), "t": (1, 3), "triton": (1, 3),
-    "alpha": (2, 4), "a": (2, 4), "D": (1, 2), "T": (1, 3),
+    "alpha": (2, 4), "a": (2, 4), "D": (1, 2), "T": (1, 3), "n": (0, 1), "neutron": (0, 1),
 }
 
 #: Named materials and the chemical formula each stands for.

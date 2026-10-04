@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
 from . import _toml
+from . import data as _data
 from .names import parse_material, parse_nuclide
 from .quantity import Quantity
 
@@ -179,7 +180,9 @@ def _read_section(raw: Any, specs: tuple[_Field, ...], where: str, problems: lis
 
 
 def _lower_first(s: str) -> str:
-    return s if s.startswith("'") or s[:2].isupper() else s[:1].lower() + s[1:]
+    """Lower-case a leading capitalised word ("Cannot ..."), but not a symbol or name ("Tc has ...")."""
+    word = s.split(" ", 1)[0]
+    return s[:1].lower() + s[1:] if len(word) > 2 and word[1:].isalpha() and word[1:].islower() else s
 
 
 def _q(x: Optional[QuantityLike]) -> Optional[Quantity]:
@@ -260,11 +263,17 @@ class Layer:
 
     material: str
     thickness: QuantityLike
+    density: Optional[QuantityLike] = None
 
     SPECS = (
         _Field("material", "material", required=True),
         _Field("thickness", "areal_density|length", required=True, check=_positive),
+        _Field("density", "density", check=_positive),
     )
+
+    def material_data(self) -> _data.Material:
+        """Composition and density of the layer (see :func:`physim.nuclear.data.material`)."""
+        return _data.material(self.material, _q(self.density))
 
 
 @dataclass
@@ -274,13 +283,19 @@ class Target:
     material: str
     thickness: QuantityLike
     tilt: Optional[QuantityLike] = None
+    density: Optional[QuantityLike] = None
     backing: Optional[Layer] = None
 
     SPECS = (
         _Field("material", "material", required=True),
         _Field("thickness", "areal_density|length", required=True, check=_positive),
+        _Field("density", "density", check=_positive),
         _Field("tilt", "angle", check=_tilt),
     )
+
+    def material_data(self) -> _data.Material:
+        """Composition and density of the target (see :func:`physim.nuclear.data.material`)."""
+        return _data.material(self.material, _q(self.density))
 
 
 @dataclass
@@ -306,6 +321,7 @@ class Detector:
     sectors: Optional[int] = None
     radius: Optional[QuantityLike] = None
     material: Optional[str] = None
+    density: Optional[QuantityLike] = None
     dead_layer: Optional[QuantityLike] = None
     resolution: Optional[QuantityLike] = None
     threshold: Optional[QuantityLike] = None
@@ -329,6 +345,7 @@ class Detector:
         _Field("sectors", "int", check=lambda n: None if n >= 1 else "must be at least 1"),
         _Field("radius", "length", check=_positive),
         _Field("material", "material"),
+        _Field("density", "density", check=_positive),
         _Field("thickness", "length|areal_density", required=True, check=_positive),
         _Field("dead_layer", "length|areal_density", check=_non_negative),
         _Field("resolution", "energy", check=_non_negative),
@@ -339,6 +356,10 @@ class Detector:
     def detector_material(self) -> str:
         """Detector material; silicon unless given."""
         return self.material or "Si"
+
+    def material_data(self) -> _data.Material:
+        """Composition and density of the detector (and its dead layer)."""
+        return _data.material(self.detector_material, _q(self.density))
 
     def position_mm(self) -> tuple[float, float, float]:
         """Centre of the detector face, mm, in the coordinates described in the module docstring."""
@@ -424,6 +445,17 @@ class Experiment:
                 if not 1 <= b["charge_state"] <= z:
                     problems.append(f"beam: charge_state must be between 1 and {z} for {b['nuclide']} "
                                     f"(Z = {z}), got {b['charge_state']}")
+            if "nuclide" in b:
+                z, a = parse_nuclide(b["nuclide"])
+                if z == 0:
+                    problems.append("beam: nuclide must be charged; a neutron beam cannot be planned here")
+                    del b["nuclide"]
+                else:
+                    try:
+                        _data.nuclide((z, a))
+                    except ValueError as e:
+                        problems.append(f"beam: nuclide {e}")
+                        del b["nuclide"]
             if all(k in b for k in ("nuclide", "energy", "current")):
                 beam = Beam(**b)
 
@@ -436,8 +468,10 @@ class Experiment:
             raw_t = data["target"] if isinstance(data["target"], dict) else {}
             if "backing" in raw_t:
                 lb = _read_section(raw_t["backing"], Layer.SPECS, "target.backing", problems)
-                if len(lb) == 2:
+                _check_material("target.backing", lb, problems)
+                if "material" in lb and "thickness" in lb:
                     backing = Layer(**lb)
+            _check_material("target", t, problems)
             if "material" in t and "thickness" in t:
                 target = Target(**t, backing=backing)
 
@@ -559,8 +593,30 @@ def _read_detector(raw: dict[str, Any], label: str, problems: list[str]) -> Opti
                 problems.append(f"{label}: '{k}' is missing (or give the detector a position)")
     if len(problems) > before:
         return None
+    _check_material(label, {"material": d.get("material", "Si"), **{k: d[k] for k in ("density", "thickness",
+                                                                                     "dead_layer") if k in d}},
+                    problems)
+    if len(problems) > before:
+        return None
     return Detector(**d)
 
 
-__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "Beam", "Detector", "Experiment", "Layer", "Run",
-           "SetupError", "Target"]
+def _check_material(where: str, values: dict[str, Any], problems: list[str]) -> None:
+    """The material must exist in the data, and lengths need a density to convert to areal densities."""
+    if "material" not in values:
+        return
+    try:
+        m = _data.material(values["material"], values.get("density"))
+    except ValueError as e:
+        problems.append(f"{where}: material {_lower_first(str(e))}")
+        return
+    if m.density_g_cm3 is None:
+        for key in ("thickness", "dead_layer"):
+            q = values.get(key)
+            if isinstance(q, Quantity) and q.kind == "length":
+                problems.append(f"{where}: {key} '{q}' is a length, but the density of {values['material']} is "
+                                "not known; give 'density' or the thickness in mg/cm2")
+
+
+__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "Beam", "Detector", "Experiment", "Layer",
+           "Run", "SetupError", "Target"]

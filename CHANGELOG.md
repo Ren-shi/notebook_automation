@@ -15,6 +15,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
   target, detectors and run conditions, with every value written with its unit and every problem reported by field
   name. Example setups (`Experiment.example`), the guide page `nuclear-setup`, and the physics register
   (`physics-register`) recording what physics is implemented and how it is validated.
+- Nuclear and material data (`physim.nuclear.data`): AME2020 atomic masses for 3558 nuclides, Q-values, nuclear
+  masses; natural isotopic compositions, element densities and mean excitation energies, and 48 compounds from NIST;
+  materials from elements, isotopes, formulas or compound names, with areal-density and atoms/cm² conversions and
+  enriched isotopes. Setup files gain an optional `density` and check that every material and nuclide exists.
+  Data sources and licences are in `physim/nuclear/data/SOURCES.md`; `scripts/convert_nuclear_data.py` rebuilds the
+  NIST tables from the downloads.
 - Quantum mechanics: `Schrodinger`, the time-dependent Schrödinger equation for one particle on 1–3D grids, by
   split-step Fourier (spectral in space, second or fourth order in time, exactly unitary) or Crank–Nicolson (any
   boundary, unitary, direct 1D and BiCGSTAB 2D/3D solves); static or time-dependent potentials (arrays or Python
