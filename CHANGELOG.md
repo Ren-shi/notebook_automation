@@ -21,15 +21,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - a self-contained HTML report with print styles for PDF;
   - CSV tables with units in the column names;
   - figures as PNG and PDF, and the setup file;
-  - the same setup and seed reproduce every number.
-
+  - the same setup and seed reproduce every number;
   - with `uproot` installed (`pip install physim-engine[root]`), `events.root`: an event TTree, TH1D spectra with
     Monte Carlo errors, and the setup (`physim.nuclear.rootio`).
 
   `plot.kinematics` draws E against θ with detector coverage.
 - `physim.nuclear.planner.Planner`: the planner app's model. It covers setup editing with validation, every result
-  tab as plain data, warnings, "Explain" texts and one-parameter sweeps, so the web app (item 41, framework still
-  to be chosen) is a thin layer over it.
+  tab as plain data, warnings, "Explain" texts and one-parameter sweeps, so the web app is a thin layer over it.
 - Validation suite for the nuclear planner:
   - `physim.nuclear.validation`: one tool comparison and one literature comparison per physics-register capability,
     with `run()`, `report()` and plots; a test keeps the register's ✅ marks honest and checks that broken formulas

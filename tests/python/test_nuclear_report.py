@@ -164,3 +164,16 @@ def test_report_writes_the_root_file(tmp_path, alpha):
     paths = alpha.write(tmp_path, figures=False)
     assert tmp_path / "events.root" in paths
     assert alpha.write(tmp_path / "no", figures=False, root=False)[-1].name == "setup.toml"
+
+
+def test_the_app_downloads_the_report():
+    pytest.importorskip("plotly")
+    import io
+    import zipfile
+
+    from physim.nuclear.app import report_zip
+    from physim.nuclear.planner import Planner
+
+    data = report_zip(Planner.example("alpha_on_gold"), seed=1, events=20_000)
+    names = zipfile.ZipFile(io.BytesIO(data)).namelist()
+    assert {"report.html", "detectors.csv", "setup.toml", "figures/spectra.pdf"} <= set(names)
