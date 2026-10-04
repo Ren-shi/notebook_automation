@@ -11,6 +11,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- The experiment planner web app (NiceGUI): `physim app` opens the planner in the browser.
+  - A setup panel with a detector table, a warnings banner, and tabs for geometry (3D), kinematics, rates and beam
+    time (per-strip heat maps, parameter sweeps), energy loss, spectra, trajectories and the report.
+  - An "Explain" panel on every tab.
+  - Install with `pip install physim-engine[app]`; step-by-step guide in `planner-app`. A new `physim` command
+    (`physim app`, `physim report`).
 - `physim.nuclear.planner.Planner`: the planner app's model. It covers setup editing with validation, every result
   tab as plain data, warnings, "Explain" texts and one-parameter sweeps, so the web app (item 41, framework still
   to be chosen) is a thin layer over it.

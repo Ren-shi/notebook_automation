@@ -29,11 +29,16 @@ classifiers = [
 Repository = "https://github.com/Ren-shi/notebook_automation"
 Changelog = "https://github.com/Ren-shi/notebook_automation/blob/main/CHANGELOG.md"
 
+[project.scripts]
+physim = "physim.__main__:main"
+
 [project.optional-dependencies]
 notebooks = ["matplotlib", "jupyter"]
 plot = ["matplotlib"]
 plot3d = ["matplotlib", "plotly"]
 io = ["h5py"]
+# The experiment planner app (physim app).
+app = ["nicegui", "matplotlib", "plotly"]
 test = ["pytest"]
 
 [tool.maturin]

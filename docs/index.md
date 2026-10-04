@@ -24,6 +24,7 @@ quickstart
 guide
 new-ideas
 nuclear-setup
+planner-app
 ```
 
 ```{toctree}
