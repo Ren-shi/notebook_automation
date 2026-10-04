@@ -41,7 +41,7 @@ First slice: elastic scattering (backlog items 33–42).
 | Rutherford cross section | ✅ | ⬜ | ✅ LISE++ (1 case, 0.03%) | ✅ analytic, Geiger–Marsden 1913 | [Rutherford](rutherford.md) | 37 |
 | Distance of closest approach and validity checks | ✅ | ⬜ | ✅ LISE++ grazing angle (1 case) | 🟡 above-barrier data requested | [Rutherford](rutherford.md) | 37 |
 | Coulomb trajectories | ✅ | ⬜ | — | ✅ analytic b(θ) to 1e-6° | [Rutherford](rutherford.md) | 37 |
-| Detector solid angles and response | ⬜ | ⬜ | — | ⬜ analytic | — | 38 |
+| Detector solid angles and response | ✅ | ⬜ | — | ✅ closed forms to 1e-10, Monte Carlo | [Detectors](detectors.md) | 38 |
 | Count rates and beam time | ⬜ | ⬜ | ⬜ LISE++ | ⬜ | — | 39 |
 | Monte Carlo spectra | ⬜ | ⬜ | ⬜ | ⬜ | — | 39 |
 | Beam-time report, CSV and ROOT export | ⬜ | ⬜ | — | — | — | 42 |
