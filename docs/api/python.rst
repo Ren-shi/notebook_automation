@@ -153,6 +153,9 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.events
    :members:
 
+.. automodule:: physim.nuclear.planner
+   :members:
+
 .. automodule:: physim.nuclear.validation
    :members:
 

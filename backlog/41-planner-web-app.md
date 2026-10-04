@@ -1,6 +1,29 @@
 # 41 · Experiment planner web app
 
-**Priority:** P1 · **Size:** L · **Area:** Nuclear planner
+**Priority:** P1 · **Size:** L · **Area:** Nuclear planner · **Status: in progress**
+
+> **Progress (2026-10-04).** The app's model is done. The GUI waits for the framework decision.
+> - **Done:** `physim.nuclear.planner.Planner` (`python/physim/nuclear/planner.py`,
+>   `tests/python/test_nuclear_planner.py`) has every part of the app that does not depend on a framework:
+>   - Setup editing: `set` on any field of beam, target, backing, run or detector N; `add_detector`,
+>     `remove_detector`, `duplicate_detector`; load, save, examples. A draft that fails validation keeps the last
+>     valid setup on screen and lists the problems.
+>   - Each result tab as plain data: `geometry`, `kinematics` (E vs θ for ejectiles and recoils, with detector
+>     coverage), `rates` (per detector and strip, counts in the run, beam time, error), `energy_loss` (per layer,
+>     depth profile, dead layers, punch-through), `spectra`, `trajectories` (engine orbits) and `report`.
+>   - The warnings banner, with errors first.
+>   - An "Explain" text for each tab: formula, assumptions, limits, register link.
+>   - One-parameter `sweep`: beam energy, target thickness or detector angle, against rate, beam time, peak energy
+>     or peak width.
+>
+>   Smoke tests render every tab for every example. The slowest tab is the per-strip rates of the 16O + Pb example,
+>   at 2.5 s.
+> - **Blocked, needs the user's approval:** installing a GUI framework (Panel or NiceGUI). Neither is installed,
+>   and the loop does not install dependencies without approval. Once one is approved:
+>   - build the mock-up (beam form, detector table, 3D plot) in each candidate and record the choice here;
+>   - write the GUI on top of `Planner`, the `physim app` command, and smoke tests through the GUI;
+>   - document installation for users without Python.
+> - **Needs a person:** the trial with a graduate student who has not seen the project.
 
 ## Why
 The main users are graduate students planning experiments, many of whom do not want to write code. They need a
