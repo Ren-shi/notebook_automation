@@ -38,9 +38,9 @@ First slice: elastic scattering (backlog items 33–42).
 | Two-body reaction kinematics | ✅ | ⬜ | 🟡 LISE++: 1 case passes, 8 requested | ✅ analytic limit, Lorentz boost, threshold | [Kinematics](kinematics.md) | 35 |
 | Stopping power and range | ✅ | ⬜ | ✅ LISE++ (1680 points, tolerances by regime); 🟡 SRIM requested | ✅ NIST CSDA ranges within 1% | [Stopping](stopping.md) | 36 |
 | Energy and angular straggling | ✅ | ⬜ | ✅ LISE++ ≥ 30 MeV/u (25%); 🟡 TRIM requested | ✅ Bohr and Highland formulas | [Stopping](stopping.md) | 36 |
-| Rutherford cross section | ⬜ | ⬜ | — | ⬜ analytic, Geiger–Marsden | — | 37 |
-| Distance of closest approach and validity checks | ⬜ | ⬜ | ⬜ LISE++ | ⬜ | — | 37 |
-| Coulomb trajectories | ⬜ | ⬜ | — | ⬜ analytic b(θ) | — | 37 |
+| Rutherford cross section | ✅ | ⬜ | ✅ LISE++ (1 case, 0.03%) | ✅ analytic, Geiger–Marsden 1913 | [Rutherford](rutherford.md) | 37 |
+| Distance of closest approach and validity checks | ✅ | ⬜ | ✅ LISE++ grazing angle (1 case) | 🟡 above-barrier data requested | [Rutherford](rutherford.md) | 37 |
+| Coulomb trajectories | ✅ | ⬜ | — | ✅ analytic b(θ) to 1e-6° | [Rutherford](rutherford.md) | 37 |
 | Detector solid angles and response | ⬜ | ⬜ | — | ⬜ analytic | — | 38 |
 | Count rates and beam time | ⬜ | ⬜ | ⬜ LISE++ | ⬜ | — | 39 |
 | Monte Carlo spectra | ⬜ | ⬜ | ⬜ | ⬜ | — | 39 |
