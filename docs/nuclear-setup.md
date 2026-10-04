@@ -38,14 +38,14 @@ thickness = "300 um"
 ```
 
 Each `[[detectors]]` block adds one detector; repeat it for as many as you need. Two complete examples are in
-`examples/nuclear/` in the repository.
+physim (`physim.nuclear.example_names()` lists them).
 
 From Python:
 
 ```python
 from physim.nuclear import Experiment
 
-exp = Experiment.load("examples/nuclear/alpha_on_gold.toml")
+exp = Experiment.example("alpha_on_gold")    # or Experiment.load("my_setup.toml")
 exp.beam.energy_mev                 # 5.5
 exp.detectors[0].theta = "25 deg"   # edit in Python...
 exp.save("my_setup.toml")           # ...checked again before saving

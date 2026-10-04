@@ -1,13 +1,12 @@
 import copy
 import math
-from pathlib import Path
-
 import pytest
 
 from physim import nuclear as nu
 from physim.nuclear import Experiment, Quantity, SetupError
 
-EXAMPLES = sorted((Path(__file__).resolve().parents[2] / "examples" / "nuclear").glob("*.toml"))
+# Shipped inside the package, so these tests also run against an installed wheel.
+EXAMPLES = sorted(nu.EXAMPLES.glob("*.toml"))
 
 
 def minimal():
@@ -92,11 +91,14 @@ def test_examples_round_trip_exactly(path, tmp_path):
 
 
 def test_examples_exist():
-    assert len(EXAMPLES) >= 2
+    assert nu.example_names() == ["alpha_on_gold", "oxygen_on_lead_array"]
+    assert Experiment.example("alpha_on_gold") == Experiment.load(nu.EXAMPLES / "alpha_on_gold.toml")
+    with pytest.raises(ValueError, match="no example setup 'nope'; available: alpha_on_gold"):
+        Experiment.example("nope")
 
 
 def test_derived_values():
-    exp = Experiment.load(EXAMPLES[[p.name for p in EXAMPLES].index("oxygen_on_lead_array.toml")])
+    exp = Experiment.example("oxygen_on_lead_array")
     b = exp.beam
     assert (b.Z, b.A, b.charge) == (8, 16, 6)
     assert b.energy_mev == pytest.approx(64.0)  # 4 MeV/u x 16

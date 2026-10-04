@@ -5,6 +5,7 @@ energy loss and count rates build on the :class:`Experiment` described here.
 """
 
 from .experiment import (
+    EXAMPLES,
     REACTIONS,
     SCHEMA,
     SHAPES,
@@ -15,11 +16,14 @@ from .experiment import (
     Run,
     SetupError,
     Target,
+    example_names,
 )
 from .names import parse_material, parse_nuclide
 from .quantity import UNITS, Quantity
 
 __all__ = [
+    "EXAMPLES",
+    "example_names",
     "REACTIONS",
     "SCHEMA",
     "SHAPES",

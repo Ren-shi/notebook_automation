@@ -7,7 +7,7 @@ it unless ``facing`` says otherwise.
 Every field is written with its unit (``"5.5 MeV"``, ``"40 mm"``), so a setup file reads unambiguously. Reading
 collects every problem in the file and reports them together, each naming the field::
 
-    exp = Experiment.load("examples/nuclear/geiger_marsden.toml")
+    exp = Experiment.example("alpha_on_gold")  # or Experiment.load("my_setup.toml")
     exp.beam.energy            # Quantity(5.5, 'MeV')
     exp.beam.energy_mev        # total kinetic energy in MeV
     exp.detectors[0].theta = "60 deg"
@@ -32,6 +32,15 @@ SCHEMA = "physim.experiment/1"
 
 #: Reactions this version can plan. Others are added slice by slice (backlog item 43 onwards).
 REACTIONS = ("elastic",)
+
+#: Folder of the example setups shipped with the package.
+EXAMPLES = Path(__file__).resolve().parent / "examples"
+
+
+def example_names() -> list[str]:
+    """Names of the example setups, for :meth:`Experiment.example`."""
+    return sorted(p.stem for p in EXAMPLES.glob("*.toml"))
+
 
 #: Detector shapes and the size fields each one uses.
 SHAPES = {
@@ -477,6 +486,14 @@ class Experiment:
         """Read a setup file."""
         return cls.from_toml(Path(path).read_text(encoding="utf-8"))
 
+    @classmethod
+    def example(cls, name: str) -> Experiment:
+        """One of the example setups shipped with physim (see :func:`example_names`)."""
+        path = EXAMPLES / f"{name}.toml"
+        if not path.is_file():
+            raise ValueError(f"no example setup '{name}'; available: {', '.join(example_names())}")
+        return cls.load(path)
+
     # -- writing ------------------------------------------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
@@ -545,5 +562,5 @@ def _read_detector(raw: dict[str, Any], label: str, problems: list[str]) -> Opti
     return Detector(**d)
 
 
-__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "Beam", "Detector", "Experiment", "Layer", "Run",
+__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "Beam", "Detector", "Experiment", "Layer", "Run",
            "SetupError", "Target"]

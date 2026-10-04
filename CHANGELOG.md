@@ -13,7 +13,7 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ### Added
 - Nuclear experiment planner, first part: `physim.nuclear.Experiment`, a setup file (TOML) describing the beam,
   target, detectors and run conditions, with every value written with its unit and every problem reported by field
-  name. Example setups in `examples/nuclear/`, the guide page `nuclear-setup`, and the physics register
+  name. Example setups (`Experiment.example`), the guide page `nuclear-setup`, and the physics register
   (`physics-register`) recording what physics is implemented and how it is validated.
 - Quantum mechanics: `Schrodinger`, the time-dependent Schrödinger equation for one particle on 1–3D grids, by
   split-step Fourier (spectral in space, second or fourth order in time, exactly unitary) or Crank–Nicolson (any
