@@ -107,6 +107,18 @@ fn generator(cfg: &Bound<'_, PyDict>) -> PyResult<Generator> {
                 u_min: f64_of(c, "u_min")?,
                 u_max: f64_of(c, "u_max")?,
                 probability: f64_of(c, "probability")?,
+                excitation: match c.get_item("excitation")? {
+                    Some(v) => v.extract()?,
+                    None => 0.0,
+                },
+                excite_recoil: match c.get_item("excite_recoil")? {
+                    Some(v) => v.extract()?,
+                    None => true,
+                },
+                p_table: match c.get_item("p_table")? {
+                    Some(v) => v.extract()?,
+                    None => Vec::new(),
+                },
             })
         })
         .collect::<PyResult<Vec<_>>>()?;

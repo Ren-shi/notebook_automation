@@ -37,7 +37,7 @@ from .rates import Rates, beam_energy_at, beam_ion, stack, stopping, tilt_deg
 from .rutherford import Rutherford
 
 #: The result tabs, in display order.
-TABS = ("geometry", "kinematics", "rates", "energy_loss", "spectra", "trajectories", "report")
+TABS = ("geometry", "kinematics", "rates", "energy_loss", "spectra", "trajectories", "gamma", "report")
 
 #: Where each tab's physics is documented and validated (paths under the docs root).
 REGISTER = {
@@ -47,6 +47,7 @@ REGISTER = {
     "energy_loss": "physics-register/stopping",
     "spectra": "physics-register/rates-and-events",
     "trajectories": "physics-register/rutherford",
+    "gamma": "theory/coulex",
     "report": "physics-register/README",
 }
 
@@ -98,11 +99,21 @@ EXPLAIN = {
         "assumptions": "Point charges, classical mechanics (valid when the Sommerfeld parameter η ≫ 1).",
         "limits": "Inside the interaction radius nuclear forces act and the orbit is no longer Coulomb.",
     },
+    "gamma": {
+        "title": "Coulomb excitation and γ rays",
+        "formula": "First-order semiclassical Coulomb excitation: P(θ) from the multipole field integrated along the "
+                   "Rutherford orbit (Alder and Winther); dσ/dΩ = P dσ_R/dΩ. γ energy E₀ √(1 − β²)/(1 − β cos α) "
+                   "for a nucleus moving at β, emitting at α to its velocity.",
+        "assumptions": "One state reached from a 0⁺ ground state; B(Eλ) as given in the setup; decay in flight after "
+                       "leaving the target, isotropic.",
+        "limits": "Closer than Cline's safe distance nuclear forces interfere; P ≳ 0.1 needs multi-step excitation "
+                  "(GOSIA); lifetimes, angular distributions and feeding are not modelled.",
+    },
     "report": {
         "title": "Beam-time report",
         "formula": "Collects the setup, rates, beam time, peaks and warnings.",
         "assumptions": "As for each tab.",
-        "limits": "The report export itself is backlog item 42.",
+        "limits": "Only what the tabs compute; check the warnings first.",
     },
 }
 
@@ -304,6 +315,22 @@ class Planner:
                                "energy": ej.energy, "max_angle": tb.max_angle()})
                 curves.append({"label": f"{nuc} recoil ({lay.name})", "particle": "recoil", "theta": rec.theta_lab,
                                "energy": rec.energy, "max_angle": tb.max_angle("recoil")})
+        for ch in self._rates().channels:
+            if ch.excitation is None:
+                continue
+            try:
+                tb = TwoBody(ion, ch.nuclide.name, beam.energy_mev, **ch.kinematics_args)
+            except ValueError:  # below the excitation threshold
+                continue
+            ej, rec = tb.at_cm(th_cm), tb.recoil_for(th_cm)
+            star = f"{ch.excitation.energy_mev * 1e3:g} keV"
+            who = ch.nuclide.name if ch.excitation.excite == "target" else ion
+            curves.append({"label": f"{ion} on {ch.nuclide.name}, {who}* {star}", "particle": "ejectile",
+                           "theta": ej.theta_lab, "energy": ej.energy, "max_angle": tb.max_angle(),
+                           "inelastic": True})
+            curves.append({"label": f"{ch.nuclide.name} recoil, {who}* {star}", "particle": "recoil",
+                           "theta": rec.theta_lab, "energy": rec.energy, "max_angle": tb.max_angle("recoil"),
+                           "inelastic": True})
         cover = [{"name": g.name, "theta_range": g.theta_range()} for g in Array.from_experiment(self.experiment)]
         return {"beam_energy_mev": beam.energy_mev, "curves": curves, "detectors": cover}
 
@@ -390,6 +417,30 @@ class Planner:
                 "orbits": [{"b_fm": o.b, "xy": o.pos, "deflection_deg": o.deflection(),
                             "closest_fm": o.closest_approach()} for o in orbits],
                 "grazing_angle_deg": r.grazing_angle()}
+
+    def gamma(self) -> dict:
+        """Coulomb excitation: the excited state, its cross section, the excitation probability against angle, and
+        the Doppler-shifted γ-ray energy for every particle × γ detector pair. ``{"available": False}`` without an
+        excited state."""
+        exc = self.experiment.excitation
+        if exc is None:
+            return {"available": False, "reason": "The setup has no excited state ([reaction] type = \"coulex\")."}
+        from .gamma import doppler_table
+        from .rates import coulex_for
+
+        r = self._rates()
+        ch = next(c for c in r.channels if c.excitation is not None)
+        cx = coulex_for(self.experiment, ch, r.layers)
+        th = np.linspace(1.0, 180.0, 180)
+        rates = {g.name: sum(v for (label, _), v in r.by_channel(g.name).items() if label == ch.label)
+                 for g in r.array}
+        if "gamma" not in self._cache:
+            self._cache["gamma"] = doppler_table(self.experiment) if self.experiment.gamma_detectors else []
+        return {"available": True, "state": {"excite": exc.excite, "energy_kev": exc.energy_mev * 1e3,
+                                             "multipolarity": exc.multipolarity, "b_up_e2fm": exc.b_up_e2fm},
+                "xi": cx.xi, "eta": cx.eta, "safe_distance_fm": cx.safe_distance, "max_safe_angle": cx.max_safe_angle(),
+                "total_mb": cx.total(), "theta_cm": th, "probability": cx.probability(th),
+                "rates": rates, "doppler": self._cache["gamma"]}
 
     def report(self) -> dict:
         """What the beam-time report will contain (the export itself is item 42)."""

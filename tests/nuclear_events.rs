@@ -66,3 +66,40 @@ fn weights_add_up_to_the_sampled_rate() {
     bad.channels[0].u_min = 0.0;
     assert!(bad.run(10, 10, 1, 0).is_err());
 }
+
+#[test]
+fn excitation_lowers_energies_and_its_probability_weights_events() {
+    let elastic = Generator::demo();
+    let mut excited = elastic.clone();
+    excited.channels[0].excitation = 0.5;
+    excited.channels[0].excite_recoil = true;
+    excited.channels[0].p_table = vec![0.5; 181];
+    let (a, b) = (
+        elastic.run(20_000, 20_000, 2, 0).unwrap(),
+        excited.run(20_000, 20_000, 2, 0).unwrap(),
+    );
+    // Same draws, so the same events: each weight is halved, and the scattered α particles leave
+    // with less energy. (Lab angles shift slightly too, so compare events seen in both runs.)
+    let seen: std::collections::HashMap<u64, &physim::nuclear::Record> = a
+        .iter()
+        .filter(|r| !r.recoil)
+        .map(|r| (r.event, r))
+        .collect();
+    let mut compared = 0;
+    for y in b.iter().filter(|r| !r.recoil) {
+        if let Some(x) = seen.get(&y.event) {
+            assert!(
+                (y.weight / x.weight - 0.5).abs() < 1e-3,
+                "{} {}",
+                x.weight,
+                y.weight
+            );
+            assert!(y.energy < x.energy - 0.4);
+            compared += 1;
+        }
+    }
+    assert!(compared > 100, "{compared}");
+    let mut bad = excited.clone();
+    bad.channels[0].p_table[3] = -1.0;
+    assert!(bad.run(10, 10, 1, 0).is_err());
+}

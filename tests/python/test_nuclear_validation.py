@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from physim.nuclear import Experiment, data, export, validation
-from physim.nuclear import kinematics, rates, rutherford, stopping
+from physim.nuclear import coulex, gamma, kinematics, rates, rutherford, stopping
 from physim.nuclear.detectors import Geometry
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,7 +28,7 @@ def statuses(**kw):
 def test_every_capability_has_a_tool_and_a_literature_check():
     for cap in validation.CAPABILITIES:
         kinds = {c.kind for c in validation.CHECKS if c.capability == cap}
-        if cap in ("Coulomb trajectories", "Detector solid angles and response"):
+        if cap in ("Coulomb trajectories", "Detector solid angles and response", "γ-ray Doppler shift and broadening"):
             # Exact closed forms are a stronger test than any tool; no tool computes these for arbitrary setups.
             assert "literature" in kinds, cap
         else:
@@ -42,7 +42,7 @@ def test_every_check_passes_or_waits_for_its_reference():
     assert not failed, failed
     pending = {r.name for r in results if r.status == "pending"}
     # Exactly the references still requested from the user (tests/reference/nuclear/pending/).
-    assert pending == {"closest_approach_above_barrier", "rates_vs_lise", "spectra_vs_trim"}
+    assert pending == {"closest_approach_above_barrier", "rates_vs_lise", "spectra_vs_trim", "coulex_vs_gosia"}
     assert "| Capability |" in validation.report(results)
 
 
@@ -163,6 +163,9 @@ BREAKS = {
     "solid angle": (lambda m: _scale_method(m, Geometry, "solid_angle", 1 + 1e-8), ["solid_angles_closed_form"]),
     "rates": (_break_rates, ["rates_small_detector"]),
     "spectra": (_break_spectra, ["spectra_vs_analytic"]),
+    "coulex": (lambda m: _scale_method(m, coulex.Coulex, "_p", 1.01), ["coulex_closed_form"]),
+    "doppler": (lambda m: m.setattr(gamma, "doppler_energy", lambda e0, b, c: e0 * np.sqrt(1 - np.asarray(b) ** 2)
+                                    / (1 - 0.999 * np.asarray(b) * np.asarray(c))), ["doppler_lorentz"]),
 }
 
 

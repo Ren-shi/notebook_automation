@@ -59,6 +59,9 @@ A one-click installer that needs no Python is planned (backlog item 44).
    - **Energy loss:** what the target, backing and dead layers take from the beam.
    - **Spectra:** press *Simulate* for more events or another seed.
    - **Trajectories:** Coulomb orbits.
+   - **Excitation and γ rays:** for a Coulomb-excitation setup (see the example *coulex_ni58*), the excitation
+     probability against angle, excitation events per detector, and the Doppler-shifted γ-ray energy and width
+     for every pair of particle and γ detector.
 
    Each tab ends with an **Explain** panel giving the formula, the assumptions and where they stop being valid.
 7. **Try a sweep.** In *Rates and beam time*, under **Sweep one parameter**, choose *beam energy*, enter
@@ -71,5 +74,6 @@ A one-click installer that needs no Python is planned (backlog item 44).
 
 ## What it does not do yet
 
-- Only elastic (Rutherford) scattering. Inelastic scattering and Coulomb excitation are next (backlog item 43).
+- Elastic (Rutherford) scattering and Coulomb excitation of one state. Transfer and fusion-evaporation come
+  later.
 - One person at a time, on their own computer; it is not meant to be hosted for a group.

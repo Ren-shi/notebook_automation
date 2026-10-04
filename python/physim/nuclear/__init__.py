@@ -4,8 +4,8 @@ This is the first part of the nuclear experiment planner (backlog items 33-43). 
 energy loss and count rates build on the :class:`Experiment` described here.
 """
 
-from . import (data, detectors, events, export, kinematics, planner, rates, report, rootio, rutherford,
-               stopping, validation)
+from . import (coulex, data, detectors, events, export, gamma, kinematics, planner, rates, report, rootio,
+               rutherford, stopping, validation)
 from .experiment import (
     EXAMPLES,
     REACTIONS,
@@ -13,7 +13,9 @@ from .experiment import (
     SHAPES,
     Beam,
     Detector,
+    Excitation,
     Experiment,
+    GammaDetector,
     Layer,
     Run,
     SetupError,
@@ -26,10 +28,12 @@ from .quantity import UNITS, Quantity
 __all__ = [
     "EXAMPLES",
     "example_names",
+    "coulex",
     "data",
     "detectors",
     "events",
     "export",
+    "gamma",
     "kinematics",
     "planner",
     "rates",
@@ -44,7 +48,9 @@ __all__ = [
     "UNITS",
     "Beam",
     "Detector",
+    "Excitation",
     "Experiment",
+    "GammaDetector",
     "Layer",
     "Quantity",
     "Run",

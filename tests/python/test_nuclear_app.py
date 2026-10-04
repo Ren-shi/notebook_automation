@@ -21,7 +21,8 @@ def test_every_figure_renders(name):
     p = Planner.example(name)
     for tab, fig in app.FIGURES.items():
         f = fig(p, 20_000) if tab == "spectra" else fig(p)
-        assert len(f.data) > 0, tab
+        # The excitation figure has data only for a Coulomb-excitation setup.
+        assert len(f.data) > 0 or (tab == "gamma" and p.experiment.excitation is None), tab
         f.to_json()  # serialisable, as the browser needs it
     first = p.experiment.detectors[0].name
     assert app.figure_strips(p, first).data[0].z.sum() > 0

@@ -91,7 +91,7 @@ def test_examples_round_trip_exactly(path, tmp_path):
 
 
 def test_examples_exist():
-    assert nu.example_names() == ["alpha_on_gold", "oxygen_on_lead_array"]
+    assert nu.example_names() == ["alpha_on_gold", "coulex_ni58", "oxygen_on_lead_array"]
     assert Experiment.example("alpha_on_gold") == Experiment.load(nu.EXAMPLES / "alpha_on_gold.toml")
     with pytest.raises(ValueError, match="no example setup 'nope'; available: alpha_on_gold"):
         Experiment.example("nope")

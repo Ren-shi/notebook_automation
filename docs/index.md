@@ -41,6 +41,7 @@ theory/stopping
 theory/rutherford
 theory/detectors
 theory/events
+theory/coulex
 ```
 
 ```{toctree}

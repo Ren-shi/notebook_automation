@@ -130,7 +130,8 @@ def test_distant_collisions_are_cut_by_energy():
     lambda: Experiment.example("alpha_on_gold"),
     lambda: Experiment.example("oxygen_on_lead_array"),
     lambda: tilted(),
-], ids=["alpha_on_gold", "oxygen_on_lead_array", "tilted_30deg"])
+    lambda: Experiment.example("coulex_ni58"),
+], ids=["alpha_on_gold", "oxygen_on_lead_array", "tilted_30deg", "coulex_ni58"])
 def test_monte_carlo_rates_agree_with_analytic_rates(make):
     exp = make()
     r = Rates(exp)

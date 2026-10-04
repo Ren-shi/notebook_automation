@@ -104,7 +104,8 @@ def figure_kinematics(planner: Planner):
         th, en = np.asarray(c["theta"]), np.asarray(c["energy"])
         ok = th <= c["max_angle"] + 1e-9
         fig.add_trace(go.Scatter(x=th[ok], y=en[ok], mode="lines", name=c["label"],
-                                 line=dict(dash="solid" if c["particle"] == "ejectile" else "dash")))
+                                 line=dict(dash=("dot" if c.get("inelastic") else "solid")
+                                           if c["particle"] == "ejectile" else "dash")))
     fig.update_layout(xaxis=dict(title="lab angle θ (deg)", range=[0, 180]), yaxis=dict(title="energy (MeV)"),
                       margin=dict(l=50, r=10, t=30, b=40), height=440)
     return fig
@@ -180,8 +181,24 @@ def figure_sweep(sweep: dict):
     return fig
 
 
+def figure_excitation(planner: Planner):
+    """Coulomb-excitation probability against CM angle (when the setup has an excited state)."""
+    go = _go()
+    g = planner.gamma()
+    fig = go.Figure()
+    if g["available"]:
+        fig.add_trace(go.Scatter(x=g["theta_cm"], y=g["probability"], mode="lines", name="P(θ)"))
+        if g["max_safe_angle"] < 180:
+            fig.add_vrect(x0=g["max_safe_angle"], x1=180, fillcolor="#d62728", opacity=0.1, line_width=0,
+                          annotation_text="not safe", annotation_position="top")
+    fig.update_layout(xaxis=dict(title="CM angle θ (deg)", range=[0, 180]),
+                      yaxis=dict(title="excitation probability", type="log"), margin=dict(l=60, r=10, t=10, b=40),
+                      height=320)
+    return fig
+
+
 FIGURES = {"geometry": figure_geometry, "kinematics": figure_kinematics, "energy_loss": figure_energy_loss,
-           "spectra": figure_spectra, "trajectories": figure_trajectories}
+           "spectra": figure_spectra, "trajectories": figure_trajectories, "gamma": figure_excitation}
 
 
 def report_zip(planner: Planner, seed: int = 1, events: int = 200_000) -> bytes:
@@ -469,6 +486,31 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
         ui.plotly(figure_trajectories(P())).classes("w-full")
 
     @ui.refreshable
+    def gamma_panel():
+        g = P().gamma()
+        if not g["available"]:
+            ui.markdown(g["reason"] + " To plan Coulomb excitation, set the reaction to `coulex` in the setup "
+                        "file (see the guide) and add `[[gamma_detectors]]`.")
+            return
+        s = g["state"]
+        ui.label(f"{s['excite'].capitalize()} excited to {s['energy_kev']:g} keV ({s['multipolarity']}, "
+                 f"B↑ = {s['b_up_e2fm']:.4g} e²fm^{2 * int(s['multipolarity'][1])}): ξ = {g['xi']:.2f}, "
+                 f"η = {g['eta']:.1f}, total {g['total_mb']:.3g} mb; safe up to "
+                 f"{g['max_safe_angle']:.0f}° CM.").classes("text-sm")
+        ui.plotly(figure_excitation(P())).classes("w-full")
+        ui.table(columns=columns((("detector", "Detector"), ("rate", "Excitation events (1/s)"))),
+                 rows=[{"detector": k, "rate": _fmt(v)} for k, v in g["rates"].items()]).props("dense flat")
+        if g["doppler"]:
+            ui.label("γ rays: Doppler-shifted energy and width").classes("font-semibold mt-2")
+            ui.table(columns=columns((("p", "Particle detector"), ("g", "γ detector"), ("mean", "E_γ (keV)"),
+                                      ("shift", "Shift (keV)"), ("fwhm", "FWHM (keV)"))),
+                     rows=[{"p": r["particle_detector"], "g": r["gamma_detector"], "mean": f"{r['mean_kev']:.2f}",
+                            "shift": f"{r['shift_kev']:+.2f}", "fwhm": f"{r['fwhm_kev']:.2f}"}
+                           for r in g["doppler"]]).props("dense flat")
+        else:
+            ui.label("Add [[gamma_detectors]] to the setup file for Doppler shifts.").classes("text-sm")
+
+    @ui.refreshable
     def report_panel():
         ui.markdown("The report collects the setup, every warning, the detector table, kinematics, peaks, energy "
                     "loss, spectra and each model's validation status. The zip holds `report.html` (print it to "
@@ -490,7 +532,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
 
     panels = {"geometry": geometry_panel, "kinematics": kinematics_panel, "rates": rates_panel,
               "energy_loss": energy_loss_panel, "spectra": spectra_panel, "trajectories": trajectories_panel,
-              "report": report_panel}
+              "gamma": gamma_panel, "report": report_panel}
 
     def refresh_results() -> None:
         warnings_banner.refresh()
@@ -506,7 +548,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
 
     labels = {"geometry": "Geometry", "kinematics": "Kinematics", "rates": "Rates and beam time",
               "energy_loss": "Energy loss", "spectra": "Spectra", "trajectories": "Trajectories",
-              "report": "Report"}
+              "gamma": "Excitation and γ rays", "report": "Report"}
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.query("body").style("background-color: #ffffff; color: #1b1b1b")  # light page in a dark-mode browser too
@@ -556,4 +598,5 @@ def main(argv: Optional[list] = None) -> None:
 
 
 __all__ = ["FIGURES", "build_page", "main", "figure_energy_loss", "figure_geometry", "figure_kinematics",
-           "figure_spectra", "figure_strips", "figure_sweep", "figure_trajectories", "report_zip"]
+           "figure_excitation", "figure_spectra", "figure_strips", "figure_sweep", "figure_trajectories",
+           "report_zip"]
