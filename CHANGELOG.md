@@ -21,6 +21,11 @@ workflow builds the wheels, tests them and publishes to PyPI.
   enriched isotopes. Setup files gain an optional `density` and check that every material and nuclide exists.
   Data sources and licences are in `physim/nuclear/data/SOURCES.md`; `scripts/convert_nuclear_data.py` rebuilds the
   NIST tables from the downloads.
+- Relativistic two-body reaction kinematics (`physim.nuclear.kinematics.TwoBody`): lab energies and angles of
+  ejectile and recoil from CM or lab angles (both solutions where double-valued), maximum angles, thresholds,
+  excitation energies, the solid-angle Jacobian and kinematic broadening dE/dθ; `elastic(experiment)` for every
+  target isotope. Theory note `theory/kinematics`; LISE++ comparison cases written to
+  `tests/reference/nuclear/pending/` for running by hand.
 - Quantum mechanics: `Schrodinger`, the time-dependent Schrödinger equation for one particle on 1–3D grids, by
   split-step Fourier (spectral in space, second or fourth order in time, exactly unitary) or Crank–Nicolson (any
   boundary, unitary, direct 1D and BiCGSTAB 2D/3D solves); static or time-dependent potentials (arrays or Python

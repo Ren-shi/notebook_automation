@@ -40,7 +40,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 32 | ~~[Quantum mechanics: the Schrödinger equation on a grid](32-quantum-mechanics.md)~~ **Done** | Physics | P3 | L | 20 |
 | 33 | ~~[Experiment definition: the setup file](33-experiment-definition.md)~~ **Done** | Nuclear planner | P1 | M | — |
 | 34 | ~~[Nuclear and material data](34-nuclear-and-material-data.md)~~ **Done** | Nuclear planner | P1 | M | — |
-| 35 | [Two-body reaction kinematics](35-reaction-kinematics.md) | Nuclear planner | P1 | M | 34 |
+| 35 | ~~[Two-body reaction kinematics](35-reaction-kinematics.md)~~ **Done** | Nuclear planner | P1 | M | 34 |
 | 36 | [Stopping power and energy loss](36-stopping-power-and-energy-loss.md) | Nuclear planner | P1 | L | 34 |
 | 37 | [Rutherford scattering, closest approach and Coulomb trajectories](37-rutherford-scattering.md) | Nuclear planner | P1 | M | 34, 35 |
 | 38 | [Detector geometry and response](38-detector-geometry-and-response.md) | Nuclear planner | P1 | M | 33, 36 |

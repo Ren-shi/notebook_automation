@@ -4,7 +4,7 @@ This is the first part of the nuclear experiment planner (backlog items 33-43). 
 energy loss and count rates build on the :class:`Experiment` described here.
 """
 
-from . import data
+from . import data, kinematics
 from .experiment import (
     EXAMPLES,
     REACTIONS,
@@ -26,6 +26,7 @@ __all__ = [
     "EXAMPLES",
     "example_names",
     "data",
+    "kinematics",
     "REACTIONS",
     "SCHEMA",
     "SHAPES",

@@ -35,6 +35,7 @@ theory/forces
 theory/methods
 theory/fields
 theory/quantum
+theory/kinematics
 ```
 
 ```{toctree}
@@ -59,5 +60,6 @@ api/python
 api/rust
 physics-register/README
 physics-register/nuclear-data
+physics-register/kinematics
 changelog
 ```

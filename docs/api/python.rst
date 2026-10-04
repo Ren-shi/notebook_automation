@@ -135,6 +135,9 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.data
    :members:
 
+.. automodule:: physim.nuclear.kinematics
+   :members:
+
 .. autofunction:: physim.nuclear.parse_nuclide
 .. autofunction:: physim.nuclear.parse_material
 
