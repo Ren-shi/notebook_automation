@@ -11,7 +11,8 @@ description = "Classical mechanics simulation engine (Rust core, Python front en
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
-dependencies = ["numpy>=1.21"]
+# tomli reads nuclear-planner setup files on Python < 3.11 (3.11+ has tomllib built in).
+dependencies = ["numpy>=1.21", "tomli>=1.1; python_version < '3.11'"]
 keywords = ["physics", "simulation", "n-body", "symplectic", "molecular-dynamics", "rust"]
 classifiers = [
     "Development Status :: 3 - Alpha",

@@ -63,7 +63,7 @@ from .analysis import (
     relative_energy_error,
     tabulate_pair,
 )
-from . import plot, quantum, scenarios, units
+from . import nuclear, plot, quantum, scenarios, units
 from .geometry import (
     box_walls,
     inertia_box,
@@ -137,6 +137,7 @@ __all__ = [
     "save_trajectory",
     "solve_poisson",
     "tabulate_pair",
+    "nuclear",
     "plot",
     "quantum",
     "scenarios",

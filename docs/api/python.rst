@@ -111,6 +111,29 @@ Quantum mechanics
 .. automodule:: physim.quantum
    :members:
 
+Nuclear experiment planner
+--------------------------
+
+The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
+
+.. autoclass:: physim.nuclear.Experiment
+   :members:
+.. autoclass:: physim.nuclear.Beam
+   :members:
+.. autoclass:: physim.nuclear.Target
+   :members:
+.. autoclass:: physim.nuclear.Layer
+   :members:
+.. autoclass:: physim.nuclear.Detector
+   :members:
+.. autoclass:: physim.nuclear.Run
+   :members:
+.. autoclass:: physim.nuclear.SetupError
+.. autoclass:: physim.nuclear.Quantity
+   :members:
+.. autofunction:: physim.nuclear.parse_nuclide
+.. autofunction:: physim.nuclear.parse_material
+
 Scenarios
 ---------
 

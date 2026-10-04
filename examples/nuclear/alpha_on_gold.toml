@@ -1,0 +1,79 @@
+schema = "physim.experiment/1"
+title = "Alpha scattering on gold"
+description = "A Geiger-Marsden-style setup: 5.5 MeV alpha particles on a thin gold foil, with small silicon detectors at six angles to map the Rutherford angular distribution."
+
+[reaction]
+type = "elastic"
+
+[beam]
+nuclide = "4He"
+energy = "5.5 MeV"
+current = "1 pnA"
+
+[target]
+material = "Au"
+thickness = "0.5 mg/cm2"
+
+[run]
+beam_time = "2 h"
+counts_wanted = 10000
+
+[[detectors]]
+name = "A20"
+shape = "circle"
+theta = "20 deg"
+distance = "100 mm"
+radius = "2.5 mm"
+thickness = "300 um"
+resolution = "20 keV"
+threshold = "200 keV"
+
+[[detectors]]
+name = "A30"
+shape = "circle"
+theta = "30 deg"
+distance = "100 mm"
+radius = "2.5 mm"
+thickness = "300 um"
+resolution = "20 keV"
+threshold = "200 keV"
+
+[[detectors]]
+name = "A45"
+shape = "circle"
+theta = "45 deg"
+distance = "100 mm"
+radius = "2.5 mm"
+thickness = "300 um"
+resolution = "20 keV"
+threshold = "200 keV"
+
+[[detectors]]
+name = "A60"
+shape = "circle"
+theta = "60 deg"
+distance = "100 mm"
+radius = "2.5 mm"
+thickness = "300 um"
+resolution = "20 keV"
+threshold = "200 keV"
+
+[[detectors]]
+name = "A90"
+shape = "circle"
+theta = "90 deg"
+distance = "100 mm"
+radius = "2.5 mm"
+thickness = "300 um"
+resolution = "20 keV"
+threshold = "200 keV"
+
+[[detectors]]
+name = "A135"
+shape = "circle"
+theta = "135 deg"
+distance = "100 mm"
+radius = "2.5 mm"
+thickness = "300 um"
+resolution = "20 keV"
+threshold = "200 keV"
