@@ -102,6 +102,15 @@ Fields on grids
    :members:
 .. autofunction:: physim.solve_poisson
 
+Quantum mechanics
+-----------------
+
+.. autoclass:: physim.Schrodinger
+   :members:
+
+.. automodule:: physim.quantum
+   :members:
+
 Scenarios
 ---------
 

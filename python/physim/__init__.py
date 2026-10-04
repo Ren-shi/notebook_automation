@@ -1,4 +1,5 @@
-"""physim: classical-mechanics simulation with a Rust engine.
+"""physim: classical-mechanics simulation with a Rust engine, plus grid solvers for fields
+and the Schrödinger equation.
 
 Quick start::
 
@@ -42,6 +43,7 @@ from ._core import (
     QuadraticDrag,
     RigidSystem,
     RigidTrajectory,
+    Schrodinger,
     SoftContact,
     Spring,
     SpringNetwork,
@@ -61,7 +63,7 @@ from .analysis import (
     relative_energy_error,
     tabulate_pair,
 )
-from . import plot, scenarios, units
+from . import plot, quantum, scenarios, units
 from .geometry import (
     box_walls,
     inertia_box,
@@ -108,6 +110,7 @@ __all__ = [
     "QuadraticDrag",
     "RigidSystem",
     "RigidTrajectory",
+    "Schrodinger",
     "SoftContact",
     "Spring",
     "SpringNetwork",
@@ -135,6 +138,7 @@ __all__ = [
     "solve_poisson",
     "tabulate_pair",
     "plot",
+    "quantum",
     "scenarios",
     "units",
     "__version__",

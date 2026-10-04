@@ -13,7 +13,7 @@ use crate::forces::Force;
 use crate::vec3::Vec3;
 
 /// A float64 array's flat values and shape.
-fn flat(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<(Vec<f64>, Vec<usize>)> {
+pub(super) fn flat(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<(Vec<f64>, Vec<usize>)> {
     let arr = as_f64_array(obj)?;
     let shape: Vec<usize> = arr.getattr("shape")?.extract()?;
     if shape.is_empty() || shape.len() > 3 {
@@ -28,7 +28,7 @@ fn flat(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<(Vec<f64>, Vec<usize>)> 
     Ok((values, shape))
 }
 
-fn to_array<'py>(
+pub(super) fn to_array<'py>(
     py: Python<'py>,
     values: &[f64],
     grid: &Grid,
@@ -36,12 +36,12 @@ fn to_array<'py>(
     PyArray1::from_slice(py, values).reshape(grid.shape())
 }
 
-fn grid_from(shape: Vec<usize>, spacing: f64, boundary: &str) -> PyResult<Grid> {
+pub(super) fn grid_from(shape: Vec<usize>, spacing: f64, boundary: &str) -> PyResult<Grid> {
     Ok(Grid::new(&shape, spacing, Boundary::parse(boundary)?)?)
 }
 
 /// 1D coordinate arrays along each axis (cell centres for Neumann grids).
-fn axes<'py>(py: Python<'py>, grid: &Grid) -> Vec<Bound<'py, PyArray1<f64>>> {
+pub(super) fn axes<'py>(py: Python<'py>, grid: &Grid) -> Vec<Bound<'py, PyArray1<f64>>> {
     let shift = if grid.boundary == Boundary::Neumann {
         0.5
     } else {
@@ -53,7 +53,7 @@ fn axes<'py>(py: Python<'py>, grid: &Grid) -> Vec<Bound<'py, PyArray1<f64>>> {
         .collect()
 }
 
-fn set_field(grid: &Grid, obj: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<f64>> {
+pub(super) fn set_field(grid: &Grid, obj: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<f64>> {
     let (values, shape) = flat(obj, what)?;
     if shape != grid.shape() {
         return Err(PyValueError::new_err(format!(
