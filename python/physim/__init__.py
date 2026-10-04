@@ -63,7 +63,7 @@ from .analysis import (
     relative_energy_error,
     tabulate_pair,
 )
-from . import nuclear, plot, quantum, scenarios, units
+from . import nuclear, plot, quantum, random, scenarios, units
 from .geometry import (
     box_walls,
     inertia_box,
@@ -140,6 +140,7 @@ __all__ = [
     "nuclear",
     "plot",
     "quantum",
+    "random",
     "scenarios",
     "units",
     "__version__",

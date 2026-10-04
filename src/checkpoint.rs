@@ -40,6 +40,8 @@ pub struct Checkpoint {
     pub constraints: Constraints,
     /// Hard-collision settings, if enabled.
     pub collisions: Option<Collisions>,
+    /// The world's random seed (see [`crate::rng`]).
+    pub seed: u64,
 }
 
 impl World {
@@ -62,6 +64,7 @@ impl World {
             next_force_id: self.forces.next_id(),
             constraints: self.constraints.clone(),
             collisions: self.collisions.clone(),
+            seed: self.seed,
         }
     }
 
@@ -79,6 +82,7 @@ impl World {
             next_force_id,
             constraints,
             collisions,
+            seed,
         } = checkpoint;
         let n = state.pos.len();
         let lengths = [
@@ -127,6 +131,7 @@ impl World {
         world.tension = vec![0.0; constraints.len()];
         world.constraints = constraints;
         world.set_collisions(collisions)?;
+        world.seed = seed;
         Ok(world)
     }
 }

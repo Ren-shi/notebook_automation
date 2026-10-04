@@ -24,7 +24,7 @@ pub mod forces;
 pub mod integrators;
 mod parallel;
 pub mod rigid;
-mod rng;
+pub mod rng;
 pub mod state;
 pub mod vec3;
 pub mod world;

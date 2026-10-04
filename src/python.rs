@@ -2118,10 +2118,12 @@ impl PyWorld {
     }
 
     /// Switches to Langevin dynamics at ``temperature`` with friction rate ``friction``
-    /// (BAOAB splitting; k_B = 1). Random numbers are reproducible from ``seed`` and restart
-    /// exactly from checkpoints.
-    #[pyo3(signature = (temperature, friction = 1.0, seed = 1))]
-    fn use_langevin(&mut self, temperature: f64, friction: f64, seed: u64) -> PyResult<()> {
+    /// (BAOAB splitting; k_B = 1). Random numbers are reproducible from ``seed`` (the world's
+    /// :attr:`seed` if not given), independent of the thread count, and restart exactly from
+    /// checkpoints.
+    #[pyo3(signature = (temperature, friction = 1.0, seed = None))]
+    fn use_langevin(&mut self, temperature: f64, friction: f64, seed: Option<u64>) -> PyResult<()> {
+        let seed = seed.unwrap_or(self.inner.seed);
         self.inner
             .set_integrator(Box::new(integrators::Langevin::new(
                 temperature,
@@ -2129,6 +2131,18 @@ impl PyWorld {
                 seed,
             )?));
         Ok(())
+    }
+
+    /// Seed for this world's random numbers (thermostats, :mod:`physim.random` helpers);
+    /// assignable, saved in checkpoints. Defaults to 1.
+    #[getter]
+    fn seed(&self) -> u64 {
+        self.inner.seed
+    }
+
+    #[setter]
+    fn set_seed(&mut self, seed: u64) {
+        self.inner.seed = seed;
     }
 
     /// Switches to a Nosé-Hoover thermostat at ``temperature`` with relaxation time ``tau``.
@@ -2440,6 +2454,7 @@ impl PyWorld {
             Some(c) => d.set_item("collisions", describe_collisions(py, c)?)?,
             None => d.set_item("collisions", py.None())?,
         }
+        d.set_item("seed", self.inner.seed)?;
         Ok(d)
     }
 
@@ -2565,6 +2580,8 @@ impl PyWorld {
             forces,
             next_force_id: get("next_force_id")?.extract()?,
             constraints,
+            // Checkpoints from before the world had a seed used the default, 1.
+            seed: optional(checkpoint, "seed")?.unwrap_or(1),
         };
         let inner = World::from_checkpoint(checkpoint, |id, _| {
             let k = external
@@ -2982,6 +2999,40 @@ impl EventFunction for PythonEvent {
     }
 }
 
+/// ``n`` uniform deviates in (0, 1) from physim's counter-based generator: values
+/// ``index = start, ..., start + n - 1`` of draw ``counter`` with ``seed``.
+#[pyfunction]
+#[pyo3(signature = (seed, counter, n, start = 0))]
+fn random_uniform(
+    py: Python<'_>,
+    seed: u64,
+    counter: u64,
+    n: usize,
+    start: u64,
+) -> Bound<'_, PyArray1<f64>> {
+    let v: Vec<f64> = (0..n as u64)
+        .map(|k| crate::rng::uniform(seed, counter, start + k))
+        .collect();
+    PyArray1::from_vec(py, v)
+}
+
+/// ``n`` standard normal deviates from physim's counter-based generator (as
+/// :func:`random_uniform`); the Langevin thermostat draws the same values.
+#[pyfunction]
+#[pyo3(signature = (seed, counter, n, start = 0))]
+fn random_normal(
+    py: Python<'_>,
+    seed: u64,
+    counter: u64,
+    n: usize,
+    start: u64,
+) -> Bound<'_, PyArray1<f64>> {
+    let v: Vec<f64> = (0..n as u64)
+        .map(|k| crate::rng::normal(seed, counter, start + k))
+        .collect();
+    PyArray1::from_vec(py, v)
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEvent>()?;
@@ -3018,6 +3069,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     rigid::register(m)?;
     fields::register(m)?;
     quantum::register(m)?;
+    m.add_function(wrap_pyfunction!(random_uniform, m)?)?;
+    m.add_function(wrap_pyfunction!(random_normal, m)?)?;
+    m.add("RANDOM_SETUP_COUNTER", crate::rng::SETUP)?;
     m.add("INTEGRATORS", integrators::NAMES.to_vec())?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
