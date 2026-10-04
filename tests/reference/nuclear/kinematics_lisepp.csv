@@ -1,0 +1,9 @@
+# tool: LISE++ (LISEcute, Qt build), Kinematic calculator (relativistic), "Scattering" mode
+# produced by: Ren-shi (screenshots), transcribed 2026-10-04
+# settings: 4He 5 MeV/u on 197Au, target 0.1 micron, reaction at the "middle" of the target, CM angle of C = 50 deg.
+#   LISE++ slows the beam to the middle of the target first. beam_energy_mev is that energy: 4.997339 MeV/u x 4,
+#   from LISE++'s own energy-loss library (treste with set_loss(0), Hubert) over 0.0966 mg/cm2 of Au.
+#   LISE++ shows 4 significant figures in MeV/u, so energy_tol_mev is half a unit in the last digit shown.
+beam,target,ejectile,excitation_mev,beam_energy_mev,particle,theta_lab_deg,branch,energy_mev,theta_cm_deg,energy_tol_mev
+4He,197Au,,0,19.989356,ejectile,49.115,1,19.708,50,0.002
+4He,197Au,,0,19.989356,recoil,65,1,0.27974,130,0.001

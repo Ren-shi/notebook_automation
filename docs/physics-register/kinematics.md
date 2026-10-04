@@ -31,7 +31,8 @@ optional excitation energy on either outgoing particle. It gives:
 | Jacobian and dE/dθ, ejectile and recoil | Numerical derivatives; non-relativistic Jacobian formula | 1e-6 / 1e-5 relative | pass | `test_jacobian_and_broadening_match_numerical_derivatives`, `test_jacobian_non_relativistic_formula` |
 | Both branches, maximum angle | Round trip CM → lab → CM; brute-force maximum; arcsin(m₂/m₁) limit | 1e-7° / 1e-6° / 0.2% | pass | `test_lab_to_cm_inverts_cm_to_lab`, `test_double_valued_cases` |
 | ³H(p, n)³He threshold | Tabulated 1.019 MeV | 0.5 keV | 1.0190 MeV | `test_q_value_and_threshold` |
-| 8 cases incl. inverse kinematics and a double-valued case | LISE++ | 1 keV, 0.01° | 🟡 request written (`tests/reference/nuclear/pending/kinematics_lisepp.md`) | `test_against_lise_reference_files` (skipped until the file exists) |
+| ⁴He + ¹⁹⁷Au at 20 MeV, 50° CM: ejectile and recoil | LISE++ kinematic calculator (screenshots) | 1 keV or the digits shown (2 keV) | pass: every displayed digit agrees | `test_against_lise_reference_files` |
+| 8 more cases incl. inverse kinematics and two double-valued cases | LISE++ | 1 keV, 0.01° | 🟡 request written (`tests/reference/nuclear/pending/kinematics_lisepp.md`) | same test, once the results are added |
 
 Validated 2026-10-04.
 

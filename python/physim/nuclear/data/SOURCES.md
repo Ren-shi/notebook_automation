@@ -43,6 +43,18 @@ changes the layout only (HTML or text listing → CSV) and copies the values as 
   (48 materials, with composition by mass fraction).
 - **Modified:** converted to CSV.
 
+## `nist_pstar.csv` and `nist_astar.csv`: proton and α stopping powers and ranges
+
+- **Source:** M. J. Berger, J. S. Coursey, M. A. Zucker and J. Chang, "Stopping-Power & Range Tables for Electrons,
+  Protons, and Helium Ions", NIST Standard Reference Database 124 (last updated July 2017), doi:10.18434/T4NC7P,
+  PSTAR and ASTAR, <https://physics.nist.gov/cgi-bin/Star/ap_table.pl>. The methods are those of ICRU Reports 37 and
+  49; graphite, air and water were re-evaluated following ICRU Report 90.
+- **Contents:** for 74 materials (26 elements, 48 compounds and mixtures), on NIST's default energy grid (protons
+  1 keV to 10 GeV, 132 energies; α particles 1 keV to 1 GeV, 121 energies): electronic, nuclear and total stopping
+  power (MeV cm²/g), CSDA range and projected range (g/cm²), detour factor.
+- **Modified:** retrieved 2026-10-04 by `scripts/fetch_star_tables.py`, one request per material, and converted from
+  the HTML answers to CSV; values copied as published.
+
 ## NIST terms
 
 Data from NIST Standard Reference Databases: ©Copyright by the U.S. Secretary of Commerce on behalf of the

@@ -210,6 +210,8 @@ def test_against_lise_reference_files():
                     excitation_mev=float(row["excitation_mev"] or 0))
         first, second = r.at_lab(float(row["theta_lab_deg"]), row["particle"])
         point = first if row["branch"] in ("", "1") else second
-        assert point.energy == pytest.approx(float(row["energy_mev"]), abs=1e-3), (name, row)
+        # 1 keV, or the precision the tool displayed if that is coarser.
+        tol = max(1e-3, float(row.get("energy_tol_mev") or 0))
+        assert point.energy == pytest.approx(float(row["energy_mev"]), abs=tol), (name, row)
         if row.get("theta_cm_deg"):
             assert point.theta_cm == pytest.approx(float(row["theta_cm_deg"]), abs=0.01), (name, row)

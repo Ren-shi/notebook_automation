@@ -35,9 +35,9 @@ First slice: elastic scattering (backlog items 33–42).
 |---|---|---|---|---|---|---|
 | Experiment setup file | ✅ | ⬜ | — | — | [Guide](../nuclear-setup.md) | 33 |
 | Atomic masses and material data | ✅ | ⬜ | — | ✅ Q-values within 1 keV; atomic weights vs NIST | [Data](nuclear-data.md) | 34 |
-| Two-body reaction kinematics | ✅ | ⬜ | 🟡 LISE++ (request written) | ✅ analytic limit, Lorentz boost, threshold | [Kinematics](kinematics.md) | 35 |
-| Stopping power and range | ⬜ | ⬜ | ⬜ SRIM | ⬜ NIST PSTAR/ASTAR | — | 36 |
-| Energy and angular straggling | ⬜ | ⬜ | ⬜ TRIM | ⬜ | — | 36 |
+| Two-body reaction kinematics | ✅ | ⬜ | 🟡 LISE++: 1 case passes, 8 requested | ✅ analytic limit, Lorentz boost, threshold | [Kinematics](kinematics.md) | 35 |
+| Stopping power and range | ✅ | ⬜ | ✅ LISE++ (1680 points, tolerances by regime); 🟡 SRIM requested | ✅ NIST CSDA ranges within 1% | [Stopping](stopping.md) | 36 |
+| Energy and angular straggling | ✅ | ⬜ | ✅ LISE++ ≥ 30 MeV/u (25%); 🟡 TRIM requested | ✅ Bohr and Highland formulas | [Stopping](stopping.md) | 36 |
 | Rutherford cross section | ⬜ | ⬜ | — | ⬜ analytic, Geiger–Marsden | — | 37 |
 | Distance of closest approach and validity checks | ⬜ | ⬜ | ⬜ LISE++ | ⬜ | — | 37 |
 | Coulomb trajectories | ⬜ | ⬜ | — | ⬜ analytic b(θ) | — | 37 |
