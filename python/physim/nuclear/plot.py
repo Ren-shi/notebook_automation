@@ -7,6 +7,11 @@
     exp = Experiment.example("oxygen_on_lead_array")
     plot.setup_3d(exp)       # beam, target and detectors in 3D
     plot.coverage(exp)       # where each detector sits in (θ, φ)
+
+    from physim.nuclear.events import simulate
+    ev = simulate(exp)
+    plot.spectra(ev)         # measured-energy spectrum of each detector
+    plot.theta_energy(ev)    # measured energy against lab angle
 """
 
 from __future__ import annotations
@@ -75,4 +80,61 @@ def coverage(experiment, *, ax=None, figsize=(7, 3.8)):
     ax.set_xlabel("φ (deg)")
     ax.set_ylabel("θ (deg)")
     tidy(ax, grid=True, legend=True)
+    return ax
+
+
+def spectra(events, detectors=None, *, bins=300, log=True, by_particle=True, figsize=None):
+    """Measured-energy spectrum of each detector (counts in the planned beam time per bin), one panel per
+    detector; with ``by_particle`` the ejectiles and recoils of each channel are drawn separately. Returns the
+    figure."""
+    plt = _plt()
+    names = list(events.detectors) if detectors is None else list(detectors)
+    fig, axes = plt.subplots(len(names), 1, figsize=figsize or (7, 2.2 * len(names)), squeeze=False)
+    for ax, name in zip(axes[:, 0], names):
+        m = events.select(name)
+        x = events["measured"][m]
+        if not len(x):
+            ax.text(0.5, 0.5, f"{name}: no counts", transform=ax.transAxes, ha="center")
+            continue
+        rng = (0.0, float(x.max()) * 1.03)
+        h, edges = events.spectrum(name, bins=bins, range=rng)
+        ax.stairs(h, edges, color="#444444", lw=0.8, label="all")
+        if by_particle:
+            k = 0
+            for ch in events.channels:
+                for particle in ("ejectile", "recoil"):
+                    hp, _ = events.spectrum(name, bins=bins, range=rng, channel=ch, particle=particle)
+                    if hp.sum() > 1e-3 * h.sum():
+                        ax.stairs(hp, edges, color=color(k), lw=1.0, label=f"{ch} {particle}")
+                        k += 1
+        if log:
+            ax.set_yscale("log")
+        ax.set_ylabel("counts / bin")
+        ax.set_title(name, fontsize=9, loc="left")
+        tidy(ax, legend=by_particle)
+    axes[-1, 0].set_xlabel("measured energy (MeV)")
+    fig.tight_layout()
+    return fig
+
+
+def theta_energy(events, detector=None, *, bins=(180, 200), ax=None, figsize=(7, 4)):
+    """Measured energy against lab angle for all counted particles (or one detector): the kinematic curves of
+    each channel. Returns the axes."""
+    plt = _plt()
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+    m = events.select(detector)
+    th, e = events["theta"][m], events["measured"][m]
+    w = events["weight"][m] * events.beam_time_s
+    if len(th):
+        h, xe, ye = np.histogram2d(th, e, bins=bins, weights=w)
+        from matplotlib.colors import LogNorm
+
+        h = np.where(h > 0, h, np.nan)
+        mesh = ax.pcolormesh(xe, ye, h.T, norm=LogNorm(), cmap="viridis")
+        plt.colorbar(mesh, ax=ax, label="counts / bin")
+    ax.set_xlabel("lab angle θ (deg)")
+    ax.set_ylabel("measured energy (MeV)")
+    ax.set_title(detector or "all detectors", fontsize=9, loc="left")
+    tidy(ax)
     return ax

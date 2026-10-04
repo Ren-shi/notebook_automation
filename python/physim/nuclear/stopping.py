@@ -341,43 +341,64 @@ class Stopping:
         ``propagate=False`` just adds up Ω² along the path (no growth or shrinking), for comparison.
         """
         path = self._areal(thickness) / math.cos(math.radians(tilt_deg))
-        z_over_a = sum(n * z for (z, _), n in self._atoms_per_unit().items()) / self.material.molar_mass
         e, var = float(energy), 0.0
         dx = path / steps
         for _ in range(steps):
             if e <= 0:
                 return 0.0
             e_mid = max(self.energy_after(e, dx / 2), 1e-12)
-            s = self.stopping_power(e_mid)
             ds_de = (self.stopping_power(e_mid * 1.001) - self.stopping_power(e_mid * 0.999)) / (0.002 * e_mid)
-            z_eff2 = self._z_eff2(e_mid / self.mass_u)
-            b2 = float(_beta(np.array(e_mid / self.mass_u))) ** 2
-            omega2 = (BOHR_K * z_eff2 * z_over_a * dx * 1e-3 * (1 - b2 / 2) / (1 - b2)
-                      * self._lindhard_scharff_factor(b2))
+            omega2 = float(self.straggling_rate(e_mid)) * dx
             # Two ions δ apart in energy drift as dδ/dx = −S′(E) δ, so the spread is carried by exp(−2 S′ dx):
             # it grows above the Bragg peak (S′ < 0) and shrinks below it.
             var = var * math.exp(-2 * ds_de * dx) * (1.0 if propagate else 0.0) + omega2 if propagate else var + omega2
             e = self.energy_after(e, dx)
         return math.sqrt(var)
 
-    def _lindhard_scharff_factor(self, beta2: float) -> float:
+    def straggling_rate(self, energy: ArrayLike) -> ArrayLike:
+        """Bohr straggling variance added per unit path at kinetic energy ``energy`` (MeV), MeV² per mg/cm²:
+        dΩ²/dx with the effective charge, the relativistic factor (1 − β²/2)/(1 − β²) and Lindhard and Scharff's
+        reduction for slow ions."""
+        e_u = np.asarray(energy, dtype=float) / self.mass_u
+        z_over_a = sum(n * z for (z, _), n in self._atoms_per_unit().items()) / self.material.molar_mass
+        b2 = _beta(e_u) ** 2
+        out = (BOHR_K * self._z_eff2(e_u) * z_over_a * 1e-3 * (1 - b2 / 2) / (1 - b2)
+               * self._lindhard_scharff_factor(b2))
+        return float(out) if np.ndim(energy) == 0 else out
+
+    def transport_table(self) -> dict:
+        """The tables the event generator (Rust) uses to carry ions through layers, on this object's energy grid:
+        ``energy`` (MeV), ``range`` (CSDA, mg/cm²), ``stopping`` (total, MeV/(mg/cm²)) and the straggling integral
+        ``w`` = ∫ (dΩ²/dx) / S³ dE, with which the spread added along a path is S(E_out)² (W(E_in) − W(E_out))
+        (see :doc:`/theory/events`)."""
+        s = (self._se + self._sn) * 1e-3
+        f = self.straggling_rate(self._e) / s**3 * self._e  # integrand in ln E
+        ln_e = np.log(self._e)
+        w = np.concatenate([[0.0], np.cumsum(0.5 * (f[1:] + f[:-1]) * np.diff(ln_e))])
+        return {"energy": self._e.tolist(), "range": self._range.tolist(), "stopping": s.tolist(),
+                "w": w.tolist()}
+
+    def _lindhard_scharff_factor(self, beta2: ArrayLike) -> ArrayLike:
         """Reduction of Bohr straggling for slow ions: L(χ)/2 with L = 1.36 χ^½ − 0.016 χ^(3/2) for χ < 3, where
         χ = v²/(Z₂ v₀²) (Lindhard and Scharff 1953), averaged over the material's elements by electrons."""
-        total, weight = 0.0, 0.0
+        b2 = np.asarray(beta2, dtype=float)
+        total, weight = np.zeros_like(b2), 0.0
         for (z2, _), n in self._atoms_per_unit().items():
-            chi = beta2 / ALPHA**2 / z2
-            f = 0.5 * (1.36 * math.sqrt(chi) - 0.016 * chi**1.5) if chi < 3.0 else 1.0
-            total += n * z2 * min(f, 1.0)
+            chi = b2 / ALPHA**2 / z2
+            f = np.where(chi < 3.0, 0.5 * (1.36 * np.sqrt(chi) - 0.016 * chi**1.5), 1.0)
+            total = total + n * z2 * np.minimum(f, 1.0)
             weight += n * z2
         return total / weight
 
-    def _z_eff2(self, e_u: float) -> float:
+    def _z_eff2(self, e_u: ArrayLike) -> ArrayLike:
+        """Effective charge squared at ``e_u`` MeV/u: this ion's electronic stopping over a proton's at the same
+        velocity."""
         z1 = self.ion.Z
         if z1 == 1:
-            return 1.0
+            return np.ones_like(np.asarray(e_u, dtype=float))
         p = Stopping._proton_cache(self.material)
-        return float(self.stopping_power(e_u * self.mass_u, "electronic") / p.stopping_power(
-            e_u * p.mass_u, "electronic"))
+        return (np.asarray(self.stopping_power(e_u * self.mass_u, "electronic"))
+                / np.asarray(p.stopping_power(e_u * p.mass_u, "electronic")))
 
     @staticmethod
     @lru_cache(maxsize=64)

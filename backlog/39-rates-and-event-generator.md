@@ -1,6 +1,42 @@
 # 39 · Count rates, beam time and the Monte Carlo event generator
 
-**Priority:** P1 · **Size:** L · **Area:** Nuclear planner
+**Priority:** P1 · **Size:** L · **Area:** Nuclear planner · **Status: Done**
+
+> **Done** (`python/physim/nuclear/rates.py`, `python/physim/nuclear/events.py`, `python/physim/nuclear/plot.py`,
+> `src/nuclear/`, `src/python/nuclear.rs`, `tests/python/test_nuclear_events.py`, `tests/nuclear_events.rs`,
+> `benches/engine.rs`, `docs/theory/events.md`, `docs/physics-register/rates-and-events.md`).
+> - `Rates(experiment)`:
+>   - `rate`, `per_detector`, `per_segment`, `by_channel`, `counts_in_run`, `beam_time_for`, `relative_error`;
+>   - `peaks` (mean measured energy and width, with its parts: target thickness, kinematic broadening, beam
+>     energy spread, straggling, resolution);
+>   - `warnings` (above 5000/s by default, too few counts, beam stopping in the target, Rutherford's limits, layout).
+>
+>   The target and the backing, every nuclide in each, and both ejectile and recoil are all included. Rates are
+>   averaged over target depth.
+> - Rust `physim::nuclear`:
+>   - `TwoBody`, a port of item 35, equal to Python to 1e-11;
+>   - `Table`, energy loss with straggling from range, S and W = ∫(dΩ²/dx)/S³ dE tables, which solve the item 36
+>     straggling equation in closed form;
+>   - `Face` (detector hits);
+>   - `Generator`: multithreaded in fixed blocks; random numbers keyed by (seed, 2⁶¹ + event, draw).
+> - Python: `physim.nuclear.events.simulate` returns weighted `Events` (per-particle columns, `rate`, `counts`,
+>   `spectrum`). `Stopping` gained `straggling_rate` and `transport_table`. `Geometry.directions` provides the
+>   quadrature. `plot.spectra` and `plot.theta_energy` draw the results.
+> - **Sampling.** CM angles are drawn over the detectors' acceptance, half from Rutherford's 1/u² and half flat in
+>   ln u, with weights f/p. Backward strips get events, and spectra stay absolute.
+> - **Finite rates.** Lab angles below 0.5° and particles leaving the reaction below the lowest threshold (at least
+>   10 keV) are cut. This removes the 90° Rutherford recoil divergence.
+> - **Done-when results:**
+>   - Monte Carlo against analytic rates within 4σ for every detector, per channel and in total, for both example
+>     setups and a tilted one.
+>   - Peak positions agree with kinematics plus mean energy loss (and a hand calculation within 1 keV).
+>   - Peak widths agree with the quadrature sum within 5%.
+>   - Output is bit-identical on 1 and 4 threads, and for a run split in pieces.
+>   - 10⁶ events take 0.13 s in the benchmark, and 0.2–0.4 s from Python, tables included.
+> - **Left for later:**
+>   - comparing count rates with LISE++ (item 40);
+>   - multiple scattering and beam divergence in the generator;
+>   - reaction types beyond elastic (item 43).
 
 ## Why
 These are the numbers a beam-time proposal needs: how many counts each detector collects per hour, how long to run
