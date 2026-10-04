@@ -1,0 +1,99 @@
+schema = "physim.experiment/1"
+title = "Coulomb excitation of 58Ni with 16O"
+description = "Safe Coulomb excitation of the first 2+ state of 58Ni (1.454 MeV) by a 30 MeV 16O beam: an annular silicon detector catches backscattered beam, two strip detectors the forward recoils, and four germanium detectors see the de-excitation gamma rays. B(E2) is an illustrative value close to the evaluated one; check ENSDF before planning a run."
+
+[reaction]
+type = "coulex"
+excite = "target"
+energy = "1.454 MeV"
+multipolarity = "E2"
+b_up = "0.0695 e2b2"
+
+[beam]
+nuclide = "16O"
+energy = "30 MeV"
+current = "1 pnA"
+
+[target]
+material = "58Ni"
+thickness = "0.5 mg/cm2"
+
+[run]
+beam_time = "24 h"
+counts_wanted = 2000
+
+[[detectors]]
+name = "CD"
+shape = "annular"
+theta = "180 deg"
+distance = "30 mm"
+inner_radius = "9 mm"
+outer_radius = "41 mm"
+rings = 16
+sectors = 24
+thickness = "300 um"
+dead_layer = "0.5 um"
+resolution = "50 keV"
+threshold = "500 keV"
+
+[[detectors]]
+name = "DSSD-L"
+shape = "rectangle"
+theta = "45 deg"
+phi = "0 deg"
+distance = "100 mm"
+width = "50 mm"
+height = "50 mm"
+strips_x = 16
+strips_y = 16
+thickness = "500 um"
+dead_layer = "0.5 um"
+resolution = "50 keV"
+threshold = "500 keV"
+
+[[detectors]]
+name = "DSSD-R"
+shape = "rectangle"
+theta = "45 deg"
+phi = "180 deg"
+distance = "100 mm"
+width = "50 mm"
+height = "50 mm"
+strips_x = 16
+strips_y = 16
+thickness = "500 um"
+dead_layer = "0.5 um"
+resolution = "50 keV"
+threshold = "500 keV"
+
+[[gamma_detectors]]
+name = "Ge90"
+theta = "90 deg"
+phi = "90 deg"
+distance = "120 mm"
+radius = "35 mm"
+resolution = "2.5 keV"
+
+[[gamma_detectors]]
+name = "Ge45"
+theta = "45 deg"
+phi = "-90 deg"
+distance = "120 mm"
+radius = "35 mm"
+resolution = "2.5 keV"
+
+[[gamma_detectors]]
+name = "Ge135"
+theta = "135 deg"
+phi = "90 deg"
+distance = "120 mm"
+radius = "35 mm"
+resolution = "2.5 keV"
+
+[[gamma_detectors]]
+name = "Ge0"
+theta = "25 deg"
+phi = "90 deg"
+distance = "150 mm"
+radius = "35 mm"
+resolution = "2.5 keV"

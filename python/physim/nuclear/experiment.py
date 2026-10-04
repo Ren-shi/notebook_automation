@@ -32,7 +32,7 @@ from .quantity import Quantity
 SCHEMA = "physim.experiment/1"
 
 #: Reactions this version can plan. Others are added slice by slice (backlog item 43 onwards).
-REACTIONS = ("elastic",)
+REACTIONS = ("elastic", "coulex")
 
 #: Folder of the example setups shipped with the package.
 EXAMPLES = Path(__file__).resolve().parent / "examples"
@@ -392,6 +392,74 @@ class Run:
 
 
 @dataclass
+class Excitation:
+    """The excited state of a Coulomb-excitation reaction (``[reaction] type = "coulex"``).
+
+    One state, reached from a 0⁺ ground state: its energy, multipolarity (E1, E2, E3), the reduced transition
+    probability ``b_up`` = B(Eλ↑) as text with a unit (``"0.0695 e2b2"``), and which nucleus is excited.
+    """
+
+    energy: QuantityLike
+    b_up: str
+    excite: str = "target"
+    multipolarity: str = "E2"
+
+    SPECS = (
+        _Field("excite", "str", check=lambda s: None if s in ("target", "projectile")
+               else "must be 'target' or 'projectile'"),
+        _Field("energy", "energy", check=_positive),
+        _Field("multipolarity", "str", check=lambda s: None if s in ("E1", "E2", "E3") else "must be E1, E2 or E3"),
+        _Field("b_up", "str"),
+    )
+
+    @property
+    def energy_mev(self) -> float:
+        return _q(self.energy).to("MeV")
+
+    @property
+    def lam(self) -> int:
+        return int(self.multipolarity[1])
+
+    @property
+    def b_up_e2fm(self) -> float:
+        """B(Eλ↑) in e² fm^(2λ)."""
+        from .coulex import parse_b
+
+        return parse_b(self.b_up, self.lam)
+
+
+@dataclass
+class GammaDetector:
+    """A γ-ray detector, for Doppler shifts and broadening: a disc of ``radius`` facing the target."""
+
+    theta: QuantityLike
+    distance: QuantityLike
+    radius: QuantityLike
+    name: Optional[str] = None
+    phi: Optional[QuantityLike] = None
+    resolution: Optional[QuantityLike] = None
+
+    SPECS = (
+        _Field("name", "str"),
+        _Field("theta", "angle", required=True, check=_polar),
+        _Field("phi", "angle"),
+        _Field("distance", "length", required=True, check=_positive),
+        _Field("radius", "length", required=True, check=_positive),
+        _Field("resolution", "energy", check=_non_negative),
+    )
+
+    def direction(self) -> tuple:
+        """Unit vector from the target to the centre of the detector."""
+        th = math.radians(_q(self.theta).to("deg"))
+        ph = math.radians(_q(self.phi).to("deg")) if self.phi is not None else 0.0
+        return (math.sin(th) * math.cos(ph), math.sin(th) * math.sin(ph), math.cos(th))
+
+    def half_angle_deg(self) -> float:
+        """Half the opening angle of the detector seen from the target."""
+        return math.degrees(math.atan2(_q(self.radius).to("mm"), _q(self.distance).to("mm")))
+
+
+@dataclass
 class Experiment:
     """A complete setup. Build it in Python, or :meth:`load` it from a setup file."""
 
@@ -402,6 +470,9 @@ class Experiment:
     run: Run
     description: Optional[str] = None
     reaction: str = "elastic"
+    #: The excited state, for ``reaction = "coulex"``.
+    excitation: Optional[Excitation] = None
+    gamma_detectors: list = field(default_factory=list)
 
     # -- reading ------------------------------------------------------------------------------------------------
 
@@ -411,7 +482,8 @@ class Experiment:
         problems: list[str] = []
         if not isinstance(data, dict):
             raise SetupError(["the setup must be a table of sections"])
-        known = ("schema", "title", "description", "reaction", "beam", "target", "detectors", "run")
+        known = ("schema", "title", "description", "reaction", "beam", "target", "detectors", "run",
+                 "gamma_detectors")
         for key in data:
             if key not in known:
                 hint = difflib.get_close_matches(key, known, n=1)
@@ -429,11 +501,30 @@ class Experiment:
             problems.append("description must be text")
 
         reaction = "elastic"
+        excitation = None
         if "reaction" in data:
-            r = _read_section(data["reaction"], (_Field("type", "str", required=True),), "reaction", problems)
+            r = _read_section(data["reaction"], (_Field("type", "str", required=True),) + Excitation.SPECS,
+                              "reaction", problems)
             reaction = r.get("type", reaction)
             if "type" in r and reaction not in REACTIONS:
                 problems.append(f"reaction: type '{reaction}' is not available yet; available: {', '.join(REACTIONS)}")
+            raw_r = data["reaction"] if isinstance(data["reaction"], dict) else {}
+            state = {k: v for k, v in r.items() if k != "type"}
+            if reaction == "coulex":
+                hints = {"energy": "the excited state's energy, e.g. \"1.454 MeV\"",
+                         "b_up": "B(Eλ↑) of the excited state, e.g. \"0.0695 e2b2\""}
+                for need, hint in hints.items():
+                    if need not in raw_r:
+                        problems.append(f"reaction: '{need}' is missing: {hint}")
+                if "energy" in state and "b_up" in state:
+                    excitation = Excitation(**state)
+                    try:
+                        excitation.b_up_e2fm
+                    except ValueError as e:
+                        problems.append(f"reaction: b_up {_lower_first(str(e))}")
+                        excitation = None
+            elif state:
+                problems.append(f"reaction: {', '.join(sorted(state))} only apply to type = \"coulex\"")
 
         beam = None
         if "beam" not in data:
@@ -493,6 +584,17 @@ class Experiment:
                 if d is not None:
                     detectors.append(d)
 
+        gammas: list = []
+        raw_g = data.get("gamma_detectors")
+        if raw_g is not None:
+            if not isinstance(raw_g, list) or not all(isinstance(g, dict) for g in raw_g):
+                problems.append("gamma detectors must be written as [[gamma_detectors]] sections")
+            else:
+                for i, raw in enumerate(raw_g, start=1):
+                    g = _read_section(raw, GammaDetector.SPECS, f"gamma detector {i}", problems)
+                    if all(k in g for k in ("theta", "distance", "radius")):
+                        gammas.append(GammaDetector(**g))
+
         run = None
         if "run" not in data:
             problems.append("the [run] section is missing")
@@ -504,7 +606,7 @@ class Experiment:
         if problems:
             raise SetupError(problems)
         return cls(title=title, beam=beam, target=target, detectors=detectors, run=run,
-                   description=description, reaction=reaction)
+                   description=description, reaction=reaction, excitation=excitation, gamma_detectors=gammas)
 
     @classmethod
     def from_toml(cls, text: str) -> Experiment:
@@ -536,6 +638,8 @@ class Experiment:
         if self.description is not None:
             d["description"] = self.description
         d["reaction"] = {"type": self.reaction}
+        if self.excitation is not None:
+            d["reaction"].update(_to_dict(self.excitation))
         d["beam"] = _to_dict(self.beam)
         target = _to_dict(self.target)
         if self.target.backing is not None:
@@ -543,6 +647,8 @@ class Experiment:
         d["target"] = target
         d["run"] = _to_dict(self.run)
         d["detectors"] = [_to_dict(det) for det in self.detectors]
+        if self.gamma_detectors:
+            d["gamma_detectors"] = [_to_dict(g) for g in self.gamma_detectors]
         return d
 
     def to_toml(self) -> str:
@@ -618,5 +724,5 @@ def _check_material(where: str, values: dict[str, Any], problems: list[str]) -> 
                                 "not known; give 'density' or the thickness in mg/cm2")
 
 
-__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "Beam", "Detector", "Experiment", "Layer",
-           "Run", "SetupError", "Target"]
+__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "Beam", "Detector", "Excitation",
+           "Experiment", "GammaDetector", "Layer", "Run", "SetupError", "Target"]

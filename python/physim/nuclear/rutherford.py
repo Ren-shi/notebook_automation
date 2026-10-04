@@ -188,13 +188,13 @@ class Rutherford:
     # -- trajectories ---------------------------------------------------------------------------------------------
 
     def trajectories(self, impact_parameters: ArrayLike, distance: Optional[float] = None,
-                     rtol: float = 1e-11) -> list:
+                     rtol: float = 1e-11, samples: int = 801) -> list:
         """Integrate classical Coulomb orbits in the CM frame with physim's engine.
 
         The relative motion is one particle of reduced mass μ in the field of a fixed charge Z₁Z₂e², started at
         ``distance`` (default 2000 d₀) on the incoming side of the orbit with impact parameter b, and followed to
-        about the same distance on the way out. Units: fm, MeV, time in fm/c.
-        Returns a list of :class:`Orbit`.
+        about the same distance on the way out, recorded at ``samples`` equally spaced times. Units: fm, MeV, time
+        in fm/c. Returns a list of :class:`Orbit`.
         """
         import physim as ps  # the engine; imported here to keep this module light
 
@@ -218,9 +218,9 @@ class Rutherford:
             w.add_force(ps.Coulomb(k=E2_MEV_FM))
             t_end = 2 * start / v_inf
             traj = w.run_adaptive(t_end, rtol=rtol, atol=1e-12 * start, energies=False,
-                                  times=np.linspace(0, t_end, 801))
+                                  times=np.linspace(0, t_end, samples))
             orbits.append(Orbit(b=float(b), mu=mu, k=self.k, pos=np.asarray(traj.pos)[:, 0, :2],
-                                vel=np.asarray(traj.vel)[:, 0, :2]))
+                                vel=np.asarray(traj.vel)[:, 0, :2], t=np.asarray(traj.t)))
         return orbits
 
 
@@ -233,6 +233,8 @@ class Orbit:
     k: float
     pos: np.ndarray
     vel: np.ndarray
+    #: Times of the samples, fm/c.
+    t: Optional[np.ndarray] = None
 
     def _elements(self, i: int) -> tuple:
         """(e, ψ, φ, L) of the hyperbola through point i: e cos ψ = 1 + L²/(μkr), e sin ψ = L ṙ / k."""

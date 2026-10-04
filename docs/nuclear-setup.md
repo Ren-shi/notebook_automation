@@ -92,7 +92,24 @@ distance **d** from the target. θ = 0° is straight downstream and θ = 180° s
 
 | Field | Required | Meaning |
 |---|---|---|
-| `type` | yes, if the section is given | `"elastic"` (the default when the section is left out). More reactions are added in later stages. |
+| `type` | yes, if the section is given | `"elastic"` (the default when the section is left out) or `"coulex"` (Coulomb excitation of one state). |
+| `excite` | no | `"target"` (default) or `"projectile"`: which nucleus is excited (`coulex` only). |
+| `energy` | for `coulex` | Energy of the excited state, e.g. `"1.454 MeV"`. |
+| `multipolarity` | no | `"E2"` (default), `"E1"` or `"E3"`: the transition from the 0⁺ ground state. |
+| `b_up` | for `coulex` | B(Eλ↑), the reduced transition probability up, with its unit: `"0.0695 e2b2"` or `"695 e2fm4"` for E2 (`e2b`/`e2fm2` for E1, `e2b3`/`e2fm6` for E3). Take it from ENSDF; physim does not look it up. |
+
+A Coulomb-excitation setup:
+
+```toml
+[reaction]
+type = "coulex"
+excite = "target"
+energy = "1.454 MeV"
+multipolarity = "E2"
+b_up = "0.0695 e2b2"
+```
+
+See {doc}`theory/coulex` for the physics, and the example `coulex_ni58`.
 
 ### `[beam]`
 
@@ -144,6 +161,19 @@ Size, depending on the shape:
 | `rectangle` | `width`, `height` (required); `strips_x`, `strips_y`: number of strips on each side (1 if left out). |
 | `annular` | `inner_radius`, `outer_radius` (required); `rings`, `sectors` (1 if left out). |
 | `circle` | `radius` (required). |
+
+### `[[gamma_detectors]]` (optional)
+
+γ-ray detectors, for Doppler shifts and broadening of the γ rays from an excited nucleus (`physim.nuclear.gamma`).
+Each is a disc facing the target.
+
+| Field | Required | Unit | Meaning |
+|---|---|---|---|
+| `name` | no | — | A label. |
+| `theta`, `phi` | `theta` yes | angle | Direction of the detector centre (φ = 0 if left out). |
+| `distance` | yes | length | From the target to the detector face. |
+| `radius` | yes | length | Radius of the face, which sets the opening angle. |
+| `resolution` | no | energy | Intrinsic resolution (FWHM), added to the Doppler broadening. |
 
 ### `[run]`
 
