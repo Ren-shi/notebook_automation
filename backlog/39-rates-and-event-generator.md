@@ -24,6 +24,7 @@ data (exported to ROOT by item 42).
   Each event records: detector, strip, true and measured energy, angles, interaction depth.
 - Energy spectra per detector and per strip, and θ vs E plots.
 - Seeded and reproducible: depends on item 31.
+- Port the two-body kinematics of item 35 (Python, NumPy) to Rust for the per-event loop, checked against it.
 - Left out: background, random coincidences, beam halo.
 
 ## Depends on
