@@ -24,6 +24,8 @@ pub struct World {
     /// Hard collisions, if enabled (see [`crate::collisions`]).
     pub(crate) collisions: Option<Collisions>,
     pub(crate) collision_count: u64,
+    /// Seed for random numbers drawn for this world (see [`crate::rng`]); saved in checkpoints.
+    pub seed: u64,
 }
 
 impl World {
@@ -38,6 +40,7 @@ impl World {
             backup_tension: Vec::new(),
             collisions: None,
             collision_count: 0,
+            seed: 1,
         }
     }
 

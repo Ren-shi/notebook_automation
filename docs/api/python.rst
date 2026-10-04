@@ -153,6 +153,12 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. autofunction:: physim.nuclear.parse_nuclide
 .. autofunction:: physim.nuclear.parse_material
 
+Random numbers
+--------------
+
+.. automodule:: physim.random
+   :members:
+
 Scenarios
 ---------
 

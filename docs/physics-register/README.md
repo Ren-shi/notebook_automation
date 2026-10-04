@@ -64,6 +64,7 @@ and the tests are in `tests/` (Rust) and `tests/python/`. None of it is in the p
 | Chaos indicators | ✅ | Kepler λ → 0, symplectic ± pairing of Lyapunov spectra | 18 |
 | Fields on grids: waves, diffusion, Poisson | ✅ | Analytic solutions, convergence orders | 20 |
 | Single-particle quantum mechanics | ✅ | Analytic levels, transmission, norm conservation | 32 |
+| Seeded random numbers (thermostats, initial conditions) | ✅ | χ² uniformity, correlations; bit-identical across thread counts and restarts | 31 |
 
 ## Adding an entry
 

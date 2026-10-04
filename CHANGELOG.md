@@ -11,6 +11,10 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Seeded, reproducible randomness: `World.seed` (saved in checkpoints; the Langevin thermostat's default seed), the
+  counter-based generator made public (`physim::rng`, `physim.random.uniform`/`normal`), and `physim.random` helpers
+  for Maxwell–Boltzmann velocities and uniform positions in a box or ball. Noisy runs are bit-identical for any
+  thread count and across checkpoint restarts.
 - Nuclear experiment planner, first part: `physim.nuclear.Experiment`, a setup file (TOML) describing the beam,
   target, detectors and run conditions, with every value written with its unit and every problem reported by field
   name. Example setups (`Experiment.example`), the guide page `nuclear-setup`, and the physics register

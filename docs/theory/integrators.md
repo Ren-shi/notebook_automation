@@ -115,6 +115,22 @@ $\dot\xi = (2K - g k_BT)/Q$; the extended energy $E + $ `thermostat_energy()` is
 thermostat is not ergodic for small or stiff systems (its temperature fluctuations come out too large there); prefer
 Langevin when canonical fluctuations matter.
 
+### Random numbers
+
+Every random number in physim is a pure function of a key `(seed, counter, index)`: SplitMix64's mixing function
+applied three times, giving a uniform deviate, and Box–Muller for normals. Nothing is carried from one draw to the
+next, so:
+
+- results do not depend on the thread count or the order of evaluation;
+- a checkpoint only needs the seed and the counter to restart bit for bit.
+
+The Langevin thermostat uses `counter` = step and `index` = 3 × particle + component, so each particle has its own
+stream. The seed is the world's `seed` (default 1; saved in checkpoints) unless `use_langevin` is given one.
+`physim.random` draws from the same generator for initial conditions: Maxwell–Boltzmann velocities, and uniform
+positions in a box or a ball. It uses counters from $2^{62}$ upwards, so setup draws never coincide with a run's.
+Tests check uniformity (χ² over 100 bins for 10⁶ values), lag-1 and cross-seed correlations, normal moments, and
+bit-identical noisy runs with 1 and 4 threads and across checkpoint restarts.
+
 ## Choosing
 
 - Conservative, long, smooth: `verlet` (cheap) or `yoshida4`/`pefrl`/`blanes_moan4` (accurate).
