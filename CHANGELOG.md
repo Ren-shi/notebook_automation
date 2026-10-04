@@ -10,7 +10,18 @@ workflow builds the wheels, tests them and publishes to PyPI.
 
 ## Unreleased
 
+### Changed
+- `physim app` listens on 127.0.0.1 by default instead of every network interface (NiceGUI's default), so it is not
+  reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
+
 ### Added
+- A one-click Windows installer for the planner app (`physim-planner-<version>-windows-x64-setup.exe`, attached to
+  each GitHub release): the official embeddable Python with physim and the app's packages, a per-user install with a
+  Start-menu shortcut, no Python or administrator rights needed. Built and test-installed by the new `Installer`
+  workflow.
+- `physim app --desktop` (what the shortcut runs): logs to `%LOCALAPPDATA%\physim\planner.log`, reuses a planner
+  that is already running, moves to a free port if 8080 is taken, and stops a minute after the last browser tab
+  closes (`--idle-exit`).
 - Coulomb excitation (second slice of the nuclear planner):
   - `physim.nuclear.coulex.Coulex`: first-order semiclassical excitation probability and cross sections for E1, E2
     and E3, with the safe-distance check;

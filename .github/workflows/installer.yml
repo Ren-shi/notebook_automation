@@ -1,0 +1,112 @@
+name: Installer
+
+# Builds the one-click Windows installer of the experiment planner (backlog item 44): the physim wheel, the
+# official embeddable Python and the app's packages, packed with Inno Setup. It then installs it on the runner with
+# Python taken off the PATH, starts the planner the way the Start-menu shortcut does, loads every example page and
+# uninstalls. A version tag (v1.2.3) attaches the installer to the GitHub release.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "installer/**"
+      - "python/physim/__main__.py"
+      - "python/physim/nuclear/app.py"
+      - "pyproject.toml"
+      - ".github/workflows/installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # the same minor version as the bundled Python (installer/windows/build.py)
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: x64
+          args: --release --out dist
+      - name: Assemble the bundle
+        shell: pwsh
+        run: |
+          python -m pip install pillow
+          $wheel = (Get-ChildItem dist\*.whl)[0].FullName
+          python installer\windows\build.py --wheel $wheel --out build\planner
+      - name: Pack the installer
+        shell: pwsh
+        run: |
+          $version = python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['package']['version'])"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc /Qp "/DAppVersion=$version" installer\windows\planner.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $setup = (Get-ChildItem dist\physim-planner-*-setup.exe)[0]
+          "SETUP=$($setup.FullName)" >> $env:GITHUB_ENV
+          "### Windows installer`n`n$($setup.Name): **$([math]::Round($setup.Length / 1MB, 1)) MB**" >> $env:GITHUB_STEP_SUMMARY
+      - name: Install, start the planner, uninstall
+        shell: pwsh
+        run: |
+          $dir = "$env:RUNNER_TEMP\physim planner"
+          Start-Process $env:SETUP -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/CURRENTUSER", "/DIR=`"$dir`"", "/LOG=`"$env:RUNNER_TEMP\setup.log`"" -Wait
+          if (-not (Test-Path "$dir\python\pythonw.exe")) { Get-Content "$env:RUNNER_TEMP\setup.log"; throw "not installed" }
+          $installed = "{0:N0} MB" -f ((Get-ChildItem $dir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
+          "Installed size: **$installed**" >> $env:GITHUB_STEP_SUMMARY
+          # As on a machine without Python: no Python on the PATH and no PYTHON* variables.
+          $env:PATH = ($env:PATH -split ";" | Where-Object { $_ -notmatch "python" }) -join ";"
+          foreach ($name in @((Get-ChildItem env: | Where-Object Name -like "PYTHON*").Name)) { Remove-Item "env:$name" }
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP\appdata"
+          # What the Start-menu shortcut runs.
+          $app = Start-Process "$dir\python\pythonw.exe" -ArgumentList "-m", "physim", "app", "--desktop", "--no-browser", "--idle-exit", "600" -PassThru
+          $ok = $false
+          foreach ($i in 1..120) {
+            try { $r = Invoke-RestMethod http://127.0.0.1:8080/physim-planner -TimeoutSec 5; $ok = $true; break } catch { Start-Sleep 1 }
+          }
+          Get-Content "$env:LOCALAPPDATA\physim\planner.log" -ErrorAction SilentlyContinue
+          if (-not $ok) { throw "the planner did not start" }
+          "planner $($r.version) is running"
+          foreach ($example in "alpha_on_gold", "oxygen_on_lead_array", "coulex_ni58") {
+            $page = Invoke-WebRequest "http://127.0.0.1:8080/?example=$example" -TimeoutSec 180 -UseBasicParsing
+            if ($page.StatusCode -ne 200) { throw "$example gave $($page.StatusCode)" }
+            "$example page served"
+          }
+          # A second launch finds the running planner and leaves at once.
+          $second = Start-Process "$dir\python\python.exe" -ArgumentList "-m", "physim", "app", "--desktop", "--no-browser" -PassThru -Wait
+          if ($second.ExitCode -ne 0) { throw "second launch failed" }
+          Get-Content "$env:LOCALAPPDATA\physim\planner.log"
+          Stop-Process -Id $app.Id -Force
+          Start-Sleep 2
+          Start-Process "$dir\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -Wait
+          Start-Sleep 5
+          if (Test-Path "$dir\python") { throw "the uninstaller left the bundle behind" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: planner-windows-installer
+          path: dist/physim-planner-*-setup.exe
+
+  release:
+    name: Attach to the GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: planner-windows-installer
+          path: dist
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
+          gh release upload "$TAG" dist/*.exe --repo "$GITHUB_REPOSITORY" --clobber

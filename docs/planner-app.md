@@ -8,7 +8,22 @@ It runs on your own computer, in your web browser. There are no accounts, and no
 
 ## Install and start it
 
-**If you have never used Python:**
+**On Windows, without Python:** download `physim-planner-…-windows-x64-setup.exe` from the
+[releases page](https://github.com/Ren-shi/notebook_automation/releases) and run it.
+
+1. Windows may say *"Windows protected your PC"*, because the installer is not code-signed yet. Click **More info**,
+   then **Run anyway**.
+2. The installer needs no administrator rights. It puts everything, including its own copy of Python, in
+   `%LOCALAPPDATA%\Programs\physim planner`, and adds **physim planner** to the Start menu (and, if you tick the
+   box, to the desktop).
+3. Click **physim planner**. Your browser opens the planner after a few seconds. There is no window to keep open:
+   the planner stops by itself a minute after you close its last browser tab. Clicking the shortcut again while it
+   runs just opens another tab.
+4. To remove it: *Settings → Apps → physim planner → Uninstall*. To update, run a newer installer over the old one.
+
+If the browser does not open, the log is in `%LOCALAPPDATA%\physim\planner.log`.
+
+**If you have never used Python (macOS, Linux, or Windows without the installer):**
 
 1. Install Python 3.11 or newer from <https://www.python.org/downloads/>. On Windows, tick **"Add python.exe to
    PATH"** on the first screen of the installer.
@@ -31,7 +46,8 @@ It runs on your own computer, in your web browser. There are no accounts, and no
 **If you already use Python:** `pip install "physim-engine[app,root]"`, then `physim app` (or `python -m physim app`).
 `physim app --example oxygen_on_lead_array` starts from another example; `--port` picks another port.
 
-A one-click installer that needs no Python is planned (backlog item 44).
+`physim app` listens only on this computer (127.0.0.1). `--host 0.0.0.0` serves the local network too, for
+example to show the planner on a lab PC; anyone on that network can then open it.
 
 ## A four-detector setup, step by step
 

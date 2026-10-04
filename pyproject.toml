@@ -49,4 +49,4 @@ python-source = "python"
 module-name = "physim._core"
 # Keep the source distribution small: the engine, the package, the tests and the docs it needs.
 include = [{ path = "LICENSE", format = "sdist" }, { path = "CHANGELOG.md", format = "sdist" }]
-exclude = ["notebooks/**", "backlog/**", "benches/**", "examples/**", "target/**"]
+exclude = ["notebooks/**", "backlog/**", "benches/**", "examples/**", "target/**", "installer/**"]
