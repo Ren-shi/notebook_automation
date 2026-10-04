@@ -94,9 +94,11 @@ HELP = {
                               "detector around the beam.", "annular at backward angles, rectangles at the sides",
                               "—"),
     ("detector", "name"): _h("A short name used in tables, plots and the report.", "A30, CD, DSSD-L", "—"),
-    ("detector", "theta"): _h("Angle between the beam direction and the detector centre.", "20–170 deg",
-                              "Rutherford rates fall steeply with angle (1/sin⁴(θ/2)); backward detectors see the "
-                              "close collisions, and the lowest energies."),
+    ("detector", "theta"): _h("Angle between the beam direction and the detector centre: below 90° is forward, "
+                              "above 90° backward (180° is straight back, around the beam).", "20–170 deg",
+                              "Rutherford rates fall steeply with angle (1/sin⁴(θ/2)), so backward detectors count "
+                              "slowly and the beam time grows; but they see the closest collisions, where Coulomb "
+                              "excitation is most likely."),
     ("detector", "phi"): _h("Angle around the beam axis (0 = +x, 90 = +y).", "0, 90, 180, 270 deg",
                             "moves the detector around the beam; rates do not change for an unpolarised beam."),
     ("detector", "distance"): _h("Distance from the target to the detector centre.", "30–200 mm",
@@ -139,6 +141,11 @@ HELP = {
                             "and more Doppler broadening."),
     ("gamma", "resolution"): _h("Intrinsic energy resolution (FWHM) of the crystal.", "2–3 keV at 1.3 MeV for "
                                 "germanium", "wider γ peaks (added to the Doppler broadening)."),
+    ("gamma", "efficiency"): _h("Full-energy-peak efficiency of this detector for the γ ray, as a percentage of all "
+                                "γ rays emitted (from a source measurement or the array's specification). Left "
+                                "empty, the planner uses the crystal's geometric coverage, an upper limit.",
+                                "0.5–3 % per germanium crystal at 1.3 MeV",
+                                "more particle–γ coincidences: a shorter beam time."),
 }
 
 
@@ -149,6 +156,56 @@ def help_for(section: str, field: str) -> Optional[Help]:
     elif section.startswith("detector"):
         section = "detector"
     return HELP.get((section, field))
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Where to put a new particle detector
+
+
+@dataclass(frozen=True)
+class Placement:
+    """A ready-made particle detector for one region of angles."""
+
+    key: str
+    label: str
+    #: Why one would put a detector there.
+    why: str
+    #: Name prefix; a number is added.
+    prefix: str
+    #: The detector's fields, as in a setup file.
+    fields: tuple
+
+
+PLACEMENTS = (
+    Placement("forward", "Forward strip detector (45°)",
+              "Many counts: the beam scattered a little, and recoils from the target. Fast, high-energy particles.",
+              "F", (("shape", "rectangle"), ("theta", "45 deg"), ("distance", "100 mm"), ("width", "50 mm"),
+                    ("height", "50 mm"), ("strips_x", 16), ("strips_y", 16), ("thickness", "500 um"),
+                    ("resolution", "30 keV"), ("threshold", "300 keV"))),
+    Placement("side", "Side pad (90°)", "A middle angle: moderate rates, a check on the angular distribution.",
+              "S", (("shape", "circle"), ("theta", "90 deg"), ("distance", "80 mm"), ("radius", "5 mm"),
+                    ("thickness", "300 um"), ("resolution", "20 keV"), ("threshold", "200 keV"))),
+    Placement("backward", "Backward pad (150°)",
+              "Few counts and a long beam time, but the closest collisions: the strongest test of Rutherford "
+              "scattering, and where Coulomb excitation is most likely.",
+              "B", (("shape", "circle"), ("theta", "150 deg"), ("distance", "50 mm"), ("radius", "5 mm"),
+                    ("thickness", "300 um"), ("resolution", "20 keV"), ("threshold", "200 keV"))),
+    Placement("ring", "Backward ring around the beam (CD, 180°)",
+              "An annular detector the beam passes through, covering about 125–165°: the most solid angle at "
+              "backward angles, the usual choice for Coulomb excitation.",
+              "CD", (("shape", "annular"), ("theta", "180 deg"), ("distance", "30 mm"), ("inner_radius", "9 mm"),
+                     ("outer_radius", "41 mm"), ("rings", 16), ("sectors", 24), ("thickness", "300 um"),
+                     ("resolution", "30 keV"), ("threshold", "300 keV"))),
+)
+
+
+def placement(key: str, taken=()) -> dict:
+    """The fields of a new detector from :data:`PLACEMENTS`, named so it does not clash with ``taken``."""
+    p = next(x for x in PLACEMENTS if x.key == key)
+    k = 1
+    while f"{p.prefix}{k}" in set(taken):
+        k += 1
+    return dict(p.fields, name=f"{p.prefix}{k}")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -183,9 +240,9 @@ STEPS = (
          "What the beam hits and how thick it is. A thicker target gives more counts but costs energy and widens "
          "the peaks.", ("target", "backing"), ("energy_loss",)),
     Step("detectors", "Particle detectors",
-         "Where the silicon detectors sit and how big they are. Angle sets the rate and the energies they see; "
-         "distance and size set the solid angle and how sharp the peaks are.", ("detectors",),
-         ("geometry", "kinematics")),
+         "Where the silicon detectors sit and how big they are. Forward angles count fast; backward angles count "
+         "slowly but see the closest collisions, which Coulomb excitation needs. Distance and size set the solid "
+         "angle and how sharp the peaks are.", ("detectors",), ("geometry", "kinematics")),
     Step("gamma", "γ-ray detectors",
          "Where the germanium detectors sit. Their angle to the beam and to the particle detectors sets the Doppler "
          "shift of the γ ray.", ("gamma_detectors",), ("gamma",), coulex_only=True),
@@ -292,6 +349,17 @@ def _geometry(p) -> list:
                "nothing blocks another detector or the beam.")
     if g["gamma_detectors"]:
         out.append("Dashed circles are the γ-ray detectors.")
+    if not any(d["theta_range"][1] > 90 for d in dets):
+        out.append("All detectors are forward of 90°. Backward angles count slowly but see the closest collisions: "
+                   "add one under Particle detectors (Backward pad, or Backward ring around the beam).")
+    if p.experiment.excitation is not None:
+        r = p.rates()["rows"]
+        share = {x["detector"]: x["excitation_per_s"] / x["rate_per_s"] for x in r if x["rate_per_s"] > 0}
+        if share:
+            best = max(share, key=share.get)
+            out.append(f"{best} has the largest share of excitation events: 1 in {1 / share[best]:,.0f} of its "
+                       "particles. Close collisions excite the state: the beam scattered backward, or a target "
+                       "recoil sent forward.")
     return out
 
 
@@ -319,6 +387,8 @@ def _rates(p) -> list:
     out = [f"{top['detector']} counts fastest ({_fmt(top['rate_per_s'])}/s) and {low['detector']} slowest "
            f"({_fmt(low['rate_per_s'])}/s): scattering falls steeply with angle."]
     need = {x["detector"]: x["beam_time_s"] for x in rows if x["beam_time_s"] is not None}
+    if r["measured"] != "all":
+        return out + _coulex_rates(r, need)
     if need:
         worst = max(need, key=need.get)
         have = r["beam_time_s"]
@@ -329,6 +399,30 @@ def _rates(p) -> list:
     if top["rate_per_s"] > 5000:
         out.append(f"{top['detector']} is above about 5000/s, where pile-up and dead time start: lower the current "
                    "or move it back.")
+    return out
+
+
+def _coulex_rates(r: dict, need: dict) -> list:
+    """The rates reading for Coulomb excitation: what is counted, the beam time it needs, and the efficiency."""
+    out = []
+    if r["measured"] == "coincidences":
+        eff = r["gamma_efficiency"]
+        out.append(f"For Coulomb excitation what counts is an excitation event seen in a particle detector together "
+                   f"with its γ ray: the γ detectors catch {eff:.1%} of the γ rays"
+                   + (" (their geometric coverage, an upper limit: set each detector's Efficiency for a realistic "
+                      "beam time)." if r["gamma_efficiency_geometric"] else "."))
+        what = "particle–γ coincidences"
+    else:
+        out.append("For Coulomb excitation what counts is the excitation events; add γ-ray detectors to count the "
+                   "particle–γ coincidences the measurement uses.")
+        what = "excitation events"
+    if need:
+        best = min(need, key=need.get)
+        have = r["beam_time_s"]
+        verdict = "" if have is None else (" Your planned beam time is enough there." if need[best] <= have else
+                                           f" Your planned {_duration(have)} is not enough.")
+        out.append(f"For {r['counts_wanted']:g} {what}, {best} needs the least beam: {_duration(need[best])}."
+                   + verdict)
     return out
 
 
@@ -407,4 +501,5 @@ def _report(p) -> list:
 _READINGS = {"geometry": _geometry, "kinematics": _kinematics, "rates": _rates, "energy_loss": _energy_loss,
              "spectra": _spectra, "trajectories": _trajectories, "gamma": _gamma, "report": _report}
 
-__all__ = ["GOALS", "HELP", "Help", "STEPS", "Step", "help_for", "reading", "steps_for"]
+__all__ = ["GOALS", "HELP", "Help", "PLACEMENTS", "Placement", "STEPS", "Step", "help_for", "placement", "reading",
+           "steps_for"]

@@ -87,8 +87,14 @@ walkthrough below. The browser remembers which mode you used last.
    - Open a detector in the *Detectors* list to change its angle (θ), distance, size, thickness, resolution or
      threshold.
    - **Duplicate** copies a detector, and **Remove** deletes it.
-   - **Add** makes a new one, a 5 mm disc at 45° and 100 mm, which you then edit. Make four, for example at 30°,
-     60°, 90° and 150°.
+   - **Add** offers a ready-made detector for each region, which you then edit:
+     - a forward strip detector (45°);
+     - a side pad (90°);
+     - a backward pad (150°);
+     - a backward ring around the beam (a CD at 180°, covering about 125–165°).
+
+     θ below 90° is forward and above 90° is backward. Backward detectors count slowly but see the closest
+     collisions. Make four, for example at 30°, 60°, 90° and 150°.
 5. **Read the warnings.** The yellow box above the results lists everything to check: detectors counting too fast,
    too few counts in the planned beam time, angles where Rutherford's formula fails, detectors in the beam.
    - A red line means the setup has a problem, and the message names the field.
@@ -125,11 +131,23 @@ The example *coulex_ni58* is a complete one. To build your own:
 4. Enter the **State energy** (`1.454 MeV`) and **B(Eλ↑)** (`0.0695 e2b2` or `695 e2fm4`). Take both from ENSDF
    for your nucleus. Until both are filled in, a red line names what is missing.
 5. **Particle detectors** are silicon detectors. They measure the scattered beam particles and recoils, so you know
-   each excited nucleus's direction and speed. Place them as in the elastic case: an annular detector at backward
-   angles catches backscattered beam, and strip detectors at forward angles catch the recoils.
+   each excited nucleus's direction and speed.
+   - Close collisions excite the state, so put detectors where those particles go: **Add → Backward ring around the
+     beam** for the backscattered beam, and forward strip detectors for the target recoils.
+   - *Geometry* names the detector with the largest share of excitation events.
 6. Under **γ-ray detectors** (germanium), **Add** a detector for each crystal, with its angle, distance, radius and
    resolution. They appear in *Geometry* as dashed circles.
-7. Open **Excitation and γ rays**:
+   - Set each crystal's **Efficiency**: its full-energy-peak efficiency for your γ ray, typically 0.5–3% per crystal
+     at 1.3 MeV.
+   - Left empty, the planner uses the crystal's geometric coverage, an upper limit that makes the beam time look
+     shorter than it will be.
+7. **Rates and beam time** counts what the measurement uses: excitation events seen in a particle detector
+   together with their γ ray. *Counts wanted* is the number of these particle–γ coincidences, so the beam time is
+   usually hours. The table shows, per detector:
+   - all particles;
+   - the excitation events;
+   - the excitation events with a γ ray.
+8. Open **Excitation and γ rays**:
    - **Excitation probability:** against angle, with the excitation events per particle detector.
    - **Particle energies:** the energy of each particle at each particle detector's edges and centre, elastic and
      after exciting the state. It also gives the speed β of the excited nucleus, which is what you need to correct

@@ -449,6 +449,9 @@ class GammaDetector:
     name: Optional[str] = None
     phi: Optional[QuantityLike] = None
     resolution: Optional[QuantityLike] = None
+    #: Full-energy-peak efficiency for the γ ray, as a percentage of all γ rays emitted ("2.5 %"). Without it the
+    #: planner uses the detector's geometric coverage, an upper limit.
+    efficiency: Optional[QuantityLike] = None
 
     SPECS = (
         _Field("name", "str"),
@@ -457,7 +460,17 @@ class GammaDetector:
         _Field("distance", "length", required=True, check=_positive),
         _Field("radius", "length", required=True, check=_positive),
         _Field("resolution", "energy", check=_non_negative),
+        _Field("efficiency", "fraction", check=lambda q: None if 0 < q.value <= 100
+               else f"must be above 0 and at most 100 %, got '{q}'"),
     )
+
+    def geometric_efficiency(self) -> float:
+        """Fraction of all directions the crystal face covers, seen from the target: (1 − cos α)/2."""
+        return (1.0 - math.cos(math.radians(self.half_angle_deg()))) / 2.0
+
+    def peak_efficiency(self) -> float:
+        """Full-energy-peak efficiency as a fraction: :attr:`efficiency` if given, else the geometric coverage."""
+        return _q(self.efficiency).to("%") / 100.0 if self.efficiency is not None else self.geometric_efficiency()
 
     def direction(self) -> tuple:
         """Unit vector from the target to the centre of the detector."""

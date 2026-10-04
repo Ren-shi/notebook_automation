@@ -92,3 +92,60 @@ def test_guided_steps():
     c = Planner.example("coulex_ni58")
     c.set("gamma detector 1", "radius", "x")
     assert list(problems(c)) == ["gamma"]
+
+
+def test_placements():
+    p = Planner.example("alpha_on_gold")
+    names = [d.name for d in p.experiment.detectors]
+    for pl in guide.PLACEMENTS:
+        fields = guide.placement(pl.key, names)
+        assert fields["name"] not in names
+        assert p.add_detector(**fields), (pl.key, p.problems)
+        names.append(fields["name"])
+    ranges = {g["name"]: g["theta_range"] for g in p.geometry()["detectors"]}
+    assert ranges["F1"][1] < 90 and ranges["B1"][0] > 90
+    lo, hi = ranges["CD1"]
+    assert 120 < lo < hi < 170  # the ring sits around the beam, backward
+    assert guide.placement("ring", ["CD1", "CD2"])["name"] == "CD3"
+
+
+def test_coulomb_excitation_beam_time_is_set_by_coincidences():
+    """Coulomb excitation is counted in particle–γ coincidences, so its beam time is hours, not seconds."""
+    p = Planner.example("coulex_ni58")
+    r = p.rates()
+    assert r["measured"] == "coincidences" and r["gamma_efficiency_geometric"]
+    rates = p._rates()
+    eff = sum(g.geometric_efficiency() for g in p.experiment.gamma_detectors)
+    assert r["gamma_efficiency"] == pytest.approx(eff)
+    for row in r["rows"]:
+        exc = rates.rate(row["detector"], what="excitations")
+        assert row["excitation_per_s"] == pytest.approx(exc) and exc < 0.01 * row["rate_per_s"]
+        assert row["coincidence_per_s"] == pytest.approx(exc * eff)
+        assert row["beam_time_s"] == pytest.approx(r["counts_wanted"] / (exc * eff))
+        assert row["beam_time_s"] > 3600
+    # A measured photopeak efficiency replaces the geometric coverage.
+    for i in range(len(p.experiment.gamma_detectors)):
+        assert p.set(f"gamma detector {i + 1}", "efficiency", "1 %")
+    r2 = p.rates()
+    assert r2["gamma_efficiency"] == pytest.approx(0.04) and not r2["gamma_efficiency_geometric"]
+    assert not p.set("gamma detector 1", "efficiency", "150 %") and "at most 100 %" in p.problems[0]
+    text = " ".join(guide.reading(Planner.example("coulex_ni58"), "rates"))
+    assert "particle–γ coincidences" in text and "upper limit" in text and " h." in text
+    # Without γ detectors, the excitation events themselves.
+    q = Planner.example("coulex_ni58")
+    for _ in range(4):
+        q.remove_gamma_detector(0)
+    assert q.rates()["measured"] == "excitations"
+    # Elastic setups are unchanged.
+    a = Planner.example("alpha_on_gold")
+    assert a.rates()["measured"] == "all" and "excitation_per_s" not in a.rates()["rows"][0]
+
+
+def test_geometry_reading_points_backward():
+    p = Planner.example("alpha_on_gold")
+    for i in range(len(p.experiment.detectors) - 1, -1, -1):
+        if p.geometry()["detectors"][i]["theta_range"][1] > 90:
+            p.remove_detector(i)
+    assert "Backward pad" in " ".join(guide.reading(p, "geometry"))
+    c = " ".join(guide.reading(Planner.example("coulex_ni58"), "geometry"))
+    assert "CD has the largest share of excitation events" in c
