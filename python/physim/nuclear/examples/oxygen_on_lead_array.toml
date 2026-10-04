@@ -1,0 +1,100 @@
+schema = "physim.experiment/1"
+title = "16O on 208Pb with a silicon array"
+description = "Elastic scattering below the Coulomb barrier: four double-sided strip detectors at forward and backward angles and an annular strip detector upstream of the target."
+
+[reaction]
+type = "elastic"
+
+[beam]
+nuclide = "16O"
+energy = "4 MeV/u"
+current = "10 enA"
+charge_state = 6
+energy_spread = "0.1 %"
+spot_size = "2 mm"
+
+[target]
+material = "208Pb"
+thickness = "200 ug/cm2"
+
+[target.backing]
+material = "C"
+thickness = "20 ug/cm2"
+
+[run]
+beam_time = "12 h"
+counts_wanted = 5000
+
+[[detectors]]
+name = "DSSD1"
+shape = "rectangle"
+theta = "35 deg"
+phi = "0 deg"
+distance = "150 mm"
+width = "50 mm"
+height = "50 mm"
+strips_x = 16
+strips_y = 16
+thickness = "500 um"
+dead_layer = "0.5 um"
+resolution = "40 keV"
+threshold = "300 keV"
+
+[[detectors]]
+name = "DSSD2"
+shape = "rectangle"
+theta = "60 deg"
+phi = "180 deg"
+distance = "150 mm"
+width = "50 mm"
+height = "50 mm"
+strips_x = 16
+strips_y = 16
+thickness = "500 um"
+dead_layer = "0.5 um"
+resolution = "40 keV"
+threshold = "300 keV"
+
+[[detectors]]
+name = "DSSD3"
+shape = "rectangle"
+theta = "105 deg"
+phi = "0 deg"
+distance = "150 mm"
+width = "50 mm"
+height = "50 mm"
+strips_x = 16
+strips_y = 16
+thickness = "500 um"
+dead_layer = "0.5 um"
+resolution = "40 keV"
+threshold = "300 keV"
+
+[[detectors]]
+name = "DSSD4"
+shape = "rectangle"
+theta = "125 deg"
+phi = "180 deg"
+distance = "150 mm"
+width = "50 mm"
+height = "50 mm"
+strips_x = 16
+strips_y = 16
+thickness = "500 um"
+dead_layer = "0.5 um"
+resolution = "40 keV"
+threshold = "300 keV"
+
+[[detectors]]
+name = "CD"
+shape = "annular"
+theta = "180 deg"
+distance = "40 mm"
+inner_radius = "9 mm"
+outer_radius = "41 mm"
+rings = 16
+sectors = 24
+thickness = "300 um"
+dead_layer = "0.5 um"
+resolution = "40 keV"
+threshold = "300 keV"

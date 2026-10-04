@@ -23,6 +23,7 @@ install
 quickstart
 guide
 new-ideas
+nuclear-setup
 ```
 
 ```{toctree}

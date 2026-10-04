@@ -38,7 +38,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 30 | [Special-relativistic particle dynamics](30-special-relativity.md) | Physics | P3 | M | 09 |
 | 31 | [Seeded, reproducible randomness](31-seeded-randomness.md) | Core | P2 | S | — |
 | 32 | ~~[Quantum mechanics: the Schrödinger equation on a grid](32-quantum-mechanics.md)~~ **Done** | Physics | P3 | L | 20 |
-| 33 | [Experiment definition: the setup file](33-experiment-definition.md) | Nuclear planner | P1 | M | — |
+| 33 | ~~[Experiment definition: the setup file](33-experiment-definition.md)~~ **Done** | Nuclear planner | P1 | M | — |
 | 34 | [Nuclear and material data](34-nuclear-and-material-data.md) | Nuclear planner | P1 | M | — |
 | 35 | [Two-body reaction kinematics](35-reaction-kinematics.md) | Nuclear planner | P1 | M | 34 |
 | 36 | [Stopping power and energy loss](36-stopping-power-and-energy-loss.md) | Nuclear planner | P1 | L | 34 |
