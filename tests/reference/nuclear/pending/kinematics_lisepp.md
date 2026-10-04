@@ -5,12 +5,17 @@ with **relativistic** kinematics and the **AME2020** mass table if your version 
 used). Save the results as `tests/reference/nuclear/kinematics_lisepp.csv` with columns
 `beam,target,ejectile,excitation_mev,beam_energy_mev,particle,theta_lab_deg,branch,energy_mev,theta_cm_deg`.
 
+**Settings:** set "Reaction takes place at the target" to **Entrance** (or use a very thin target), so the beam is not
+slowed before the reaction; otherwise note the setting, as in the ¹⁹⁷Au case already recorded in
+`../kinematics_lisepp.csv`. LISE++ shows about 4 significant figures in MeV/u; add an `energy_tol_mev` column with half
+a unit in the last digit shown when that is coarser than 1 keV.
+
 The test compares energies to **1 keV** and CM angles to **0.01°**. Physim's values are listed so a mismatch is easy
 to spot. If LISE++ disagrees by more than that, keep its numbers anyway; the difference is what we need to see.
 
 | # | Reaction | Beam energy | Particle | Lab angle | physim: energy (MeV) | physim: θ_cm |
 |---|---|---|---|---|---|---|
-| 1 | ¹⁹⁷Au(α, α) elastic | 5.5 MeV | ejectile | 30°, 90°, 150° | 5.4701, 5.2808, 5.0980 | 30.583°, 91.166°, 150.583° |
+| 1 | ¹⁹⁷Au(α, α) elastic (a 20 MeV case at 50° CM is already recorded) | 5.5 MeV | ejectile | 30°, 90°, 150° | 5.4701, 5.2808, 5.0980 | 30.583°, 91.166°, 150.583° |
 | 2 | ²⁰⁸Pb(¹⁶O, ¹⁶O) elastic | 64 MeV | ejectile | 35°, 125° | 62.2398, 50.1922 | 37.538°, 128.624° |
 | 3 | ²⁰⁸Pb(¹⁶O, ¹⁶O) elastic | 64 MeV | recoil (²⁰⁸Pb) | 30° | 12.7517 | 60.001° |
 | 4 | ²⁰⁸Pb(¹⁶O, ¹⁶O)²⁰⁸Pb*, E* = 2.614 MeV | 64 MeV | ejectile | 90° | 52.4160 | 94.527° |
