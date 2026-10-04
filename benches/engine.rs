@@ -176,9 +176,22 @@ fn springs(c: &mut Criterion) {
     g.finish();
 }
 
+/// The nuclear event generator: 10⁶ events of the demo setup (α on gold, four detectors).
+fn nuclear_events(c: &mut Criterion) {
+    let gen = physim::nuclear::Generator::demo();
+    let n = 1_000_000;
+    let mut g = c.benchmark_group("nuclear_events");
+    g.sample_size(10);
+    g.throughput(Throughput::Elements(n));
+    g.bench_function("alpha_on_gold_1e6", |b| {
+        b.iter(|| gen.run(black_box(n), n, 1, 0).unwrap())
+    });
+    g.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().warm_up_time(Duration::from_secs(1)).measurement_time(Duration::from_secs(3));
-    targets = gravity, tree_gravity, integrators, recording, springs
+    targets = gravity, tree_gravity, integrators, recording, springs, nuclear_events
 }
 criterion_main!(benches);

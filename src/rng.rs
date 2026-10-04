@@ -6,7 +6,8 @@
 //! - `seed`: [`crate::World::seed`] (or a seed passed explicitly, as for the Langevin thermostat).
 //! - `counter`: the step number for draws made during a run (the Langevin thermostat), or
 //!   [`SETUP`] + a call number for draws made while setting a system up (random initial
-//!   conditions), so the two never overlap.
+//!   conditions), or `crate::nuclear::events::EVENTS` + an event number for the nuclear event
+//!   generator, so these never overlap.
 //! - `index`: which value within that draw, e.g. `3 × particle + component`. Each particle has
 //!   its own run of indices, i.e. its own stream.
 //!

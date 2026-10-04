@@ -42,8 +42,8 @@ First slice: elastic scattering (backlog items 33–42).
 | Distance of closest approach and validity checks | ✅ | ⬜ | ✅ LISE++ grazing angle (1 case) | 🟡 above-barrier data requested | [Rutherford](rutherford.md) | 37 |
 | Coulomb trajectories | ✅ | ⬜ | — | ✅ analytic b(θ) to 1e-6° | [Rutherford](rutherford.md) | 37 |
 | Detector solid angles and response | ✅ | ⬜ | — | ✅ closed forms to 1e-10, Monte Carlo | [Detectors](detectors.md) | 38 |
-| Count rates and beam time | ⬜ | ⬜ | ⬜ LISE++ | ⬜ | — | 39 |
-| Monte Carlo spectra | ⬜ | ⬜ | ⬜ | ⬜ | — | 39 |
+| Count rates and beam time | ✅ | ⬜ | ⬜ LISE++ (item 40) | ✅ I n (dσ/dΩ) Ω within 1%; Monte Carlo within 4σ | [Rates and events](rates-and-events.md) | 39 |
+| Monte Carlo spectra | ✅ | ⬜ | — | ✅ peak positions and widths vs analytic (5%); seeded, thread-independent | [Rates and events](rates-and-events.md) | 39 |
 | Beam-time report, CSV and ROOT export | ⬜ | ⬜ | — | — | — | 42 |
 
 Next slices: inelastic scattering and Coulomb excitation (43), then transfer reactions and fusion-evaporation.

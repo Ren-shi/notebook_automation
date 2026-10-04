@@ -209,9 +209,9 @@ class Geometry:
 
     # -- solid angle ------------------------------------------------------------------------------------------
 
-    def _nodes(self, segment: Optional[tuple] = None) -> tuple:
+    def _nodes(self, segment: Optional[tuple] = None, order: int = QUADRATURE_ORDER) -> tuple:
         """Quadrature points (local u, v) and weights (area, mm²) over the face or one segment."""
-        x, w = np.polynomial.legendre.leggauss(QUADRATURE_ORDER)
+        x, w = np.polynomial.legendre.leggauss(order)
         if self.shape == "rectangle":
             a, b = self.width / 2, self.height / 2
             if segment is None:
@@ -239,11 +239,18 @@ class Geometry:
 
     def solid_angle(self, segment: Optional[tuple] = None, source=(0.0, 0.0, 0.0)) -> float:
         """Solid angle seen from ``source``, msr: ∫ (r̂ · n) dA / r² over the face (Gauss–Legendre)."""
-        su, sv, w = self._nodes(segment)
+        _, d_omega = self.directions(segment, source=source)
+        return float(np.sum(d_omega)) * 1e3
+
+    def directions(self, segment: Optional[tuple] = None, order: int = QUADRATURE_ORDER,
+                   source=(0.0, 0.0, 0.0)) -> tuple:
+        """Quadrature over the face (or one segment) as seen from ``source``: unit directions (N, 3) and the solid
+        angle each stands for (sr), so ∫ f dΩ ≈ Σ f(direction) dΩ."""
+        su, sv, w = self._nodes(segment, order)
         p = self.centre + su[:, None] * self.u + sv[:, None] * self.v - np.asarray(source, dtype=float)
         r = np.linalg.norm(p, axis=1)
         cos = -(p @ self.n) / r
-        return float(np.sum(w * np.clip(cos, 0, None) / r**2)) * 1e3
+        return p / r[:, None], w * np.clip(cos, 0, None) / r**2
 
     def segment_solid_angles(self, source=(0.0, 0.0, 0.0)) -> dict:
         """Solid angle of every segment, msr."""

@@ -11,6 +11,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Count rates, beam time and Monte Carlo spectra for the nuclear planner:
+  - `physim.nuclear.rates.Rates`: rates per detector, strip and channel (ejectile and recoil, target and backing),
+    counts in the run, beam time for N counts, expected peaks with their widths broken down, and warnings.
+  - `physim.nuclear.events.simulate`: a seeded, multithreaded Rust event generator (`physim::nuclear`) giving
+    weighted per-particle events and absolute spectra.
+  - `plot.spectra` and `plot.theta_energy`, plus a benchmark.
 - Seeded, reproducible randomness: `World.seed` (saved in checkpoints; the Langevin thermostat's default seed), the
   counter-based generator made public (`physim::rng`, `physim.random.uniform`/`normal`), and `physim.random` helpers
   for Maxwell–Boltzmann velocities and uniform positions in a box or ball. Noisy runs are bit-identical for any

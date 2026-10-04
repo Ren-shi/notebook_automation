@@ -23,6 +23,7 @@ use crate::vec3::Vec3;
 use crate::world::{Frame, Recorder, RunOptions, Trajectory, World};
 
 mod fields;
+mod nuclear;
 mod quantum;
 mod rigid;
 
@@ -3069,6 +3070,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     rigid::register(m)?;
     fields::register(m)?;
     quantum::register(m)?;
+    nuclear::register(m)?;
     m.add_function(wrap_pyfunction!(random_uniform, m)?)?;
     m.add_function(wrap_pyfunction!(random_normal, m)?)?;
     m.add("RANDOM_SETUP_COUNTER", crate::rng::SETUP)?;

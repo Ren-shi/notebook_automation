@@ -39,6 +39,7 @@ theory/kinematics
 theory/stopping
 theory/rutherford
 theory/detectors
+theory/events
 ```
 
 ```{toctree}
@@ -67,5 +68,6 @@ physics-register/kinematics
 physics-register/stopping
 physics-register/rutherford
 physics-register/detectors
+physics-register/rates-and-events
 changelog
 ```

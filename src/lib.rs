@@ -22,6 +22,7 @@ pub mod events;
 pub mod fields;
 pub mod forces;
 pub mod integrators;
+pub mod nuclear;
 mod parallel;
 pub mod rigid;
 pub mod rng;

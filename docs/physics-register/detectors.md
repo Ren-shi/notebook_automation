@@ -17,8 +17,8 @@ Backlog item 38 · modules `physim.nuclear.detectors`, `physim.nuclear.plot` · 
 
 ## Assumptions and range of validity
 
-- Point source at the target unless a source point is given. Beam spot size is not yet folded in (item 39 samples
-  it).
+- Point source at the target unless a source point is given. The event generator (item 39, {doc}`rates-and-events`)
+  samples the beam spot.
 - Flat faces, no gaps between strips, no inter-strip charge sharing. Resolution is constant in energy.
 - Pulse-height defects in silicon for heavy ions, and ΔE–E telescopes, are not modelled.
 

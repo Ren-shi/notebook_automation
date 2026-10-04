@@ -178,6 +178,32 @@ data.material("CD2", density="1.06 g/cm3").atoms_per_cm2("200 ug/cm2")
 data.Material.enriched("C", {13: 0.99, 12: 0.01})   # isotopically enriched (Python only, for now)
 ```
 
+## Rates, beam time and simulated spectra
+
+Once a setup reads cleanly, the planner works out what it will measure:
+
+```python
+from physim.nuclear import Experiment, plot
+from physim.nuclear.rates import Rates
+from physim.nuclear.events import simulate
+
+exp = Experiment.example("oxygen_on_lead_array")
+r = Rates(exp)
+r.per_detector()              # counts per second in each detector
+r.beam_time_for("DSSD3")      # seconds for run.counts_wanted counts
+r.peaks("DSSD1", (8, 8))      # peaks in one strip pair: mean energy, width and what makes it up
+r.warnings()                  # too fast, too few counts, Rutherford's limits, detectors in the beam
+
+ev = simulate(exp, events=1_000_000, seed=1)   # under a second
+plot.spectra(ev)              # measured-energy spectra, counts in the planned beam time
+plot.theta_energy(ev)         # energy against angle: the kinematic line of each channel
+```
+
+Rates count the scattered beam and the recoiling target nuclei, from the target and from its backing. The beam
+current sets the absolute scale. `energy_spread` and `spot_size` (both FWHM) enter the simulation and the peak
+widths. The same `seed` always gives the same events. {doc}`theory/events` explains the method and
+{doc}`physics-register/rates-and-events` how it is checked.
+
 ## When something is wrong
 
 The planner reads the whole file and lists every problem at once, each naming the field:

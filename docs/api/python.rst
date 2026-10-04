@@ -147,6 +147,12 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.detectors
    :members:
 
+.. automodule:: physim.nuclear.rates
+   :members:
+
+.. automodule:: physim.nuclear.events
+   :members:
+
 .. automodule:: physim.nuclear.plot
    :members:
 
