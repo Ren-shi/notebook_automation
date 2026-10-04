@@ -27,6 +27,15 @@ def main(paths):
             failed.append(path)
             print(f"FAIL {path}\n{e}", file=sys.stderr)
             continue
+        # Errors raised after a cell's code finishes (e.g. while the inline backend draws a
+        # figure) are recorded as outputs without failing the cell, so look for them too.
+        errors = [(i, o) for i, c in enumerate(nb.cells) if c.cell_type == "code"
+                  for o in c.get("outputs", []) if o.output_type == "error"]
+        if errors:
+            failed.append(path)
+            for i, o in errors:
+                print(f"FAIL {path} cell {i}: {o.ename}: {o.evalue}", file=sys.stderr)
+            continue
         print(f"ok   {path} ({time.perf_counter() - start:.1f}s)")
     return 1 if failed else 0
 
