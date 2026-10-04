@@ -36,6 +36,7 @@ theory/methods
 theory/fields
 theory/quantum
 theory/kinematics
+theory/stopping
 ```
 
 ```{toctree}
@@ -61,5 +62,6 @@ api/rust
 physics-register/README
 physics-register/nuclear-data
 physics-register/kinematics
+physics-register/stopping
 changelog
 ```
