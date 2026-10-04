@@ -19,6 +19,7 @@ from typing import Optional
 
 import numpy as np
 
+from . import guide
 from .planner import TABS, Planner
 
 #: Fields of each setup section shown in the setup panel, in order: (field, label, placeholder).
@@ -36,6 +37,13 @@ DETECTOR_FIELDS = [("name", "Name", "D1"), ("theta", "θ", "45 deg"), ("phi", "�
                    ("rings", "Rings", "16"), ("sectors", "Sectors", "24"), ("thickness", "Thickness", "300 um"),
                    ("dead_layer", "Dead layer", "0.5 um"), ("resolution", "Resolution (FWHM)", "20 keV"),
                    ("threshold", "Threshold", "200 keV"), ("material", "Material", "Si")]
+#: The excited state of a Coulomb-excitation setup ([reaction] in a setup file); type, excite and multipolarity are
+#: drop-downs.
+REACTION_FIELDS = [("energy", "State energy", "1.454 MeV"), ("b_up", "B(Eλ↑)", "0.0695 e2b2 or 695 e2fm4")]
+REACTION_TYPES = {"elastic": "Elastic (Rutherford) scattering", "coulex": "Coulomb excitation"}
+GAMMA_FIELDS = [("name", "Name", "Ge1"), ("theta", "θ", "90 deg"), ("phi", "φ", "90 deg"),
+                ("distance", "Distance", "120 mm"), ("radius", "Crystal radius", "35 mm"),
+                ("resolution", "Resolution (FWHM)", "2.5 keV")]
 #: Which size fields each shape uses.
 SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circle": {"radius"},
                 "annular": {"inner_radius", "outer_radius", "rings", "sectors"}}
@@ -85,6 +93,10 @@ def figure_geometry(planner: Planner):
         o = d["outline"]
         fig.add_trace(go.Scatter3d(x=o[:, 0], y=o[:, 1], z=o[:, 2], mode="lines", name=d["name"],
                                    line=dict(color=COLORS[i % len(COLORS)], width=5)))
+    for d in g.get("gamma_detectors", []):
+        o = d["outline"]
+        fig.add_trace(go.Scatter3d(x=o[:, 0], y=o[:, 1], z=o[:, 2], mode="lines", name=f"{d['name']} (γ)",
+                                   line=dict(color="#7c3aed", width=4, dash="dash")))
     e = g["extent"]
     axis = dict(range=[-e, e])
     fig.update_layout(scene=dict(xaxis=dict(title="x (mm)", **axis), yaxis=dict(title="y (mm)", **axis),
@@ -242,19 +254,31 @@ def _time(seconds) -> str:
     return f"{seconds / 60:.3g} min" if seconds >= 60 else f"{seconds:.3g} s"
 
 
-def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
-    """Build the planner page for the current client (call inside a NiceGUI page function)."""
+def _prepared(example: str) -> Planner:
+    """An example's planner with its rates already computed (run in a worker thread while the page waits)."""
+    p = Planner.example(example)
+    p.rates()
+    return p
+
+
+def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Optional[str] = None) -> None:
+    """Build the planner page for the current client (call inside a NiceGUI page function).
+
+    ``mode`` is "guided" (a step-by-step workflow) or "expert" (every input and result at once); ``None`` takes the
+    one this browser used last, guided the first time."""
     from nicegui import run, ui
 
     from .experiment import Experiment, SetupError
 
-    state = {"planner": Planner.example(example), "events": events}
+    state = {"planner": Planner.example(example), "events": events, "mode": mode or "guided",
+             "step": guide.STEPS[0].key, "example": example}
 
     def P() -> Planner:  # noqa: N802
         return state["planner"]
 
     # -- actions ----------------------------------------------------------------------------------------------
     def changed(ok: bool) -> None:
+        step_status.refresh()
         if ok:
             refresh_results()
         else:
@@ -268,6 +292,8 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
             old = d.get("title")
         elif section == "backing":
             old = d["target"].get("backing", {}).get(field)
+        elif section.startswith("gamma detector"):
+            old = d["gamma_detectors"][int(section.split()[2]) - 1].get(field)
         elif section.startswith("detector"):
             old = d["detectors"][int(section.split()[1]) - 1].get(field)
         else:
@@ -275,7 +301,8 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
         if (None if old is None else str(old)) == (None if value is None else str(value)):
             return
         changed(P().set(section, field, value))
-        if section.startswith("detector") and field in ("name", "shape"):
+        if (section.startswith(("detector", "gamma detector")) and field in ("name", "shape")) or (
+                section == "reaction" and field == "type"):
             setup_panel.refresh()
 
     def add_detector() -> None:
@@ -284,21 +311,53 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
                                  radius="5 mm", thickness="300 um"))
         setup_panel.refresh()
 
-    def duplicate_detector(k: int) -> None:
-        changed(P().duplicate_detector(k))
+    def duplicate_detector(k: int):
+        def run() -> None:
+            changed(P().duplicate_detector(k))
+            setup_panel.refresh()
+        return run
+
+    def remove_detector(k: int):
+        def run() -> None:
+            if len(P().draft["detectors"]) == 1:
+                ui.notify("A setup needs at least one particle detector.", type="warning")
+                return
+            changed(P().remove_detector(k))
+            setup_panel.refresh()
+        return run
+
+    def add_gamma_detector() -> None:
+        n = len(P().draft.get("gamma_detectors", []))
+        changed(P().add_gamma_detector(name=f"Ge{n + 1}", theta="90 deg", phi="90 deg", distance="120 mm",
+                                       radius="35 mm", resolution="2.5 keV"))
         setup_panel.refresh()
 
-    def remove_detector(k: int) -> None:
-        if len(P().draft["detectors"]) == 1:
-            ui.notify("A setup needs at least one detector.", type="warning")
-            return
-        changed(P().remove_detector(k))
-        setup_panel.refresh()
+    def duplicate_gamma_detector(k: int):
+        def run() -> None:
+            changed(P().duplicate_gamma_detector(k))
+            setup_panel.refresh()
+        return run
 
-    def load_example(name: str) -> None:
-        state["planner"] = Planner.example(name)
+    def remove_gamma_detector(k: int):
+        def run() -> None:
+            changed(P().remove_gamma_detector(k))
+            setup_panel.refresh()
+        return run
+
+    async def load_example(name: str, then: Optional[str] = None) -> None:
+        note = ui.notification(f"Loading {name}…", spinner=True, timeout=None)
+        try:
+            planner = await run.io_bound(_prepared, name)
+        finally:
+            note.dismiss()
+        state["planner"] = planner
+        state["example"] = name
+        example_select.value = name  # its handler sees the name is already loaded
+        if then:
+            state["step"] = then
         setup_panel.refresh()
         refresh_results()
+        main_area.refresh()
 
     async def load_file(e) -> None:
         upload_dialog.close()
@@ -326,43 +385,182 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
         el.on("blur", apply)
         el.on("keydown.enter", apply)
 
+    def help_icon(element, sec_name: str, field: str) -> None:
+        """A help icon inside an input: hover for the help, or click it (on a touch screen)."""
+        h = guide.help_for(sec_name, field)
+        if h is None:
+            return
+        with element.add_slot("append"):
+            icon = ui.icon("help_outline", size="xs").classes("cursor-help text-slate-400")
+            with icon, ui.tooltip().classes("bg-slate-800 text-white max-w-xs p-2"):
+                ui.label(h.what).classes("text-sm")
+                ui.label(f"Typical: {h.typical}").classes("text-xs text-slate-300 mt-1")
+                if h.effect != "—":
+                    ui.label(f"Raise it: {h.effect}").classes("text-xs text-slate-300")
+            icon.on("click.stop", lambda: ui.notify(h.text(), multi_line=True, close_button=True,
+                                                    classes="whitespace-pre-line"))
+
     def section(title, fields, sec_name, values):
         if title:
             ui.label(title).classes("text-sm font-semibold mt-3")
-        with ui.grid(columns=2).classes("w-full gap-1"):
+        # The guided steps have few fields each: one per line leaves room for the labels.
+        with ui.grid(columns=1 if state["mode"] == "guided" else 2).classes("w-full gap-1"):
             for field, label, placeholder in fields:
                 v = values.get(field)
                 inp = ui.input(label, value="" if v is None else str(v), placeholder=placeholder).props(
                     "dense outlined").classes("w-full")
                 bind(inp, sec_name, field)
+                help_icon(inp, sec_name, field)
 
     @ui.refreshable
     def setup_panel():
+        if state["mode"] == "guided":
+            stepper()
+            return
         d = P().draft
         title = ui.input("Title", value=d.get("title", "")).props("dense outlined").classes("w-full")
         bind(title, "title", "")
+        help_icon(title, "title", "")
         section("Beam", BEAM_FIELDS, "beam", d["beam"])
+        target_inputs(d)
+        section("Run", RUN_FIELDS, "run", d["run"])
+        reaction_section(d.get("reaction", {"type": "elastic"}))
+        particle_detectors(d)
+        if d.get("reaction", {}).get("type") == "coulex":
+            gamma_detectors(d)
+
+    def target_inputs(d: dict) -> None:
         section("Target", TARGET_FIELDS, "target", d["target"])
         section("Backing (optional)", BACKING_FIELDS, "backing", d["target"].get("backing", {}))
-        section("Run", RUN_FIELDS, "run", d["run"])
+
+    def particle_detectors(d: dict) -> None:
         with ui.row().classes("items-center mt-3 w-full"):
-            ui.label("Detectors").classes("text-sm font-semibold")
+            ui.label("Particle detectors").classes("text-sm font-semibold")
             ui.space()
             ui.button("Add", icon="add", on_click=add_detector).props("dense flat")
+        ui.label("Silicon detectors: they measure the energy of the scattered beam particles and recoils.").classes(
+            "text-xs text-slate-500")
         size_fields = set().union(*SHAPE_FIELDS.values())
         for i, det in enumerate(d["detectors"]):
             shape = det.get("shape", "circle")
-            with ui.expansion(f"{det.get('name') or f'D{i + 1}'} · {shape}").classes("w-full bg-white"):
-                ui.select(list(SHAPE_FIELDS), value=shape, label="Shape",
-                          on_change=lambda e, k=i: edit(f"detector {k + 1}", "shape", e.value)).props(
+            with ui.expansion(f"{det.get('name') or f'D{i + 1}'} · {shape} silicon").classes("w-full bg-white"):
+                sel = ui.select(list(SHAPE_FIELDS), value=shape, label="Shape",
+                                on_change=lambda e, k=i: edit(f"detector {k + 1}", "shape", e.value)).props(
                     "dense outlined").classes("w-full")
+                help_icon(sel, "detector", "shape")
                 wanted = [f for f in DETECTOR_FIELDS if f[0] not in size_fields or f[0] in SHAPE_FIELDS[shape]]
                 section("", wanted, f"detector {i + 1}", det)
                 with ui.row():
+                    ui.button("Duplicate", icon="content_copy", on_click=duplicate_detector(i)).props("dense flat")
+                    ui.button("Remove", icon="delete", on_click=remove_detector(i)).props(
+                        "dense flat color=negative")
+
+    def gamma_detectors(d: dict) -> None:
+        with ui.row().classes("items-center mt-3 w-full"):
+            ui.label("γ-ray detectors").classes("text-sm font-semibold")
+            ui.space()
+            ui.button("Add", icon="add", on_click=add_gamma_detector).props("dense flat")
+        ui.label("Germanium detectors: they see the γ ray emitted when the excited state decays.").classes(
+            "text-xs text-slate-500")
+        for i, gd in enumerate(d.get("gamma_detectors", [])):
+            with ui.expansion(f"{gd.get('name') or f'γ{i + 1}'} · germanium").classes("w-full bg-white"):
+                section("", GAMMA_FIELDS, f"gamma detector {i + 1}", gd)
+                with ui.row():
                     ui.button("Duplicate", icon="content_copy",
-                              on_click=lambda k=i: duplicate_detector(k)).props("dense flat")
-                    ui.button("Remove", icon="delete",
-                              on_click=lambda k=i: remove_detector(k)).props("dense flat color=negative")
+                              on_click=duplicate_gamma_detector(i)).props("dense flat")
+                    ui.button("Remove", icon="delete", on_click=remove_gamma_detector(i)).props(
+                        "dense flat color=negative")
+
+    def reaction_section(reaction: dict, title: str = "Reaction") -> None:
+        if title:
+            ui.label(title).classes("text-sm font-semibold mt-3")
+        kind = reaction.get("type", "elastic")
+        sel = ui.select(REACTION_TYPES, value=kind, label="What happens in the target",
+                        on_change=lambda e: edit("reaction", "type", e.value)).props("dense outlined").classes(
+            "w-full")
+        help_icon(sel, "reaction", "type")
+        if kind != "coulex":
+            return
+        with ui.grid(columns=2).classes("w-full gap-1"):
+            exc = ui.select({"target": "Target nucleus", "projectile": "Beam nucleus"},
+                            value=reaction.get("excite", "target"), label="Excited nucleus",
+                            on_change=lambda e: edit("reaction", "excite", e.value)).props("dense outlined")
+            help_icon(exc, "reaction", "excite")
+            mul = ui.select(["E1", "E2", "E3"], value=reaction.get("multipolarity", "E2"), label="Multipolarity",
+                            on_change=lambda e: edit("reaction", "multipolarity", e.value)).props("dense outlined")
+            help_icon(mul, "reaction", "multipolarity")
+        section("", REACTION_FIELDS, "reaction", reaction)
+
+    # -- guided workflow --------------------------------------------------------------------------------------
+    def go_to(key: str):
+        def run_() -> None:
+            state["step"] = key
+            setup_panel.refresh()
+            main_area.refresh()
+        return run_
+
+    def step_inputs(key: str) -> None:
+        d = P().draft
+        if key == "goal":
+            for goal, (name, text, ex) in guide.GOALS.items():
+                with ui.card().classes("w-full p-3 gap-1 bg-white"):
+                    ui.label(name).classes("font-semibold")
+                    ui.label(text).classes("text-sm text-slate-600")
+                    ui.button("Start here", icon="arrow_forward",
+                              on_click=lambda ex=ex: load_example(ex, then="beam")).props(
+                        "dense flat no-caps").classes("self-start")
+                    ui.label(f"Starts from the example {ex}.").classes("text-xs text-slate-500")
+            ui.label("Or keep the current setup and set the reaction here:").classes("text-sm mt-2")
+            reaction_section(d.get("reaction", {"type": "elastic"}), title="")
+        elif key == "beam":
+            section("", BEAM_FIELDS, "beam", d["beam"])
+        elif key == "target":
+            target_inputs(d)
+        elif key == "detectors":
+            particle_detectors(d)
+        elif key == "gamma":
+            gamma_detectors(d)
+        elif key == "rates":
+            section("", RUN_FIELDS, "run", d["run"])
+
+    def stepper() -> None:
+        steps = guide.steps_for(P())
+        keys = [s["step"].key for s in steps]
+        if state["step"] not in keys:
+            state["step"] = keys[0]
+
+        def picked(e) -> None:
+            if e.value != state["step"]:
+                state["step"] = e.value
+                main_area.refresh()
+                step_status.refresh()
+
+        with ui.stepper(value=state["step"], on_value_change=picked).props(
+                "vertical flat header-nav animated=false").classes("w-full bg-transparent"):
+            for i, s in enumerate(steps):
+                step = s["step"]
+                with ui.step(step.key, title=f"{i + 1}. {step.title}"):
+                    ui.label(step.intro).classes("text-sm text-slate-600")
+                    step_inputs(step.key)
+                    step_status(step.key, keys[i - 1] if i else None, keys[i + 1] if i + 1 < len(keys) else None)
+
+    @ui.refreshable
+    def step_status(key: str = "", back: Optional[str] = None, nxt: Optional[str] = None) -> None:
+        if not key:
+            return
+        problems = next((s["problems"] for s in guide.steps_for(P()) if s["step"].key == key), [])
+        for p in problems:
+            with ui.row().classes("items-start no-wrap gap-1 mt-1"):
+                ui.icon("error").classes("text-red-700")
+                ui.label(p).classes("text-sm text-red-700")
+        with ui.row().classes("mt-2 gap-2"):
+            if nxt:
+                btn = ui.button("Next", icon="arrow_downward", on_click=go_to(nxt))
+                if problems:
+                    btn.disable()
+                    btn.tooltip("Fix the problem above first")
+            if back:
+                ui.button("Back", on_click=go_to(back)).props("flat")
 
     # -- warnings banner --------------------------------------------------------------------------------------
     @ui.refreshable
@@ -390,8 +588,14 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
                  "theta": f"{d['theta_range'][0]:.1f}–{d['theta_range'][1]:.1f}",
                  "phi": f"{d['phi_range'][0]:.1f}–{d['phi_range'][1]:.1f}", "segments": d["segments"]}
                 for d in P().geometry()["detectors"]]
-        ui.table(columns=columns((("detector", "Detector"), ("omega", "Ω (msr)"), ("theta", "θ (deg)"),
+        ui.table(columns=columns((("detector", "Particle detector"), ("omega", "Ω (msr)"), ("theta", "θ (deg)"),
                                   ("phi", "φ (deg)"), ("segments", "Segments"))), rows=rows).props("dense flat")
+        gammas = P().geometry()["gamma_detectors"]
+        if gammas:
+            ui.table(columns=columns((("detector", "γ-ray detector"), ("theta", "θ (deg)"),
+                                      ("distance", "Distance (mm)"), ("half", "Half-angle (deg)"))),
+                     rows=[{"detector": g["name"], "theta": f"{g['theta']:.1f}", "distance": f"{g['distance_mm']:g}",
+                            "half": f"{g['half_angle_deg']:.1f}"} for g in gammas]).props("dense flat")
 
     @ui.refreshable
     def kinematics_panel():
@@ -491,8 +695,9 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
     def gamma_panel():
         g = P().gamma()
         if not g["available"]:
-            ui.markdown(g["reason"] + " To plan Coulomb excitation, set the reaction to `coulex` in the setup "
-                        "file (see the guide) and add `[[gamma_detectors]]`.")
+            ui.markdown("This setup has no excited state. To plan Coulomb excitation, set **Reaction** to "
+                    "*Coulomb excitation* in the setup panel, enter the state's energy and B(Eλ↑), and add "
+                    "γ-ray detectors.")
             return
         s = g["state"]
         ui.label(f"{s['excite'].capitalize()} excited to {s['energy_kev']:g} keV ({s['multipolarity']}, "
@@ -500,8 +705,21 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
                  f"η = {g['eta']:.1f}, total {g['total_mb']:.3g} mb; safe up to "
                  f"{g['max_safe_angle']:.0f}° CM.").classes("text-sm")
         ui.plotly(figure_excitation(P())).classes("w-full")
-        ui.table(columns=columns((("detector", "Detector"), ("rate", "Excitation events (1/s)"))),
+        ui.table(columns=columns((("detector", "Particle detector"), ("rate", "Excitation events (1/s)"))),
                  rows=[{"detector": k, "rate": _fmt(v)} for k, v in g["rates"].items()]).props("dense flat")
+        if g["particles"]:
+            ui.label("Particle energies: elastic and after exciting the state").classes("font-semibold mt-2")
+            ui.label("At each particle detector's smallest, central and largest angle, at the reaction point "
+                     "(before energy loss in the target; the Spectra tab includes it). β is the speed of the "
+                     "excited nucleus in that event, which the Doppler correction needs.").classes(
+                "text-xs text-slate-500")
+            ui.table(columns=columns((("detector", "Detector"), ("particle", "Particle"), ("theta", "θ lab (deg)"),
+                                      ("el", "Elastic (MeV)"), ("ex", "Excited (MeV)"), ("diff", "Difference (MeV)"),
+                                      ("beta", "β excited"))),
+                     rows=[{"detector": r["detector"], "particle": f"{r['nuclide']} ({r['particle']})",
+                            "theta": f"{r['theta_lab']:.1f}", "el": f"{r['elastic_mev']:.2f}",
+                            "ex": f"{r['excited_mev']:.2f}", "diff": f"{r['difference_mev']:.3f}",
+                            "beta": f"{r['beta_excited']:.4f}"} for r in g["particles"]]).props("dense flat")
         if g["doppler"]:
             ui.label("γ rays: Doppler-shifted energy and width").classes("font-semibold mt-2")
             ui.table(columns=columns((("p", "Particle detector"), ("g", "γ detector"), ("mean", "E_γ (keV)"),
@@ -510,7 +728,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
                             "shift": f"{r['shift_kev']:+.2f}", "fwhm": f"{r['fwhm_kev']:.2f}"}
                            for r in g["doppler"]]).props("dense flat")
         else:
-            ui.label("Add [[gamma_detectors]] to the setup file for Doppler shifts.").classes("text-sm")
+            ui.label("Add γ-ray detectors in the setup panel for Doppler shifts.").classes("text-sm")
 
     @ui.refreshable
     def report_panel():
@@ -538,8 +756,23 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
 
     def refresh_results() -> None:
         warnings_banner.refresh()
+        reading_box.refresh()
         for p in panels.values():
             p.refresh()
+
+    @ui.refreshable
+    def reading_box(tab: str) -> None:
+        try:
+            lines = guide.reading(P(), tab)
+        except Exception:  # noqa: BLE001 -- a reading must never break the page
+            lines = []
+        if not lines:
+            return
+        with ui.row().classes("w-full items-start no-wrap gap-2 bg-sky-50 rounded p-2"):
+            ui.icon("lightbulb").classes("text-sky-700 mt-0.5")
+            with ui.column().classes("gap-1"):
+                ui.label("How to read this").classes("text-xs font-semibold text-sky-800 uppercase")
+                ui.label(" ".join(lines)).classes("text-sm text-slate-800")
 
     def explain(tab: str):
         e = P().explain(tab)
@@ -552,29 +785,84 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000) -> None:
               "energy_loss": "Energy loss", "spectra": "Spectra", "trajectories": "Trajectories",
               "gamma": "Excitation and γ rays", "report": "Report"}
 
-    # -- layout -----------------------------------------------------------------------------------------------
-    ui.query("body").style("background-color: #ffffff; color: #1b1b1b")  # light page in a dark-mode browser too
-    with ui.header().classes("items-center bg-slate-800 py-1"):
-        ui.label("physim · experiment planner").classes("text-lg font-medium")
-        ui.space()
-        ui.select(Planner.examples(), value=example, label="Start from example",
-                  on_change=lambda e: load_example(e.value)).props("dense dark outlined").classes("w-60")
-        ui.button("Load setup", icon="upload", on_click=lambda: upload_dialog.open()).props("flat color=white")
-        ui.button("Save setup", icon="download", on_click=save_setup).props("flat color=white")
-    with ui.dialog() as upload_dialog, ui.card():
-        ui.label("Load a setup file (.toml)")
-        ui.upload(auto_upload=True, on_upload=load_file).props("accept=.toml max-files=1")
-    with ui.left_drawer(value=True).classes("bg-slate-50").props("width=400 bordered behavior=desktop"):
-        setup_panel()
-    with ui.column().classes("w-full gap-2"):
+    @ui.refreshable
+    def main_area() -> None:
         warnings_banner()
+        if state["mode"] == "guided":
+            step = next(s for s in guide.STEPS if s.key == state["step"])
+            if not step.tabs:
+                welcome()
+            for t in step.tabs:
+                ui.label(labels[t]).classes("text-lg font-semibold mt-2")
+                reading_box(t)
+                panels[t]()
+                explain(t)
+            return
         with ui.tabs().classes("w-full") as tabs:
             tab = {t: ui.tab(labels[t]) for t in TABS}
         with ui.tab_panels(tabs, value=tab["geometry"]).classes("w-full"):
             for t in TABS:
                 with ui.tab_panel(tab[t]):
+                    reading_box(t)
                     panels[t]()
                     explain(t)
+
+    def welcome() -> None:
+        with ui.column().classes("max-w-3xl gap-2 mt-2"):
+            ui.label("Plan an experiment, step by step").classes("text-xl font-semibold")
+            ui.markdown(
+                "The steps on the left take you through a plan in the order you would decide it: **what to "
+                "measure**, the **beam**, the **target**, the **detectors**, then the **rates and beam time**, the "
+                "**spectra** you will see, and the **report**.\n\n"
+                "- Every step starts filled in with values that work, so the results on this side are always "
+                "complete. Change one value at a time and watch what it does.\n"
+                "- Hover over (or tap) the **?** in any field for what it means, a typical value, and what raising "
+                "it does.\n"
+                "- Each result opens with **How to read this**: what to look for, with your numbers. The "
+                "**Explain** panel underneath has the formula and its limits.\n"
+                "- Problems show in red inside the step; **Next** waits until they are fixed.\n\n"
+                "**Expert view** (top right) shows every input and result at once.")
+
+    def set_mode(mode: str) -> None:
+        if mode == state["mode"]:
+            return
+        state["mode"] = mode
+        ui.run_javascript(f"try {{ localStorage.setItem('physim-planner-mode', '{mode}') }} catch (e) {{}}")
+        setup_panel.refresh()
+        main_area.refresh()
+
+    async def restore_mode() -> None:
+        if mode is not None:  # given in the address (?mode=...)
+            return
+        try:
+            saved = await ui.run_javascript("localStorage.getItem('physim-planner-mode')", timeout=3)
+        except Exception:  # noqa: BLE001 -- no answer from the browser: keep the default
+            return
+        if saved in ("guided", "expert") and saved != state["mode"]:
+            mode_toggle.value = saved
+
+    # -- layout -----------------------------------------------------------------------------------------------
+    ui.query("body").style("background-color: #ffffff; color: #1b1b1b")  # light page in a dark-mode browser too
+    with ui.header().classes("items-center bg-slate-800 py-1"):
+        ui.label("physim · experiment planner").classes("text-lg font-medium")
+        ui.space()
+        mode_toggle = ui.toggle({"guided": "Guided", "expert": "Expert view"}, value=state["mode"],
+                                on_change=lambda e: set_mode(e.value)).props(
+            "dense no-caps toggle-color=white toggle-text-color=slate-800 text-color=white")
+        example_select = ui.select(
+            Planner.examples(), value=example, label="Start from example",
+            on_change=lambda e: None if e.value == state["example"] else load_example(e.value)).props(
+            "dense dark outlined").classes("w-60")
+        ui.button("Load setup", icon="upload", on_click=lambda: upload_dialog.open()).props("flat color=white")
+        ui.button("Save setup", icon="download", on_click=save_setup).props("flat color=white")
+    with ui.dialog() as upload_dialog, ui.card():
+        ui.label("Load a setup file (.toml)")
+        ui.upload(auto_upload=True, on_upload=load_file).props("accept=.toml max-files=1")
+    with ui.left_drawer(value=True).classes("bg-slate-50").props("width=420 bordered behavior=desktop"):
+        setup_panel()
+    with ui.column().classes("w-full gap-2"):
+        main_area()
+    ui.timer(0.2, restore_mode, once=True)
 
 
 # -- starting the server --------------------------------------------------------------------------------------------
@@ -663,13 +951,19 @@ def main(argv: Optional[list] = None) -> None:
         args.port = pick_port(args.port, args.host)
 
     try:
+        import matplotlib
+
+        matplotlib.use("Agg")  # the report draws its figures in a worker thread, without a screen
+    except ImportError:
+        pass
+    try:
         from nicegui import app, ui
     except ImportError:
         raise SystemExit("The planner app needs NiceGUI: pip install physim-engine[app]") from None
 
     @ui.page("/")
-    def index(example: str = args.example):
-        build_page(example)
+    def index(example: str = args.example, mode: Optional[str] = None):
+        build_page(example, mode=mode if mode in ("guided", "expert") else None)
 
     @app.get("/physim-planner")
     def marker():

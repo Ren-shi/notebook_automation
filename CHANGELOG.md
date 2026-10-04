@@ -11,10 +11,32 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Changed
+- The planner app draws its Matplotlib figures off screen (Agg). The report builds them in a worker thread, where
+  the on-screen backend could fail.
 - `physim app` listens on 127.0.0.1 by default instead of every network interface (NiceGUI's default), so it is not
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The planner app opens in a **guided mode**:
+  - a step-by-step workflow (what to measure, beam, target, particle detectors, γ-ray detectors, rates and beam
+    time, spectra, report), each step showing the results it affects, with **Next** waiting until the step's
+    problems are fixed;
+  - a **?** help on every input (what it is, a typical value, what raising it does);
+  - a **How to read this** box on every result, written with the setup's own numbers.
+
+  The previous layout is the **Expert view**, and the browser remembers the choice. The guidance lives in
+  `physim.nuclear.guide` (`HELP`, `STEPS`, `reading`).
+- Setup errors suggest a unit that suits the field ("'12' has no unit; write it with one, e.g. '12 h'"), instead of
+  always "40 mm".
+- Coulomb excitation can be set up entirely in the planner app:
+  - a **Reaction** section (elastic or Coulomb excitation, with the excited nucleus, multipolarity, state energy
+    and B(Eλ↑));
+  - a **γ-ray detectors** section (add, edit, duplicate, remove), shown in the 3D geometry and its table;
+  - a table of particle energies per particle detector, elastic and after excitation, with β of the excited nucleus;
+  - particle detectors are labelled as silicon.
+
+  `Planner` gains `set("reaction", …)`, `set("gamma detector N", …)` and `add_`/`remove_`/
+  `duplicate_gamma_detector`.
 - A one-click Windows installer for the planner app (`physim-planner-<version>-windows-x64-setup.exe`, attached to
   each GitHub release): the official embeddable Python with physim and the app's packages, a per-user install with a
   Start-menu shortcut, no Python or administrator rights needed. Built and test-installed by the new `Installer`

@@ -146,6 +146,8 @@ class Planner:
         #: Problems with the current draft (empty when it is valid).
         self.problems: list = []
         self._cache: dict = {}
+        #: The Coulomb-excitation settings while the reaction is switched to elastic, so switching back restores them.
+        self._stashed_excitation: dict = {}
 
     # -- loading and saving -----------------------------------------------------------------------------------------
 
@@ -190,11 +192,19 @@ class Planner:
         return True
 
     def set(self, section: str, field: str, value: Any) -> bool:
-        """Set ``field`` of ``section`` ("beam", "target", "backing", "run", or "detector N" counting from 1);
-        ``None`` removes an optional field. Returns whether the setup is valid afterwards."""
+        """Set ``field`` of ``section`` ("beam", "target", "backing", "run", "reaction", "detector N" or
+        "gamma detector N", counting from 1); ``None`` removes an optional field. Returns whether the setup is valid
+        afterwards.
+
+        Setting the reaction ``type`` to ``"coulex"`` fills in E2 excitation of the target (the state's energy and
+        B(E2↑) still have to be given); switching back to ``"elastic"`` keeps the excitation settings for later."""
         d = self.draft
+        if section == "reaction" and field == "type":
+            return self._set_reaction_type(d, value)
         if section == "backing":
             sec = d["target"].setdefault("backing", {})
+        elif section.startswith("gamma detector"):
+            sec = d["gamma_detectors"][self._index(section[len("gamma "):], "gamma_detectors")]
         elif section.startswith("detector"):
             sec = d["detectors"][self._index(section)]
         elif section in ("title", "description"):
@@ -210,21 +220,51 @@ class Planner:
             d["target"].pop("backing")
         return self._apply(d)
 
-    def _index(self, which) -> int:
-        n = len(self._draft["detectors"])
+    def _set_reaction_type(self, d: dict, value: str) -> bool:
+        reaction = d.setdefault("reaction", {"type": "elastic"})
+        if value == "coulex":
+            reaction.update(self._stashed_excitation or {"excite": "target", "multipolarity": "E2"})
+            reaction["type"] = "coulex"
+        else:
+            kept = {k: v for k, v in reaction.items() if k != "type"}
+            if kept:
+                self._stashed_excitation = kept
+            d["reaction"] = {"type": value}
+        return self._apply(d)
+
+    def _index(self, which, kind: str = "detectors") -> int:
+        n = len(self._draft.get(kind, []))
         if isinstance(which, str):
             if which.startswith("detector "):
                 i = int(which.split()[1]) - 1
             else:
-                names = [det.get("name") for det in self._draft["detectors"]]
+                names = [det.get("name") for det in self._draft.get(kind, [])]
                 if which not in names:
                     raise KeyError(f"no detector named {which!r}")
                 i = names.index(which)
         else:
             i = int(which)
         if not 0 <= i < n:
-            raise IndexError(f"there are {n} detectors")
+            raise IndexError(f"there are {n} {kind.replace('_', ' ')}")
         return i
+
+    def add_gamma_detector(self, **fields) -> bool:
+        """Append a γ-ray detector with the given fields (as in a setup file's ``[[gamma_detectors]]``)."""
+        d = self.draft
+        d.setdefault("gamma_detectors", []).append(dict(fields))
+        return self._apply(d)
+
+    def remove_gamma_detector(self, which) -> bool:
+        """Remove a γ-ray detector, by index (from 0) or name."""
+        d = self.draft
+        d["gamma_detectors"].pop(self._index(which, "gamma_detectors"))
+        if not d["gamma_detectors"]:
+            d.pop("gamma_detectors")
+        return self._apply(d)
+
+    def duplicate_gamma_detector(self, which, **changes) -> bool:
+        """Copy a γ-ray detector (by index or name), apply ``changes``, and append it under a new name."""
+        return self._duplicate("gamma_detectors", which, changes)
 
     def add_detector(self, **fields) -> bool:
         """Append a detector with the given fields (as in a setup file)."""
@@ -240,16 +280,19 @@ class Planner:
 
     def duplicate_detector(self, which, **changes) -> bool:
         """Copy a detector (by index or name), apply ``changes``, and append it; a copy gets a new name."""
+        return self._duplicate("detectors", which, changes)
+
+    def _duplicate(self, kind: str, which, changes: dict) -> bool:
         d = self.draft
-        det = copy.deepcopy(d["detectors"][self._index(which)])
-        names = {x.get("name") for x in d["detectors"]}
+        det = copy.deepcopy(d[kind][self._index(which, kind)])
+        names = {x.get("name") for x in d[kind]}
         base = det.get("name") or "D"
         k = 2
         while f"{base}-{k}" in names:
             k += 1
         det["name"] = f"{base}-{k}"
         det.update(changes)
-        d["detectors"].append(det)
+        d[kind].append(det)
         return self._apply(d)
 
     # -- shared results -----------------------------------------------------------------------------------------
@@ -294,8 +337,23 @@ class Planner:
             dets.append({"name": g.name, "outline": g.outline(), "centre": g.centre, "normal": g.n,
                          "solid_angle_msr": g.solid_angle(), "theta_range": (lo, hi), "phi_range": g.phi_range(),
                          "segments": len(g.segments)})
+        gammas = []
+        for i, gd in enumerate(self.experiment.gamma_detectors):
+            u = np.array(gd.direction())
+            dist, rad = _q(gd.distance).to("mm"), _q(gd.radius).to("mm")
+            # Two unit vectors across the detector face, for its outline.
+            a = np.cross(u, [0.0, 0.0, 1.0] if abs(u[2]) < 0.9 else [1.0, 0.0, 0.0])
+            a /= np.linalg.norm(a)
+            b = np.cross(u, a)
+            t = np.linspace(0.0, 2 * np.pi, 49)[:, None]
+            outline = dist * u + rad * (np.cos(t) * a + np.sin(t) * b)
+            gammas.append({"name": gd.name or f"γ{i + 1}", "outline": outline, "centre": dist * u,
+                           "theta": _q(gd.theta).to("deg"), "half_angle_deg": gd.half_angle_deg(),
+                           "distance_mm": dist})
+        if gammas:
+            extent = max(extent, 1.25 * max(g["distance_mm"] for g in gammas))
         return {"beam": np.array([[0.0, 0.0, -extent], [0.0, 0.0, extent]]), "extent": extent,
-                "target_size_mm": 0.04 * extent, "detectors": dets}
+                "target_size_mm": 0.04 * extent, "detectors": dets, "gamma_detectors": gammas}
 
     def kinematics(self, points: int = 361) -> dict:
         """Lab energy against lab angle for the scattered beam and the recoil of every target nuclide, with the
@@ -440,7 +498,50 @@ class Planner:
                                              "multipolarity": exc.multipolarity, "b_up_e2fm": exc.b_up_e2fm},
                 "xi": cx.xi, "eta": cx.eta, "safe_distance_fm": cx.safe_distance, "max_safe_angle": cx.max_safe_angle(),
                 "total_mb": cx.total(), "theta_cm": th, "probability": cx.probability(th),
-                "rates": rates, "doppler": self._cache["gamma"]}
+                "rates": rates, "particles": self._particle_energies(ch), "doppler": self._cache["gamma"]}
+
+    def _particle_energies(self, channel) -> list:
+        """What each particle detector measures in a Coulomb-excitation run: the energy of the beam particle or
+        recoil at the detector's smallest, central and largest lab angle, after elastic scattering and after exciting
+        the state, and the speed β of the excited nucleus in that event (for the Doppler correction). Energies are at
+        the reaction point, before losses in the target."""
+        beam = self.experiment.beam
+        ion = beam_ion(self.experiment)
+        elastic = TwoBody(ion, channel.nuclide.name, beam.energy_mev)
+        try:
+            inelastic = TwoBody(ion, channel.nuclide.name, beam.energy_mev, **channel.kinematics_args)
+        except ValueError:  # below the excitation threshold
+            return []
+        excited = channel.kinematics_args["excite"]  # "recoil" or "ejectile"
+        m_exc = inelastic.m4 if excited == "recoil" else inelastic.m3
+
+        def beta(t, m):
+            return float(np.sqrt(t * (t + 2 * m)) / (t + m))
+
+        rows = []
+        for g in Array.from_experiment(self.experiment):
+            lo, hi = g.theta_range()
+            for particle, name in (("ejectile", ion), ("recoil", channel.nuclide.name)):
+                reach = min(elastic.max_angle(particle), inelastic.max_angle(particle))
+                for where, th in (("min", lo), ("centre", 0.5 * (lo + hi)), ("max", hi)):
+                    if not 0 < th <= reach:
+                        continue
+                    el = elastic.at_lab(th, particle)[0]
+                    ex = inelastic.at_lab(th, particle)[0]
+                    if not (np.isfinite(el.energy) and np.isfinite(ex.energy)):
+                        continue
+                    # The excited nucleus is the detected particle itself or its partner in the same event.
+                    if particle == excited:
+                        t_exc = float(ex.energy)
+                    else:
+                        partner = "recoil" if particle == "ejectile" else "ejectile"
+                        t_exc = float(inelastic.at_cm(180.0 - float(ex.theta_cm), partner).energy)
+                    rows.append({"detector": g.name, "particle": particle, "nuclide": name, "where": where,
+                                 "theta_lab": float(th), "elastic_mev": float(el.energy),
+                                 "excited_mev": float(ex.energy),
+                                 "difference_mev": float(el.energy) - float(ex.energy),
+                                 "beta_excited": beta(t_exc, m_exc)})
+        return rows
 
     def report(self) -> dict:
         """What the beam-time report will contain (the export itself is item 42)."""
