@@ -69,5 +69,6 @@ physics-register/stopping
 physics-register/rutherford
 physics-register/detectors
 physics-register/rates-and-events
+validation
 changelog
 ```

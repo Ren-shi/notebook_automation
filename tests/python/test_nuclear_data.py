@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from physim.nuclear import Experiment, Quantity, SetupError, data
+from physim.nuclear.validation import PUBLISHED_Q
 
 N_A = 6.02214076e23
 
@@ -33,19 +34,6 @@ def test_masses_in_other_units():
     assert he4.nuclear_mass_mev == pytest.approx(3727.3794, abs=2e-4)
     # The proton (CODATA 2018: 938.27208816 MeV), from the hydrogen atom (13.6 eV binding).
     assert data.nuclide("p").nuclear_mass_mev == pytest.approx(938.272088, abs=1e-6)
-
-
-# Q-values as tabulated in nuclear data compilations, each quoted to the precision given (MeV).
-PUBLISHED_Q = [
-    (["2H", "3H"], ["4He", "n"], 17.589),  # D-T fusion
-    (["2H", "2H"], ["3He", "n"], 3.269),
-    (["2H", "2H"], ["3H", "p"], 4.033),
-    (["2H", "3He"], ["4He", "p"], 18.353),
-    (["n", "6Li"], ["3H", "4He"], 4.783),
-    (["n", "p"], ["2H"], 2.224566),  # deuteron binding energy
-    (["238U"], ["234Th", "4He"], 4.270),  # alpha decay
-    (["12C", "4He"], ["16O"], 7.162),  # 12C(alpha, gamma)16O
-]
 
 
 @pytest.mark.parametrize("entrance, exit, q", PUBLISHED_Q, ids=lambda x: "+".join(x) if isinstance(x, list) else x)

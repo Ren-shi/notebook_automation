@@ -8,6 +8,7 @@ import pytest
 from physim.nuclear import Experiment, data
 from physim.nuclear import stopping as st
 from physim.nuclear.stopping import Stopping, angular_straggling_mrad
+from physim.nuclear.validation import LISE_SYMBOLS, STOPPING_TOLERANCE
 
 REFERENCE = Path(__file__).resolve().parents[1] / "reference" / "nuclear"
 LISE = REFERENCE / "stopping_lise.csv"
@@ -158,22 +159,9 @@ def test_inputs():
 
 # -- comparison with LISE++ (scripts/lise_reference.py) ---------------------------------------------------------
 
-SYM = {6: "C", 13: "Al", 14: "Si", 28: "Ni", 29: "Cu", 47: "Ag", 73: "Ta", 79: "Au"}
-#: Worst deviation from LISE++ (ATIMA 1.4) allowed, by quantity, ion class and energy band (MeV/u). Each is the
-#: measured worst case over 8 targets (2 of them interpolated) rounded up; see docs/physics-register/stopping.md.
-TOLERANCE = {
-    ("stopping", "p,a", "1-10"): 0.07, ("stopping", "p,a", ">=10"): 0.04, ("stopping", "p,a", "0.1-1"): 0.13,
-    ("stopping", "C-Ar", ">=10"): 0.04, ("stopping", "C-Ar", "1-10"): 0.11, ("stopping", "C-Ar", "0.1-1"): 0.25,
-    ("stopping", "Kr,Xe", ">=10"): 0.10, ("stopping", "Kr,Xe", "1-10"): 0.12, ("stopping", "Kr,Xe", "0.1-1"): 0.55,
-    ("range", "p,a", ">=10"): 0.035, ("range", "p,a", "1-10"): 0.06, ("range", "p,a", "0.1-1"): 0.21,
-    ("range", "C-Ar", ">=10"): 0.05, ("range", "C-Ar", "1-10"): 0.15, ("range", "C-Ar", "0.1-1"): 0.39,
-    ("range", "Kr,Xe", ">=10"): 0.09, ("range", "Kr,Xe", "1-10"): 0.53, ("range", "Kr,Xe", "0.1-1"): 1.0,
-    ("energy_after", "p,a", ">=10"): 0.005, ("energy_after", "p,a", "1-10"): 0.012,
-    ("energy_after", "p,a", "0.1-1"): 0.053, ("energy_after", "C-Ar", ">=10"): 0.008,
-    ("energy_after", "C-Ar", "1-10"): 0.048, ("energy_after", "C-Ar", "0.1-1"): 0.115,
-    ("energy_after", "Kr,Xe", ">=10"): 0.022, ("energy_after", "Kr,Xe", "1-10"): 0.06,
-    ("energy_after", "Kr,Xe", "0.1-1"): 0.19,
-}
+SYM = LISE_SYMBOLS
+#: Worst deviation from LISE++ (ATIMA 1.4) allowed, by quantity, ion class and energy band (MeV/u).
+TOLERANCE = STOPPING_TOLERANCE
 
 
 def _lise_rows():

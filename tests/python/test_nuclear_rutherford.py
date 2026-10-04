@@ -4,12 +4,7 @@ import numpy as np
 import pytest
 
 from physim.nuclear.rutherford import E2_MEV_FM, Rutherford
-
-# Geiger and Marsden, Phil. Mag. 25, 604 (1913), Table II, gold, first series: lab angle (deg) and number of
-# scintillations N in equal times. Transcribed from https://www.chemteam.info/Chem-History/GeigerMarsden-1913/
-# GeigerMarsden-1913.html; every row's N / (1/sin⁴(φ/2)) reproduces the paper's last column.
-GEIGER_MARSDEN_GOLD = [(150, 33.1), (135, 43.0), (120, 51.9), (105, 69.5), (75, 211), (60, 477), (45, 1435),
-                       (37.5, 3300), (30, 7800), (22.5, 27300), (15, 132000)]
+from physim.nuclear.validation import GEIGER_MARSDEN_GOLD
 
 
 def test_cross_section_formula():
