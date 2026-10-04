@@ -9,3 +9,5 @@ docs/_build/
 docs/examples/
 docs/validation/
 docs/jupyter_execute/
+/build/
+/dist/
