@@ -252,7 +252,10 @@ class Report:
         mark = {"pass": "✅", "pending": "🟡", "fail": "❌", "none": "—", "unchecked": "see register"}
         reg_rows = [(r["capability"], mark[r["tool"]], mark[r["literature"]]) for r in self.register]
         m = self.meta
-        counts_note = (f"Beam time is for {exp.run.counts_wanted} counts (relative statistical error "
+        what = {"all": "counts", "excitations": "Coulomb-excitation events",
+                "coincidences": "particle–γ coincidences from Coulomb excitation"}[self.planner.rates()["measured"]]
+        counts_note = (f"Counts in the run and beam time are for {what}; the beam time is for "
+                       f"{exp.run.counts_wanted} of them (relative statistical error "
                        f"{100 / math.sqrt(exp.run.counts_wanted):.1f}%)." if exp.run.counts_wanted else "")
         return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">

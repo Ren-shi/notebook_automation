@@ -17,6 +17,17 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Coulomb-excitation beam times count what the measurement uses: excitation events seen in a particle detector
+  together with their γ ray.
+  - γ-ray detectors gain an optional `efficiency` (full-energy peak); without it, their geometric coverage is used
+    as an upper limit.
+  - `Rates.rate`, `counts_in_run`, `beam_time_for` and `relative_error` take `what="all" | "excitations" |
+    "coincidences" | "measured"`.
+  - The rates table and the report say what is counted.
+  - For `coulex_ni58` the beam time for 2000 coincidences is 4–6 h, where it was 3 s for 2000 particles of any kind.
+- The planner app's **Add** offers a ready-made particle detector for each region: forward strips, a side pad, a
+  backward pad, or a backward ring around the beam. The geometry reading points out a setup with nothing backward,
+  and which detector sees the most excitation events.
 - The planner app opens in a **guided mode**:
   - a step-by-step workflow (what to measure, beam, target, particle detectors, γ-ray detectors, rates and beam
     time, spectra, report), each step showing the results it affects, with **Next** waiting until the step's

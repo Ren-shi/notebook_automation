@@ -174,13 +174,14 @@ Each is a disc facing the target.
 | `distance` | yes | length | From the target to the detector face. |
 | `radius` | yes | length | Radius of the face, which sets the opening angle. |
 | `resolution` | no | energy | Intrinsic resolution (FWHM), added to the Doppler broadening. |
+| `efficiency` | no | fraction (`%`) | Full-energy-peak efficiency for the γ ray. Without it, the geometric coverage is used, an upper limit. |
 
 ### `[run]`
 
 | Field | Required | Unit | Meaning |
 |---|---|---|---|
 | `beam_time` | yes | time | How long the beam runs. |
-| `counts_wanted` | no | — | Counts needed per detector; the planner reports the beam time this takes. |
+| `counts_wanted` | no | — | Counts needed per detector; the planner reports the beam time this takes. For Coulomb excitation these are particle–γ coincidences (excitation events seen with their γ ray), or excitation events if there are no γ detectors. |
 
 ## Materials
 

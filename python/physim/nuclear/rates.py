@@ -465,12 +465,42 @@ class Rates:
                     for r in rows if frac[(r.channel, r.particle)] > 0]
         return rows
 
-    def rate(self, detector: str, segment: Optional[tuple] = None, counted: bool = True) -> float:
+    @property
+    def measured(self) -> str:
+        """What a Coulomb-excitation measurement counts, and so what ``counts_wanted`` and the beam time refer to:
+        ``"all"`` particles for elastic scattering; for Coulomb excitation, the excitation events seen in a particle
+        detector together with a γ ray (``"coincidences"``), or without γ detectors the excitation events alone
+        (``"excitations"``)."""
+        if not any(c.excitation is not None for c in self.channels):
+            return "all"
+        return "coincidences" if self.experiment.gamma_detectors else "excitations"
+
+    def gamma_efficiency(self) -> tuple:
+        """(full-energy-peak efficiency of all γ detectors together, whether any of it is only geometric coverage).
+        Geometric coverage, used for a detector without ``efficiency``, is an upper limit."""
+        dets = self.experiment.gamma_detectors
+        total = sum(g.peak_efficiency() for g in dets)
+        return min(total, 1.0), any(g.efficiency is None for g in dets)
+
+    def rate(self, detector: str, segment: Optional[tuple] = None, counted: bool = True, what: str = "all") -> float:
         """Counts per second in a detector (or one segment). With ``counted``, each channel's rate is scaled by the
         fraction of its particles measured above the threshold (estimated for the whole detector from mean
         energies, see :meth:`peaks`; the event generator counts each particle exactly). Without it, every particle
-        reaching the face is counted."""
-        return float(sum(r.rate for r in self._select(detector, segment, counted)))
+        reaching the face is counted.
+
+        ``what`` picks the events: ``"all"``, ``"excitations"`` (Coulomb-excitation channels only) or
+        ``"coincidences"`` (excitations with the γ ray in a γ detector, see :meth:`gamma_efficiency`); ``"measured"``
+        is :attr:`measured`."""
+        if what == "measured":
+            what = self.measured
+        if what not in ("all", "excitations", "coincidences"):
+            raise ValueError(f"what must be 'all', 'excitations', 'coincidences' or 'measured', not {what!r}")
+        rows = self._select(detector, segment, counted)
+        if what != "all":
+            excited = {c.label for c in self.channels if c.excitation is not None}
+            rows = [r for r in rows if r.channel in excited]
+        total = float(sum(r.rate for r in rows))
+        return total * self.gamma_efficiency()[0] if what == "coincidences" else total
 
     def per_detector(self, counted: bool = True) -> dict:
         """{detector: counts per second}."""
@@ -490,23 +520,26 @@ class Rates:
             out[(r.channel, r.particle)] = out.get((r.channel, r.particle), 0.0) + r.rate
         return out
 
-    def counts_in_run(self, detector: str, segment: Optional[tuple] = None, counted: bool = True) -> float:
-        """Counts expected in the planned beam time."""
-        return self.rate(detector, segment, counted) * self.beam_time_s
+    def counts_in_run(self, detector: str, segment: Optional[tuple] = None, counted: bool = True,
+                      what: str = "all") -> float:
+        """Counts expected in the planned beam time (``what`` as in :meth:`rate`)."""
+        return self.rate(detector, segment, counted, what) * self.beam_time_s
 
     def beam_time_for(self, detector: str, counts: Optional[int] = None, segment: Optional[tuple] = None,
-                      counted: bool = True) -> float:
-        """Seconds of beam needed to collect ``counts`` (default: the setup's ``counts_wanted``); the relative
-        statistical error is then 1/√counts. Infinite if the detector sees nothing."""
+                      counted: bool = True, what: str = "all") -> float:
+        """Seconds of beam needed to collect ``counts`` (default: the setup's ``counts_wanted``) of the events picked
+        by ``what`` (as in :meth:`rate`); the relative statistical error is then 1/√counts. Infinite if the detector
+        sees none."""
         counts = self.counts_wanted if counts is None else counts
         if counts is None:
             raise ValueError("give counts, or set run.counts_wanted in the setup")
-        r = self.rate(detector, segment, counted)
+        r = self.rate(detector, segment, counted, what)
         return counts / r if r > 0 else math.inf
 
-    def relative_error(self, detector: str, segment: Optional[tuple] = None, counted: bool = True) -> float:
+    def relative_error(self, detector: str, segment: Optional[tuple] = None, counted: bool = True,
+                       what: str = "all") -> float:
         """Relative statistical error 1/√N of the counts collected in the planned beam time."""
-        n = self.counts_in_run(detector, segment, counted)
+        n = self.counts_in_run(detector, segment, counted, what)
         return 1 / math.sqrt(n) if n > 0 else math.inf
 
     # -- peaks ----------------------------------------------------------------------------------------------------

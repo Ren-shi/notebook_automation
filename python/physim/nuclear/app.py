@@ -43,7 +43,7 @@ REACTION_FIELDS = [("energy", "State energy", "1.454 MeV"), ("b_up", "B(Eλ↑)"
 REACTION_TYPES = {"elastic": "Elastic (Rutherford) scattering", "coulex": "Coulomb excitation"}
 GAMMA_FIELDS = [("name", "Name", "Ge1"), ("theta", "θ", "90 deg"), ("phi", "φ", "90 deg"),
                 ("distance", "Distance", "120 mm"), ("radius", "Crystal radius", "35 mm"),
-                ("resolution", "Resolution (FWHM)", "2.5 keV")]
+                ("resolution", "Resolution (FWHM)", "2.5 keV"), ("efficiency", "Efficiency (full peak)", "2 %")]
 #: Which size fields each shape uses.
 SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circle": {"radius"},
                 "annular": {"inner_radius", "outer_radius", "rings", "sectors"}}
@@ -305,11 +305,12 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                 section == "reaction" and field == "type"):
             setup_panel.refresh()
 
-    def add_detector() -> None:
-        n = len(P().draft["detectors"])
-        changed(P().add_detector(name=f"D{n + 1}", shape="circle", theta="45 deg", distance="100 mm",
-                                 radius="5 mm", thickness="300 um"))
-        setup_panel.refresh()
+    def add_detector(key: str = "side"):
+        def run_() -> None:
+            names = [det.get("name") for det in P().draft["detectors"]]
+            changed(P().add_detector(**guide.placement(key, names)))
+            setup_panel.refresh()
+        return run_
 
     def duplicate_detector(k: int):
         def run() -> None:
@@ -437,9 +438,16 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         with ui.row().classes("items-center mt-3 w-full"):
             ui.label("Particle detectors").classes("text-sm font-semibold")
             ui.space()
-            ui.button("Add", icon="add", on_click=add_detector).props("dense flat")
-        ui.label("Silicon detectors: they measure the energy of the scattered beam particles and recoils.").classes(
-            "text-xs text-slate-500")
+            with ui.button("Add", icon="add").props("dense flat"):
+                with ui.menu():
+                    for pl in guide.PLACEMENTS:
+                        with ui.menu_item(on_click=add_detector(pl.key)).classes("max-w-sm"):
+                            with ui.column().classes("gap-0"):
+                                ui.label(pl.label).classes("text-sm font-medium")
+                                ui.label(pl.why).classes("text-xs text-slate-500")
+        ui.label("Silicon detectors: they measure the energy of the scattered beam particles and recoils. Set θ "
+                 "below 90° for forward angles, above 90° for backward ones, or use Add for a ready-made detector "
+                 "in each region.").classes("text-xs text-slate-500")
         size_fields = set().union(*SHAPE_FIELDS.values())
         for i, det in enumerate(d["detectors"]):
             shape = det.get("shape", "circle")
@@ -609,10 +617,17 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                  "counts": _fmt(x["counts_in_run"]),
                  "error": f"{100 * x['relative_error']:.2g}%" if math.isfinite(x["relative_error"]) else "—",
                  "time": _time(x["beam_time_s"])} for x in r["rows"]]
-        wanted = f" for {r['counts_wanted']} counts" if r["counts_wanted"] else ""
-        ui.table(columns=columns((("detector", "Detector"), ("omega", "Ω (msr)"), ("theta", "θ (deg)"),
-                                  ("rate", "Rate (1/s)"), ("counts", "Counts in run"), ("error", "Stat. error"),
-                                  ("time", f"Beam time{wanted}"))), rows=rows).props("dense flat")
+        what = {"all": "counts", "excitations": "excitations", "coincidences": "particle–γ coincidences"}[
+            r["measured"]]
+        wanted = f" for {r['counts_wanted']} {what}" if r["counts_wanted"] else ""
+        cols = [("detector", "Detector"), ("omega", "Ω (msr)"), ("theta", "θ (deg)"), ("rate", "Rate (1/s)")]
+        if r["measured"] != "all":
+            for row, x in zip(rows, r["rows"]):
+                row["exc"] = _fmt(x["excitation_per_s"])
+                row["coinc"] = _fmt(x["coincidence_per_s"]) if x["coincidence_per_s"] is not None else "—"
+            cols += [("exc", "Excitations (1/s)"), ("coinc", "With γ ray (1/s)")]
+        cols += [("counts", f"{what.capitalize()} in run"), ("error", "Stat. error"), ("time", f"Beam time{wanted}")]
+        ui.table(columns=columns(cols), rows=rows).props("dense flat")
         names = [x["detector"] for x in r["rows"]]
 
         @ui.refreshable

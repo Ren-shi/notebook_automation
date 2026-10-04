@@ -396,19 +396,25 @@ class Planner:
         """One row per detector: solid angle, angles, rate, counts in the run, beam time for the counts wanted,
         relative error; and per-strip rates for each detector."""
         r = self._rates()
+        what = r.measured
         rows, strips = [], {}
         for g in r.array:
             rate = r.rate(g.name)
-            counts = r.counts_in_run(g.name)
+            counts = r.counts_in_run(g.name, what=what)
             row = {"detector": g.name, "solid_angle_msr": g.solid_angle(), "theta_range": g.theta_range(),
                    "rate_per_s": rate, "rate_all_per_s": r.rate(g.name, counted=False),
                    "counts_in_run": counts,
-                   "relative_error": r.relative_error(g.name) if counts > 0 else math.inf,
-                   "beam_time_s": (r.beam_time_for(g.name) if r.counts_wanted is not None else None)}
+                   "relative_error": r.relative_error(g.name, what=what) if counts > 0 else math.inf,
+                   "beam_time_s": (r.beam_time_for(g.name, what=what) if r.counts_wanted is not None else None)}
+            if what != "all":
+                row["excitation_per_s"] = r.rate(g.name, what="excitations")
+                row["coincidence_per_s"] = r.rate(g.name, what="coincidences") if what == "coincidences" else None
             rows.append(row)
             strips[g.name] = r.per_segment(g.name)
+        eff, geometric = r.gamma_efficiency() if what == "coincidences" else (None, False)
         return {"rows": rows, "strips": strips, "beam_time_s": r.beam_time_s, "counts_wanted": r.counts_wanted,
-                "particles_per_second": r.particles_per_second}
+                "particles_per_second": r.particles_per_second, "measured": what, "gamma_efficiency": eff,
+                "gamma_efficiency_geometric": geometric}
 
     def energy_loss(self) -> dict:
         """The beam through each layer (energy in and out, loss, straggling), the beam energy through the target,
@@ -576,7 +582,7 @@ class Planner:
             if quantity == "rate":
                 y = r.rate(detector)
             elif quantity == "beam time":
-                y = r.beam_time_for(detector)
+                y = r.beam_time_for(detector, what="measured")
             elif quantity in ("peak energy", "peak width"):
                 pk = r.peaks(detector)
                 y = (pk[0].mean if quantity == "peak energy" else pk[0].fwhm) if pk else math.nan
