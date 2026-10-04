@@ -36,6 +36,10 @@ workflow builds the wheels, tests them and publishes to PyPI.
   Coulomb barrier, Sommerfeld parameter, screening and Mott warnings, and Coulomb orbits integrated by the engine.
   Checked against the analytic formulas, LISE++ and Geiger and Marsden's 1913 gold data; theory note
   `theory/rutherford`.
+- Detector geometry and response (`physim.nuclear.detectors`): rectangular strip, disc and annular faces from the
+  setup file; ray hits with strip/ring/sector and incidence angle; solid angles per detector and segment by
+  quadrature; θ/φ coverage; shadowing and beam-blocking warnings; dead layer, punch-through, resolution and
+  threshold; the exit path through the target. `physim.nuclear.plot.setup_3d` and `coverage` draw a setup.
 - Quantum mechanics: `Schrodinger`, the time-dependent Schrödinger equation for one particle on 1–3D grids, by
   split-step Fourier (spectral in space, second or fourth order in time, exactly unitary) or Crank–Nicolson (any
   boundary, unitary, direct 1D and BiCGSTAB 2D/3D solves); static or time-dependent potentials (arrays or Python

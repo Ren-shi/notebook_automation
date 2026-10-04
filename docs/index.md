@@ -38,6 +38,7 @@ theory/quantum
 theory/kinematics
 theory/stopping
 theory/rutherford
+theory/detectors
 ```
 
 ```{toctree}
@@ -65,5 +66,6 @@ physics-register/nuclear-data
 physics-register/kinematics
 physics-register/stopping
 physics-register/rutherford
+physics-register/detectors
 changelog
 ```

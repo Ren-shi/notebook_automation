@@ -1,6 +1,26 @@
 # 38 · Detector geometry and response
 
-**Priority:** P1 · **Size:** M · **Area:** Nuclear planner
+**Priority:** P1 · **Size:** M · **Area:** Nuclear planner · **Status: Done**
+
+> **Done** (`python/physim/nuclear/detectors.py`, `python/physim/nuclear/plot.py`,
+> `tests/python/test_nuclear_detectors.py`, `docs/theory/detectors.md`, `docs/physics-register/detectors.md`).
+> - `Geometry` (face, axes, segments, `hit`/`hits`, `solid_angle` per face or segment, `solid_angle_monte_carlo`,
+>   `theta_range`, `phi_range`, `mean_theta`, `outline`), `Array.from_experiment` (`first_hit`, `shadowing`,
+>   `warnings`, `response`), `Response` (dead layer, deposited energy with punch-through, `punch_through_energy`,
+>   `measured_energy` with resolution and threshold), `exit_path` through a tilted target with a cap near 90°.
+> - Solid angles by 48 × 48 Gauss–Legendre quadrature: exact to round-off for any placement, so the closed forms
+>   and Monte Carlo are tests rather than code paths. Whole-face θ extremes found on the edge by dense sampling
+>   plus golden-section refinement (the first version sampled only rectangle corners and was 0.01° off).
+> - Pictures: `setup_3d` (beam, target, faces, strips, labels) and `coverage` (outlines in θ–φ, unwrapped at ±180°),
+>   checked by eye for both examples.
+>
+> Results (15 tests): solid angles match closed forms (disc, centred and off-centre rectangle, annulus and all 384
+> of its segments) to 1e-10 and a Monte Carlo count for tilted faces within 4σ; θ ranges to 1e-9°; shadowing of a
+> disc in front of another equals Ω_front/Ω_back to 0.1%; punch-through energies equal the stopping ranges; the
+> example array's only warning is that CD hides < 1% of DSSD4.
+>
+> Left out (as planned): ΔE–E telescopes and particle identification, timing, pulse-height defects, inter-strip
+> effects; beam spot size is left to the event generator (item 39).
 
 ## Why
 A setup is only useful if the planner knows what each detector sees: its angular coverage, solid angle, and how it
