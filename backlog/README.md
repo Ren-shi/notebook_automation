@@ -58,7 +58,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 50 | ~~[Level schemes from ENSDF](50-level-schemes-from-ensdf.md)~~ **Done** (NNDC permission pending) | Experiment workbench | P1 | L | 34 |
 | 51 | ~~[Detector catalogue: S3, clover and LaBr₃ as solids](51-detector-catalogue.md)~~ **Done** (typical values to confirm) | Experiment workbench | P1 | M | 38, 48 |
 | 52 | ~~[The interactive scene](52-interactive-scene.md)~~ **Done** | Experiment workbench | P1 | L | 41, 51 |
-| 53 | [γ-detector response and calibration sources](53-gamma-detector-response.md) | Experiment workbench | P1 | L | 51 |
+| 53 | ~~[γ-detector response and calibration sources](53-gamma-detector-response.md)~~ **Done** (typical values to confirm) | Experiment workbench | P1 | L | 51 |
 | 54 | [Orientation of excited states, particle–γ correlation and decay](54-angular-correlation-and-decay.md) | Experiment workbench | P1 | L | 43, 50 |
 | 55 | [Particle–γ events, Doppler correction, coincidences and background](55-coincidence-events-and-background.md) | Experiment workbench | P1 | L | 39, 53, 54 |
 | 56 | [Automatic analysis: from peak areas to B(E2) and the shape](56-automatic-analysis.md) | Experiment workbench | P1 | L | 55 |

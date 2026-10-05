@@ -23,6 +23,7 @@ UNITS: dict[str, dict[str, float]] = {
     "time": {"h": 1.0, "s": 1.0 / 3600.0, "min": 1.0 / 60.0, "d": 24.0},
     "density": {"g/cm3": 1.0, "mg/cm3": 1e-3, "kg/m3": 1e-3},
     "fraction": {"%": 1.0},
+    "activity": {"Bq": 1.0, "kBq": 1e3, "MBq": 1e6, "uCi": 3.7e4, "µCi": 3.7e4, "mCi": 3.7e7},
 }
 
 _NUMBER_AND_UNIT = re.compile(r"^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*([^\s\d.+-]\S*)\s*$")

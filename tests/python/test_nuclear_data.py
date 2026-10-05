@@ -195,8 +195,8 @@ def test_every_data_file_has_its_source_recorded():
     folder = Path(data.DATA)
     sources = (folder / "SOURCES.md").read_text(encoding="utf-8")
     files = [p.name for p in folder.iterdir() if p.suffix in (".txt", ".csv")]
-    assert sorted(files) == ["mass_1.mas20.txt", "nist_astar.csv", "nist_compounds.csv", "nist_elements.csv",
-                             "nist_isotopes.csv", "nist_pstar.csv"]
+    assert sorted(files) == ["calibration_sources.csv", "mass_1.mas20.txt", "nist_astar.csv", "nist_attenuation.csv", "nist_compounds.csv",
+                             "nist_elements.csv", "nist_isotopes.csv", "nist_pstar.csv"]
     for name in files:
         assert f"`{name}`" in sources, name
     assert "Creative Commons Attribution 3.0" in sources and "U.S. Secretary of Commerce" in sources

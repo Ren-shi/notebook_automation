@@ -74,6 +74,9 @@ right shows its numbers.
   and its counts in the run. **Simulate its spectrum** runs the Monte Carlo for it.
 - Clicking a ring, a strip or a crystal also shows that one piece: its angles, solid angle and rate.
 - A γ-ray detector shows its half-angle, its coverage and efficiency, and its particle–γ coincidence rate.
+  - Below them is its efficiency against energy, with what the γ rays pass through on the way.
+  - **Run the source** puts a calibration source (¹⁵²Eu, ⁶⁰Co and others) at the target in place of the beam. The
+    spectrum appears, and the efficiency from each strong peak is drawn on the curve.
 - Click the background for the whole experiment: the totals, and advice on where the kinematics send the particles.
 
 **Move.** Drag a selected detector.
@@ -220,10 +223,11 @@ The example *coulex_ni58* is a complete one. To build your own:
    - *Geometry* names the detector with the largest share of excitation events.
 6. Under **γ-ray detectors** (germanium), **Add** a detector for each crystal, with its angle, distance, radius and
    resolution. They appear in *Geometry* as bronze crystals.
-   - Set each crystal's **Efficiency**: its full-energy-peak efficiency for your γ ray, typically 0.5–3% per crystal
-     at 1.3 MeV.
-   - Left empty, the planner uses the crystal's geometric coverage, an upper limit that makes the beam time look
-     shorter than it will be.
+   - Left to itself, the planner uses the typical response of such a crystal at that distance: about 0.1% for
+     a clover at 25 cm and 1.3 MeV.
+   - If you have measured your detector, set its **Efficiency** for your γ ray, or give an `efficiency_curve` in
+     the setup file.
+   - **Absorbers** takes sheets between the target and the detector, such as `Pb 1 mm, Cu 0.5 mm`.
 7. **Rates and beam time** counts what the measurement uses: excitation events seen in a particle detector
    together with their γ ray. *Counts wanted* is the number of these particle–γ coincidences, so the beam time is
    usually hours. The table shows, per detector:

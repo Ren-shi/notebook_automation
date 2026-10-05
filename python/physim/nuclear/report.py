@@ -260,6 +260,12 @@ class Report:
         counts_note = (f"Counts in the run and beam time are for {what}; the beam time is for "
                        f"{exp.run.counts_wanted} of them (relative statistical error "
                        f"{100 / math.sqrt(exp.run.counts_wanted):.1f}%)." if exp.run.counts_wanted else "")
+        r = self.planner.rates()
+        if r["measured"] == "coincidences" and r["gamma_efficiency_typical"]:
+            counts_note += (f" The γ-ray detectors are taken to catch {r['gamma_efficiency']:.2%} of the γ rays in "
+                            "the full-energy peak. This comes from the typical response of such crystals, not from "
+                            "a calibration of these detectors: the coincidence counts and the beam time scale with "
+                            "the efficiency you measure.")
         return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

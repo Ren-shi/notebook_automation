@@ -115,6 +115,32 @@ def _read_value(spec: _Field, raw: Any) -> Any:
         if math.hypot(*raw) == 0:
             raise ValueError("must not be the zero vector")
         return [float(x) for x in raw]
+    if kind in ("absorbers", "curve"):
+        what = ('[["Pb", "1 mm"], ...]: a material and its thickness' if kind == "absorbers"
+                else '[["122 keV", "1.2 %"], ...]: a γ-ray energy and the efficiency there')
+        if not isinstance(raw, list) or not all(isinstance(x, list) and len(x) == 2 for x in raw):
+            raise ValueError(f"must be a list of pairs {what}; got {raw!r}")
+        out = []
+        for a, b in raw:
+            if kind == "absorbers":
+                if not isinstance(a, str):
+                    raise ValueError(f"must name a material first in each pair, got {a!r}")
+                parse_material(a)
+                q = b if isinstance(b, Quantity) else Quantity.parse(b)
+                if q.kind not in ("length", "areal_density") or q.value <= 0:
+                    raise ValueError(f"'{q}' is not a thickness (a length, or mg/cm2)")
+                out.append([a, q])
+            else:
+                e = a if isinstance(a, Quantity) else Quantity.parse(a)
+                f = b if isinstance(b, Quantity) else Quantity.parse(b)
+                if e.kind != "energy" or e.value <= 0:
+                    raise ValueError(f"'{e}' is not a γ-ray energy")
+                if f.kind != "fraction" or not 0 < f.to("%") <= 100:
+                    raise ValueError(f"'{f}' is not an efficiency (above 0 and at most 100 %)")
+                out.append([e, f])
+        if kind == "curve" and len(out) < 2:
+            raise ValueError("needs at least two points")
+        return out
     if kind == "position":
         if not isinstance(raw, list) or len(raw) != 3:
             raise ValueError(f"must be three lengths [\"x mm\", \"y mm\", \"z mm\"], got {raw!r}")
@@ -472,10 +498,18 @@ class GammaDetector:
     crystal_pitch: Optional[QuantityLike] = None
     housing_side: Optional[QuantityLike] = None
     window_gap: Optional[QuantityLike] = None
+    #: Resolution (FWHM) at 1332 keV; it varies with energy as :mod:`physim.nuclear.response` describes.
     resolution: Optional[QuantityLike] = None
-    #: Full-energy-peak efficiency for the γ ray, as a percentage of all γ rays emitted ("2.5 %"). Without it the
-    #: planner uses the detector's geometric coverage, an upper limit.
+    #: Full-energy-peak efficiency for the γ ray, as a percentage of all γ rays emitted ("2.5 %"), used at every
+    #: energy. Without it the efficiency comes from ``efficiency_curve`` or from the response model.
     efficiency: Optional[QuantityLike] = None
+    #: The crystal's material: "Ge" (the default) or "LaBr3".
+    material: Optional[str] = None
+    #: Material between the target and the detector: pairs of a material and a thickness.
+    absorbers: Optional[list] = None
+    #: A measured full-energy-peak efficiency: pairs of a γ-ray energy and the efficiency there, for the whole
+    #: detector where it stands. It replaces the model's efficiency.
+    efficiency_curve: Optional[list] = None
 
     SPECS = (
         _Field("name", "str"),
@@ -493,6 +527,9 @@ class GammaDetector:
         _Field("resolution", "energy", check=_non_negative),
         _Field("efficiency", "fraction", check=lambda q: None if 0 < q.value <= 100
                else f"must be above 0 and at most 100 %, got '{q}'"),
+        _Field("material", "str"),
+        _Field("absorbers", "absorbers"),
+        _Field("efficiency_curve", "curve"),
     )
 
     def geometric_efficiency(self) -> float:
@@ -537,9 +574,13 @@ class GammaDetector:
         d = _q(self.distance).to("mm") - (_q(self.window_gap).to("mm") if self.window_gap is not None else 0.0)
         return (d * u[0], d * u[1], d * u[2]), _q(self.housing_side).to("mm")
 
-    def peak_efficiency(self) -> float:
-        """Full-energy-peak efficiency as a fraction: :attr:`efficiency` if given, else the geometric coverage."""
-        return _q(self.efficiency).to("%") / 100.0 if self.efficiency is not None else self.geometric_efficiency()
+    def peak_efficiency(self, energy_mev: float = 1.332492, experiment=None) -> float:
+        """Full-energy-peak efficiency at a γ-ray energy, as a fraction of all γ rays emitted at the target:
+        :attr:`efficiency` if given, else :attr:`efficiency_curve`, else the response model
+        (:class:`physim.nuclear.response.Response`). ``experiment`` adds the chamber wall's attenuation."""
+        from .response import Response
+
+        return float(Response(experiment, self).peak_efficiency(energy_mev))
 
     def direction(self) -> tuple:
         """Unit vector from the target to the centre of the detector."""
@@ -818,6 +859,18 @@ def _read_gamma_detector(raw: dict[str, Any], label: str, problems: list[str]) -
         problems.append(f"{label}: 'crystals' needs 'crystal_diameter'")
     if len(problems) > before or not all(k in g for k in ("theta", "distance")):
         return None
+    from . import response
+
+    if g.get("material", "Ge") not in response.CRYSTALS:
+        problems.append(f"{label}: material '{g['material']}' has no γ-ray response; use one of "
+                        f"{', '.join(response.CRYSTALS)}")
+        return None
+    for material, thickness in g.get("absorbers", ()):
+        try:
+            response.transmission(material, thickness, 1.0)
+        except ValueError as e:
+            problems.append(f"{label}: absorber {material}: {e}")
+            return None
     return GammaDetector(**g)
 
 

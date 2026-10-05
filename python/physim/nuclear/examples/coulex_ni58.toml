@@ -20,7 +20,7 @@ thickness = "0.5 mg/cm2"
 
 [run]
 beam_time = "24 h"
-counts_wanted = 2000
+counts_wanted = 500
 
 [[detectors]]
 name = "CD"

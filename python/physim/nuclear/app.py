@@ -44,7 +44,8 @@ REACTION_FIELDS = [("energy", "State energy", "1.454 MeV"), ("b_up", "B(Eλ↑)"
 REACTION_TYPES = {"elastic": "Elastic (Rutherford) scattering", "coulex": "Coulomb excitation"}
 GAMMA_FIELDS = [("name", "Name", "Ge1"), ("theta", "θ", "90 deg"), ("phi", "φ", "90 deg"),
                 ("distance", "Distance", "120 mm"), ("radius", "Crystal radius", "35 mm"),
-                ("resolution", "Resolution (FWHM)", "2.5 keV"), ("efficiency", "Efficiency (full peak)", "2 %")]
+                ("resolution", "Resolution (FWHM)", "2.5 keV"), ("efficiency", "Efficiency (full peak)", "2 %"),
+                ("material", "Crystal material", "Ge"), ("absorbers", "Absorbers", "Pb 1 mm, Cu 0.5 mm")]
 #: Shown in place of the radius for a γ-ray detector with real crystals (a model of the catalogue).
 CRYSTAL_FIELDS = [("crystals", "Crystals", "4"), ("crystal_diameter", "Crystal diameter", "50 mm"),
                   ("crystal_length", "Crystal length", "70 mm"), ("crystal_pitch", "Crystal pitch", "45 mm"),
@@ -109,6 +110,15 @@ def _go():
     return go
 
 
+def _shown(field: str, value) -> str:
+    """A setup value as the text of its input."""
+    if value is None:
+        return ""
+    if field == "absorbers" and isinstance(value, list):
+        return ", ".join(f"{m} {t}" for m, t in value)
+    return str(value)
+
+
 def _value(field: str, text):
     """A typed field value from the text the user entered ("" removes an optional field)."""
     if text is None:
@@ -116,6 +126,9 @@ def _value(field: str, text):
     text = str(text).strip()
     if text == "":
         return None
+    if field == "absorbers":  # "Pb 1 mm, Cu 0.5 mm"
+        return [part.strip().split(None, 1) if " " in part.strip() else [part.strip(), ""]
+                for part in text.split(",") if part.strip()]
     if field in INT_FIELDS:
         try:
             return int(text)
@@ -217,6 +230,45 @@ def figure_energy_loss(planner: Planner):
     fig = go.Figure(go.Scatter(x=el["depth_mg_cm2"], y=el["beam_energy_mev"], mode="lines", name="beam"))
     fig.update_layout(xaxis=dict(title="depth (mg/cm²)"), yaxis=dict(title="beam energy (MeV)"),
                       margin=dict(l=50, r=10, t=10, b=40), height=320)
+    return fig
+
+
+def figure_efficiency(planner: Planner, key: str, points: Optional[list] = None):
+    """A γ-ray detector's efficiency against energy (log–log): the full-energy-peak and total efficiency, the
+    energy of the excited state's γ ray, and the ``points`` a simulated source run gave
+    (:meth:`physim.nuclear.response.SourceRun.efficiency_points`)."""
+    go = _go()
+    c = planner.efficiency(key)
+    e = 1e3 * c["energy_mev"]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=e, y=100 * c["peak"], mode="lines", name="full-energy peak",
+                             line=dict(color=COLORS[0], width=2)))
+    fig.add_trace(go.Scatter(x=e, y=100 * c["total"], mode="lines", name="any energy",
+                             line=dict(color=COLORS[1], width=1.2, dash="dash")))
+    if points:
+        fig.add_trace(go.Scatter(
+            x=[1e3 * p["energy_mev"] for p in points], y=[100 * p["efficiency"] for p in points],
+            error_y=dict(type="data", array=[100 * p["uncertainty"] for p in points], width=0, thickness=1),
+            mode="markers", name="source run", marker=dict(color=COLORS[3], size=6)))
+    if planner.experiment.excitation is not None:
+        fig.add_vline(x=1e3 * planner.gamma_energy_mev(), line=dict(color="#888", width=1, dash="dot"))
+    fig.update_layout(xaxis=dict(title="γ-ray energy (keV)", type="log"),
+                      yaxis=dict(title="efficiency (%)", type="log"), height=330,
+                      margin=dict(l=55, r=10, t=10, b=40), legend=dict(orientation="h", y=-0.32, x=0))
+    return fig
+
+
+def figure_source_spectrum(run, name: str):
+    """A γ-ray detector's spectrum from a simulated calibration-source run (counts per bin, log scale)."""
+    go = _go()
+    h = run.detector(name)
+    x = 1e3 * np.repeat(run.edges, 2)[1:-1]
+    y = np.repeat(h, 2)
+    fig = go.Figure(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines",
+                               line=dict(color=COLORS[0], width=1)))
+    width = 1e3 * (run.edges[1] - run.edges[0])
+    fig.update_layout(xaxis=dict(title="energy (keV)"), yaxis=dict(title=f"counts / {width:.2g} keV", type="log"),
+                      height=260, margin=dict(l=55, r=10, t=10, b=40), showlegend=False)
     return fig
 
 
@@ -525,7 +577,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         with ui.grid(columns=1 if state["mode"] == "guided" else 2).classes("w-full gap-1"):
             for field, label, placeholder in fields:
                 v = values.get(field)
-                inp = ui.input(label, value="" if v is None else str(v), placeholder=placeholder).props(
+                inp = ui.input(label, value=_shown(field, v), placeholder=placeholder).props(
                     "dense outlined").classes("w-full")
                 bind(inp, sec_name, field)
                 help_icon(inp, sec_name, field)
@@ -840,7 +892,8 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         return [{"name": k, "label": lab, "field": k, "align": "left"} for k, lab in spec]
 
     # -- the scene and its side panel ---------------------------------------------------------------------------
-    scene_state = {"view": None, "key": None, "element": None, "live": {}}
+    scene_state = {"view": None, "key": None, "element": None, "live": {},
+                   "source": {"nuclide": "152Eu", "activity": "37 kBq", "time": "1 h", "run": False}}
 
     def scene_selected(key, element) -> None:
         scene_state["key"], scene_state["element"] = key, element
@@ -979,7 +1032,8 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             else:
                 row("Half-angle", f"{s['half_angle_deg']:.1f}°", "half")
                 row("Geometric coverage", f"{100 * s['geometric_efficiency']:.2f} %", "geometric")
-                row("Full-energy-peak efficiency", f"{100 * s['peak_efficiency']:.2f} %")
+                row(f"Full-energy-peak efficiency at {s['gamma_energy_kev']:.0f} keV",
+                    f"{100 * s['peak_efficiency']:.3f} %")
                 if s["coincidence_rate_per_s"] is not None:
                     row("Particle–γ coincidences", f"{_fmt(s['coincidence_rate_per_s'])} /s")
                 if len(s["crystals"]) > 1:
@@ -1005,6 +1059,8 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                 place_inputs((("distance", "Distance", "mm"),))
             else:
                 place_inputs((("theta", "θ", "deg"), ("phi", "φ", "deg"), ("distance", "Distance", "mm")))
+            if s["kind"] == "gamma":
+                gamma_response(key, s)
             if s["kind"] == "detector":
                 spectrum_box = ui.column().classes("w-full")
 
@@ -1019,6 +1075,58 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
                 ui.button("Simulate its spectrum", icon="play_arrow", on_click=spectrum).props(
                     "dense flat no-caps").classes("mt-1")
+
+    def gamma_response(key: str, s: dict) -> None:
+        """The efficiency curve of the selected γ-ray detector, what it is built from, and a calibration-source
+        run that measures it."""
+        from . import response as _response
+
+        src = scene_state["source"]
+        resp = s["response"]
+        ui.label("Efficiency against energy").classes("ps-section mt-2")
+        where = {"model": f"Typical response of a {resp['material']} crystal, not a calibration of this detector.",
+                 "fixed": "The single efficiency of the setup, used at every energy.",
+                 "curve": "The measured efficiency curve of the setup."}[resp["source"]]
+        through = ", ".join(f"{a['material']} {a['g_cm2']:.3g} g/cm² ({a['origin']})" for a in resp["absorbers"])
+        ui.label(where + (" The crystal is taken as long as it is wide." if resp["assumed_length"] else "")
+                 + f" On the way: {through}.").classes("text-xs ps-muted")
+        curve_box = ui.column().classes("w-full")
+        spectrum_box = ui.column().classes("w-full")
+
+        def draw(run_=None) -> None:
+            points = run_.efficiency_points(s["name"]) if run_ is not None else None
+            curve_box.clear()
+            with curve_box:
+                ui.plotly(themed(figure_efficiency(P(), key, points), state["theme"])).classes("w-full")
+            spectrum_box.clear()
+            if run_ is not None:
+                with spectrum_box:
+                    ui.plotly(themed(figure_source_spectrum(run_, s["name"]), state["theme"])).classes("w-full")
+                    ui.label(f"{run_.source.nuclide} at the target position, {run_.decays:.3g} decays. The points "
+                             "above are the peak areas of its strong lines divided by the γ rays emitted.").classes(
+                        "text-xs ps-muted")
+
+        async def run_source() -> None:
+            src.update(nuclide=nuclide.value, activity=activity.value, time=duration.value)
+            try:
+                run_ = await run.io_bound(P().source_run, src["nuclide"], src["activity"], src["time"])
+            except ValueError as err:
+                ui.notify(str(err), type="negative", multi_line=True)
+                return
+            src["run"] = True
+            draw(run_)
+
+        try:
+            draw(P().source_run(src["nuclide"], src["activity"], src["time"]) if src["run"] else None)
+        except ValueError:
+            draw()
+        ui.label("Calibration source, in place of the beam").classes("ps-section mt-2")
+        with ui.row().classes("w-full no-wrap gap-2 items-end"):
+            nuclide = ui.select(_response.source_names(), value=src["nuclide"], label="Source").props(
+                "dense outlined").classes("min-w-0")
+            activity = ui.input("Activity", value=src["activity"]).props("dense outlined").classes("min-w-0")
+            duration = ui.input("Time", value=src["time"]).props("dense outlined").classes("min-w-0")
+        ui.button("Run the source", icon="play_arrow", on_click=run_source).props("dense flat no-caps")
 
     @ui.refreshable
     def geometry_panel():
