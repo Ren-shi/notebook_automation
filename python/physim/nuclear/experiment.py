@@ -497,6 +497,8 @@ class Experiment:
     #: The excited state, for ``reaction = "coulex"``.
     excitation: Optional[Excitation] = None
     gamma_detectors: list = field(default_factory=list)
+    #: Level schemes (:class:`~physim.nuclear.levels.LevelScheme`) of the nuclei, by role: "beam" and "target".
+    levels: dict = field(default_factory=dict)
 
     # -- reading ------------------------------------------------------------------------------------------------
 
@@ -507,7 +509,7 @@ class Experiment:
         if not isinstance(data, dict):
             raise SetupError(["the setup must be a table of sections"])
         known = ("schema", "title", "description", "reaction", "beam", "target", "detectors", "run",
-                 "gamma_detectors")
+                 "gamma_detectors", "levels")
         for key in data:
             if key not in known:
                 hint = difflib.get_close_matches(key, known, n=1)
@@ -619,6 +621,8 @@ class Experiment:
                     if all(k in g for k in ("theta", "distance", "radius")):
                         gammas.append(GammaDetector(**g))
 
+        levels = _read_levels(data.get("levels"), beam, target, problems)
+
         run = None
         if "run" not in data:
             problems.append("the [run] section is missing")
@@ -630,7 +634,8 @@ class Experiment:
         if problems:
             raise SetupError(problems)
         return cls(title=title, beam=beam, target=target, detectors=detectors, run=run,
-                   description=description, reaction=reaction, excitation=excitation, gamma_detectors=gammas)
+                   description=description, reaction=reaction, excitation=excitation, gamma_detectors=gammas,
+                   levels=levels)
 
     @classmethod
     def from_toml(cls, text: str) -> Experiment:
@@ -673,6 +678,8 @@ class Experiment:
         d["detectors"] = [_to_dict(det) for det in self.detectors]
         if self.gamma_detectors:
             d["gamma_detectors"] = [_to_dict(g) for g in self.gamma_detectors]
+        if self.levels:
+            d["levels"] = {role: scheme.to_dict() for role, scheme in self.levels.items()}
         return d
 
     def to_toml(self) -> str:
@@ -729,6 +736,38 @@ def _read_detector(raw: dict[str, Any], label: str, problems: list[str]) -> Opti
     if len(problems) > before:
         return None
     return Detector(**d)
+
+
+def _read_levels(raw: Any, beam: Optional[Beam], target: Optional[Target], problems: list[str]) -> dict:
+    """The ``[levels.beam]`` and ``[levels.target]`` sections: each scheme must belong to a nucleus of its role."""
+    from .levels import LevelScheme
+
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        problems.append("levels must be written as [levels.beam] and [levels.target] sections")
+        return {}
+    out = {}
+    for role, section in raw.items():
+        if role not in ("beam", "target"):
+            problems.append(f"levels: unknown section '{role}'; use [levels.beam] or [levels.target]")
+            continue
+        scheme = LevelScheme.from_dict(section, f"levels.{role}", problems)
+        if scheme is None:
+            continue
+        za = parse_nuclide(scheme.nuclide)
+        if role == "beam" and beam is not None and za != parse_nuclide(beam.nuclide):
+            problems.append(f"levels.beam: nuclide {scheme.nuclide} is not the beam ({beam.nuclide})")
+        elif role == "target" and target is not None:
+            try:
+                present = {(z, a) for z, a, _ in _data.material(target.material).atoms}
+            except ValueError:
+                present = {za}  # the material's own problem is reported with the target
+            if za not in present:
+                problems.append(f"levels.target: nuclide {scheme.nuclide} is not in the target "
+                                f"({target.material})")
+        out[role] = scheme
+    return out
 
 
 def _check_material(where: str, values: dict[str, Any], problems: list[str]) -> None:

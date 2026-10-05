@@ -63,3 +63,17 @@ U.S. Government and not subject to copyright in the United States. Both are redi
 attribution to NIST and with the modifications noted above. NIST provides the data "AS IS" and makes no warranty
 of any kind, express or implied; NIST does not warrant that the data are accurate or fit for any purpose and is not
 liable for any damages arising from their use. Contact: NIST Physical Measurement Laboratory, <https://www.nist.gov/pml>.
+
+## ENSDF: level schemes (not in this folder)
+
+- **Not shipped.** Level schemes (`physim.nuclear.levels`) are read from a copy of the Evaluated Nuclear Structure
+  Data File that each user downloads with `scripts/fetch_ensdf.py` into `~/.physim/ensdf` (or `$PHYSIM_ENSDF`).
+  The data are free to use, but no statement that permits redistribution was found (checked 2026-10-05), so the
+  copy is kept out of the repository and out of the installer until the NNDC confirms in writing.
+- **Source:** National Nuclear Data Center, Brookhaven National Laboratory, on behalf of the international Nuclear
+  Structure and Decay Data network, <https://www.nndc.bnl.gov/ensdfarchivals/>, doi:10.18139/nndc.ensdf/1845010.
+- **Used:** the "ADOPTED LEVELS, GAMMAS" dataset of a nuclide: level energies, spins, parities, half-lives and
+  quadrupole moments; γ-ray energies, intensities, multipolarities, mixing ratios, conversion coefficients and
+  B(Eλ) in Weisskopf units. Values are read as published; what physim derives from them is marked "derived".
+- **Cite:** for up to ten nuclides, the Nuclear Data Sheets evaluation named in each dataset (physim keeps it as
+  the scheme's reference); otherwise the ENSDF database with the date of the copy.

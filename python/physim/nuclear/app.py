@@ -273,6 +273,29 @@ def figure_excitation(planner: Planner):
     return fig
 
 
+def figure_levels(table: dict):
+    """A level scheme: a line per level with its spin, parity and energy, and an arrow per γ-ray transition."""
+    go = _go()
+    fig = go.Figure()
+    levels, transitions = table["levels"], table["transitions"]
+    n = max(len(transitions), 1)
+    for lv in levels:
+        e = lv["energy_kev"]
+        fig.add_trace(go.Scatter(x=[0, n + 1], y=[e, e], mode="lines", line=dict(color=COLORS[0], width=2),
+                                 hovertemplate=f"{lv['jpi']}  {e:g} keV<extra></extra>", showlegend=False))
+        fig.add_annotation(x=0, y=e, text=lv["jpi"], xanchor="right", showarrow=False, xshift=-4)
+        fig.add_annotation(x=n + 1, y=e, text=f"{e:g}", xanchor="left", showarrow=False, xshift=4)
+    for k, t in enumerate(transitions, start=1):
+        top, bottom = levels[t["from"]]["energy_kev"], levels[t["to"]]["energy_kev"]
+        share = "" if t["branching"] is None else f", {100 * t['branching']:.3g}% of the γ rays"
+        fig.add_annotation(x=k, y=bottom, ax=k, ay=top, xref="x", yref="y", axref="x", ayref="y", showarrow=True,
+                           arrowhead=2, arrowwidth=1.5, arrowcolor=COLORS[1],
+                           hovertext=f"{t['energy_kev']:g} keV {t['multipolarity']}{share}")
+    fig.update_layout(xaxis=dict(visible=False, range=[-1, n + 2]), yaxis=dict(title="level energy (keV)"),
+                      margin=dict(l=60, r=10, t=10, b=10), height=360)
+    return fig
+
+
 FIGURES = {"geometry": figure_geometry, "kinematics": figure_kinematics, "energy_loss": figure_energy_loss,
            "spectra": figure_spectra, "trajectories": figure_trajectories, "gamma": figure_excitation}
 
@@ -897,8 +920,81 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                  f"{t['grazing_angle_deg']:.1f}° (CM).").classes("text-sm")
         plot(figure_trajectories(P()), "trajectories")
 
+    def lookup_levels(role: str):
+        def run() -> None:
+            try:
+                ok = P().lookup_levels(role)
+            except (LookupError, ValueError) as e:
+                ui.notify(str(e), type="warning", multi_line=True)
+                return
+            changed(ok)
+        return run
+
+    def remove_levels(role: str):
+        return lambda: changed(P().remove_levels(role))
+
+    def use_state(role: str, level: int, multipolarity: str):
+        def run() -> None:
+            changed(P().use_state(role, level, multipolarity))
+            setup_panel.refresh()
+        return run
+
+    def levels_block() -> None:
+        """The level schemes of the target and the beam: look-up, diagram, and matrix elements with their source."""
+        info = P().levels()
+        ui.label("Level schemes").classes("font-semibold")
+        if not info["ensdf"]:
+            ui.label(f"There is no local copy of ENSDF in {info['ensdf_folder']}. Download one with "
+                     "scripts/fetch_ensdf.py, or type the level scheme in the setup file.").classes(
+                "text-xs ps-muted")
+        for role, title in (("target", "Target"), ("beam", "Beam")):
+            nuclide, table = info["nuclides"][role], info[role]
+            with ui.row().classes("items-center gap-2"):
+                ui.label(f"{title}: {nuclide or 'not set'}").classes("text-sm")
+                look = ui.button("Look up in ENSDF", icon="search", on_click=lookup_levels(role)).props(
+                    "dense flat no-caps")
+                if not info["ensdf"] or nuclide is None:
+                    look.disable()
+                if table:
+                    ui.button("Remove", icon="delete", on_click=remove_levels(role)).props(
+                        "dense flat no-caps color=negative")
+            if not table:
+                continue
+            ui.label(table["reference"]).classes("text-xs ps-muted")
+            for note in table["notes"]:
+                ui.label(note).classes("text-xs ps-muted")
+            ui.plotly(themed(figure_levels(table), state["theme"])).classes("w-full")
+            names = [f"{lv['jpi']} {lv['energy_kev']:g} keV" for lv in table["levels"]]
+            ui.label("Matrix elements").classes("text-sm font-semibold")
+            ui.label("Sizes come from ENSDF's transition strengths or half-lives; ENSDF gives no signs, so each "
+                     "sign is assumed. \"Plan\" sets the reaction to excite that state.").classes(
+                "text-xs ps-muted")
+            with ui.grid(columns=6).classes("items-center gap-x-4 gap-y-0 text-sm"):
+                for head in ("Between", "", "Matrix element", "B↑ or Q", "Source", ""):
+                    ui.label(head).classes("text-xs ps-muted")
+                for m in table["matrix_elements"]:
+                    lam = int(m["multipolarity"][1])
+                    ui.label(names[m["from"]] if m["from"] == m["to"] else f"{names[m['from']]} ↔ {names[m['to']]}")
+                    ui.label(m["multipolarity"])
+                    ui.label(f"{_fmt(m['value_efm'])} e fm{('', '²', '³')[lam - 1]}"
+                             + (f" ± {_fmt(m['unc_efm'], 2)}" if m["unc_efm"] else ""))
+                    if m["q_efm2"] is not None:
+                        ui.label(f"Q = {_fmt(m['q_efm2'] / 100)} e b")
+                    elif m["b_up_wu"] is not None:
+                        ui.label(f"{_fmt(m['b_up_e2fm'])} e²fm^{2 * lam} ({_fmt(m['b_up_wu'], 3)} W.u.)")
+                    else:
+                        ui.label("")
+                    ui.label(m["source"]).tooltip(m["note"] or m["source"])
+                    if m["from"] == 0 and m["to"] != 0:
+                        ui.button("Plan", on_click=use_state(role, m["to"], m["multipolarity"])).props(
+                            "dense flat no-caps")
+                    else:
+                        ui.label("")
+        ui.separator()
+
     @ui.refreshable
     def gamma_panel():
+        levels_block()
         g = P().gamma()
         if not g["available"]:
             ui.markdown("This setup has no excited state. To plan Coulomb excitation, set **Reaction** to "

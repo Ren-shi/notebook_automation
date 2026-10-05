@@ -25,6 +25,14 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Level schemes (`physim.nuclear.levels`): the levels, γ-ray transitions and reduced matrix elements of the beam and
+  target nuclei, read from a local copy of ENSDF (`physim.nuclear.ensdf`) or typed in the setup file as
+  `[levels.beam]` and `[levels.target]`.
+  - Every value records its source: ENSDF, derived, assumed or the user's. The user's values take precedence.
+  - E1, E2 and E3 matrix elements are derived from B(Eλ) in Weisskopf units, or from half-lives and branching.
+  - ENSDF is not shipped: `scripts/fetch_ensdf.py` downloads a copy to `~/.physim/ensdf`.
+  - In the app, the *Excitation and γ rays* tab looks up a scheme, draws it, and plans excitation of a chosen
+    state.
 - The planner app has a **light and a dark theme** (**Light** / **Dark** in the header, or `?theme=dark`). It
   follows the system's setting the first time and remembers the choice. Figures are drawn in the theme's colours,
   with boxed axes and a colour-blind-safe palette; `app.themed(fig, theme)` does the same for a notebook.

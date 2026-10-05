@@ -11,3 +11,6 @@ docs/validation/
 docs/jupyter_execute/
 /build/
 /dist/
+# A local copy of ENSDF must not be committed: permission to redistribute it is not confirmed (backlog 50).
+/ensdf/
+ensdf_*.zip
