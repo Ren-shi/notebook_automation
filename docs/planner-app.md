@@ -58,6 +58,42 @@ sets it for one visit.
 The strip above the results always shows four numbers: the highest rate, the longest beam time for the counts you
 asked for, the head-on closest approach, and how many warnings the setup has.
 
+## The scene
+
+The **Geometry** tab shows the experiment as it would stand in the chamber, to scale: the beam (red) along the
+axis, the target at the origin, and every detector with its rings, strips or crystals. The numbers along the beam
+are millimetres from the target. A detector's circuit board is green and a γ-ray detector's housing is the
+transparent box around its crystals.
+
+**Look around.** Drag the background to turn the view and scroll to zoom. **3D**, **Side**, **Top** and **Along
+beam** set the camera.
+
+**Select.** Click a detector: it turns orange, its distance, angle and size appear beside it, and the panel on the
+right shows its numbers.
+- A particle detector shows the angles it covers, its solid angle, how much of it other detectors hide, its rate
+  and its counts in the run. **Simulate its spectrum** runs the Monte Carlo for it.
+- Clicking a ring, a strip or a crystal also shows that one piece: its angles, solid angle and rate.
+- A γ-ray detector shows its half-angle, its coverage and efficiency, and its particle–γ coincidence rate.
+- Click the background for the whole experiment: the totals, and advice on where the kinematics send the particles.
+
+**Move.** Drag a selected detector.
+- With **Drag changes the angle**, it moves over a sphere around the target, keeps its distance and keeps facing
+  the target. With **the distance**, it moves along its own direction.
+- A detector around the beam (an S3, a CD) always slides along the beam.
+- The panel follows the move: angles, solid angle, shadowing and a quick estimate of the rate. When you let go,
+  the scene and the panel settle first and the other tabs follow, the Monte Carlo included.
+- A drag cannot put a detector in the beam, inside another detector or the target, or through the chamber wall. It
+  stops at the limit, or turns red and returns to the last allowed place when you let go, and a message says why.
+- For an exact value, type it under **Exact values** in the panel, or in the setup panel on the left. Typed values
+  are not held back; the warnings report a detector in the beam and detectors that overlap.
+
+**Rings that are not safe.** For Coulomb excitation, a ring or strip that can see collisions closer than Cline's
+safe distance is drawn in violet, and the panel says how many there are.
+
+**What is drawn with typical sizes.** A setup file does not give everything a drawing needs. The target foil is
+drawn 10 mm across, a circuit board 1.6 mm thick, and a γ-ray detector without crystal dimensions as long as it is
+wide. These affect only the picture and the overlap check, not the rates.
+
 ## Figures for a paper
 
 Every figure has a **Paper figure** button. It opens the figure as it would be printed and lets you choose:
@@ -146,7 +182,8 @@ walkthrough below. The browser remembers which mode you used last.
    - A red line means the setup has a problem, and the message names the field.
    - While a red line is showing, the results stay on the last valid setup.
 6. **Look at each tab.**
-   - **Geometry:** turn the 3D view with the mouse.
+   - **Geometry:** the experiment to scale; click a detector for its numbers and drag it to move it (see
+     [The scene](#the-scene)).
    - **Kinematics:** energy against angle, with each detector's range shaded.
    - **Rates and beam time:** the rate per detector and per strip, the counts in the run, and the beam time for the
      counts you want.
@@ -182,7 +219,7 @@ The example *coulex_ni58* is a complete one. To build your own:
      beam** for the backscattered beam, and forward strip detectors for the target recoils.
    - *Geometry* names the detector with the largest share of excitation events.
 6. Under **γ-ray detectors** (germanium), **Add** a detector for each crystal, with its angle, distance, radius and
-   resolution. They appear in *Geometry* as dashed circles.
+   resolution. They appear in *Geometry* as bronze crystals.
    - Set each crystal's **Efficiency**: its full-energy-peak efficiency for your γ ray, typically 0.5–3% per crystal
      at 1.3 MeV.
    - Left empty, the planner uses the crystal's geometric coverage, an upper limit that makes the beam time look

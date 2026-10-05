@@ -381,15 +381,15 @@ def _geometry(p) -> list:
     if not dets:
         return []
     big = max(dets, key=lambda d: d["solid_angle_msr"])
-    out = [f"The coloured outlines are the particle detectors as seen from the target, which sits at the origin; "
-           f"the beam runs up the dashed line. {big['name']} covers the most solid angle "
+    out = [f"The scene shows the experiment to scale: the beam (red) comes in along the axis and meets the target "
+           f"at the origin; the particle detectors are blue. {big['name']} covers the most solid angle "
            f"({_solid_angle(big['solid_angle_msr'])})."]
     lo = min(d["theta_range"][0] for d in dets)
     hi = max(d["theta_range"][1] for d in dets)
     out.append(f"Together they cover {lo:.0f}° to {hi:.0f}° from the beam. Turn the view with the mouse to check "
                "nothing blocks another detector or the beam.")
     if g["gamma_detectors"]:
-        out.append("Dashed circles are the γ-ray detectors.")
+        out.append("The γ-ray detectors are the crystals drawn in bronze.")
     if not any(d["theta_range"][1] > 90 for d in dets):
         out.append("All detectors are forward of 90°. Backward angles count slowly but see the closest collisions: "
                    "add one under Particle detectors (Backward pad, or Backward ring around the beam).")

@@ -31,6 +31,7 @@ import numpy as np
 from . import data
 from . import data as _data
 from . import ensdf as _ensdf
+from . import scene as _scene
 from .detectors import Array, Response
 from .experiment import Experiment, SetupError, example_names
 from .kinematics import TwoBody
@@ -150,6 +151,8 @@ class Planner:
         #: Problems with the current draft (empty when it is valid).
         self.problems: list = []
         self._cache: dict = {}
+        #: The rates before the last edit: detectors the edit left alone keep their rows (see :class:`Rates`).
+        self._earlier_rates: Optional[Rates] = None
         #: The Coulomb-excitation settings while the reaction is switched to elastic, so switching back restores them.
         self._stashed_excitation: dict = {}
 
@@ -192,8 +195,28 @@ class Planner:
             return False
         self.problems = []
         self.experiment = exp
+        self._earlier_rates = self._cache.get("rates", self._earlier_rates)
         self._cache.clear()
         return True
+
+    def place(self, key: str, **fields) -> bool:
+        """Set several fields of one detector at once; ``key`` is "detector:N" or "gamma:N", counting from 0 as
+        the scene does (:mod:`physim.nuclear.scene`). ``None`` removes a field."""
+        d = self.draft
+        kind, i = key.split(":")
+        entry = d["detectors" if kind == "detector" else "gamma_detectors"][int(i)]
+        for k, v in fields.items():
+            if v is None:
+                entry.pop(k, None)
+            else:
+                entry[k] = v
+        return self._apply(d)
+
+    def move(self, key: str, position, mode: str = "angle") -> bool:
+        """Move a detector's front face to ``position`` (x, y, z in mm), as a drag in the scene does: in ``mode``
+        "angle" it keeps its distance and takes the new direction, in "distance" it keeps its direction. The
+        result is the same as typing the new angles or distance."""
+        return self.place(key, **_scene.move_fields(self.experiment, key, position, mode))
 
     def set(self, section: str, field: str, value: Any) -> bool:
         """Set ``field`` of ``section`` ("beam", "target", "backing", "run", "reaction", "detector N" or
@@ -303,8 +326,124 @@ class Planner:
 
     def _rates(self) -> Rates:
         if "rates" not in self._cache:
-            self._cache["rates"] = Rates(self.experiment)
+            self._cache["rates"] = Rates(self.experiment, previous=self._earlier_rates)
+            self._earlier_rates = None
         return self._cache["rates"]
+
+    # -- the scene ----------------------------------------------------------------------------------------------
+
+    def live(self, key: str, fields: Optional[dict] = None) -> dict:
+        """The quantities that follow a detector while it is dragged, computed quickly: its angles, solid angle,
+        how much of it other detectors hide, and (for a particle detector) a coarse estimate of its rate.
+        ``fields`` are the setup fields of the trial position (see :func:`physim.nuclear.scene.move_fields`); the
+        setup itself is not changed. "problem" says why the position is not allowed, if it is not."""
+        try:
+            exp = _scene.moved(self.experiment, key, fields) if fields else self.experiment
+        except SetupError as e:
+            return {"problem": "; ".join(e.problems)}
+        found = _scene.problems(exp, only=key)
+        i = int(key.split(":")[1])
+        if key.startswith("gamma"):
+            gd = exp.gamma_detectors[i]
+            return {"name": gd.name or f"γ{i + 1}", "theta": _q(gd.theta).to("deg"),
+                    "phi": _q(gd.phi).to("deg") if gd.phi is not None else 0.0,
+                    "distance_mm": _q(gd.distance).to("mm"), "half_angle_deg": gd.half_angle_deg(),
+                    "geometric_efficiency": gd.geometric_efficiency(), "peak_efficiency": gd.peak_efficiency(),
+                    "problem": found[0].text if found else None}
+        array = Array.from_experiment(exp)
+        g = array.geometries[i]
+        quick = Rates(exp, depth_points=2, order=3, only=g.name)
+        hidden = sum(frac for (_, behind), frac in array.shadowing().items() if behind == g.name)
+        x, y, z = g.centre
+        return {"name": g.name, "theta": math.degrees(math.atan2(math.hypot(x, y), z)),
+                "phi": math.degrees(math.atan2(y, x)), "distance_mm": float(np.linalg.norm(g.centre)),
+                "theta_range": g.theta_range(), "solid_angle_msr": g.solid_angle(), "hidden": min(hidden, 1.0),
+                "rate_per_s": quick.rate(g.name, counted=False), "problem": found[0].text if found else None}
+
+    def safety(self) -> dict:
+        """For Coulomb excitation, which rings (or strips) of each particle detector see collisions closer than
+        Cline's safe distance: {detector: set of first segment indices}. Empty for elastic scattering.
+
+        A ring is marked if the scattered beam or the recoil can reach it from a collision at a CM angle above the
+        largest safe one."""
+        if "safety" in self._cache:
+            return self._cache["safety"]
+        from .rates import coulex_for
+
+        r = self._rates()
+        out: dict = {}
+        ion = beam_ion(self.experiment)
+        th_cm = np.linspace(0.5, 180.0, 720)
+        for ch in r.channels:
+            if ch.excitation is None:
+                continue
+            safe = coulex_for(self.experiment, ch, r.layers).max_safe_angle()
+            if safe >= 180.0:
+                continue
+            tb = TwoBody(ion, ch.nuclide.name, self.experiment.beam.energy_mev)
+            close = th_cm > safe
+            lab = np.r_[tb.at_cm(th_cm).theta_lab[close], tb.recoil_for(th_cm).theta_lab[close]]
+            for g in r.array:
+                for k in sorted({seg[0] for seg in g.segments}):
+                    ranges = [g.theta_range(seg) for seg in g.segments if seg[0] == k]
+                    lo, hi = min(a for a, _ in ranges), max(b for _, b in ranges)
+                    if np.any((lab >= lo) & (lab <= hi)):
+                        out.setdefault(g.name, set()).add(k)
+        self._cache["safety"] = out
+        return out
+
+    def selection(self, key: Optional[str] = None, element: Optional[int] = None) -> dict:
+        """What the scene's side panel shows for a selected object: a detector ("detector:N"), one of its rings or
+        strips (``element``), a γ-ray detector ("gamma:N"), or with no key (or "target") the whole experiment."""
+        r = self._rates()
+        what = r.measured
+        if key is None or key == "target":
+            names = [g.name for g in r.array]
+            return {"kind": "experiment", "title": self.experiment.title, "detectors": len(names),
+                    "gamma_detectors": len(self.experiment.gamma_detectors),
+                    "solid_angle_msr": sum(r.array[n].solid_angle() for n in names),
+                    "rate_per_s": sum(r.rate(n) for n in names), "measured": what,
+                    "measured_rate_per_s": sum(r.rate(n, what=what) for n in names),
+                    "gamma_efficiency": r.gamma_efficiency()[0] if self.experiment.gamma_detectors else None,
+                    "target": {"material": self.experiment.target.material,
+                               "thickness_um": 1e3 * _scene.target_thickness_mm(self.experiment),
+                               "tilt_deg": tilt_deg(self.experiment)},
+                    "advice": _scene.advice(self.experiment)}
+        i = int(key.split(":")[1])
+        if key.startswith("gamma"):
+            gd = self.experiment.gamma_detectors[i]
+            out = dict(self.live(key), kind="gamma", model=gd.model)
+            out["crystals"] = [label or "crystal" for label, _, _ in gd.elements()]
+            out["coincidence_rate_per_s"] = None if what == "all" else gd.peak_efficiency() * sum(
+                r.rate(g.name, what="excitations") for g in r.array)
+            if element is not None and len(out["crystals"]) > 1:
+                _, c, rad = gd.elements()[element]
+                d = math.hypot(*c)
+                out["element"] = {"label": f"crystal {out['crystals'][element]}",
+                                  "theta": math.degrees(math.acos(c[2] / d)),
+                                  "half_angle_deg": math.degrees(math.atan2(rad, d))}
+            return out
+        g = r.array.geometries[i]
+        hidden = sum(frac for (_, behind), frac in r.array.shadowing().items() if behind == g.name)
+        x, y, z = g.centre
+        out = {"kind": "detector", "name": g.name, "model": self.experiment.detectors[i].model, "shape": g.shape,
+               "theta": math.degrees(math.atan2(math.hypot(x, y), z)), "phi": math.degrees(math.atan2(y, x)),
+               "distance_mm": float(np.linalg.norm(g.centre)), "theta_range": g.theta_range(),
+               "phi_range": g.phi_range(), "solid_angle_msr": g.solid_angle(), "hidden": min(hidden, 1.0),
+               "rate_per_s": r.rate(g.name), "measured": what, "measured_rate_per_s": r.rate(g.name, what=what),
+               "counts_in_run": r.counts_in_run(g.name, what=what), "segments": len(g.segments),
+               "unsafe": sorted(self.safety().get(g.name, ())), "on_axis": _scene.on_axis(self.experiment, key)}
+        if element is not None and len({seg[0] for seg in g.segments}) > 1:
+            segs = [seg for seg in g.segments if seg[0] == element]
+            ranges = [g.theta_range(seg) for seg in segs]
+            omega = g.segment_solid_angles()
+            out["element"] = {"label": f"{'strip' if g.shape == 'rectangle' else 'ring'} {element + 1}",
+                              "theta_range": (min(a for a, _ in ranges), max(b for _, b in ranges)),
+                              "solid_angle_msr": sum(omega[seg] for seg in segs),
+                              "rate_per_s": sum(r.rate(g.name, seg) for seg in segs),
+                              "measured_rate_per_s": sum(r.rate(g.name, seg, what=what) for seg in segs),
+                              "safe": element not in out["unsafe"]}
+        return out
 
     def warnings(self) -> list:
         """Setup problems, then validity and rate warnings: everything the banner should show."""
@@ -314,6 +453,10 @@ class Planner:
                                                          "records nothing", "beam path", "blocks", "hides")) else "note"
             source = "rates" if ("counts" in text or "collects" in text or "records" in text) else "physics"
             out.append(Warning(level, source, text))
+        for p in _scene.problems(self.experiment):
+            if p.kind == "overlap":  # a detector in the beam is already reported above
+                out.append(Warning("warning", "setup", p.text.replace("would overlap", "overlaps")
+                                   + " They cannot both stand there."))
         order = {"error": 0, "warning": 1, "note": 2}
         return sorted(out, key=lambda w: order[w.level])
 

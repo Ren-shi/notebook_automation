@@ -220,6 +220,23 @@ def figure_energy_loss(planner: Planner):
     return fig
 
 
+def figure_detector_spectrum(planner: Planner, detector: str, events: int = 100_000, seed: int = 1):
+    """One detector's simulated measured-energy spectrum, for the scene's side panel."""
+    go = _go()
+    h = planner.spectra(events=events, seed=seed)["spectra"].get(detector)
+    fig = go.Figure()
+    if h is None:
+        fig.add_annotation(text="no events in this detector", showarrow=False, x=0.5, y=0.5, xref="paper",
+                           yref="paper")
+    else:
+        y = np.repeat(h["counts"], 2)
+        fig.add_trace(go.Scatter(x=np.repeat(h["edges"], 2)[1:-1], y=np.where(y > 0, y, np.nan), mode="lines",
+                                 name=detector, line=dict(color=COLORS[0], width=1.2)))
+    fig.update_layout(xaxis=dict(title="measured energy (MeV)"), yaxis=dict(title="counts / bin", type="log"),
+                      margin=dict(l=50, r=10, t=10, b=40), height=260, showlegend=False)
+    return fig
+
+
 def figure_spectra(planner: Planner, events: int = 100_000, seed: int = 1):
     """Simulated measured-energy spectra, counts per bin in the planned beam time (log scale)."""
     go = _go()
@@ -822,9 +839,219 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
     def columns(spec):
         return [{"name": k, "label": lab, "field": k, "align": "left"} for k, lab in spec]
 
+    # -- the scene and its side panel ---------------------------------------------------------------------------
+    scene_state = {"view": None, "key": None, "element": None, "live": {}}
+
+    def scene_selected(key, element) -> None:
+        scene_state["key"], scene_state["element"] = key, element
+        selection_panel.refresh()
+
+    def scene_live(values: dict) -> None:
+        """Follow a detector while it is dragged: the quick numbers go straight into the side panel."""
+        labels = scene_state["live"]
+        text = {}
+        if "theta" in values:
+            text["place"] = (f"θ {values['theta']:.1f}°, φ {values['phi']:.1f}°, "
+                             f"{values['distance_mm']:.1f} mm")
+        if "theta_range" in values:
+            text["covers"] = f"{values['theta_range'][0]:.1f}–{values['theta_range'][1]:.1f}°"
+            text["omega"] = f"{_fmt(values['solid_angle_msr'])} msr"
+            text["hidden"] = f"{100 * values['hidden']:.0f} %"
+            text["rate"] = f"{_fmt(values['rate_per_s'])} /s"
+        if "half_angle_deg" in values:
+            text["half"] = f"{values['half_angle_deg']:.1f}°"
+            text["geometric"] = f"{100 * values['geometric_efficiency']:.2f} %"
+        text["status"] = f"Not allowed here: {values['problem']}" if values.get("problem") else "Moving…"
+        for name, value in text.items():
+            if name in labels:
+                labels[name].set_text(value)
+
+    def scene_moved(key: str, position, mode: str) -> None:
+        """A detector was dropped at a new place: the scene and its side panel follow at once, the other results
+        (and the Monte Carlo) a moment later."""
+        ok = P().move(key, position, mode)
+        selection_panel.refresh()
+
+        def rest() -> None:
+            changed(ok)
+            setup_panel.refresh()
+
+        ui.timer(0.05, rest, once=True)
+
+    def scene_current() -> bool:
+        """Redraw the scene in place (the camera stays), if it is on the page and in the right theme."""
+        view = scene_state["view"]
+        if view is None or not view.alive or view.theme != state["theme"]:
+            return False
+        if not view.busy and view.drawn is not P().experiment:
+            view.draw()
+        selection_panel.refresh()
+        geometry_tables.refresh()
+        return True
+
+    def typed_place(key: str, field: str, unit: str):
+        def run_(e) -> None:
+            text = str(e.sender.value or "").strip()
+            if not text:
+                return
+            try:
+                float(text)
+                text = f"{text} {unit}"
+            except ValueError:
+                pass
+            kind, i = key.split(":")
+            entry = P().draft["detectors" if kind == "detector" else "gamma_detectors"][int(i)]
+            if str(entry.get(field)) == text:
+                return
+            changed(P().place(key, **{field: text}))
+            setup_panel.refresh()
+        return run_
+
+    @ui.refreshable
+    def selection_panel() -> None:
+        key, element = scene_state["key"], scene_state["element"]
+        try:
+            s = P().selection(key, element)
+        except (IndexError, KeyError, ValueError):
+            key, s = None, P().selection()
+        live = scene_state["live"] = {}
+
+        def row(label: str, value: str, name: Optional[str] = None, classes: str = "") -> None:
+            with ui.row().classes("w-full justify-between no-wrap gap-3"):
+                ui.label(label).classes("text-sm ps-muted")
+                lab = ui.label(value).classes("text-sm ps-num text-right " + classes)
+            if name:
+                live[name] = lab
+
+        def place_inputs(fields) -> None:
+            kind, i = key.split(":")
+            entry = P().draft["detectors" if kind == "detector" else "gamma_detectors"][int(i)]
+            if "position" in entry:
+                ui.label("Placed by position: edit it in the setup panel.").classes("text-xs ps-muted")
+                return
+            ui.label("Exact values").classes("ps-section mt-2")
+            with ui.row().classes("w-full no-wrap gap-2"):
+                for field, label, unit in fields:
+                    box = ui.input(label, value=str(entry.get(field, "") or "")).props("dense outlined").classes(
+                        "min-w-0")
+                    box.on("blur", typed_place(key, field, unit))
+                    box.on("keydown.enter", typed_place(key, field, unit))
+
+        with ui.column().classes("w-full ps-card p-3 gap-1"):
+            if s["kind"] == "experiment":
+                ui.label("The whole experiment").classes("ps-section")
+                ui.label(s["title"]).classes("text-base font-medium")
+                row("Particle detectors", str(s["detectors"]))
+                row("γ-ray detectors", str(s["gamma_detectors"]))
+                row("Solid angle, all particle detectors", f"{_fmt(s['solid_angle_msr'])} msr")
+                row("Particles counted", f"{_fmt(s['rate_per_s'])} /s")
+                if s["measured"] != "all":
+                    row(f"Of these, {s['measured']}", f"{_fmt(s['measured_rate_per_s'])} /s")
+                if s["gamma_efficiency"] is not None:
+                    row("γ-ray efficiency, all detectors", f"{100 * s['gamma_efficiency']:.2f} %")
+                t = s["target"]
+                row("Target", f"{t['material']}, {_fmt(t['thickness_um'], 3)} µm"
+                    + (f", tilted {t['tilt_deg']:g}°" if t["tilt_deg"] else ""))
+                for line in s["advice"]:
+                    with ui.row().classes("items-start no-wrap gap-2 mt-1"):
+                        ui.icon("lightbulb").classes("ps-accent mt-0.5")
+                        ui.label(line).classes("text-sm")
+                ui.label("Click a detector in the scene for its numbers.").classes("text-xs ps-muted mt-1")
+                return
+            ui.label("Particle detector" if s["kind"] == "detector" else "γ-ray detector").classes("ps-section")
+            ui.label(s["name"] + (f" · {s['model']}" if s.get("model") else "")).classes("text-base font-medium")
+            row("Centre", f"θ {s['theta']:.1f}°, φ {s['phi']:.1f}°, {s['distance_mm']:.1f} mm", "place")
+            if s["kind"] == "detector":
+                row("Covers θ", f"{s['theta_range'][0]:.1f}–{s['theta_range'][1]:.1f}°", "covers")
+                row("Solid angle", f"{_fmt(s['solid_angle_msr'])} msr", "omega")
+                row("Hidden by others", f"{100 * s['hidden']:.0f} %", "hidden")
+                row("Particles reaching it", f"{_fmt(s['rate_per_s'])} /s", "rate")
+                if s["measured"] != "all":
+                    row(f"Of these, {s['measured']}", f"{_fmt(s['measured_rate_per_s'])} /s")
+                row("Counts in the run", _fmt(s["counts_in_run"]))
+                if s["rate_per_s"] == 0:
+                    ui.label("Nothing reaches this detector: the kinematics send no particle here, or another "
+                             "detector hides it.").classes("text-sm ps-warn")
+                if s["unsafe"]:
+                    word = "strips" if s["shape"] == "rectangle" else "rings"
+                    ui.label(f"{len(s['unsafe'])} of its {word} (violet in the scene) see collisions closer than "
+                             "Cline's safe distance.").classes("text-sm ps-warn")
+            else:
+                row("Half-angle", f"{s['half_angle_deg']:.1f}°", "half")
+                row("Geometric coverage", f"{100 * s['geometric_efficiency']:.2f} %", "geometric")
+                row("Full-energy-peak efficiency", f"{100 * s['peak_efficiency']:.2f} %")
+                if s["coincidence_rate_per_s"] is not None:
+                    row("Particle–γ coincidences", f"{_fmt(s['coincidence_rate_per_s'])} /s")
+                if len(s["crystals"]) > 1:
+                    row("Crystals", ", ".join(s["crystals"]))
+            status = ui.label("").classes("text-xs ps-warn")
+            live["status"] = status
+            el = s.get("element")
+            if el:
+                ui.separator().classes("my-1")
+                ui.label(el["label"]).classes("ps-section")
+                if "theta_range" in el:
+                    row("Covers θ", f"{el['theta_range'][0]:.1f}–{el['theta_range'][1]:.1f}°")
+                    row("Solid angle", f"{_fmt(el['solid_angle_msr'])} msr")
+                    row("Particles reaching it", f"{_fmt(el['rate_per_s'])} /s")
+                    if s["measured"] != "all":
+                        row(f"Of these, {s['measured']}", f"{_fmt(el['measured_rate_per_s'])} /s")
+                    row("Cline's safe distance", "kept" if el["safe"] else "not kept",
+                        classes="" if el["safe"] else "ps-warn")
+                else:
+                    row("Centre at θ", f"{el['theta']:.1f}°")
+                    row("Half-angle", f"{el['half_angle_deg']:.1f}°")
+            if s["kind"] == "detector" and s["on_axis"]:
+                place_inputs((("distance", "Distance", "mm"),))
+            else:
+                place_inputs((("theta", "θ", "deg"), ("phi", "φ", "deg"), ("distance", "Distance", "mm")))
+            if s["kind"] == "detector":
+                spectrum_box = ui.column().classes("w-full")
+
+                async def spectrum() -> None:
+                    spectrum_box.clear()
+                    with spectrum_box:
+                        ui.spinner(size="md")
+                    fig = await run.io_bound(figure_detector_spectrum, P(), s["name"], state["events"])
+                    spectrum_box.clear()
+                    with spectrum_box:
+                        ui.plotly(themed(fig, state["theme"])).classes("w-full")
+
+                ui.button("Simulate its spectrum", icon="play_arrow", on_click=spectrum).props(
+                    "dense flat no-caps").classes("mt-1")
+
     @ui.refreshable
     def geometry_panel():
-        plot(figure_geometry(P()), "geometry")
+        from .scene_view import SceneView
+
+        with ui.row().classes("w-full items-start gap-3").style("flex-wrap: wrap"):
+            with ui.column().classes("ps-plate gap-1").style("flex: 1 1 520px; min-width: 0"):
+                with ui.row().classes("w-full items-center gap-1"):
+                    ui.toggle({"angle": "Drag changes the angle", "distance": "the distance"}, value="angle",
+                              on_change=lambda e: scene_state["view"].set_mode(e.value)).props(
+                        "dense no-caps unelevated").tooltip(
+                        "What dragging a selected detector changes. A detector around the beam always slides "
+                        "along it.")
+                    ui.space()
+                    for name, label in (("default", "3D"), ("side", "Side"), ("top", "Top"), ("beam", "Along beam")):
+                        ui.button(label, on_click=lambda n=name: scene_state["view"].look(n)).props(
+                            "dense flat no-caps")
+                    ui.button("Paper figure", icon="article", on_click=lambda: open_export("geometry", {})).props(
+                        "dense flat no-caps").tooltip("Export the layout as a figure in a journal's style")
+                view = SceneView(P, state["theme"], scene_selected, scene_live, scene_moved)
+                scene_state["view"] = view
+                if scene_state["key"] is not None:
+                    view.select(scene_state["key"], scene_state["element"], notify=False)
+                ui.label("To scale; the numbers along the beam are mm from the target. Click a detector, a ring "
+                         "or a crystal to select it; drag a selected detector to move it. Drag the background to "
+                         "turn the view, scroll to zoom.").classes(
+                    "text-xs ps-muted")
+            with ui.column().classes("gap-2").style("flex: 0 1 360px; min-width: 300px"):
+                selection_panel()
+        geometry_tables()
+
+    @ui.refreshable
+    def geometry_tables():
         rows = [{"detector": d["name"], "omega": _fmt(d["solid_angle_msr"]),
                  "theta": f"{d['theta_range'][0]:.1f}–{d['theta_range'][1]:.1f}",
                  "phi": f"{d['phi_range'][0]:.1f}–{d['phi_range'][1]:.1f}", "segments": d["segments"]}
@@ -1118,7 +1345,9 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         readouts.refresh()
         warnings_banner.refresh()
         reading_box.refresh()
-        for p in panels.values():
+        for name, p in panels.items():
+            if name == "geometry" and scene_current():
+                continue  # the scene is redrawn in place, so the camera stays where it is
             p.refresh()
 
     @ui.refreshable
