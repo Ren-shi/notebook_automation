@@ -49,6 +49,49 @@ If the browser does not open, the log is in `%LOCALAPPDATA%\physim\planner.log`.
 `physim app` listens only on this computer (127.0.0.1). `--host 0.0.0.0` serves the local network too, for
 example to show the planner on a lab PC; anyone on that network can then open it.
 
+## Light and dark
+
+**Light** and **Dark** at the top switch the whole page, figures included. The first time, the planner follows your
+system's setting; after that it remembers your choice in this browser. `?theme=dark` (or `light`) in the address
+sets it for one visit.
+
+The strip above the results always shows four numbers: the highest rate, the longest beam time for the counts you
+asked for, the head-on closest approach, and how many warnings the setup has.
+
+## Figures for a paper
+
+Every figure has a **Paper figure** button. It opens the figure as it would be printed and lets you choose:
+
+- **Journal style**, which sets the column widths, the typeface and the label size:
+
+  | Style | Widths | Lettering |
+  |---|---|---|
+  | Physical Review (APS) | 86 mm, 178 mm | 8 pt serif |
+  | Nature | 89 mm, 183 mm | 7 pt sans-serif |
+  | Science | 57 mm, 121 mm, 184 mm | 7 pt sans-serif |
+  | Elsevier (Nucl. Phys. A, Phys. Lett. B, NIM) | 90 mm, 140 mm, 190 mm | 8 pt sans-serif |
+  | Springer (Eur. Phys. J. A) | 84 mm, 174 mm | 8 pt sans-serif |
+
+- **Width:** one column, two columns, or the journal's middle width.
+- **Format:** PDF or SVG (vector; the text stays text, so you can still edit it), or PNG at 600 dpi.
+
+**Download figure** saves the file at exactly that width. **Download the plotted data (CSV)** saves the numbers
+behind the curves, for replotting in your own tool.
+
+The paper figures are white with black, boxed axes and inward ticks, whichever theme the page uses. Every curve has
+its own line style as well as its own colour, so the figure still reads in greyscale and for colour-blind readers.
+Journals change their guidelines: check the current instructions for authors before you submit.
+
+From Python, the same figures come from `physim.nuclear.paper`:
+
+```python
+from physim.nuclear import paper
+from physim.nuclear.planner import Planner
+
+p = Planner.example("alpha_on_gold")
+paper.figure(p, "kinematics", journal="nature", width="double").savefig("kinematics.pdf")
+```
+
 ## The guided mode
 
 The planner opens in **Guided** mode: the left panel is a list of steps, in the order you would plan an experiment.

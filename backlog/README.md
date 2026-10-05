@@ -54,6 +54,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 46 | ~~[Guided workflow, field help and "how to read this"](46-guided-workflow.md)~~ **Done** (new-user trial pending) | Nuclear planner | P1 | M | 41, 45 |
 | 47 | ~~[Backward detectors and the Coulomb-excitation beam time](47-backward-detectors-and-coulex-beam-time.md)~~ **Done** | Nuclear planner | P1 | S | 45, 46 |
 | 48 | ~~[Hidden detectors counted in the analytic rates](48-hidden-detectors-in-the-rates.md)~~ **Done** | Nuclear planner | P1 | S | 38, 39 |
+| 49 | ~~[Light and dark themes, and paper figures in a journal's style](49-themes-and-paper-figures.md)~~ **Done** | Nuclear planner | P1 | M | 41, 42 |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - `NewtonianGravity` is direct O(N²); `TreeGravity` (item 10) is O(N log N) but its per-interaction cost is not yet

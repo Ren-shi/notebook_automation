@@ -30,6 +30,18 @@ def test_every_figure_renders(name):
     assert len(app.figure_sweep(s).data[0].x) == 2
 
 
+def test_figures_take_the_page_theme():
+    from physim.nuclear import app
+
+    p = Planner.example("alpha_on_gold")
+    for theme, colours in app.THEMES.items():
+        for fig in (app.figure_kinematics(p), app.figure_geometry(p)):
+            f = app.themed(fig, theme)
+            assert f.layout.paper_bgcolor == colours["paper"] and f.layout.font.color == colours["ink"]
+            f.to_json()
+    assert app.themed(app.figure_kinematics(p), "dark").layout.xaxis.linecolor == app.THEMES["dark"]["ink"]
+
+
 def test_field_values():
     from physim.nuclear.app import _value
 
