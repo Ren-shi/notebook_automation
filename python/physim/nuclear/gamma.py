@@ -80,9 +80,15 @@ def doppler_table(experiment, depth_points: int = 8, order: int = 10) -> list:
     e_mid = float(beam_energy_at(experiment, 0, [lay.thickness / 2], layers)[0])
     cx = Coulex(beam, target, e_mid, excite=exc.excite, energy=e0, multipolarity=exc.multipolarity,
                 b_up=exc.b_up_e2fm)
-    gammas = [(gd.name or f"G{i + 1}", _disc_directions(gd.direction(), gd.half_angle_deg()),
-               _q(gd.resolution).to("MeV") / FWHM_PER_SIGMA if gd.resolution is not None else 0.0)
-              for i, gd in enumerate(experiment.gamma_detectors)]
+    # One entry per crystal: a clover's four crystals are corrected for the Doppler shift separately.
+    gammas = []
+    for i, gd in enumerate(experiment.gamma_detectors):
+        res = _q(gd.resolution).to("MeV") / FWHM_PER_SIGMA if gd.resolution is not None else 0.0
+        for label, centre, radius in gd.elements():
+            d = math.sqrt(sum(c * c for c in centre))
+            gammas.append(((gd.name or f"G{i + 1}") + (f" {label}" if label else ""),
+                           _disc_directions(tuple(c / d for c in centre), math.degrees(math.atan2(radius, d))),
+                           res))
     rows = []
     for g in Array.from_experiment(experiment):
         dirs, dom = g.directions(None, order)

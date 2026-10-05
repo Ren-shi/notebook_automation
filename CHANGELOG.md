@@ -25,6 +25,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- A detector catalogue (`physim.nuclear.catalogue`): `model = "S3"`, `"clover"` or `"LaBr3_2x2"` in a setup file fills
+  in the real dimensions and segmentation, each with its source and with typical values marked.
+  - A γ-ray detector can have real crystals: the four crystals of a clover each get their own Doppler correction.
+  - Circuit boards and γ-detector housings stop particles, in the rates and in the simulated events.
+  - An optional `[chamber]` section keeps particle detectors inside the chamber and γ-ray detectors outside it.
+  - The app's Add menus offer the S3, the clover and the LaBr₃ detector.
 - Level schemes (`physim.nuclear.levels`): the levels, γ-ray transitions and reduced matrix elements of the beam and
   target nuclei, read from a local copy of ENSDF (`physim.nuclear.ensdf`) or typed in the setup file as
   `[levels.beam]` and `[levels.target]`.

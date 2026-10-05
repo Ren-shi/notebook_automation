@@ -107,6 +107,17 @@ def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
             face.update(inner_radius=g.inner_radius or 0.0, outer_radius=g.outer_radius, rings=g.rings,
                         sectors=g.sectors)
         faces.append(face)
+    # Dead material stops particles like a detector that never counts: a face with a threshold out of reach.
+    dead = material_index(data.material("Si"))
+    for b in array.blockers:
+        face = {"centre": b.centre.tolist(), "n": b.n.tolist(), "u": b.u.tolist(), "v": b.v.tolist(),
+                "shape": b.shape, "material": dead, "dead_layer": 0.0, "thickness": 1e6, "fwhm": 0.0,
+                "threshold": 1e30}
+        if b.shape == "rectangle":
+            face.update(width=b.width, height=b.height, strips_x=1, strips_y=1)
+        else:
+            face.update(inner_radius=b.inner_radius or 0.0, outer_radius=b.outer_radius, rings=1, sectors=1)
+        faces.append(face)
 
     z1 = experiment.beam.Z
     pps = experiment.beam.particles_per_second
@@ -230,8 +241,12 @@ def simulate(experiment, events: int = 1_000_000, seed: int = 1, theta_floor: fl
     if events < 1:
         raise ValueError("events must be at least 1")
     config, used = generator_config(experiment, theta_floor)
-    cols = nuclear_events(config, int(events), int(seed))
-    return Events(dict(cols), int(events), int(seed), [d.name for d in Array.from_experiment(experiment)],
+    cols = dict(nuclear_events(config, int(events), int(seed)))
+    names = [d.name for d in Array.from_experiment(experiment)]
+    reached = np.asarray(cols["detector"]) < len(names)  # particles stopped by dead material are left out
+    if not reached.all():
+        cols = {k: np.asarray(v)[reached] for k, v in cols.items()}
+    return Events(cols, int(events), int(seed), names,
                   [ch.label for ch in used], _q(experiment.run.beam_time).to("s"), energy_cut(experiment))
 
 

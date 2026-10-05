@@ -143,6 +143,8 @@ class Level:
     stable: bool = False
     #: Static moments from the level's continuation records: {"E2": (−0.48, 0.14)} in barns, {"M1": ...} in μN.
     moments: dict = field(default_factory=dict)
+    #: Moments written without a sign, so only their size is known.
+    unsigned: set = field(default_factory=set)
     gammas: list = field(default_factory=list)
 
 
@@ -176,8 +178,13 @@ def _continuation(text: str, level: Optional[Level], gamma: Optional[Gamma]) -> 
             n = number(m.group(5), m.group(6))
             if n is not None:
                 level.moments[m.group(4)[3:]] = n
+                if m.group(5)[0] not in "+-":
+                    level.unsigned.add(m.group(4)[3:])
         elif m.group(7) and gamma is not None:
-            gamma.final_energy = float(m.group(8))
+            try:
+                gamma.final_energy = float(m.group(8))
+            except ValueError:  # a final level such as "495.5+X" cannot be placed by energy
+                pass
         elif m.group(9) and gamma is not None and gamma.conversion is None:
             gamma.conversion = number(m.group(10), m.group(11))
 
@@ -213,6 +220,11 @@ def parse(lines: Iterator[str], z: int, a: int, mass_mev: Optional[float] = None
         if line[:5] != want or line[6] != " ":  # another nuclide's record, or a comment
             continue
         kind, primary = line[7], line[5] in " 1"
+        if kind == "H":  # the history record names the publication: CIT=NDS 177, 1 (2021)
+            cit = re.search(r"CIT=([^$]+)", line[9:])
+            if cit and not data.reference:
+                data.reference = cit.group(1).strip()
+            continue
         if line[8] != " ":  # a particle record (delayed particles), not a level or γ ray
             continue
         if kind == "L" and primary:

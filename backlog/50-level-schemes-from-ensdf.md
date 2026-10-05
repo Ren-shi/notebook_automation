@@ -2,20 +2,39 @@
 
 **Priority:** P1 · **Size:** L · **Area:** Experiment workbench
 
-**Status: in progress.** Built (2026-10-05), and tested against hand-typed data in ENSDF's layout:
-- **Reader** (`python/physim/nuclear/ensdf.py`): the adopted dataset of a nuclide from a local copy, zipped or not.
-- **Level schemes** (`python/physim/nuclear/levels.py`): sources on every value, derived matrix elements, the
-  user's values kept, truncation, and the `[levels.beam]` and `[levels.target]` sections of the setup file.
-- **Planner and app:** look-up, level diagram, matrix-element table, and "Plan" for a chosen state.
-- **Download:** `scripts/fetch_ensdf.py`, into `~/.physim/ensdf` (outside the repository) or `$PHYSIM_ENSDF`.
+**Status: Done, except the request to the NNDC and a check against the ENSDF web pages (the user).**
 
-What remains:
-- **The real ENSDF copy has not been downloaded,** so nothing is checked against real data yet. Six tests in
-  `tests/python/test_nuclear_levels.py` wait for it, and so do the five nuclides to check by hand.
-- **A table of moments.** Quadrupole moments are read only where ENSDF's adopted levels give them.
-- **Editing in the app.** A matrix element can be changed in Python and in the setup file, not yet in the app.
-- **The request to the NNDC** (the user).
-- The rates and spectra still use the single state of `[reaction]`; items 54 and 58 use the whole scheme.
+> **Done** (`python/physim/nuclear/ensdf.py`, `python/physim/nuclear/levels.py`, the `[levels.*]` sections in
+> `experiment.py`, the level-scheme methods in `planner.py`, the level-scheme block in `app.py`,
+> `scripts/fetch_ensdf.py`, `tests/python/test_nuclear_levels.py`, guide section "Level schemes" in
+> `docs/nuclear-setup.md`).
+> - **Reader:** the adopted dataset of a nuclide from the local copy, read from the zip as downloaded.
+> - **Level schemes:** a source on every value, derived matrix elements, the user's values kept across look-ups,
+>   truncation, and the setup-file sections.
+> - **App:** look-up for target and beam, level diagram, matrix elements with their source, editable in place, and
+>   "Plan" for a chosen state.
+> - **Local copy:** `ensdf_261001.zip` (42.5 MB), downloaded 2026-10-05 to `~/.physim/ensdf`, outside the
+>   repository. Tests that read it are skipped where it is absent, as on CI.
+> - **Results, on the real copy:**
+>   - All 3,438 adopted datasets with a named element are read. 66 nuclides have no level with a known energy,
+>     and a look-up says so.
+>   - **The two derivation routes agree.** For every transition where ENSDF gives B(Eλ) in Weisskopf units, the
+>     value derived here from the half-life and branching was compared with it: the median ratio is 1.000 for E1
+>     (3,975 transitions), 0.999 for E2 (9,816) and 1.000 for E3 (494), with 90–94% within 10%.
+>   - ¹⁹⁴Pt: 2⁺ at 328.473 keV, B(E2) = 49.5 W.u., which is B(E2↑) = 1.651 e²b² (ENSDF's comment quotes 1.649
+>     from Coulomb excitation); Q(2⁺) = +0.48 b.
+>   - First excited states of ⁵⁸Ni, ²⁰⁸Pb (3⁻, E3), ²⁰Ne and ¹⁵²Sm, and the odd-mass ¹⁹⁵Pt, are tested.
+>   - A look-up takes under 0.1 s.
+> - **Quadrupole moments:** ENSDF's adopted levels carry the measured moments (its evaluators cite the standard
+>   compilations), and those are used: 115 of the 529 even-even nuclei have one for their first 2⁺ state. About
+>   half of all moments are written without a sign, and the note says so. No separate table is added; where no
+>   moment is measured there is no diagonal matrix element, and item 58 sets the prolate, zero and oblate cases.
+> - **Waiting on the user:**
+>   - the request to the NNDC for permission to redistribute;
+>   - a look at five nuclides on the ENSDF web pages. The pages could not be read from here (the IAEA and NNDC
+>     services refuse automated requests), so the checks above rest on the downloaded file and on known values.
+> - **Left out, for later items:** the rates and spectra still use the single state of `[reaction]`; items 54 and
+>   58 use the whole scheme. `BE2=` values on continuation records (not in Weisskopf units) are not read.
 
 ## Why
 Typing a level scheme by hand is the most tedious part of setting up a Coulomb-excitation calculation, and the data

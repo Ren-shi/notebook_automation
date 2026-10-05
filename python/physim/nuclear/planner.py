@@ -342,22 +342,37 @@ class Planner:
                          "solid_angle_msr": g.solid_angle(), "theta_range": (lo, hi), "phi_range": g.phi_range(),
                          "segments": len(g.segments)})
         gammas = []
+        gap = np.full((1, 3), np.nan)
         for i, gd in enumerate(self.experiment.gamma_detectors):
             u = np.array(gd.direction())
-            dist, rad = _q(gd.distance).to("mm"), _q(gd.radius).to("mm")
-            # Two unit vectors across the detector face, for its outline.
-            a = np.cross(u, [0.0, 0.0, 1.0] if abs(u[2]) < 0.9 else [1.0, 0.0, 0.0])
-            a /= np.linalg.norm(a)
-            b = np.cross(u, a)
+            dist = _q(gd.distance).to("mm")
+            a, b = (np.array(x) for x in gd.face_axes())
             t = np.linspace(0.0, 2 * np.pi, 49)[:, None]
-            outline = dist * u + rad * (np.cos(t) * a + np.sin(t) * b)
-            gammas.append({"name": gd.name or f"γ{i + 1}", "outline": outline, "centre": dist * u,
-                           "theta": _q(gd.theta).to("deg"), "half_angle_deg": gd.half_angle_deg(),
-                           "distance_mm": dist})
+            # The front face of each crystal, and the crystal's length behind it where the setup gives one.
+            length = _q(gd.crystal_length).to("mm") if gd.crystal_length is not None else 0.0
+            parts = []
+            for _, centre, rad in gd.elements():
+                ring = np.array(centre) + rad * (np.cos(t) * a + np.sin(t) * b)
+                parts += [ring, gap]
+                if length:
+                    parts += [ring + length * u, gap]
+                    for k in (0, 12, 24, 36):
+                        parts += [np.array([ring[k], ring[k] + length * u]), gap]
+            housing = gd.housing()
+            if housing is not None:
+                c, side = np.array(housing[0]), housing[1] / 2
+                corners = [c + sa * side * a + sb * side * b for sa, sb in ((1, 1), (-1, 1), (-1, -1), (1, -1), (1, 1))]
+                parts += [np.array(corners), gap]
+            gammas.append({"name": gd.name or f"γ{i + 1}", "outline": np.concatenate(parts[:-1]),
+                           "centre": dist * u, "theta": _q(gd.theta).to("deg"),
+                           "half_angle_deg": gd.half_angle_deg(), "distance_mm": dist, "model": gd.model,
+                           "crystals": len(gd.elements())})
         if gammas:
             extent = max(extent, 1.25 * max(g["distance_mm"] for g in gammas))
+        blocking = [{"name": b.name, "outline": b.outline()} for b in array.blockers if "(housing)" not in b.name]
         return {"beam": np.array([[0.0, 0.0, -extent], [0.0, 0.0, extent]]), "extent": extent,
-                "target_size_mm": 0.04 * extent, "detectors": dets, "gamma_detectors": gammas}
+                "target_size_mm": 0.04 * extent, "detectors": dets, "gamma_detectors": gammas,
+                "blocking": blocking}
 
     def kinematics(self, points: int = 361) -> dict:
         """Lab energy against lab angle for the scattered beam and the recoil of every target nuclide, with the

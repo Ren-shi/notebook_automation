@@ -36,7 +36,8 @@ PT194 = [
     card("194OS", "L", [(10, "0.0"), (22, "0+")]),
     card("194OS", "L", [(10, "218.5"), (22, "2+")]),
     "",
-    card("194PT", " ", [(10, "ADOPTED LEVELS, GAMMAS"), (40, "NDS 177, 1 (2021)"), (75, "202109")]),
+    card("194PT", " ", [(10, "ADOPTED LEVELS, GAMMAS"), (75, "202109")]),
+    card("194PT", "H", [(10, "TYP=FUL$AUT=A. Nother$CIT=NDS 177, 1 (2021)$")]),
     card("194PT", "L", [(10, "A comment that is not data")], comment="c"),
     level("0.0", j="0+", t="STABLE"),
     level("328.464", "12", "2+", "41.7 PS", "4"),
@@ -48,7 +49,9 @@ PT194 = [
     gamma("622.00", "3", "9.3", "E2", cc="0.0126"),
     card("194PT", "G", [(10, "BE2W=0.29 4")], cont="2"),
     level("811.25", "3", "4+", "3.7 PS", "3"),
+    card("194PT", "L", [(10, "MOMM1=1.1 2$MOME2=0.5 2 (2016St14)")], cont="2"),
     gamma("482.78", "3", "100", "E2", cc="0.0228"),
+    card("194PT", "G", [(10, "FL=328.46+X")], cont="2"),
     level("1229.5+X", j="(5-)"),
     gamma("300.0", ri="100", m="E1"),
     level("1432.5", "1", "(3-)"),
@@ -196,6 +199,19 @@ def test_quadrupole_moment_becomes_a_diagonal_matrix_element():
     v = s.matrix_element(1, 1, "E2")
     assert v.value == pytest.approx(48.0 / 0.7579, rel=1e-4) and v.source == "derived"
     assert s.quadrupole_moment(0) is None
+    # A moment written without a sign: only its size is known, and the note says so.
+    assert s.quadrupole_moment(3) == pytest.approx(50.0)
+    assert "no sign" in s.matrix_element(3, 3).note and "no sign" not in v.note
+
+
+def test_a_nuclide_without_placed_levels_is_reported(tmp_path, monkeypatch):
+    monkeypatch.setenv(ensdf.ENV, str(tmp_path))
+    lines = [card("194AU", " ", [(10, "ADOPTED LEVELS")]), card("194AU", "L", [(10, "0+X"), (22, "1-")])]
+    (tmp_path / "ensdf.194").write_text("\n".join(lines))
+    ensdf._adopted.cache_clear()
+    with pytest.raises(ensdf.EnsdfMissing, match="no level of 194Au with a known energy"):
+        LevelScheme.from_ensdf("194Au")
+    ensdf._adopted.cache_clear()
 
 
 def test_the_users_value_takes_precedence():
