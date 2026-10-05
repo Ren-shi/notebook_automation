@@ -20,9 +20,11 @@ UNITS: dict[str, dict[str, float]] = {
     "angle": {"deg": 1.0, "rad": 180.0 / math.pi, "mrad": 0.18 / math.pi},
     "particle_current": {"pnA": 1.0, "ppA": 1e-3, "puA": 1e3, "pµA": 1e3},
     "electrical_current": {"enA": 1.0, "epA": 1e-3, "euA": 1e3, "eµA": 1e3},
-    "time": {"h": 1.0, "s": 1.0 / 3600.0, "min": 1.0 / 60.0, "d": 24.0},
+    "time": {"h": 1.0, "s": 1.0 / 3600.0, "min": 1.0 / 60.0, "d": 24.0, "ms": 1e-3 / 3600.0, "us": 1e-6 / 3600.0,
+             "µs": 1e-6 / 3600.0, "ns": 1e-9 / 3600.0},
     "density": {"g/cm3": 1.0, "mg/cm3": 1e-3, "kg/m3": 1e-3},
     "fraction": {"%": 1.0},
+    "rate": {"/s": 1.0, "Hz": 1.0, "1/s": 1.0, "kHz": 1e3, "/min": 1.0 / 60.0, "/h": 1.0 / 3600.0},
     "activity": {"Bq": 1.0, "kBq": 1e3, "MBq": 1e6, "uCi": 3.7e4, "µCi": 3.7e4, "mCi": 3.7e7},
 }
 

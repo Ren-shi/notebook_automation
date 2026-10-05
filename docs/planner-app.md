@@ -244,6 +244,11 @@ The example *coulex_ni58* is a complete one. To build your own:
    - **The angular correlation:** for each particle detector and crystal, the γ rays seen in coincidence relative
      to γ rays sent evenly in all directions. A switch turns the correlation off (isotropic emission).
    - **Doppler table:** the shifted γ-ray energy and peak width for every particle-detector and γ-detector pair.
+9. On **Spectra**, **Simulate the γ rays** follows the γ ray of every excited event to the crystals: the
+   particle × γ matrix of true and random coincidences, and each γ-ray detector's spectrum as measured and
+   Doppler-corrected from the segment and crystal that fired. Random coincidences and the room background come
+   from the `[run]` section of the setup file (`coincidence_window`, `room_background`, `extra_lines`,
+   `dead_time`).
 
 ## What it does not do yet
 

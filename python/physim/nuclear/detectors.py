@@ -249,6 +249,19 @@ class Geometry:
         W = np.outer(w, w) * (r1 - r0) / 2 * (a1 - a0) / 2 * R
         return (R * np.cos(A)).ravel(), (R * np.sin(A)).ravel(), W.ravel()
 
+    def segment_centre(self, segment: Optional[tuple] = None) -> np.ndarray:
+        """The middle of a segment (or of the face), mm: what a Doppler correction knows of where a particle hit."""
+        if segment is None:
+            return self.centre.copy()
+        if self.shape == "rectangle":
+            du, dv = self.width / self.strips_x, self.height / self.strips_y
+            su, sv = -self.width / 2 + (segment[0] + 0.5) * du, -self.height / 2 + (segment[1] + 0.5) * dv
+        else:
+            dr, da = (self.outer_radius - self.inner_radius) / self.rings, 2 * math.pi / self.sectors
+            r, a = self.inner_radius + (segment[0] + 0.5) * dr, (segment[1] + 0.5) * da
+            su, sv = r * math.cos(a), r * math.sin(a)
+        return self.centre + su * self.u + sv * self.v
+
     def solid_angle(self, segment: Optional[tuple] = None, source=(0.0, 0.0, 0.0)) -> float:
         """Solid angle seen from ``source``, msr: ∫ (r̂ · n) dA / r² over the face (Gauss–Legendre)."""
         _, d_omega = self.directions(segment, source=source)

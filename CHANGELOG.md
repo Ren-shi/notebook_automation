@@ -34,6 +34,15 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Particle–γ events (`physim.nuclear.gamma_events`, backlog 55): every simulated excitation whose particle reached a
+  detector emits its γ ray with the angular correlation from the moving nucleus; the crystals record it with
+  their response.
+  - Doppler correction from the segment and crystal that fired, for the scattered beam and for the recoil.
+  - True and random particle–γ coincidences from the singles rates and `[run] coincidence_window`; random γ–γ
+    rates; `[run] dead_time`; room background (`[run] room_background`) and `[run] extra_lines`; a `threshold`
+    on γ-ray detectors.
+  - **Simulate the γ rays** on the app's Spectra tab; `write_root(..., gammas=...)` adds a `gammas` tree.
+  - Units: `ns`, `us`, `ms` for times and `/s`, `Hz`, `kHz` for rates.
 - Orientation of Coulomb-excited states and the particle–γ angular correlation (`physim.nuclear.orientation`,
   `physim.nuclear.angular`, backlog 54).
   - First-order excitation amplitudes for every magnetic substate of every level of a level scheme, for any

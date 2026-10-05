@@ -55,9 +55,12 @@ def _th1d(name: str, title: str, counts: np.ndarray, sumw2: np.ndarray, edges: n
 
 
 def write_root(events, path: Union[str, Path], experiment=None, bins: int = 400,
-               range_mev: Optional[tuple] = None) -> Path:
+               range_mev: Optional[tuple] = None, gammas=None) -> Path:
     """Write ``events`` (from :func:`~physim.nuclear.events.simulate`) to a ROOT file; ``experiment`` is stored as
-    its setup file. Returns the path."""
+    its setup file. With ``gammas`` (from :func:`~physim.nuclear.gamma_events.simulate_gammas`) the file also
+    holds a ``gammas`` tree, one entry per γ ray in coincidence with a particle (``particle`` is the row of
+    ``events`` it belongs to), and ``gamma_<crystal>`` histograms of the Doppler-corrected energy. Returns the
+    path."""
     uproot = _uproot()
     path = Path(path)
     cols = events.columns
@@ -78,12 +81,33 @@ def write_root(events, path: Union[str, Path], experiment=None, bins: int = 400,
             inside = (x >= lo) & (x < hi)
             f[f"spectrum_{name}"] = _th1d(f"spectrum_{name}", f"{name}: measured energy, counts in the run",
                                           counts, sumw2, edges, int(m.sum()), x[inside], w[inside])
+        if gammas is not None:
+            g = {name: (np.asarray(a).astype(np.int32) if np.asarray(a).dtype in (np.uint32, np.int64)
+                        else np.asarray(a)) for name, a in gammas.columns.items()}
+            f["gammas"] = g
+            key = "corrected_recoil" if gammas.emitter == experiment_target(experiment, gammas) else \
+                "corrected_projectile"
+            for name in gammas.detector_names():
+                counts, edges = gammas.spectrum(name, corrected=key.split("_")[1], bins=bins, randoms=False)
+                f[f"gamma_{name}"] = _th1d(f"gamma_{name}", f"{name}: Doppler-corrected γ-ray energy, counts in "
+                                           "the run", counts, counts, edges, int(gammas.select(name).sum()),
+                                           np.zeros(0), np.zeros(0))
         if experiment is not None:
             f["setup"] = experiment.to_toml()
-        f["info"] = json.dumps({"seed": events.seed, "n_events": events.n_events, "beam_time_s": t,
-                                "detectors": list(events.detectors), "channels": list(events.channels),
-                                "min_energy_mev": events.min_energy, "weight_unit": "1/s"})
+        info = {"seed": events.seed, "n_events": events.n_events, "beam_time_s": t,
+                "detectors": list(events.detectors), "channels": list(events.channels),
+                "min_energy_mev": events.min_energy, "weight_unit": "1/s"}
+        if gammas is not None:
+            info.update(crystals=gammas.crystal_names, gamma_detectors=gammas.detector_names(),
+                        window_s=gammas.window_s, live_fraction=gammas.live_fraction)
+        f["info"] = json.dumps(info)
     return path
+
+
+def experiment_target(experiment, gammas) -> str:
+    """The nuclide the γ rays come from when the target is excited (for choosing the corrected spectrum)."""
+    return gammas.emitter if experiment is not None and experiment.excitation is not None \
+        and experiment.excitation.excite == "target" else ""
 
 
 def read_root(path: Union[str, Path]) -> dict:
@@ -98,7 +122,8 @@ def read_root(path: Union[str, Path]) -> dict:
             h = f[f"spectrum_{name}"]
             spectra[name] = (h.values(), h.errors(), h.axis().edges())
         setup = str(f["setup"]) if "setup" in f else None
-    return {"events": events, "spectra": spectra, "setup": setup, "info": info}
+        gammas = f["gammas"].arrays(library="np") if "gammas" in f else None
+    return {"events": events, "spectra": spectra, "setup": setup, "info": info, "gammas": gammas}
 
 
 __all__ = ["read_root", "write_root"]
