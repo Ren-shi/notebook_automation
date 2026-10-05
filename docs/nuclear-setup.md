@@ -222,7 +222,8 @@ python scripts/fetch_ensdf.py
 ```
 
 **Looking up a scheme.** In the app, the *Excitation and γ rays* tab has a *Look up in ENSDF* button for the target
-and for the beam. In Python:
+and for the beam. Each matrix element is shown in a field: type a new value with its unit to use your own. In
+Python:
 
 ```python
 from physim.nuclear.levels import LevelScheme
@@ -248,7 +249,8 @@ E1, E2 and E3 matrix element:
 
 - from B(Eλ) in Weisskopf units where ENSDF gives it;
 - otherwise from the level's half-life and its γ-ray branching, with conversion coefficients and mixing ratios;
-- a quadrupole moment in ENSDF becomes the diagonal E2 matrix element of its level.
+- a quadrupole moment in ENSDF becomes the diagonal E2 matrix element of its level. Where ENSDF writes the moment
+  without a sign, the note says that the sign is assumed.
 
 ENSDF gives no signs. Derived matrix elements are positive, and the note says the sign is assumed.
 

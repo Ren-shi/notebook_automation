@@ -194,6 +194,8 @@ class LevelScheme:
         levels below ``max_energy_kev`` that Coulomb excitation can reach (see :meth:`select`). Raises
         :class:`~physim.nuclear.ensdf.EnsdfMissing` without a local copy."""
         scheme = cls.from_adopted(ensdf.adopted(nuclide))
+        if not scheme.levels:
+            raise ensdf.EnsdfMissing(f"ENSDF has no level of {scheme.nuclide} with a known energy")
         scheme.derive()
         if max_energy_kev is not None or connected_only:
             scheme = scheme.select(max_energy_kev, connected_only)
@@ -221,7 +223,8 @@ class LevelScheme:
                 f = quadrupole_factor(j)  # Q in barns → matrix element in e fm²
                 scheme.matrix_elements.append(MatrixElement(i, i, "E2", Value(
                     q[0] * 100.0 / f, None if q[1] is None else q[1] * 100.0 / f, "derived",
-                    f"from the quadrupole moment Q = {q[0]:g} b in ENSDF")))
+                    f"from the quadrupole moment Q = {q[0]:g} b in ENSDF"
+                    + ("; ENSDF gives no sign, positive assumed" if "E2" in lv.unsigned else ""))))
         if data.unplaced:
             scheme.notes.append(f"{data.unplaced} γ ray(s) were left out because no final level matched")
         return scheme

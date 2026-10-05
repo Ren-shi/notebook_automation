@@ -55,7 +55,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 47 | ~~[Backward detectors and the Coulomb-excitation beam time](47-backward-detectors-and-coulex-beam-time.md)~~ **Done** | Nuclear planner | P1 | S | 45, 46 |
 | 48 | ~~[Hidden detectors counted in the analytic rates](48-hidden-detectors-in-the-rates.md)~~ **Done** | Nuclear planner | P1 | S | 38, 39 |
 | 49 | ~~[Light and dark themes, and paper figures in a journal's style](49-themes-and-paper-figures.md)~~ **Done** | Nuclear planner | P1 | M | 41, 42 |
-| 50 | [Level schemes from ENSDF](50-level-schemes-from-ensdf.md) (in progress) | Experiment workbench | P1 | L | 34 |
+| 50 | ~~[Level schemes from ENSDF](50-level-schemes-from-ensdf.md)~~ **Done** (NNDC permission pending) | Experiment workbench | P1 | L | 34 |
 | 51 | [Detector catalogue: S3, clover and LaBr₃ as solids](51-detector-catalogue.md) | Experiment workbench | P1 | M | 38, 48 |
 | 52 | [The interactive scene](52-interactive-scene.md) | Experiment workbench | P1 | L | 41, 51 |
 | 53 | [γ-detector response and calibration sources](53-gamma-detector-response.md) | Experiment workbench | P1 | L | 51 |

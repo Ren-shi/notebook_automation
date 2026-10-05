@@ -939,6 +939,30 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             setup_panel.refresh()
         return run
 
+    def matrix_element_input(role: str, m: dict) -> None:
+        """A matrix element as an editable field: a new value, with its unit, becomes the user's."""
+        lam = int(m["multipolarity"][1])
+        unit = ("efm", "efm2", "efm3")[lam - 1]
+        shown = f"{_fmt(m['value_efm'])} {unit}"
+        box = ui.input(value=shown).props("dense outlined").classes("w-36")
+        if m["unc_efm"]:
+            box.tooltip(f"± {_fmt(m['unc_efm'], 2)} {unit}")
+
+        def apply() -> None:
+            text = (box.value or "").strip()
+            if text == shown:
+                return
+            try:
+                ok = P().set_matrix_element(role, m["from"], m["to"], m["multipolarity"], text)
+            except ValueError as e:
+                ui.notify(str(e), type="negative", multi_line=True)
+                box.value = shown
+                return
+            changed(ok)
+
+        box.on("blur", apply)
+        box.on("keydown.enter", apply)
+
     def levels_block() -> None:
         """The level schemes of the target and the beam: look-up, diagram, and matrix elements with their source."""
         info = P().levels()
@@ -967,7 +991,8 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             names = [f"{lv['jpi']} {lv['energy_kev']:g} keV" for lv in table["levels"]]
             ui.label("Matrix elements").classes("text-sm font-semibold")
             ui.label("Sizes come from ENSDF's transition strengths or half-lives; ENSDF gives no signs, so each "
-                     "sign is assumed. \"Plan\" sets the reaction to excite that state.").classes(
+                     "sign is assumed. Type a new value with its unit (efm2 or eb for E2) to use your own, with a minus "
+                     "sign where you want one. \"Plan\" sets the reaction to excite that state.").classes(
                 "text-xs ps-muted")
             with ui.grid(columns=6).classes("items-center gap-x-4 gap-y-0 text-sm"):
                 for head in ("Between", "", "Matrix element", "B↑ or Q", "Source", ""):
@@ -976,8 +1001,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                     lam = int(m["multipolarity"][1])
                     ui.label(names[m["from"]] if m["from"] == m["to"] else f"{names[m['from']]} ↔ {names[m['to']]}")
                     ui.label(m["multipolarity"])
-                    ui.label(f"{_fmt(m['value_efm'])} e fm{('', '²', '³')[lam - 1]}"
-                             + (f" ± {_fmt(m['unc_efm'], 2)}" if m["unc_efm"] else ""))
+                    matrix_element_input(role, m)
                     if m["q_efm2"] is not None:
                         ui.label(f"Q = {_fmt(m['q_efm2'] / 100)} e b")
                     elif m["b_up_wu"] is not None:
