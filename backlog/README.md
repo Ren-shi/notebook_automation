@@ -55,6 +55,19 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 47 | ~~[Backward detectors and the Coulomb-excitation beam time](47-backward-detectors-and-coulex-beam-time.md)~~ **Done** | Nuclear planner | P1 | S | 45, 46 |
 | 48 | ~~[Hidden detectors counted in the analytic rates](48-hidden-detectors-in-the-rates.md)~~ **Done** | Nuclear planner | P1 | S | 38, 39 |
 | 49 | ~~[Light and dark themes, and paper figures in a journal's style](49-themes-and-paper-figures.md)~~ **Done** | Nuclear planner | P1 | M | 41, 42 |
+| 50 | [Level schemes from ENSDF](50-level-schemes-from-ensdf.md) | Experiment workbench | P1 | L | 34 |
+| 51 | [Detector catalogue: S3, clover and LaBr₃ as solids](51-detector-catalogue.md) | Experiment workbench | P1 | M | 38, 48 |
+| 52 | [The interactive scene](52-interactive-scene.md) | Experiment workbench | P1 | L | 41, 51 |
+| 53 | [γ-detector response and calibration sources](53-gamma-detector-response.md) | Experiment workbench | P1 | L | 51 |
+| 54 | [Orientation of excited states, particle–γ correlation and decay](54-angular-correlation-and-decay.md) | Experiment workbench | P1 | L | 43, 50 |
+| 55 | [Particle–γ events, Doppler correction, coincidences and background](55-coincidence-events-and-background.md) | Experiment workbench | P1 | L | 39, 53, 54 |
+| 56 | [Automatic analysis: from peak areas to B(E2) and the shape](56-automatic-analysis.md) | Experiment workbench | P1 | L | 55 |
+| 57 | [The run record: every number explains itself](57-run-record.md) | Experiment workbench | P1 | M | 42, 56 |
+| 58 | [Multi-step Coulomb excitation, reorientation and the shape of the nucleus](58-multi-step-coulomb-excitation.md) | Experiment workbench | P1 | L | 50, 54, 56 |
+| 59 | [Particle and γ-ray tracks in the scene](59-particle-tracks.md) | Experiment workbench | P2 | M | 52, 55 |
+| 60 | [A movable target and sources placed anywhere](60-movable-target-and-sources.md) | Experiment workbench | P2 | M | 52, 53 |
+| 61 | [The planner in its own desktop window](61-desktop-window.md) | Experiment workbench | P2 | S | 44, 52 |
+| 62 | [Add-back and Compton suppression for clovers](62-add-back-and-compton-suppression.md) | Experiment workbench | P3 | M | 53, 55 |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - `NewtonianGravity` is direct O(N²); `TreeGravity` (item 10) is O(N log N) but its per-interaction cost is not yet
@@ -90,5 +103,15 @@ Slices, one at a time:
 
 Items 33–42 take priority over the deferred items 23–30. Item 31 (seeded randomness) is needed by 39 and moves up
 with them.
+
+## Experiment workbench (items 50–62)
+
+The direction after the planner: a simulated experiment that the user sees and rearranges, aimed first at an
+experimentalist planning beam time. Detectors are drawn to scale and can be dragged within what a chamber allows;
+level schemes come from ENSDF; particle–γ events are analysed to a Doppler-corrected spectrum, a B(E2) and the shape
+of the nucleus; and every number explains how it was obtained.
+
+The aim, every decision and what is parked are in the [overview](workbench-overview.md). Suggested order: 50 and
+51 → 52 → 53 and 54 → 55 → 56 → 57 → 58 → 59–62.
 
 To add an item: copy any file, give it the next number, and add a row to the table.
