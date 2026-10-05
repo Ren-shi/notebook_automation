@@ -67,12 +67,15 @@ def ylm_equator(lam: int, mu: int) -> float:
     return y if mu >= 0 else (-1) ** m * y
 
 
+@lru_cache(maxsize=8192)
 def orbit_integrals(lam: int, epsilon: float, xi: float, tol: float = 1e-9) -> np.ndarray:
     """I_μ = ∫ e^{iξ(ε sinh w + w)} e^{iμφ(w)} / (ε cosh w + 1)^λ dw over the hyperbolic orbit, for μ = −λ…λ.
 
     The orbit is r = a(ε cosh w + 1), t = (a/v)(ε sinh w + w), with the position x = a(cosh w + ε),
     y = a √(ε² − 1) sinh w measured from the scattering centre. The integral is done in Gauss–Legendre panels,
     each spanning about a radian of the phase, out to where the integrand has fallen below ``tol``.
+
+    Results are kept, so asking again for the same orbit costs nothing; do not change the array returned.
     """
     eps_ = max(epsilon, 1.0)
     # Out to where (ε cosh w)^−λ < tol, or (for ξ > 0) where the fast oscillation has averaged it away.
@@ -100,7 +103,9 @@ def orbit_integrals(lam: int, epsilon: float, xi: float, tol: float = 1e-9) -> n
     phase = np.exp(1j * xi * (eps_ * sh + w))
     e_iphi = ((ch + eps_) + 1j * math.sqrt(max(eps_ * eps_ - 1.0, 0.0)) * sh) / r
     base = weight * phase / r**lam
-    return np.array([np.sum(base * e_iphi**mu) for mu in range(-lam, lam + 1)])
+    out = np.array([np.sum(base * e_iphi**mu) for mu in range(-lam, lam + 1)])
+    out.setflags(write=False)
+    return out
 
 
 class Coulex:

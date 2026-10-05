@@ -152,6 +152,9 @@ HELP = {
     ("gamma", "housing_side"): _h("Side of the square housing, which stops particles.", "about 100 mm for a clover",
                                   "hides more of whatever lies behind it."),
     ("gamma", "window_gap"): _h("Distance from the housing's front window to the crystals.", "a few mm", "—"),
+    ("reaction", "emission"): _h("How the γ rays leave the excited nucleus: correlated with the direction of the "
+                                 "scattered particle, as in nature, or evenly in all directions.", "correlated",
+                                 "—"),
     ("gamma", "material"): _h("What the crystal is made of: Ge or LaBr3.", "Ge",
                               "LaBr3 is faster and more efficient per volume, with about ten times worse resolution."),
     ("gamma", "absorbers"): _h("Material between the target and the detector, such as a lead or copper sheet "

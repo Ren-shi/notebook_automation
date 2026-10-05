@@ -121,8 +121,11 @@ def test_coulomb_excitation_beam_time_is_set_by_coincidences():
     for row in r["rows"]:
         exc = rates.rate(row["detector"], what="excitations")
         assert row["excitation_per_s"] == pytest.approx(exc) and exc < 0.01 * row["rate_per_s"]
-        assert row["coincidence_per_s"] == pytest.approx(exc * eff)
-        assert row["beam_time_s"] == pytest.approx(r["counts_wanted"] / (exc * eff))
+        # In coincidence with each particle detector the γ rays are not emitted evenly: its own efficiency.
+        own = row["gamma_efficiency"]
+        assert 0.5 * eff < own < 1.5 * eff
+        assert row["coincidence_per_s"] == pytest.approx(exc * own)
+        assert row["beam_time_s"] == pytest.approx(r["counts_wanted"] / (exc * own))
         assert row["beam_time_s"] > 3600
     # A measured photopeak efficiency replaces the typical response.
     for i in range(len(p.experiment.gamma_detectors)):

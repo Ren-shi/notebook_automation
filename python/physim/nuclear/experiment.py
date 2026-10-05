@@ -451,6 +451,9 @@ class Excitation:
     b_up: str
     excite: str = "target"
     multipolarity: str = "E2"
+    #: How the γ rays leave the nucleus: "correlated" with the scattered particle (also when left out), or
+    #: "isotropic".
+    emission: Optional[str] = None
 
     SPECS = (
         _Field("excite", "str", check=lambda s: None if s in ("target", "projectile")
@@ -458,6 +461,8 @@ class Excitation:
         _Field("energy", "energy", check=_positive),
         _Field("multipolarity", "str", check=lambda s: None if s in ("E1", "E2", "E3") else "must be E1, E2 or E3"),
         _Field("b_up", "str"),
+        _Field("emission", "str", check=lambda s: None if s in ("correlated", "isotropic")
+               else "must be 'correlated' or 'isotropic'"),
     )
 
     @property

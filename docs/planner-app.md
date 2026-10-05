@@ -239,6 +239,10 @@ The example *coulex_ni58* is a complete one. To build your own:
    - **Particle energies:** the energy of each particle at each particle detector's edges and centre, elastic and
      after exciting the state. It also gives the speed β of the excited nucleus, which is what you need to correct
      the γ-ray energies for the Doppler shift.
+   - **All levels excited from the ground state:** with a level scheme looked up, the first-order cross section
+     of every level, directly and with feeding from above, and of every γ ray.
+   - **The angular correlation:** for each particle detector and crystal, the γ rays seen in coincidence relative
+     to γ rays sent evenly in all directions. A switch turns the correlation off (isotropic emission).
    - **Doppler table:** the shifted γ-ray energy and peak width for every particle-detector and γ-detector pair.
 
 ## What it does not do yet
