@@ -10,6 +10,7 @@ a notebook as well.
 
 from __future__ import annotations
 
+import base64
 import io
 import math
 import os
@@ -49,8 +50,53 @@ SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circl
                 "annular": {"inner_radius", "outer_radius", "rings", "sectors"}}
 INT_FIELDS = {"charge_state", "counts_wanted", "strips_x", "strips_y", "rings", "sectors"}
 
-COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf", "#8c564b", "#e377c2", "#7f7f7f",
-          "#bcbd22"]
+#: Detector and curve colours (Okabe–Ito first): distinguishable for colour-blind readers, legible on the light and
+#: the dark page.
+COLORS = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#7F7F7F", "#882255", "#44AA99",
+          "#DDCC77"]
+
+#: Figure colours of each page theme.
+THEMES = {"light": {"paper": "#FFFFFF", "ink": "#16191C", "grid": "#E4E7E4"},
+          "dark": {"paper": "#171B1E", "ink": "#E9EBE9", "grid": "#2A3035"}}
+
+FONT = '"IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif'
+MONO = '"IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace'
+
+#: The page's style sheet. Colours are variables, set once for the light page and once for the dark one
+#: (``body--dark`` is Quasar's dark-mode class). No fonts or scripts are fetched: the app works offline.
+STYLE = """
+body { --ps-ground: #F1F2F0; --ps-surface: #FFFFFF; --ps-sunk: #F7F8F6; --ps-ink: #16191C; --ps-muted: #555C63;
+  --ps-line: #D5D9D6; --ps-accent: #0B5FA5; --ps-ok: #1E6B45; --ps-warn: #8A4B00; --ps-bad: #B3261E;
+  --ps-warnbox: #FBF3E4; --ps-note: #EAF2FA; --q-primary: #0B5FA5 !important;
+  background: var(--ps-ground) !important; color: var(--ps-ink); font-family: %(font)s; }
+body.body--dark { --ps-ground: #0F1214; --ps-surface: #171B1E; --ps-sunk: #1D2226; --ps-ink: #E9EBE9;
+  --ps-muted: #A0A8AE; --ps-line: #2C3338; --ps-accent: #7CBDF2; --ps-ok: #7FD0A4; --ps-warn: #F0B45A;
+  --ps-bad: #FF8A80; --ps-warnbox: #2A2316; --ps-note: #16222E; --q-primary: #3A8AD0 !important; }
+.ps-header { background: var(--ps-surface) !important; color: var(--ps-ink) !important;
+  border-bottom: 1px solid var(--ps-line); }
+.ps-rail { background: var(--ps-sunk) !important; }
+.ps-card, .ps-plate, .q-table__card { background: var(--ps-surface) !important; border: 1px solid var(--ps-line);
+  box-shadow: none !important; }
+.ps-card { border-radius: 8px; }
+.ps-plate { border-radius: 10px; padding: 6px 12px 10px; }
+.ps-sunk { background: var(--ps-sunk); }
+.ps-muted { color: var(--ps-muted); } .ps-accent { color: var(--ps-accent); } .ps-ok { color: var(--ps-ok); }
+.ps-warn { color: var(--ps-warn); } .ps-bad { color: var(--ps-bad); }
+.ps-warnbox { background: var(--ps-warnbox) !important; border: 1px solid var(--ps-line);
+  box-shadow: none !important; }
+.ps-note { background: var(--ps-note); }
+.ps-section { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ps-muted); }
+.q-table th { color: var(--ps-muted); font-weight: 500; }
+.q-table td, .ps-num { font-family: %(mono)s; font-variant-numeric: tabular-nums; }
+.ps-readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; width: 100%%;
+  background: var(--ps-line); border: 1px solid var(--ps-line); border-radius: 10px; overflow: hidden; }
+.ps-readout { background: var(--ps-surface); padding: 12px 16px; }
+.ps-readout-value { font-family: %(mono)s; font-size: 22px; font-weight: 500; line-height: 1.3; }
+.ps-paper { background: #FFFFFF; padding: 12px; max-width: 100%%;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), 0 8px 28px rgba(0, 0, 0, 0.18); }
+.ps-paper img { display: block; max-width: 100%%; }
+""" % {"font": FONT, "mono": MONO}
 
 
 def _go():
@@ -76,6 +122,22 @@ def _value(field: str, text):
 
 # ---------------------------------------------------------------------------------------------------------------
 # Figures (Plotly), one per tab
+
+
+def themed(fig, theme: str = "light"):
+    """Give a figure the page's look in the "light" or "dark" theme: the page's background and ink, boxed axes
+    with inward ticks, a quiet grid. Returns the figure."""
+    t = THEMES[theme]
+    fig.update_layout(template="plotly_dark" if theme == "dark" else "plotly_white", paper_bgcolor=t["paper"],
+                      plot_bgcolor=t["paper"], font=dict(family=FONT, color=t["ink"], size=13), colorway=COLORS,
+                      legend=dict(bgcolor="rgba(0,0,0,0)"))
+    axis = dict(showline=True, linewidth=1, linecolor=t["ink"], mirror="ticks", ticks="inside", tickcolor=t["ink"],
+                gridcolor=t["grid"], zeroline=False)
+    fig.update_xaxes(**axis)
+    fig.update_yaxes(**axis)
+    wall = dict(backgroundcolor=t["paper"], gridcolor=t["grid"], color=t["ink"], showbackground=True)
+    fig.update_scenes(xaxis=wall, yaxis=wall, zaxis=wall)
+    return fig
 
 
 def figure_geometry(planner: Planner):
@@ -261,17 +323,21 @@ def _prepared(example: str) -> Planner:
     return p
 
 
-def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Optional[str] = None) -> None:
+def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Optional[str] = None,
+               theme: Optional[str] = None) -> None:
     """Build the planner page for the current client (call inside a NiceGUI page function).
 
     ``mode`` is "guided" (a step-by-step workflow) or "expert" (every input and result at once); ``None`` takes the
-    one this browser used last, guided the first time."""
+    one this browser used last, guided the first time. ``theme`` is "light" or "dark"; ``None`` takes the one this
+    browser used last, the system's setting the first time."""
     from nicegui import run, ui
 
+    from . import paper
     from .experiment import Experiment, SetupError
 
     state = {"planner": Planner.example(example), "events": events, "mode": mode or "guided",
-             "step": guide.STEPS[0].key, "example": example}
+             "step": guide.STEPS[0].key, "example": example, "theme": theme or "light",
+             "export": None, "journal": "physical_review", "width": "single", "format": "pdf"}
 
     def P() -> Planner:  # noqa: N802
         return state["planner"]
@@ -392,7 +458,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         if h is None:
             return
         with element.add_slot("append"):
-            icon = ui.icon("help_outline", size="xs").classes("cursor-help text-slate-400")
+            icon = ui.icon("help_outline", size="xs").classes("cursor-help ps-muted")
             with icon, ui.tooltip().classes("bg-slate-800 text-white max-w-xs p-2"):
                 ui.label(h.what).classes("text-sm")
                 ui.label(f"Typical: {h.typical}").classes("text-xs text-slate-300 mt-1")
@@ -403,7 +469,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
     def section(title, fields, sec_name, values):
         if title:
-            ui.label(title).classes("text-sm font-semibold mt-3")
+            ui.label(title).classes("ps-section mt-3")
         # The guided steps have few fields each: one per line leaves room for the labels.
         with ui.grid(columns=1 if state["mode"] == "guided" else 2).classes("w-full gap-1"):
             for field, label, placeholder in fields:
@@ -436,7 +502,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
     def particle_detectors(d: dict) -> None:
         with ui.row().classes("items-center mt-3 w-full"):
-            ui.label("Particle detectors").classes("text-sm font-semibold")
+            ui.label("Particle detectors").classes("ps-section")
             ui.space()
             with ui.button("Add", icon="add").props("dense flat"):
                 with ui.menu():
@@ -444,14 +510,14 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                         with ui.menu_item(on_click=add_detector(pl.key)).classes("max-w-sm"):
                             with ui.column().classes("gap-0"):
                                 ui.label(pl.label).classes("text-sm font-medium")
-                                ui.label(pl.why).classes("text-xs text-slate-500")
+                                ui.label(pl.why).classes("text-xs ps-muted")
         ui.label("Silicon detectors: they measure the energy of the scattered beam particles and recoils. Set θ "
                  "below 90° for forward angles, above 90° for backward ones, or use Add for a ready-made detector "
-                 "in each region.").classes("text-xs text-slate-500")
+                 "in each region.").classes("text-xs ps-muted")
         size_fields = set().union(*SHAPE_FIELDS.values())
         for i, det in enumerate(d["detectors"]):
             shape = det.get("shape", "circle")
-            with ui.expansion(f"{det.get('name') or f'D{i + 1}'} · {shape} silicon").classes("w-full bg-white"):
+            with ui.expansion(f"{det.get('name') or f'D{i + 1}'} · {shape} silicon").classes("w-full ps-card"):
                 sel = ui.select(list(SHAPE_FIELDS), value=shape, label="Shape",
                                 on_change=lambda e, k=i: edit(f"detector {k + 1}", "shape", e.value)).props(
                     "dense outlined").classes("w-full")
@@ -465,13 +531,13 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
     def gamma_detectors(d: dict) -> None:
         with ui.row().classes("items-center mt-3 w-full"):
-            ui.label("γ-ray detectors").classes("text-sm font-semibold")
+            ui.label("γ-ray detectors").classes("ps-section")
             ui.space()
             ui.button("Add", icon="add", on_click=add_gamma_detector).props("dense flat")
         ui.label("Germanium detectors: they see the γ ray emitted when the excited state decays.").classes(
-            "text-xs text-slate-500")
+            "text-xs ps-muted")
         for i, gd in enumerate(d.get("gamma_detectors", [])):
-            with ui.expansion(f"{gd.get('name') or f'γ{i + 1}'} · germanium").classes("w-full bg-white"):
+            with ui.expansion(f"{gd.get('name') or f'γ{i + 1}'} · germanium").classes("w-full ps-card"):
                 section("", GAMMA_FIELDS, f"gamma detector {i + 1}", gd)
                 with ui.row():
                     ui.button("Duplicate", icon="content_copy",
@@ -481,7 +547,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
     def reaction_section(reaction: dict, title: str = "Reaction") -> None:
         if title:
-            ui.label(title).classes("text-sm font-semibold mt-3")
+            ui.label(title).classes("ps-section mt-3")
         kind = reaction.get("type", "elastic")
         sel = ui.select(REACTION_TYPES, value=kind, label="What happens in the target",
                         on_change=lambda e: edit("reaction", "type", e.value)).props("dense outlined").classes(
@@ -511,13 +577,13 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         d = P().draft
         if key == "goal":
             for goal, (name, text, ex) in guide.GOALS.items():
-                with ui.card().classes("w-full p-3 gap-1 bg-white"):
+                with ui.card().classes("w-full p-3 gap-1 ps-card"):
                     ui.label(name).classes("font-semibold")
-                    ui.label(text).classes("text-sm text-slate-600")
+                    ui.label(text).classes("text-sm ps-muted")
                     ui.button("Start here", icon="arrow_forward",
                               on_click=lambda ex=ex: load_example(ex, then="beam")).props(
                         "dense flat no-caps").classes("self-start")
-                    ui.label(f"Starts from the example {ex}.").classes("text-xs text-slate-500")
+                    ui.label(f"Starts from the example {ex}.").classes("text-xs ps-muted")
             ui.label("Or keep the current setup and set the reaction here:").classes("text-sm mt-2")
             reaction_section(d.get("reaction", {"type": "elastic"}), title="")
         elif key == "beam":
@@ -548,7 +614,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             for i, s in enumerate(steps):
                 step = s["step"]
                 with ui.step(step.key, title=f"{i + 1}. {step.title}"):
-                    ui.label(step.intro).classes("text-sm text-slate-600")
+                    ui.label(step.intro).classes("text-sm ps-muted")
                     step_inputs(step.key)
                     step_status(step.key, keys[i - 1] if i else None, keys[i + 1] if i + 1 < len(keys) else None)
 
@@ -559,8 +625,8 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         problems = next((s["problems"] for s in guide.steps_for(P()) if s["step"].key == key), [])
         for p in problems:
             with ui.row().classes("items-start no-wrap gap-1 mt-1"):
-                ui.icon("error").classes("text-red-700")
-                ui.label(p).classes("text-sm text-red-700")
+                ui.icon("error").classes("ps-bad")
+                ui.label(p).classes("text-sm ps-bad")
         with ui.row().classes("mt-2 gap-2"):
             if nxt:
                 btn = ui.button("Next", icon="arrow_downward", on_click=go_to(nxt))
@@ -574,16 +640,139 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
     @ui.refreshable
     def warnings_banner():
         ws = P().warnings()
-        if not ws:
-            ui.label("No warnings.").classes("text-green-700")
+        if not ws:  # the key results above say so
             return
-        style = {"error": "text-red-700 font-semibold", "warning": "text-amber-800", "note": "text-slate-600"}
+        style = {"error": "ps-bad font-semibold", "warning": "ps-warn", "note": "ps-muted"}
         icon = {"error": "error", "warning": "warning", "note": "info"}
-        with ui.card().classes("w-full bg-amber-50 p-2 gap-1"):
+        with ui.card().classes("w-full ps-warnbox p-2 gap-1"):
             for w in ws:
                 with ui.row().classes("items-start no-wrap gap-2"):
                     ui.icon(icon[w.level]).classes(style[w.level])
                     ui.label(w.text).classes(style[w.level] + " text-sm")
+
+    # -- figures and their export ---------------------------------------------------------------------------------
+    def plot(fig, name: str, **options) -> None:
+        """A figure on its plate, with the button that exports it in a journal's style."""
+        with ui.column().classes("w-full ps-plate gap-0"):
+            with ui.row().classes("w-full items-center"):
+                ui.space()
+                ui.button("Paper figure", icon="article", on_click=lambda: open_export(name, options)).props(
+                    "dense flat no-caps").tooltip("Export this figure in a journal's style")
+            ui.plotly(themed(fig, state["theme"])).classes("w-full")
+
+    def open_export(name: str, options: dict) -> None:
+        state["export"] = (name, options)
+        export_controls.refresh()
+        export_dialog.open()
+
+    async def render_preview() -> None:
+        name, options = state["export"]
+        j, w = state["journal"], state["width"]
+        preview_box.clear()
+        with preview_box:
+            ui.spinner(size="lg")
+        try:
+            png = await run.io_bound(lambda: paper.preview(P(), name, j, w, **options))
+        except Exception as err:  # noqa: BLE001 -- show the reason instead of an empty dialog
+            preview_box.clear()
+            with preview_box:
+                ui.label(f"Could not draw the figure: {err}").classes("ps-bad")
+            return
+        if (j, w) != (state["journal"], state["width"]):  # the choice changed while this one was drawn
+            return
+        preview_box.clear()
+        mm = paper.width_mm(j, w)
+        style = paper.journal(j)
+        with preview_box:
+            with ui.element("div").classes("ps-paper"):
+                ui.html(f'<img alt="{paper.FIGURES[name]} in the {style.label} style" style="width: {mm}mm" '
+                        f'src="data:image/png;base64,{base64.b64encode(png).decode()}">', sanitize=False)
+            ui.label(f"{mm:g} mm wide · {style.size:g} pt {style.family} lettering").classes("text-xs ps-muted")
+
+    async def choose(key: str, value) -> None:
+        if state[key] == value:
+            return
+        state[key] = value
+        if key == "journal" and state["width"] not in paper.JOURNALS[value].widths:
+            state["width"] = "single"
+        if key != "format":
+            export_controls.refresh()
+            await render_preview()
+
+    async def download_figure() -> None:
+        name, options = state["export"]
+        j, w, fmt = state["journal"], state["width"], state["format"]
+        note = ui.notification("Drawing the figure…", spinner=True, timeout=None)
+        try:
+            data = await run.io_bound(lambda: paper.export(P(), name, fmt, j, w, **options))
+        finally:
+            note.dismiss()
+        ui.download.content(data, f"{name}-{j}-{w}.{fmt}")
+
+    def download_data() -> None:
+        name, options = state["export"]
+        ui.download.content(paper.data_csv(P(), name, **options), f"{name}.csv")
+
+    @ui.refreshable
+    def export_controls() -> None:
+        if state["export"] is None:
+            return
+        style = paper.JOURNALS[state["journal"]]
+        ui.label(f"Paper figure: {paper.FIGURES[state['export'][0]]}").classes("text-lg font-semibold")
+        ui.select({k: j.label for k, j in paper.JOURNALS.items()}, value=state["journal"], label="Journal style",
+                  on_change=lambda e: choose("journal", e.value)).props("dense outlined").classes("w-full")
+        ui.label(style.note + " Check the journal's current guidelines before you submit.").classes(
+            "text-xs ps-muted")
+        ui.label("Width").classes("ps-section")
+        ui.toggle({k: f"{paper.WIDTHS[k]} · {mm:g} mm" for k, mm in style.widths.items()}, value=state["width"],
+                  on_change=lambda e: choose("width", e.value)).props("dense no-caps unelevated")
+        ui.label("Format").classes("ps-section")
+        ui.toggle({k: label for k, (label, _) in paper.FORMATS.items()}, value=state["format"],
+                  on_change=lambda e: choose("format", e.value)).props("dense no-caps unelevated")
+        ui.button("Download figure", icon="download", on_click=download_figure).props("no-caps unelevated")
+        ui.button("Download the plotted data (CSV)", icon="table_view", on_click=download_data).props(
+            "no-caps flat")
+        ui.label("White background in either theme. Text stays editable text in PDF and SVG, and every curve has "
+                 "its own line style, so the figure also reads in greyscale.").classes("text-xs ps-muted")
+
+    # -- key results ------------------------------------------------------------------------------------------
+    @ui.refreshable
+    def readouts() -> None:
+        try:
+            r, t, ws = P().rates(), P().trajectories(), P().warnings()
+        except Exception:  # noqa: BLE001 -- the strip must never break the page
+            return
+        rows = r["rows"]
+        what = {"all": "counts", "excitations": "excitations", "coincidences": "coincidences"}[r["measured"]]
+        fast = max(rows, key=lambda x: x["rate_per_s"])
+        rate = fast["rate_per_s"]
+        cells = [("Highest rate", (f"{rate:,.0f}" if rate >= 1000 else _fmt(rate, 3)) + " /s",
+                  f"particles in {fast['detector']}", "")]
+        timed = [x for x in rows if x["beam_time_s"] is not None]
+        if r["counts_wanted"] and timed:
+            slow = max(timed, key=lambda x: x["beam_time_s"])
+            cells.append(("Longest beam time", _time(slow["beam_time_s"]),
+                          f"{slow['detector']}, for {r['counts_wanted']} {what}", ""))
+        else:
+            few = min(rows, key=lambda x: x["counts_in_run"])
+            cells.append(("Fewest counts in the run", _fmt(few["counts_in_run"], 3), f"{what} in {few['detector']}",
+                          ""))
+        cells.append(("Closest approach, head-on", f"{t['d0_fm']:.1f} fm",
+                      f"nuclear range {t['interaction_radius_fm']:.1f} fm", ""))
+        n = {level: sum(w.level == level for w in ws) for level in ("error", "warning", "note")}
+        if n["error"]:
+            checks = (f"{n['error']} error" + "s" * (n["error"] > 1), "ps-bad")
+        elif n["warning"]:
+            checks = (f"{n['warning']} warning" + "s" * (n["warning"] > 1), "ps-warn")
+        else:
+            checks = ("No warnings", "ps-ok")
+        cells.append(("Setup checks", checks[0], f"{n['note']} note" + "s" * (n["note"] != 1), checks[1]))
+        with ui.element("div").classes("ps-readouts"):
+            for title, value, sub, colour in cells:
+                with ui.element("div").classes("ps-readout"):
+                    ui.label(title).classes("text-xs ps-muted")
+                    ui.label(value).classes("ps-readout-value " + colour)
+                    ui.label(sub).classes("text-xs ps-muted")
 
     # -- result tabs ------------------------------------------------------------------------------------------
     def columns(spec):
@@ -591,7 +780,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
     @ui.refreshable
     def geometry_panel():
-        ui.plotly(figure_geometry(P())).classes("w-full")
+        plot(figure_geometry(P()), "geometry")
         rows = [{"detector": d["name"], "omega": _fmt(d["solid_angle_msr"]),
                  "theta": f"{d['theta_range'][0]:.1f}–{d['theta_range'][1]:.1f}",
                  "phi": f"{d['phi_range'][0]:.1f}–{d['phi_range'][1]:.1f}", "segments": d["segments"]}
@@ -607,7 +796,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
     @ui.refreshable
     def kinematics_panel():
-        ui.plotly(figure_kinematics(P())).classes("w-full")
+        plot(figure_kinematics(P()), "kinematics")
 
     @ui.refreshable
     def rates_panel():
@@ -632,7 +821,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
         @ui.refreshable
         def strips(name):
-            ui.plotly(figure_strips(P(), name)).classes("w-full")
+            plot(figure_strips(P(), name), "strips", detector=name)
 
         ui.select(names, value=names[0], label="Rates per strip of",
                   on_change=lambda e: strips.refresh(e.value)).props("dense outlined").classes("w-48")
@@ -657,7 +846,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                         return
                     sweep_out.clear()
                     with sweep_out:
-                        ui.plotly(figure_sweep(s)).classes("w-full")
+                        plot(figure_sweep(s), "sweep", sweep=s)
 
                 ui.button("Run sweep", on_click=do_sweep)
             sweep_out = ui.column().classes("w-full")
@@ -672,7 +861,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                         "ein": f"{x['energy_in_mev']:.4f}", "eout": f"{x['energy_out_mev']:.4f}",
                         "loss": f"{x['loss_mev'] * 1e3:.1f}", "strag": f"{x['straggling_fwhm_mev'] * 1e3:.1f}"}
                        for x in el["layers"]]).props("dense flat")
-        ui.plotly(figure_energy_loss(P())).classes("w-full")
+        plot(figure_energy_loss(P()), "energy_loss")
         ui.table(columns=columns((("detector", "Detector"), ("e", "Scattered beam (MeV)"),
                                   ("dl", "After dead layer (MeV)"), ("pt", "Punch-through above (MeV)"))),
                  rows=[{"detector": x["detector"], "e": f"{x['ejectile_energy_mev']:.4f}",
@@ -691,12 +880,12 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                 fig = await run.io_bound(figure_spectra, P(), int(n.value), int(seed.value))
                 plot_area.clear()
                 with plot_area:
-                    ui.plotly(fig).classes("w-full")
+                    plot(fig, "spectra", events=int(n.value), seed=int(seed.value))
 
             ui.button("Simulate", icon="play_arrow", on_click=simulate)
         plot_area = ui.column().classes("w-full")
         with plot_area:
-            ui.plotly(figure_spectra(P(), state["events"], 1)).classes("w-full")
+            plot(figure_spectra(P(), state["events"], 1), "spectra", events=state["events"], seed=1)
 
     @ui.refreshable
     def trajectories_panel():
@@ -704,7 +893,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         ui.label(f"{P().experiment.beam.nuclide} on {t['target']}: head-on distance d₀ = {t['d0_fm']:.2f} fm, "
                  f"nuclear range {t['interaction_radius_fm']:.1f} fm, grazing angle "
                  f"{t['grazing_angle_deg']:.1f}° (CM).").classes("text-sm")
-        ui.plotly(figure_trajectories(P())).classes("w-full")
+        plot(figure_trajectories(P()), "trajectories")
 
     @ui.refreshable
     def gamma_panel():
@@ -719,7 +908,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                  f"B↑ = {s['b_up_e2fm']:.4g} e²fm^{2 * int(s['multipolarity'][1])}): ξ = {g['xi']:.2f}, "
                  f"η = {g['eta']:.1f}, total {g['total_mb']:.3g} mb; safe up to "
                  f"{g['max_safe_angle']:.0f}° CM.").classes("text-sm")
-        ui.plotly(figure_excitation(P())).classes("w-full")
+        plot(figure_excitation(P()), "gamma")
         ui.table(columns=columns((("detector", "Particle detector"), ("rate", "Excitation events (1/s)"))),
                  rows=[{"detector": k, "rate": _fmt(v)} for k, v in g["rates"].items()]).props("dense flat")
         if g["particles"]:
@@ -727,7 +916,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             ui.label("At each particle detector's smallest, central and largest angle, at the reaction point "
                      "(before energy loss in the target; the Spectra tab includes it). β is the speed of the "
                      "excited nucleus in that event, which the Doppler correction needs.").classes(
-                "text-xs text-slate-500")
+                "text-xs ps-muted")
             ui.table(columns=columns((("detector", "Detector"), ("particle", "Particle"), ("theta", "θ lab (deg)"),
                                       ("el", "Elastic (MeV)"), ("ex", "Excited (MeV)"), ("diff", "Difference (MeV)"),
                                       ("beta", "β excited"))),
@@ -770,6 +959,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
               "gamma": gamma_panel, "report": report_panel}
 
     def refresh_results() -> None:
+        readouts.refresh()
         warnings_banner.refresh()
         reading_box.refresh()
         for p in panels.values():
@@ -783,15 +973,15 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             lines = []
         if not lines:
             return
-        with ui.row().classes("w-full items-start no-wrap gap-2 bg-sky-50 rounded p-2"):
-            ui.icon("lightbulb").classes("text-sky-700 mt-0.5")
+        with ui.row().classes("w-full items-start no-wrap gap-2 ps-note rounded p-2"):
+            ui.icon("lightbulb").classes("ps-accent mt-0.5")
             with ui.column().classes("gap-1"):
-                ui.label("How to read this").classes("text-xs font-semibold text-sky-800 uppercase")
-                ui.label(" ".join(lines)).classes("text-sm text-slate-800")
+                ui.label("How to read this").classes("text-xs font-semibold ps-accent uppercase")
+                ui.label(" ".join(lines)).classes("text-sm")
 
     def explain(tab: str):
         e = P().explain(tab)
-        with ui.expansion("Explain: " + e["title"], icon="school").classes("w-full bg-slate-50 mt-2"):
+        with ui.expansion("Explain: " + e["title"], icon="school").classes("w-full ps-sunk mt-2"):
             ui.markdown(f"**Formula.** {e['formula']}\n\n**Assumptions.** {e['assumptions']}\n\n"
                         f"**Where it stops being valid.** {e['limits']}\n\n"
                         f"**Validation:** see the physics register page `{e['register']}` in physim's docs.")
@@ -813,7 +1003,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                 panels[t]()
                 explain(t)
             return
-        with ui.tabs().classes("w-full") as tabs:
+        with ui.tabs().classes("w-full").props("dense no-caps align=left") as tabs:
             tab = {t: ui.tab(labels[t]) for t in TABS}
         with ui.tab_panels(tabs, value=tab["geometry"]).classes("w-full"):
             for t in TABS:
@@ -846,38 +1036,63 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         setup_panel.refresh()
         main_area.refresh()
 
-    async def restore_mode() -> None:
-        if mode is not None:  # given in the address (?mode=...)
+    def set_theme(name: str) -> None:
+        if name == state["theme"]:
             return
+        state["theme"] = name
+        dark.value = name == "dark"
+        ui.run_javascript(f"try {{ localStorage.setItem('physim-planner-theme', '{name}') }} catch (e) {{}}")
+        refresh_results()  # the figures are drawn in the theme's colours
+
+    async def restore_choices() -> None:
+        """The mode and theme this browser used last (the system's light or dark setting the first time), unless
+        the address gives them (?mode=...&theme=...)."""
         try:
-            saved = await ui.run_javascript("localStorage.getItem('physim-planner-mode')", timeout=3)
-        except Exception:  # noqa: BLE001 -- no answer from the browser: keep the default
+            saved_mode, saved_theme, system_dark = await ui.run_javascript(
+                "(() => { let m = null, t = null; try { m = localStorage.getItem('physim-planner-mode'); "
+                "t = localStorage.getItem('physim-planner-theme') } catch (e) {} "
+                "return [m, t, window.matchMedia('(prefers-color-scheme: dark)').matches] })()", timeout=3)
+        except Exception:  # noqa: BLE001 -- no answer from the browser: keep the defaults
             return
-        if saved in ("guided", "expert") and saved != state["mode"]:
-            mode_toggle.value = saved
+        if theme is None:
+            wanted = saved_theme if saved_theme in THEMES else ("dark" if system_dark else "light")
+            if wanted != state["theme"]:
+                theme_toggle.value = wanted
+        if mode is None and saved_mode in ("guided", "expert") and saved_mode != state["mode"]:
+            mode_toggle.value = saved_mode
 
     # -- layout -----------------------------------------------------------------------------------------------
-    ui.query("body").style("background-color: #ffffff; color: #1b1b1b")  # light page in a dark-mode browser too
-    with ui.header().classes("items-center bg-slate-800 py-1"):
-        ui.label("physim · experiment planner").classes("text-lg font-medium")
+    ui.add_css(STYLE)
+    dark = ui.dark_mode(state["theme"] == "dark")
+    with ui.header(elevated=False).classes("items-center ps-header py-1"):
+        ui.label("physim").classes("text-lg font-semibold")
+        ui.label("experiment planner").classes("ps-muted")
         ui.space()
         mode_toggle = ui.toggle({"guided": "Guided", "expert": "Expert view"}, value=state["mode"],
-                                on_change=lambda e: set_mode(e.value)).props(
-            "dense no-caps toggle-color=white toggle-text-color=slate-800 text-color=white")
+                                on_change=lambda e: set_mode(e.value)).props("dense no-caps unelevated")
+        theme_toggle = ui.toggle({"light": "Light", "dark": "Dark"}, value=state["theme"],
+                                 on_change=lambda e: set_theme(e.value)).props("dense no-caps unelevated")
         example_select = ui.select(
             Planner.examples(), value=example, label="Start from example",
             on_change=lambda e: None if e.value == state["example"] else load_example(e.value)).props(
-            "dense dark outlined").classes("w-60")
-        ui.button("Load setup", icon="upload", on_click=lambda: upload_dialog.open()).props("flat color=white")
-        ui.button("Save setup", icon="download", on_click=save_setup).props("flat color=white")
+            "dense outlined").classes("w-60")
+        ui.button("Load setup", icon="upload", on_click=lambda: upload_dialog.open()).props("flat no-caps")
+        ui.button("Save setup", icon="download", on_click=save_setup).props("flat no-caps")
     with ui.dialog() as upload_dialog, ui.card():
         ui.label("Load a setup file (.toml)")
         ui.upload(auto_upload=True, on_upload=load_file).props("accept=.toml max-files=1")
-    with ui.left_drawer(value=True).classes("bg-slate-50").props("width=420 bordered behavior=desktop"):
+    with ui.dialog() as export_dialog, ui.card().classes("ps-card").style("max-width: min(1100px, 95vw)"):
+        with ui.row().classes("items-start gap-6"):
+            with ui.column().classes("gap-2").style("width: 320px; max-width: 100%"):
+                export_controls()
+            preview_box = ui.column().classes("items-center gap-2")
+    export_dialog.on("show", render_preview)
+    with ui.left_drawer(value=True).classes("ps-rail").props("width=420 bordered behavior=desktop"):
         setup_panel()
     with ui.column().classes("w-full gap-2"):
+        readouts()
         main_area()
-    ui.timer(0.2, restore_mode, once=True)
+    ui.timer(0.2, restore_choices, once=True)
 
 
 # -- starting the server --------------------------------------------------------------------------------------------
@@ -977,8 +1192,9 @@ def main(argv: Optional[list] = None) -> None:
         raise SystemExit("The planner app needs NiceGUI: pip install physim-engine[app]") from None
 
     @ui.page("/")
-    def index(example: str = args.example, mode: Optional[str] = None):
-        build_page(example, mode=mode if mode in ("guided", "expert") else None)
+    def index(example: str = args.example, mode: Optional[str] = None, theme: Optional[str] = None):
+        build_page(example, mode=mode if mode in ("guided", "expert") else None,
+                   theme=theme if theme in THEMES else None)
 
     @app.get("/physim-planner")
     def marker():
@@ -1021,4 +1237,4 @@ def _start_idle_timer(check, every: float) -> None:
 
 __all__ = ["FIGURES", "MARKER", "build_page", "log_path", "main", "pick_port", "planner_at", "figure_energy_loss", "figure_geometry", "figure_kinematics",
            "figure_excitation", "figure_spectra", "figure_strips", "figure_sweep", "figure_trajectories",
-           "report_zip"]
+           "report_zip", "themed"]

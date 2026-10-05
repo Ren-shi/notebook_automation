@@ -17,12 +17,26 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - A fully hidden detector's warning names the detector in front, and shadowing is now a warning, not a note.
 
 ### Changed
+- The planner app has a new look: a quieter header and setup panel, numbers in a monospace face, and no fixed white
+  page. It still loads no fonts or scripts from the network.
 - The planner app draws its Matplotlib figures off screen (Agg). The report builds them in a worker thread, where
   the on-screen backend could fail.
 - `physim app` listens on 127.0.0.1 by default instead of every network interface (NiceGUI's default), so it is not
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The planner app has a **light and a dark theme** (**Light** / **Dark** in the header, or `?theme=dark`). It
+  follows the system's setting the first time and remembers the choice. Figures are drawn in the theme's colours,
+  with boxed axes and a colour-blind-safe palette; `app.themed(fig, theme)` does the same for a notebook.
+- **Paper figures in a journal's style.** Every figure in the app has a **Paper figure** button: choose Physical
+  Review, Nature, Science, Elsevier or Springer and a column width, and download a PDF, SVG or 600 dpi PNG at
+  exactly that width, plus the plotted data as CSV.
+  - The new module `physim.nuclear.paper` does the same from Python: `paper.figure`, `paper.export`,
+    `paper.data_csv`, and the styles in `paper.JOURNALS`.
+  - The figures are white with black, boxed axes; every curve has its own line style as well as its own colour,
+    and text stays editable in the PDF and SVG files.
+- The planner app shows a strip of key results above the tabs: highest rate, longest beam time, closest approach
+  and the number of warnings.
 - Coulomb-excitation beam times count what the measurement uses: excitation events seen in a particle detector
   together with their γ ray.
   - γ-ray detectors gain an optional `efficiency` (full-energy peak); without it, their geometric coverage is used

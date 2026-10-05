@@ -4,7 +4,7 @@ This is the first part of the nuclear experiment planner (backlog items 33-43). 
 energy loss and count rates build on the :class:`Experiment` described here.
 """
 
-from . import (coulex, data, detectors, events, export, gamma, guide, kinematics, planner, rates, report,
+from . import (coulex, data, detectors, events, export, gamma, guide, kinematics, paper, planner, rates, report,
                rootio, rutherford, stopping, validation)
 from .experiment import (
     EXAMPLES,
@@ -36,6 +36,7 @@ __all__ = [
     "gamma",
     "guide",
     "kinematics",
+    "paper",
     "planner",
     "rates",
     "report",
