@@ -520,11 +520,14 @@ class Rates:
         return "coincidences" if self.experiment.gamma_detectors else "excitations"
 
     def gamma_efficiency(self) -> tuple:
-        """(full-energy-peak efficiency of all γ detectors together, whether any of it is only geometric coverage).
-        Geometric coverage, used for a detector without ``efficiency``, is an upper limit."""
+        """(full-energy-peak efficiency of all γ detectors together at the energy of the excited state's γ ray,
+        whether any of it comes from the typical response model rather than from the setup's ``efficiency`` or
+        ``efficiency_curve``). See :mod:`physim.nuclear.response`."""
         dets = self.experiment.gamma_detectors
-        total = sum(g.peak_efficiency() for g in dets)
-        return min(total, 1.0), any(g.efficiency is None for g in dets)
+        exc = self.experiment.excitation
+        energy = exc.energy_mev if exc is not None else 1.332492
+        total = sum(g.peak_efficiency(energy, self.experiment) for g in dets)
+        return min(total, 1.0), any(g.efficiency is None and not g.efficiency_curve for g in dets)
 
     def rate(self, detector: str, segment: Optional[tuple] = None, counted: bool = True, what: str = "all") -> float:
         """Counts per second in a detector (or one segment). With ``counted``, each channel's rate is scaled by the

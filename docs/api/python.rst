@@ -162,6 +162,9 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.scene
    :members:
 
+.. automodule:: physim.nuclear.response
+   :members:
+
 .. automodule:: physim.nuclear.ensdf
    :members:
 

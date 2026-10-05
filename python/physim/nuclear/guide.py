@@ -152,11 +152,17 @@ HELP = {
     ("gamma", "housing_side"): _h("Side of the square housing, which stops particles.", "about 100 mm for a clover",
                                   "hides more of whatever lies behind it."),
     ("gamma", "window_gap"): _h("Distance from the housing's front window to the crystals.", "a few mm", "—"),
-    ("gamma", "resolution"): _h("Intrinsic energy resolution (FWHM) of the crystal.", "2–3 keV at 1.3 MeV for "
+    ("gamma", "material"): _h("What the crystal is made of: Ge or LaBr3.", "Ge",
+                              "LaBr3 is faster and more efficient per volume, with about ten times worse resolution."),
+    ("gamma", "absorbers"): _h("Material between the target and the detector, such as a lead or copper sheet "
+                               "against X-rays: a material and its thickness, several separated by commas.",
+                               "Pb 1 mm, Cu 0.5 mm", "fewer low-energy γ rays and X-rays reach the crystal; "
+                               "high-energy γ rays are hardly reduced."),
+    ("gamma", "resolution"): _h("Energy resolution (FWHM) of the crystal at 1332 keV; it is scaled to other energies.", "2–3 keV at 1.3 MeV for "
                                 "germanium", "wider γ peaks (added to the Doppler broadening)."),
     ("gamma", "efficiency"): _h("Full-energy-peak efficiency of this detector for the γ ray, as a percentage of all "
                                 "γ rays emitted (from a source measurement or the array's specification). Left "
-                                "empty, the planner uses the crystal's geometric coverage, an upper limit.",
+                                "empty, the planner uses the typical response of such a crystal at this distance.",
                                 "0.5–3 % per germanium crystal at 1.3 MeV",
                                 "more particle–γ coincidences: a shorter beam time."),
 }
@@ -450,8 +456,8 @@ def _coulex_rates(r: dict, need: dict) -> list:
         eff = r["gamma_efficiency"]
         out.append(f"For Coulomb excitation what counts is an excitation event seen in a particle detector together "
                    f"with its γ ray: the γ detectors catch {eff:.1%} of the γ rays"
-                   + (" (their geometric coverage, an upper limit: set each detector's Efficiency for a realistic "
-                      "beam time)." if r["gamma_efficiency_geometric"] else "."))
+                   + (" (from the typical response of such crystals: give a measured Efficiency, or an "
+                      "efficiency curve, for your own detectors)." if r["gamma_efficiency_typical"] else "."))
         what = "particle–γ coincidences"
     else:
         out.append("For Coulomb excitation what counts is the excitation events; add γ-ray detectors to count the "

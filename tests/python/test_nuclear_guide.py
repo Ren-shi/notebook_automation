@@ -113,9 +113,10 @@ def test_coulomb_excitation_beam_time_is_set_by_coincidences():
     """Coulomb excitation is counted in particle–γ coincidences, so its beam time is hours, not seconds."""
     p = Planner.example("coulex_ni58")
     r = p.rates()
-    assert r["measured"] == "coincidences" and r["gamma_efficiency_geometric"]
+    assert r["measured"] == "coincidences" and r["gamma_efficiency_typical"]
     rates = p._rates()
-    eff = sum(g.geometric_efficiency() for g in p.experiment.gamma_detectors)
+    e0 = p.experiment.excitation.energy_mev
+    eff = sum(g.peak_efficiency(e0, p.experiment) for g in p.experiment.gamma_detectors)
     assert r["gamma_efficiency"] == pytest.approx(eff)
     for row in r["rows"]:
         exc = rates.rate(row["detector"], what="excitations")
@@ -123,14 +124,14 @@ def test_coulomb_excitation_beam_time_is_set_by_coincidences():
         assert row["coincidence_per_s"] == pytest.approx(exc * eff)
         assert row["beam_time_s"] == pytest.approx(r["counts_wanted"] / (exc * eff))
         assert row["beam_time_s"] > 3600
-    # A measured photopeak efficiency replaces the geometric coverage.
+    # A measured photopeak efficiency replaces the typical response.
     for i in range(len(p.experiment.gamma_detectors)):
         assert p.set(f"gamma detector {i + 1}", "efficiency", "1 %")
     r2 = p.rates()
-    assert r2["gamma_efficiency"] == pytest.approx(0.04) and not r2["gamma_efficiency_geometric"]
+    assert r2["gamma_efficiency"] == pytest.approx(0.04) and not r2["gamma_efficiency_typical"]
     assert not p.set("gamma detector 1", "efficiency", "150 %") and "at most 100 %" in p.problems[0]
     text = " ".join(guide.reading(Planner.example("coulex_ni58"), "rates"))
-    assert "particle–γ coincidences" in text and "upper limit" in text and " h." in text
+    assert "particle–γ coincidences" in text and "typical response" in text and " h." in text
     # Without γ detectors, the excitation events themselves.
     q = Planner.example("coulex_ni58")
     for _ in range(4):

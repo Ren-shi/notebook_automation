@@ -17,6 +17,11 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - A fully hidden detector's warning names the detector in front, and shadowing is now a warning, not a note.
 
 ### Changed
+- A γ-ray detector without `efficiency` now takes its efficiency from the response model, where it took its
+  geometric coverage (an upper limit) before. Coincidence rates fall and beam times for Coulomb excitation grow
+  accordingly: by a factor of about ten in the ⁵⁸Ni example. `gamma_efficiency_geometric` in `Planner.rates()` is
+  now `gamma_efficiency_typical`.
+- `resolution` of a γ-ray detector is its value at 1332 keV.
 - After an edit, the rates of detectors that did not change, and that nothing shadows, are kept instead of being
   computed again.
 - The planner app has a new look: a quieter header and setup panel, numbers in a monospace face, and no fixed white
@@ -27,6 +32,17 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- γ-ray detectors have a response (`physim.nuclear.response`, backlog 53).
+  - The full-energy-peak efficiency depends on energy, crystal size and distance, from a typical response per
+    crystal material (germanium and LaBr₃). A measured `efficiency_curve` in the setup replaces it.
+  - `absorbers` on a γ-ray detector, the chamber wall and the housing window attenuate the γ rays, with NIST
+    attenuation coefficients.
+  - The spectrum of a γ ray has a full-energy peak, a Compton continuum and escape peaks; the resolution depends
+    on energy.
+  - Calibration sources (²²Na, ⁶⁰Co, ⁸⁸Y, ¹³³Ba, ¹³⁷Cs, ¹⁵²Eu, DDEP data) can be run at the target position:
+    `response.source_run`, and **Run the source** in the app, where the efficiency from each peak is drawn on the
+    detector's efficiency curve.
+  - Activities can be written with units (`37 kBq`, `1 uCi`).
 - The planner app's Geometry tab is an interactive scene, drawn to scale (`physim.nuclear.scene`, backlog 52).
   - Detectors are solids with their rings, strips, crystals, circuit boards and housings; the target, the beam and
     the chamber are drawn too.

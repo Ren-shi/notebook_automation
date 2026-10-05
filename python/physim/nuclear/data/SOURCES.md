@@ -64,6 +64,36 @@ attribution to NIST and with the modifications noted above. NIST provides the da
 of any kind, express or implied; NIST does not warrant that the data are accurate or fit for any purpose and is not
 liable for any damages arising from their use. Contact: NIST Physical Measurement Laboratory, <https://www.nist.gov/pml>.
 
+## `nist_attenuation.csv`: γ-ray attenuation coefficients
+
+- **Source:** NIST Standard Reference Database 126, "Tables of X-Ray Mass Attenuation Coefficients and Mass
+  Energy-Absorption Coefficients" (J. H. Hubbell and S. M. Seltzer, NISTIR 5632), table 3,
+  <https://physics.nist.gov/PhysRefData/XrayMassCoef/tab3.html>, read 2026-10-05.
+- **Content:** the total mass attenuation coefficient μ/ρ (with coherent scattering) from 5 keV to 20 MeV for
+  H, Be, C, N, O, Al, Si, Ti, Cr, Fe, Ni, Cu, Ge, Br, Ag, Cd, Sn, La, Ta, W, Au and Pb. The μ_en/ρ column is not
+  kept.
+- **Licence:** as the other NIST data above (a work of the US Government, not subject to copyright in the United
+  States).
+
+## `calibration_sources.csv`: photon lines of calibration sources
+
+- **Source:** the Decay Data Evaluation Project (DDEP) recommended data, as served by the Laboratoire National
+  Henri Becquerel, <http://www.lnhb.fr/nuclear-data/nuclear-data-table/>, read 2026-10-05 (also published as
+  BIPM Monographie 5, "Table of Radionuclides").
+- **Content:** half-lives, and the energies and intensities of the photons of ²²Na, ⁶⁰Co, ⁸⁸Y, ¹³³Ba, ¹³⁷Cs and
+  ¹⁵²Eu: γ rays and annihilation photons of at least 0.05 per 100 decays, X-rays above 20 keV of at least 1 per
+  100 decays. Each row names the evaluator and year.
+- **Use:** numerical values only, with the source cited here and in the file.
+
+## γ-ray response parameters (in `response.py`, not a data file)
+
+- **From documents:** the clover's relative efficiency (21 to 22% per crystal) and resolution (Mirion's sheet,
+  below); the 1.2 × 10⁻³ of the NaI standard (IEEE Std 325); LaBr₃'s density and resolution (Saint-Gobain's note,
+  below).
+- **Typical values, not from a document:** the peak-to-total ratios and their slopes, the window thicknesses,
+  the shares of the escape peaks and of the flat part of the continuum, and LaBr₃'s factor k. They are listed
+  per crystal in `response.CRYSTALS[...].typical`.
+
 ## `detector_models.toml`: dimensions of real detectors
 
 - **Written for physim.** The file holds dimensions and specifications read from manufacturers' documents on

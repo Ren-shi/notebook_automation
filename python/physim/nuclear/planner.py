@@ -31,6 +31,7 @@ import numpy as np
 from . import data
 from . import data as _data
 from . import ensdf as _ensdf
+from . import response as _response
 from . import scene as _scene
 from .detectors import Array, Response
 from .experiment import Experiment, SetupError, example_names
@@ -348,7 +349,8 @@ class Planner:
             return {"name": gd.name or f"γ{i + 1}", "theta": _q(gd.theta).to("deg"),
                     "phi": _q(gd.phi).to("deg") if gd.phi is not None else 0.0,
                     "distance_mm": _q(gd.distance).to("mm"), "half_angle_deg": gd.half_angle_deg(),
-                    "geometric_efficiency": gd.geometric_efficiency(), "peak_efficiency": gd.peak_efficiency(),
+                    "geometric_efficiency": gd.geometric_efficiency(),
+                    "peak_efficiency": gd.peak_efficiency(self.gamma_energy_mev(), exp),
                     "problem": found[0].text if found else None}
         array = Array.from_experiment(exp)
         g = array.geometries[i]
@@ -359,6 +361,30 @@ class Planner:
                 "phi": math.degrees(math.atan2(y, x)), "distance_mm": float(np.linalg.norm(g.centre)),
                 "theta_range": g.theta_range(), "solid_angle_msr": g.solid_angle(), "hidden": min(hidden, 1.0),
                 "rate_per_s": quick.rate(g.name, counted=False), "problem": found[0].text if found else None}
+
+    def gamma_energy_mev(self) -> float:
+        """The γ-ray energy the efficiencies are quoted at: that of the excited state, or 1332 keV without one."""
+        exc = self.experiment.excitation
+        return exc.energy_mev if exc is not None else _response.REFERENCE_MEV
+
+    def efficiency(self, key: str, points: int = 120) -> dict:
+        """The efficiency curve of γ-ray detector ``key`` ("gamma:N", from 0): full-energy-peak and total
+        efficiency (fractions of all γ rays emitted at the target) and the resolution against energy, with what
+        the response is built from (see :mod:`physim.nuclear.response`)."""
+        gd = self.experiment.gamma_detectors[int(key.split(":")[1])]
+        r = _response.Response(self.experiment, gd)
+        e = np.geomspace(0.03, 3.0, points)
+        return {"name": gd.name or f"γ{int(key.split(':')[1]) + 1}", "energy_mev": e,
+                "peak": r.peak_efficiency(e), "total": r.total_efficiency(e), "fwhm_kev": 1e3 * r.fwhm(e),
+                "transmission": r.transmission(e), **r.describe()}
+
+    def source_run(self, nuclide: str = "152Eu", activity: str = "37 kBq", time: str = "1 h", seed: int = 1):
+        """A simulated run with a calibration source at the target position, without beam
+        (:func:`physim.nuclear.response.source_run`). Kept until the setup changes."""
+        key = ("source", nuclide, activity, time, seed)
+        if key not in self._cache:
+            self._cache[key] = _response.source_run(self.experiment, nuclide, activity, time, seed)
+        return self._cache[key]
 
     def safety(self) -> dict:
         """For Coulomb excitation, which rings (or strips) of each particle detector see collisions closer than
@@ -414,7 +440,9 @@ class Planner:
             gd = self.experiment.gamma_detectors[i]
             out = dict(self.live(key), kind="gamma", model=gd.model)
             out["crystals"] = [label or "crystal" for label, _, _ in gd.elements()]
-            out["coincidence_rate_per_s"] = None if what == "all" else gd.peak_efficiency() * sum(
+            out["gamma_energy_kev"] = 1e3 * self.gamma_energy_mev()
+            out["response"] = _response.Response(self.experiment, gd).describe()
+            out["coincidence_rate_per_s"] = None if what == "all" else out["peak_efficiency"] * sum(
                 r.rate(g.name, what="excitations") for g in r.array)
             if element is not None and len(out["crystals"]) > 1:
                 _, c, rad = gd.elements()[element]
@@ -573,10 +601,10 @@ class Planner:
                 row["coincidence_per_s"] = r.rate(g.name, what="coincidences") if what == "coincidences" else None
             rows.append(row)
             strips[g.name] = r.per_segment(g.name)
-        eff, geometric = r.gamma_efficiency() if what == "coincidences" else (None, False)
+        eff, typical = r.gamma_efficiency() if what == "coincidences" else (None, False)
         return {"rows": rows, "strips": strips, "beam_time_s": r.beam_time_s, "counts_wanted": r.counts_wanted,
                 "particles_per_second": r.particles_per_second, "measured": what, "gamma_efficiency": eff,
-                "gamma_efficiency_geometric": geometric}
+                "gamma_efficiency_typical": typical}
 
     def energy_loss(self) -> dict:
         """The beam through each layer (energy in and out, loss, straggling), the beam energy through the target,

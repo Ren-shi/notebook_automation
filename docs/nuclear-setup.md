@@ -164,8 +164,9 @@ Size, depending on the shape:
 
 ### `[[gamma_detectors]]` (optional)
 
-γ-ray detectors, for Doppler shifts and broadening of the γ rays from an excited nucleus (`physim.nuclear.gamma`).
-Each is a disc facing the target.
+γ-ray detectors, for Doppler shifts and broadening of the γ rays from an excited nucleus (`physim.nuclear.gamma`)
+and for their efficiency and spectrum (`physim.nuclear.response`, see [γ-ray response](#γ-ray-response)). Each
+faces the target: a single disc, or the crystals of a [model](#detector-models-and-the-chamber).
 
 | Field | Required | Unit | Meaning |
 |---|---|---|---|
@@ -173,8 +174,13 @@ Each is a disc facing the target.
 | `theta`, `phi` | `theta` yes | angle | Direction of the detector centre (φ = 0 if left out). |
 | `distance` | yes | length | From the target to the detector face. |
 | `radius` | yes | length | Radius of the face, which sets the opening angle. |
-| `resolution` | no | energy | Intrinsic resolution (FWHM), added to the Doppler broadening. |
-| `efficiency` | no | fraction (`%`) | Full-energy-peak efficiency for the γ ray. Without it, the geometric coverage is used, an upper limit. |
+| `resolution` | no | energy | Resolution (FWHM) at 1332 keV; it is scaled to other energies and added to the Doppler broadening. |
+| `material` | no | — | The crystal: `"Ge"` (if left out) or `"LaBr3"`. |
+| `absorbers` | no | pairs | Material between the target and the detector: `[["Pb", "1 mm"], ["Cu", "0.5 mm"]]`. A thickness is a length or an areal density. |
+| `efficiency_curve` | no | pairs | A measured full-energy-peak efficiency of the detector where it stands: `[["122 keV", "1.2 %"], ["1408 keV", "0.2 %"]]`, at least two points. |
+| `efficiency` | no | fraction (`%`) | One full-energy-peak efficiency, used at every energy. |
+
+Without `efficiency` or `efficiency_curve`, the efficiency comes from the typical response of such a crystal.
 
 ### `[run]`
 
@@ -210,6 +216,8 @@ distance = "200 mm"           # from the target to the front face of the crystal
 | `clover` | `[[gamma_detectors]]` | a germanium clover of four crystals, each 50 mm in diameter and 70 mm long |
 | `LaBr3_2x2` | `[[gamma_detectors]]` | a LaBr₃(Ce) scintillator, one crystal of 2 inches by 2 inches |
 
+The chamber's `wall_material` and `wall_thickness` attenuate the γ rays of every detector outside it.
+
 **Typical values.** Not every dimension is in a data sheet. Each model lists which of its values are typical and
 should be replaced by those of the detector you have: `catalogue.model("S3").typical` in Python, and the `typical`
 and `notes` entries in `physim/nuclear/data/detector_models.toml`, which also names the source of every number.
@@ -236,6 +244,55 @@ beam_pipe_radius = "20 mm"
 
 With a chamber, a particle detector that reaches beyond its radius, or a γ-ray detector whose front lies inside
 its wall, is reported as a problem.
+
+## γ-ray response
+
+A γ-ray detector's efficiency and spectrum are built from a few numbers per crystal material; no photon is followed
+inside the crystal. **These are typical responses, not the calibration of a real detector.** Give your own
+`efficiency_curve` when you have measured one.
+
+For a γ ray of energy E emitted at the target:
+
+| Step | Rule | Where the numbers come from |
+|---|---|---|
+| Solid angle | the fraction of all directions the crystal faces cover | the setup |
+| Attenuation | exp(−Σ μᵢ xᵢ) through the chamber wall (for a detector outside it), the `absorbers` and the housing window | NIST mass attenuation coefficients |
+| Interaction | k (1 − exp(−μ L)) for a crystal of length L | NIST; k from the clover's data sheet (germanium), 1 for LaBr₃ (typical) |
+| Peak-to-total | P/T(E) = min(0.95, P/T(1332 keV) (E / 1332 keV)^−q) | typical: 0.18 and q = 0.68 for germanium, 0.20 and 0.75 for LaBr₃ |
+| The rest | a Compton continuum (Klein–Nishina, one scattering), a flat part up to the peak, escape peaks above 1.022 MeV | typical shares |
+| Resolution | FWHM² = noise² + (FWHM(1332 keV)² − noise²) E / 1332 keV | the data sheets |
+
+For germanium, k is fixed so that a 50 mm × 70 mm crystal has the 21.5% relative efficiency of Mirion's clover
+sheet. The default clover then has a full-energy-peak efficiency of 0.099% at 1332 keV and 25 cm, all four
+crystals together and without add-back. A detector given only a `radius` is taken as long as it is wide.
+
+```python
+from physim.nuclear import Experiment, response
+
+exp = Experiment.example("coulex_ni58")
+r = response.Response(exp, exp.gamma_detectors[0])
+r.peak_efficiency(1.332)          # fraction of all γ rays emitted that end in the full-energy peak
+r.total_efficiency(1.332)         # ... that leave any energy
+r.fwhm(1.332)                     # MeV
+response.transmission("Pb", "1 mm", 0.122)
+```
+
+**Calibration sources.** A source at the target position, in place of the beam, lets you measure the efficiency
+of your arrangement as you would in the experimental hall:
+
+```python
+run = response.source_run(exp, "152Eu", activity="37 kBq", time="1 h")
+run.efficiency_points("Ge90")     # per strong line: the efficiency from its peak area, and the one put in
+response.source_run(exp, "60Co").peak_to_total("Ge90")
+```
+
+- The sources are ²²Na, ⁶⁰Co, ⁸⁸Y, ¹³³Ba, ¹³⁷Cs and ¹⁵²Eu, with the lines and intensities of the DDEP evaluations.
+- The counts in each bin are drawn from a Poisson distribution, and the source decays during the run.
+- A peak area is the counts within ±3σ less the level of the bands beside it. Lines that overlap a neighbour are
+  left out of the efficiency points.
+- Not included: two γ rays of one decay summing in a crystal, the room background, dead time, add-back.
+
+Units of activity are `Bq`, `kBq`, `MBq`, `uCi` and `mCi`.
 
 ## Materials
 

@@ -75,6 +75,7 @@ crystal_pitch = "45 mm"
 housing_side = "101 mm"
 window_gap = "5 mm"
 resolution = "2.1 keV"
+material = "Ge"
 
 [clover.facts]
 crystal_gap_max = "0.7 mm"
@@ -104,6 +105,7 @@ crystal_length = "50.8 mm"
 housing_side = "58 mm"
 window_gap = "2 mm"
 resolution = "28 keV"
+material = "LaBr3"
 
 [LaBr3_2x2.facts]
 resolution_at_662_keV = "2.9 %"
