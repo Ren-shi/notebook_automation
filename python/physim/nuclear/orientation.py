@@ -20,7 +20,8 @@ completes it. The beam direction is (−sin(θ/2), cos(θ/2), 0) and the scatter
 (sin(θ/2), cos(θ/2), 0), θ being the CM scattering angle. :meth:`Populated.axes` gives the frame in the
 laboratory.
 
-**The amplitude** of going from |I_i M_i⟩ to |I_f M_f⟩ by a multipole Eλ is
+**The amplitude** of going from the substate M_i of the ground state (spin I_i) to the substate M_f of a level
+(spin I_f) by a multipole Eλ is
 
     a = K_λ ⟨I_f‖M(Eλ)‖I_i⟩ (−1)^{I_f − M_f} (I_f λ I_i; −M_f μ M_i) Y_λμ(π/2, 0) I_λ,−μ(θ, ξ),   μ = M_f − M_i,
 
@@ -143,9 +144,9 @@ class Populated:
 
     excitation: Excitation
     theta_cm: float
-    #: {level: probability of exciting it directly}.
+    #: Probability of exciting each level directly, by level.
     direct: dict
-    #: {level: {(k, q): t_kq}} with feeding.
+    #: Statistical tensors with feeding: by level, then by the pair (rank, component).
     tensors: dict
     isotropic: bool = False
 

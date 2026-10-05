@@ -31,7 +31,8 @@ def _fact(x: float) -> float:
 
 
 def triangle(a: float, b: float, c: float) -> bool:
-    """Whether three angular momenta can couple: |a − b| ≤ c ≤ a + b, with a + b + c an integer."""
+    """Whether three angular momenta can couple: c lies between the difference and the sum of a and b, and
+    a + b + c is an integer."""
     return abs(a - b) - 1e-9 <= c <= a + b + 1e-9 and abs((a + b + c) - round(a + b + c)) < 1e-9
 
 
@@ -146,10 +147,12 @@ def _double_factorial(n: int) -> float:
 
 def multipole_pattern(amplitudes, theta, phi) -> np.ndarray:
     """The angular distribution of radiation from a source with multipole amplitudes a_M of one order L,
-    |Σ_M a_M X_LM(θ, φ)|² with the vector spherical harmonics X_LM = L Y_LM / √(L(L+1)) (Jackson, section 9.8).
+    the squared size of Σ_M a_M X_LM(θ, φ), with the vector spherical harmonics X_LM = L Y_LM / √(L(L+1))
+    (Jackson, section 9.8).
 
-    ``amplitudes`` holds a_M for M = −L … L. This is the distribution of the γ rays of a state Σ a_M |L M⟩
-    decaying to a spin-0 state, and integrates to Σ |a_M|². It is the direct formula against which the tensor
+    ``amplitudes`` holds a_M for M = −L … L. This is the distribution of the γ rays of a state of spin
+    L, with amplitude a_M in each substate M, decaying to a spin-0 state. It integrates to the sum of the
+    squared sizes of the amplitudes. It is the direct formula against which the tensor
     formalism is checked."""
     a = np.asarray(amplitudes, dtype=complex)
     L = (len(a) - 1) // 2  # noqa: N806
