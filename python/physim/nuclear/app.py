@@ -277,15 +277,17 @@ FIGURES = {"geometry": figure_geometry, "kinematics": figure_kinematics, "energy
            "spectra": figure_spectra, "trajectories": figure_trajectories, "gamma": figure_excitation}
 
 
-def report_zip(planner: Planner, seed: int = 1, events: int = 200_000) -> bytes:
-    """The report folder (HTML, CSV, figures, setup, ROOT file if uproot is installed) as a zip archive."""
+def report_zip(planner: Planner, seed: int = 1, events: int = 200_000, journal: str = "physical_review",
+               width: str = "single") -> bytes:
+    """The report folder (HTML, CSV, figures in a journal's style, setup, ROOT file if uproot is installed) as a
+    zip archive."""
     import tempfile
     from pathlib import Path
 
     from .report import build
 
     with tempfile.TemporaryDirectory() as tmp:
-        build(planner.experiment, seed=seed, events=events).write(tmp)
+        build(planner.experiment, seed=seed, events=events, journal=journal, width=width).write(tmp)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for p in sorted(Path(tmp).rglob("*")):
@@ -944,7 +946,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         async def download():
             note = ui.notification("Building the report…", spinner=True, timeout=None)
             try:
-                data = await run.io_bound(report_zip, P(), 1, 200_000)
+                data = await run.io_bound(report_zip, P(), 1, 200_000, state["journal"], state["width"])
             except ImportError as err:
                 ui.notify(f"The report export is not available in this version: {err}", type="warning")
                 return
@@ -952,6 +954,21 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                 note.dismiss()
             ui.download.content(data, "physim-report.zip")
 
+        def pick(key: str, value) -> None:
+            state[key] = value
+            if state["width"] not in paper.JOURNALS[state["journal"]].widths:
+                state["width"] = "single"
+            report_panel.refresh()
+
+        ui.label("The report's figures are drawn in a journal's style, at its column width.").classes(
+            "text-sm ps-muted")
+        with ui.row().classes("items-end gap-2"):
+            ui.select({k: j.label for k, j in paper.JOURNALS.items()}, value=state["journal"], label="Journal style",
+                      on_change=lambda e: pick("journal", e.value)).props("dense outlined").classes("w-80")
+            ui.select({k: f"{paper.WIDTHS[k]} · {mm:g} mm"
+                       for k, mm in paper.JOURNALS[state["journal"]].widths.items()}, value=state["width"],
+                      label="Figure width", on_change=lambda e: pick("width", e.value)).props(
+                "dense outlined").classes("w-56")
         ui.button("Build and download the report", icon="description", on_click=download)
 
     panels = {"geometry": geometry_panel, "kinematics": kinematics_panel, "rates": rates_panel,

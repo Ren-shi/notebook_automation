@@ -117,6 +117,30 @@ def test_figures_and_command_line(tmp_path):
         assert (tmp_path / "out" / "figures" / f"{name}.pdf").exists()
 
 
+def _png_width(path):
+    return int.from_bytes(path.read_bytes()[16:20], "big")
+
+
+def test_figures_in_a_journal_style(tmp_path):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    # The default is Physical Review, one column: 86 mm at 600 dpi.
+    rep = report.build(Experiment.example("alpha_on_gold"), events=20_000, validation=False)
+    rep.write_figures(tmp_path / "prc")
+    assert _png_width(tmp_path / "prc" / "kinematics.png") == pytest.approx(86 / 25.4 * 600, abs=2)
+    figs = rep.figures()
+    assert figs["kinematics"].axes[0].xaxis.label.get_fontfamily() == ["serif"]
+    assert len(figs["spectra"].axes) == len(rep.experiment.detectors)  # one panel per detector
+
+    rc = report.main(["alpha_on_gold", "-o", str(tmp_path / "nature"), "--events", "20000", "--journal", "nature",
+                      "--width", "double"])
+    assert rc == 0
+    assert _png_width(tmp_path / "nature" / "figures" / "coverage.png") == pytest.approx(183 / 25.4 * 600, abs=2)
+    with pytest.raises(ValueError, match="has no 'middle' width"):
+        report.build(Experiment.example("alpha_on_gold"), journal="nature", width="middle")
+
+
 def test_coulomb_excitation_in_the_report(tmp_path):
     rep = report.build(Experiment.example("coulex_ni58"), seed=1, events=20_000, validation=False)
     x = rep.excitation

@@ -35,6 +35,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
     `paper.data_csv`, and the styles in `paper.JOURNALS`.
   - The figures are white with black, boxed axes; every curve has its own line style as well as its own colour,
     and text stays editable in the PDF and SVG files.
+  - The beam-time report's figures use the same styles: `python -m physim.nuclear.report --journal nature --width
+    double`, `report.build(exp, journal=..., width=...)`, or the journal choice in the app's **Report** tab. They
+    are Physical Review, one column, by default, and the PNG files are now 600 dpi (they were 200 dpi).
 - The planner app shows a strip of key results above the tabs: highest rate, longest beam time, closest approach
   and the number of warnings.
 - Coulomb-excitation beam times count what the measurement uses: excitation events seen in a particle detector

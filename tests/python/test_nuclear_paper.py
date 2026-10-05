@@ -11,7 +11,7 @@ pytest.importorskip("matplotlib")
 def _options(p, name):
     if name == "sweep":
         return {"sweep": p.sweep("beam energy", ["4 MeV", "5 MeV"], detector=p.experiment.detectors[0].name)}
-    return {"events": 20_000} if name == "spectra" else {}
+    return {"events": 20_000} if name in ("spectra", "detector_spectra") else {}
 
 
 @pytest.mark.parametrize("example", Planner.examples())

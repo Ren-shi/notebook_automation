@@ -67,15 +67,16 @@ JOURNALS = {
 WIDTHS = {"single": "1 column", "middle": "1.5 columns", "double": "2 columns"}
 
 #: The figures :func:`figure` can draw, with their titles.
-FIGURES = {"geometry": "Geometry", "kinematics": "Kinematics", "strips": "Rates per strip",
-           "energy_loss": "Energy loss", "spectra": "Spectra", "trajectories": "Trajectories",
+FIGURES = {"geometry": "Geometry", "coverage": "Angular coverage", "kinematics": "Kinematics",
+           "strips": "Rates per strip", "energy_loss": "Energy loss", "spectra": "Spectra",
+           "detector_spectra": "Spectra by detector", "trajectories": "Trajectories",
            "gamma": "Excitation probability", "sweep": "Sweep"}
 
 #: File formats of :func:`export`: label and savefig options.
 FORMATS = {"pdf": ("PDF (vector)", {}), "svg": ("SVG (vector)", {}), "png": ("PNG, 600 dpi", {"dpi": 600})}
 
 #: Height over width of each figure.
-_ASPECT = {"geometry": 0.9, "trajectories": 0.72, "strips": 0.8}
+_ASPECT = {"geometry": 0.9, "coverage": 0.6, "trajectories": 0.72, "strips": 0.8}
 
 
 def journal(key) -> Journal:
@@ -148,6 +149,42 @@ def series(planner, name: str, *, detector=None, events: int = 100_000, seed: in
             e = np.asarray(h["edges"])
             out.append((det, 0.5 * (e[1:] + e[:-1]), np.asarray(h["counts"])))
         return {"x": "measured energy (MeV)", "y": "counts / bin", "series": out}
+    if name == "detector_spectra":
+        ev = planner.spectra(events=events, seed=seed)["events"]
+        out = []
+        for det in ev.detectors:
+            x = ev["measured"][ev.select(det)]
+            if not len(x):
+                continue
+            rng = (0.0, float(x.max()) * 1.03)
+            h, e = ev.spectrum(det, bins=300, range=rng)
+            centres = 0.5 * (e[1:] + e[:-1])
+            out.append((f"{det}: all", centres, h))
+            for ch in ev.channels:
+                for particle in ("ejectile", "recoil"):
+                    hp, _ = ev.spectrum(det, bins=300, range=rng, channel=ch, particle=particle)
+                    if hp.sum() > 1e-3 * h.sum():
+                        out.append((f"{det}: {ch} {particle}", centres, hp))
+        return {"x": "measured energy (MeV)", "y": "counts / bin", "series": out}
+    if name == "coverage":
+        from .detectors import Array, angles
+
+        out = []
+        gap = [np.nan]
+        for g in Array.from_experiment(planner.experiment):
+            if g.phi_range() == (-180.0, 180.0):  # a ring around the beam: a band between its θ edges
+                lo, hi = g.theta_range()
+                out.append((g.name, np.array([-180.0, 180.0, np.nan, -180.0, 180.0]),
+                            np.array([lo, lo, np.nan, hi, hi])))
+                continue
+            th, ph = angles(g.outline(360))
+            _, ph0 = angles(g.centre)
+            # Unwrap φ around the detector's own azimuth; copies shifted by ±360° show a detector that straddles
+            # ±180° whole at both edges.
+            ph = ph0 + (ph - ph0 + 180.0) % 360.0 - 180.0
+            out.append((g.name, np.concatenate([ph, gap, ph - 360.0, gap, ph + 360.0]),
+                        np.concatenate([th, gap, th, gap, th])))
+        return {"x": "φ (deg)", "y": "θ (deg)", "series": out}
     if name == "trajectories":
         t = planner.trajectories()
         out = [(f"b = {o['b_fm']:.1f} fm, {o['deflection_deg']:.0f}°", o["xy"][:, 0], o["xy"][:, 1])
@@ -222,8 +259,39 @@ def _draw(planner, name: str, fig, options: dict) -> None:
         ax.tick_params(pad=0)
         ax.xaxis.labelpad = ax.yaxis.labelpad = ax.zaxis.labelpad = -4
         return
+    if name == "detector_spectra":
+        names = [d.name for d in planner.experiment.detectors]
+        counted = {label.split(": ", 1)[0] for label, _, _ in s["series"]}
+        axes = fig.subplots(len(names), 1, squeeze=False)[:, 0]
+        for ax, det in zip(axes, names):
+            k = 0
+            for label, x, y in s["series"]:
+                d, what = label.split(": ", 1)
+                if d != det:
+                    continue
+                y = np.where(y > 0, y, np.nan)
+                if what == "all":
+                    ax.stairs(y, _edges(x), color="black", lw=0.6, label="all")
+                else:
+                    ax.stairs(y, _edges(x), lw=0.8, label=what, **_style(k))
+                    k += 1
+            ax.set_title(det, loc="left")
+            if det not in counted:
+                ax.text(0.5, 0.5, "no counts", transform=ax.transAxes, ha="center", va="center")
+                continue
+            ax.set_yscale("log")
+            ax.set_ylabel(s["y"])
+            ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.0), borderaxespad=0.2)  # clear of the spectrum
+        axes[-1].set_xlabel(s["x"])
+        return
     ax = fig.add_subplot()
     ax.set(xlabel=s["x"], ylabel=s["y"])
+    if name == "coverage":
+        for k, (label, x, y) in enumerate(s["series"]):
+            ax.plot(x, y, label=label, **_style(k))
+        ax.set(xlim=(-180, 180), ylim=(180, 0), xticks=range(-180, 181, 60), yticks=range(0, 181, 30))
+        ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), borderaxespad=0)
+        return
     if name == "strips":
         _, i, j, rate = s["series"][0]
         z = np.zeros((int(j.max()) + 1, int(i.max()) + 1))
@@ -280,7 +348,7 @@ def _edges(centres) -> np.ndarray:
 
 def figure(planner, name: str, journal="physical_review", width="single", **options):
     """One of the planner's figures (a key of :data:`FIGURES`) in a journal's style, as a matplotlib figure of the
-    journal's column width. ``options``: ``detector`` for "strips", ``events`` and ``seed`` for "spectra",
+    journal's column width. ``options``: ``detector`` for "strips", ``events`` and ``seed`` for the spectra,
     ``sweep`` (what :meth:`Planner.sweep` returned) for "sweep"."""
     import matplotlib
     from matplotlib.figure import Figure
@@ -289,7 +357,10 @@ def figure(planner, name: str, journal="physical_review", width="single", **opti
         raise ValueError(f"unknown figure {name!r}; choose one of {', '.join(FIGURES)}")
     w = width_mm(journal, width) * MM
     with matplotlib.rc_context(rc(journal)):
-        fig = Figure(figsize=(w, w * _ASPECT.get(name, 0.68)), layout="constrained")
+        aspect = _ASPECT.get(name, 0.68)
+        if name == "detector_spectra":  # one panel per detector
+            aspect = 0.5 * max(1, len(planner.experiment.detectors))
+        fig = Figure(figsize=(w, w * aspect), layout="constrained")
         _draw(planner, name, fig, options)
     return fig
 

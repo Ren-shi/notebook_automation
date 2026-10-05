@@ -249,7 +249,10 @@ From Python, `physim.nuclear.report.build(exp, seed=1).write("my-report")` does 
   detector table, kinematics, expected peaks, energy loss, simulated spectra, the validation status of each model,
   data sources and references to cite. Print it from the browser ("Save as PDF") for the PDF version; the page has
   print styles.
-- **`figures/`**: the geometry, coverage, kinematics and spectra figures, as PNG (200 dpi) and PDF.
+- **`figures/`**: the geometry, coverage, kinematics and spectra figures, as PNG (600 dpi) and PDF. They are
+  drawn in a journal's style at its column width: Physical Review, one column, unless you say otherwise with
+  `--journal nature --width double` (or `build(exp, journal="nature", width="double")`). The styles are
+  `physical_review`, `nature`, `science`, `elsevier` and `springer`; see {doc}`planner-app` for their widths.
 - **`setup.toml`**: the setup the report was made from. With the same seed it reproduces every number.
 - **`events.root`** (when `uproot` is installed: `pip install physim-engine[root]`), for analysis in ROOT. It holds:
   - the simulated particles as a TTree `events`, one branch per column (detector, strip, energies, angles, depth,
