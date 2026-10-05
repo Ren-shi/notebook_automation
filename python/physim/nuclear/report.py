@@ -33,6 +33,7 @@ import numpy as np
 from . import data
 from .detectors import Array
 from .experiment import Experiment
+from .paper import JOURNALS, WIDTHS
 from .planner import Planner
 from .rutherford import Rutherford
 
@@ -119,6 +120,9 @@ class Report:
     planner: Planner = field(repr=False, default=None)
     #: Coulomb excitation (:meth:`physim.nuclear.planner.Planner.gamma`), or None for elastic setups.
     excitation: Optional[dict] = None
+    #: The journal style of the figures (a key of :data:`physim.nuclear.paper.JOURNALS`) and their width.
+    journal: str = "physical_review"
+    width: str = "single"
 
     # -- numbers --------------------------------------------------------------------------------------------------
 
@@ -171,32 +175,34 @@ class Report:
     # -- figures --------------------------------------------------------------------------------------------------
 
     def figures(self) -> dict:
-        """The report's matplotlib figures: geometry, coverage, kinematics, spectra."""
-        from . import plot
+        """The report's matplotlib figures (geometry, coverage, kinematics, spectra), in the report's journal
+        style and at its column width (:mod:`physim.nuclear.paper`)."""
+        from . import paper
 
-        figs = {}
-        ax = plot.setup_3d(self.experiment)
-        figs["geometry"] = ax.figure
-        ax = plot.coverage(self.experiment)
-        figs["coverage"] = ax.figure
-        ax = plot.kinematics(self.planner.kinematics())
-        figs["kinematics"] = ax.figure
-        figs["spectra"] = plot.spectra(self.planner.spectra(events=self.events, seed=self.seed)["events"])
+        figs = {name: paper.figure(self.planner, name, self.journal, self.width)
+                for name in ("geometry", "coverage", "kinematics")}
+        figs["spectra"] = paper.figure(self.planner, "detector_spectra", self.journal, self.width,
+                                       events=self.events, seed=self.seed)
         return figs
 
+    def _save(self, fig, target, fmt: str, **kw) -> None:
+        import matplotlib
+
+        from . import paper
+
+        with matplotlib.rc_context(paper.rc(self.journal)):  # the font embedding is decided when saving
+            fig.savefig(target, format=fmt, **kw)
+
     def write_figures(self, directory: Union[str, Path]) -> list:
-        """Each figure as PNG (200 dpi) and PDF."""
+        """Each figure as PNG (600 dpi) and PDF, at the journal's column width."""
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         paths = []
-        from ..plot import _plt
-
         for name, fig in self.figures().items():
-            for ext, kw in (("png", {"dpi": 200}), ("pdf", {})):
+            for ext, kw in (("png", {"dpi": 600}), ("pdf", {})):
                 p = d / f"{name}.{ext}"
-                fig.savefig(p, bbox_inches="tight", **kw)
+                self._save(fig, p, ext, **kw)
                 paths.append(p)
-            _plt().close(fig)
         return paths
 
     # -- HTML -----------------------------------------------------------------------------------------------------
@@ -206,13 +212,10 @@ class Report:
         exp = self.experiment
         e = html.escape
         figs = {}
-        from ..plot import _plt
-
         for name, fig in self.figures().items():
             buf = io.BytesIO()
-            fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+            self._save(fig, buf, "png", dpi=200)
             figs[name] = base64.b64encode(buf.getvalue()).decode()
-            _plt().close(fig)
         b = exp.beam
         t = exp.target
 
@@ -386,10 +389,15 @@ def _round(x):
     return float(f"{x:.10g}") if isinstance(x, (float, np.floating)) and math.isfinite(x) else x
 
 
-def build(experiment: Experiment, seed: int = 1, events: int = 200_000, validation: bool = True) -> Report:
+def build(experiment: Experiment, seed: int = 1, events: int = 200_000, validation: bool = True,
+          journal: str = "physical_review", width: str = "single") -> Report:
     """Compute everything in the report. ``validation`` runs the register checks to show each model's status (about
-    1.5 s); without it the status is left out."""
+    1.5 s); without it the status is left out. ``journal`` and ``width`` set the figures' style and column width
+    (:data:`physim.nuclear.paper.JOURNALS`)."""
     from .. import __version__
+    from . import paper
+
+    paper.width_mm(journal, width)  # a wrong choice fails here, not after the simulation
 
     p = Planner(experiment)
     r = p._rates()
@@ -465,7 +473,7 @@ def build(experiment: Experiment, seed: int = 1, events: int = 200_000, validati
             "data": DATA_SOURCES}
     excitation = p.gamma() if experiment.excitation is not None else None
     return Report(experiment, seed, events, meta, detectors, peaks, kinematics, p.energy_loss(),
-                  [(w.level, w.text) for w in p.warnings()], status, p, excitation)
+                  [(w.level, w.text) for w in p.warnings()], status, p, excitation, journal, width)
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -478,6 +486,10 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--events", type=int, default=200_000)
     ap.add_argument("--no-figures", action="store_true", help="skip the PNG/PDF figure files")
+    ap.add_argument("--journal", default="physical_review", choices=list(JOURNALS),
+                    help="journal style of the figures (default: physical_review)")
+    ap.add_argument("--width", default="single", choices=list(WIDTHS),
+                    help="column width of the figures (default: single; 'middle' only where the journal has one)")
     ap.add_argument("--no-root", action="store_true", help="skip events.root (written when uproot is installed)")
     args = ap.parse_args(argv)
     from .experiment import example_names
@@ -486,8 +498,11 @@ def main(argv: Optional[list] = None) -> int:
     import matplotlib
 
     matplotlib.use("Agg")
-    paths = build(exp, seed=args.seed, events=args.events).write(args.output, figures=not args.no_figures,
-                                                                 root=False if args.no_root else None)
+    try:
+        rep = build(exp, seed=args.seed, events=args.events, journal=args.journal, width=args.width)
+    except ValueError as err:
+        ap.error(str(err))
+    paths = rep.write(args.output, figures=not args.no_figures, root=False if args.no_root else None)
     print(f"wrote {len(paths)} files to {args.output}/ (open report.html)")
     return 0
 

@@ -27,11 +27,15 @@ A new design was drawn first as an HTML mockup and agreed, then applied here.
   - Formats: PDF and SVG with editable text, PNG at 600 dpi, and the plotted data as CSV.
   - Every curve has its own line style as well as its own colour.
   - In the app, each figure's **Paper figure** button opens a preview at the chosen width and downloads the file.
+- **Report figures:** the beam-time report draws its geometry, coverage, kinematics and spectra figures with
+  `paper` too (`--journal`, `--width`; a journal choice in the app's **Report** tab). The default is Physical
+  Review, one column.
 - **Tests:** `test_nuclear_paper.py` checks every figure for every example, the width and type size of every
   journal style, the three file formats, and that curves differ without colour. `test_nuclear_app.py` checks the
   themed figures.
 
 ## Not done
-- The beam-time report's figures (`report.py`) keep their own style. A `--journal` option there is a small follow-up.
+- `physim.nuclear.plot` (the notebook helpers `setup_3d`, `coverage`, `spectra`, `kinematics`) keeps the house
+  style; the report no longer uses it.
 - The journal widths and type sizes were taken from the publishers' guidelines as remembered, not re-read for this
   change. They should be checked against the current instructions for authors.

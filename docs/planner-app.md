@@ -82,6 +82,9 @@ The paper figures are white with black, boxed axes and inward ticks, whichever t
 its own line style as well as its own colour, so the figure still reads in greyscale and for colour-blind readers.
 Journals change their guidelines: check the current instructions for authors before you submit.
 
+The **Report** tab has the same journal and width choice: the report's figures (in `report.html` and in the
+`figures` folder of the zip) are drawn in that style.
+
 From Python, the same figures come from `physim.nuclear.paper`:
 
 ```python
