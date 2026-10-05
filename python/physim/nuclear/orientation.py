@@ -448,6 +448,15 @@ class Excitation:
         gamma = {(i, f): populated.get(i, 0.0) * d.gamma for (i, f), d in self._decays.items()}
         return {"direct": direct, "populated": populated, "gamma": gamma}
 
+    def coefficient_table(self, initial: int, final: int, step: float = 2.0) -> tuple:
+        """(grid of CM angles, {(k, q): a_kq on the grid}, γ yield on the grid) for a transition: the
+        distribution coefficients of :meth:`Populated.coefficients` at every grid angle, for interpolating over
+        many events at once."""
+        grid, states = self.table(step)
+        keys = sorted({key for s in states for key in s.coefficients(initial, final)})
+        table = {key: np.array([s.coefficients(initial, final).get(key, 0.0) for s in states]) for key in keys}
+        return grid, table, np.array([s.gamma_yield(initial, final) for s in states])
+
     def probability(self, level: int, theta_cm: float) -> float:
         """Probability of exciting ``level`` directly at CM angle ``theta_cm``: the amplitudes squared, summed
         over the final substates and averaged over the initial ones."""

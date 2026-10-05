@@ -180,6 +180,7 @@ faces the target: a single disc, or the crystals of a [model](#detector-models-a
 | `absorbers` | no | pairs | Material between the target and the detector: `[["Pb", "1 mm"], ["Cu", "0.5 mm"]]`. A thickness is a length or an areal density. |
 | `efficiency_curve` | no | pairs | A measured full-energy-peak efficiency of the detector where it stands: `[["122 keV", "1.2 %"], ["1408 keV", "0.2 %"]]`, at least two points. |
 | `efficiency` | no | fraction (`%`) | One full-energy-peak efficiency, used at every energy. |
+| `threshold` | no | energy | Energy below which the crystal records nothing. |
 
 Without `efficiency` or `efficiency_curve`, the efficiency comes from the typical response of such a crystal.
 
@@ -188,6 +189,10 @@ Without `efficiency` or `efficiency_curve`, the efficiency comes from the typica
 | Field | Required | Unit | Meaning |
 |---|---|---|---|
 | `beam_time` | yes | time | How long the beam runs. |
+| `coincidence_window` | no | time | Full width of the particle–γ coincidence window (`"100 ns"` if left out). |
+| `dead_time` | no | time | A non-paralysable dead time per count; every count is scaled by the live fraction 1/(1 + τ × total rate). |
+| `room_background` | no | rate (`/s`) | Room background in each γ-ray crystal: the lines of ⁴⁰K and the thorium and uranium series, this many counts per second together. |
+| `extra_lines` | no | pairs | Lines added by hand to every crystal: `[["1274.5 keV", "0.5 /s"]]`. |
 | `counts_wanted` | no | — | Counts needed per detector; the planner reports the beam time this takes. For Coulomb excitation these are particle–γ coincidences (excitation events seen with their γ ray), or excitation events if there are no γ detectors. |
 
 ## Detector models and the chamber
@@ -328,6 +333,45 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
 - **Not included:** excitation in two or more steps and reorientation (first order only, so the matrix elements
   enter through their size and not their sign), deorientation in vacuum, and lifetimes: every state decays in
   flight with the orientation it was given.
+
+## Particle–γ events
+
+`physim.nuclear.gamma_events` follows the γ ray of every simulated Coulomb-excitation event whose particle
+reached a detector:
+
+```python
+from physim.nuclear import Experiment
+from physim.nuclear.gamma_events import simulate_gammas
+
+g = simulate_gammas(Experiment.example("coulex_ni58"), events=400_000, seed=1)
+g.counts("Ge90", "CD")                        # particle–γ coincidences in the run
+g.spectrum("Ge90", "CD", corrected="recoil")  # counts per bin, random coincidences included
+g.coincidences()                              # particle × γ matrix: true, random, and random γ–γ
+g["corrected_recoil"], g["weight"]            # per γ ray (see gamma_events.GAMMA_COLUMNS)
+```
+
+- **The chain.** The excited nucleus leaves the target with its velocity (its own simulated path, or the
+  two-body partner's of the particle that was detected), emits its γ ray in its rest frame with the angular
+  correlation for that orbit, and the γ ray is transformed to the laboratory. A crystal it meets records it with
+  the response: full energy, Compton deposit or escape peak, then the resolution and the threshold.
+- **Doppler correction** from what the detectors know: the centre of the segment that fired, the centre of the
+  crystal, and two-body kinematics at the nominal beam energy. It is made for the scattered beam and for the
+  target recoil (`corrected_projectile`, `corrected_recoil`): the right one puts the peak at the transition
+  energy, the wrong one smears it. The width that remains comes from the sizes of segments and crystals.
+- **Coincidences.** Every γ ray is a true coincidence with its particle, weighted as the particle events are.
+  Random coincidences follow from the singles rates and the window: 2τ × (particle rate) × (γ singles), the γ
+  singles being all excitations (detected particle or not) times the crystal's total efficiency, plus the room
+  background and the extra lines. True γ–γ coincidences need a cascade, which one excited state does not give;
+  random γ–γ rates are given.
+- **Dead time** scales every count by the live fraction.
+- **Statistics.** Each excited event emits its γ ray ten times over (`gammas_per_event`), each with a share of
+  its weight, since coincidences are rare. On the ⁵⁸Ni example 400 000 reactions take about 5 s and give about
+  6 000 γ rays in coincidence.
+- **Not included:** cascades (one γ ray per excitation), summing, pile-up, lifetimes, contaminant reactions.
+
+In the app, **Simulate the γ rays** on the Spectra tab shows the particle × γ matrix and each detector's raw and
+corrected spectrum. `write_root(..., gammas=g)` adds a `gammas` tree and `gamma_<detector>` histograms to the
+ROOT file.
 
 ## Materials
 

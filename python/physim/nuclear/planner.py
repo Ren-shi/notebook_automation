@@ -662,6 +662,47 @@ class Planner:
             out[name] = {"counts": h, "edges": edges}
         return {"events": ev, "spectra": out}
 
+    def gamma_events(self, events: int = 400_000, seed: int = 1):
+        """γ rays in coincidence with the detected particles (:func:`physim.nuclear.gamma_events.simulate_gammas`),
+        built on the same particle events as :meth:`spectra`. Kept until the setup changes."""
+        from .events import simulate
+        from .gamma_events import simulate_gammas
+
+        key = ("gammas", events, seed)
+        if key not in self._cache:
+            ev_key = ("events", events, seed)
+            if ev_key not in self._cache:
+                self._cache[ev_key] = simulate(self.experiment, events, seed)
+            self._cache[key] = simulate_gammas(self.experiment, events, seed, particle_events=self._cache[ev_key])
+        return self._cache[key]
+
+    def gamma_spectra(self, events: int = 400_000, seed: int = 1, bins: int = 300) -> dict:
+        """The γ-ray side of the Monte Carlo: for each γ-ray detector the raw and Doppler-corrected spectra in
+        coincidence with all particle detectors (counts in the run per bin, random coincidences included), the
+        particle × γ matrix of true and random coincidences, and the live fraction.
+        ``{"available": False}`` without an excited state or γ-ray detectors."""
+        exp = self.experiment
+        if exp.excitation is None or not exp.gamma_detectors:
+            return {"available": False, "reason": "Coulomb excitation with γ-ray detectors is needed."}
+        g = self.gamma_events(events, seed)
+        emitter = "recoil" if exp.excitation.excite == "target" else "projectile"
+        spectra = {}
+        for name in g.detector_names():
+            total = None
+            out = {}
+            for key in (None, "projectile", "recoil"):
+                parts = [g.spectrum(name, d, corrected=key, bins=bins, range=(0.0, 1.3 * g.energy_mev))
+                         for d in g.events.detectors]
+                counts = np.sum([h for h, _ in parts], axis=0)
+                edges = parts[0][1]
+                out[key or "measured"] = counts
+                total = edges
+            spectra[name] = {"edges": total, **out, "counts": g.counts(name)}
+        return {"available": True, "spectra": spectra, "emitter": emitter, "energy_kev": 1e3 * g.energy_mev,
+                "coincidences": g.coincidences(), "live_fraction": g.live_fraction, "window_s": g.window_s,
+                "gamma_detectors": g.detector_names(), "particle_detectors": list(g.events.detectors),
+                "notes": g.notes, "n_gammas": len(g)}
+
     def trajectories(self, impact_parameters: Optional[list] = None, nuclide: Optional[str] = None) -> dict:
         """Coulomb orbits (CM frame, fm) for a range of impact parameters, from physim's engine."""
         exp = self.experiment

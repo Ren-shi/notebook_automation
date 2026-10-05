@@ -168,6 +168,9 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.orientation
    :members:
 
+.. automodule:: physim.nuclear.gamma_events
+   :members:
+
 .. automodule:: physim.nuclear.angular
    :members:
 

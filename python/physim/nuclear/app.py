@@ -289,6 +289,29 @@ def figure_detector_spectrum(planner: Planner, detector: str, events: int = 100_
     return fig
 
 
+def figure_gamma_spectra(planner: Planner, detector: str, events: int = 400_000, seed: int = 1):
+    """A γ-ray detector's coincidence spectrum: as measured, and Doppler-corrected for the emitting nucleus."""
+    go = _go()
+    g = planner.gamma_spectra(events, seed)
+    fig = go.Figure()
+    if not g["available"]:
+        fig.add_annotation(text=g["reason"], showarrow=False, x=0.5, y=0.5, xref="paper", yref="paper")
+        return fig
+    s = g["spectra"][detector]
+    x = 1e3 * np.repeat(s["edges"], 2)[1:-1]
+    for i, (key, label) in enumerate((("measured", "measured"), (g["emitter"], f"corrected for the {g['emitter']}"),
+                                      ("projectile" if g["emitter"] == "recoil" else "recoil",
+                                       "corrected for the wrong nucleus"))):
+        y = np.repeat(s[key], 2)
+        fig.add_trace(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines", name=label,
+                                 line=dict(color=COLORS[i % len(COLORS)], width=1.2 if i < 2 else 0.8),
+                                 visible=True if i < 2 else "legendonly"))
+    fig.add_vline(x=g["energy_kev"], line=dict(color="#888", width=1, dash="dot"))
+    fig.update_layout(xaxis=dict(title="γ-ray energy (keV)"), yaxis=dict(title="counts / bin in the run"),
+                      margin=dict(l=50, r=10, t=10, b=40), height=320, legend=dict(orientation="h", y=-0.3, x=0))
+    return fig
+
+
 def figure_spectra(planner: Planner, events: int = 100_000, seed: int = 1):
     """Simulated measured-energy spectra, counts per bin in the planned beam time (log scale)."""
     go = _go()
@@ -1265,6 +1288,60 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         plot_area = ui.column().classes("w-full")
         with plot_area:
             plot(figure_spectra(P(), state["events"], 1), "spectra", events=state["events"], seed=1)
+        gamma_block()
+
+    def gamma_block() -> None:
+        """Particle–γ coincidences: the matrix, and each γ-ray detector's raw and corrected spectrum."""
+        if P().experiment.excitation is None or not P().experiment.gamma_detectors:
+            return
+        ui.label("γ rays in coincidence with the particles").classes("font-semibold mt-3")
+        ui.label("Every excited event whose particle reached a detector emits its γ ray, with the angular "
+                 "correlation, from the moving nucleus; the crystals record it with their response. The Doppler "
+                 "correction uses the centre of the segment and of the crystal that fired. Random coincidences "
+                 "come from the singles rates and the coincidence window, and the room background from the "
+                 "[run] section.").classes("text-xs ps-muted")
+        holder = ui.column().classes("w-full")
+
+        async def build() -> None:
+            holder.clear()
+            with holder:
+                ui.spinner(size="md")
+            try:
+                g = await run.io_bound(P().gamma_spectra, max(state["events"], 400_000), 1)
+            except ValueError as err:
+                holder.clear()
+                with holder:
+                    ui.label(str(err)).classes("text-sm ps-warn")
+                return
+            holder.clear()
+            with holder:
+                if not g["available"]:
+                    ui.label(g["reason"]).classes("text-sm")
+                    return
+                co = g["coincidences"]
+                cols = [("p", "Particle detector")] + [(f"g{i}", f"{n} (true / random)")
+                                                        for i, n in enumerate(g["gamma_detectors"])]
+                rows = [dict({"p": d}, **{f"g{i}": f"{_fmt(co['true'][(d, n)], 3)} / "
+                                                   f"{_fmt(co['random'][(d, n)], 2)}"
+                                          for i, n in enumerate(g["gamma_detectors"])})
+                        for d in g["particle_detectors"]]
+                ui.table(columns=columns(cols), rows=rows).props("dense flat")
+                ui.label(f"Counts in the run, after a live fraction of {g['live_fraction']:.3f}; coincidence "
+                         f"window {1e9 * g['window_s']:.0f} ns. {g['notes'][0]}").classes("text-xs ps-muted")
+                sel = ui.select(g["gamma_detectors"], value=g["gamma_detectors"][0], label="γ-ray detector").props(
+                    "dense outlined").classes("w-48")
+                fig_box = ui.column().classes("w-full")
+
+                def draw() -> None:
+                    fig_box.clear()
+                    with fig_box:
+                        ui.plotly(themed(figure_gamma_spectra(P(), sel.value, max(state["events"], 400_000), 1),
+                                         state["theme"])).classes("w-full")
+
+                sel.on_value_change(lambda e: draw())
+                draw()
+
+        ui.button("Simulate the γ rays", icon="play_arrow", on_click=build).props("dense flat no-caps")
 
     @ui.refreshable
     def trajectories_panel():

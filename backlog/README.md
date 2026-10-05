@@ -60,7 +60,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 52 | ~~[The interactive scene](52-interactive-scene.md)~~ **Done** | Experiment workbench | P1 | L | 41, 51 |
 | 53 | ~~[γ-detector response and calibration sources](53-gamma-detector-response.md)~~ **Done** (typical values to confirm) | Experiment workbench | P1 | L | 51 |
 | 54 | ~~[Orientation of excited states, particle–γ correlation and decay](54-angular-correlation-and-decay.md)~~ **Done** | Experiment workbench | P1 | L | 43, 50 |
-| 55 | [Particle–γ events, Doppler correction, coincidences and background](55-coincidence-events-and-background.md) | Experiment workbench | P1 | L | 39, 53, 54 |
+| 55 | ~~[Particle–γ events, Doppler correction, coincidences and background](55-coincidence-events-and-background.md)~~ **Done** | Experiment workbench | P1 | L | 39, 53, 54 |
 | 56 | [Automatic analysis: from peak areas to B(E2) and the shape](56-automatic-analysis.md) | Experiment workbench | P1 | L | 55 |
 | 57 | [The run record: every number explains itself](57-run-record.md) | Experiment workbench | P1 | M | 42, 56 |
 | 58 | [Multi-step Coulomb excitation, reorientation and the shape of the nucleus](58-multi-step-coulomb-excitation.md) | Experiment workbench | P1 | L | 50, 54, 56 |

@@ -115,9 +115,10 @@ def _read_value(spec: _Field, raw: Any) -> Any:
         if math.hypot(*raw) == 0:
             raise ValueError("must not be the zero vector")
         return [float(x) for x in raw]
-    if kind in ("absorbers", "curve"):
-        what = ('[["Pb", "1 mm"], ...]: a material and its thickness' if kind == "absorbers"
-                else '[["122 keV", "1.2 %"], ...]: a γ-ray energy and the efficiency there')
+    if kind in ("absorbers", "curve", "lines"):
+        what = {"absorbers": '[["Pb", "1 mm"], ...]: a material and its thickness',
+                "curve": '[["122 keV", "1.2 %"], ...]: a γ-ray energy and the efficiency there',
+                "lines": '[["1274 keV", "0.5 /s"], ...]: a γ-ray energy and its rate'}[kind]
         if not isinstance(raw, list) or not all(isinstance(x, list) and len(x) == 2 for x in raw):
             raise ValueError(f"must be a list of pairs {what}; got {raw!r}")
         out = []
@@ -135,8 +136,10 @@ def _read_value(spec: _Field, raw: Any) -> Any:
                 f = b if isinstance(b, Quantity) else Quantity.parse(b)
                 if e.kind != "energy" or e.value <= 0:
                     raise ValueError(f"'{e}' is not a γ-ray energy")
-                if f.kind != "fraction" or not 0 < f.to("%") <= 100:
+                if kind == "curve" and (f.kind != "fraction" or not 0 < f.to("%") <= 100):
                     raise ValueError(f"'{f}' is not an efficiency (above 0 and at most 100 %)")
+                if kind == "lines" and (f.kind != "rate" or f.value < 0):
+                    raise ValueError(f"'{f}' is not a rate (counts per second, e.g. '0.5 /s')")
                 out.append([e, f])
         if kind == "curve" and len(out) < 2:
             raise ValueError("needs at least two points")
@@ -432,10 +435,21 @@ class Run:
 
     beam_time: QuantityLike
     counts_wanted: Optional[int] = None
+    #: Full width of the coincidence window (100 ns if left out), and a non-paralysable dead time per count.
+    coincidence_window: Optional[QuantityLike] = None
+    dead_time: Optional[QuantityLike] = None
+    #: Room background in each γ-ray crystal, counts per second in its lines (⁴⁰K, thorium and uranium series).
+    room_background: Optional[QuantityLike] = None
+    #: Extra γ-ray lines in every crystal, by hand: pairs of an energy and a rate (``[["1274 keV", "0.5 /s"]]``).
+    extra_lines: Optional[list] = None
 
     SPECS = (
         _Field("beam_time", "time", required=True, check=_positive),
         _Field("counts_wanted", "int", check=lambda n: None if n >= 1 else "must be at least 1"),
+        _Field("coincidence_window", "time", check=_positive),
+        _Field("dead_time", "time", check=_non_negative),
+        _Field("room_background", "rate", check=_non_negative),
+        _Field("extra_lines", "lines"),
     )
 
 
@@ -515,6 +529,8 @@ class GammaDetector:
     #: A measured full-energy-peak efficiency: pairs of a γ-ray energy and the efficiency there, for the whole
     #: detector where it stands. It replaces the model's efficiency.
     efficiency_curve: Optional[list] = None
+    #: Energy below which the crystal records nothing.
+    threshold: Optional[QuantityLike] = None
 
     SPECS = (
         _Field("name", "str"),
@@ -535,6 +551,7 @@ class GammaDetector:
         _Field("material", "str"),
         _Field("absorbers", "absorbers"),
         _Field("efficiency_curve", "curve"),
+        _Field("threshold", "energy", check=_non_negative),
     )
 
     def geometric_efficiency(self) -> float:
