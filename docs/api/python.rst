@@ -153,6 +153,12 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.gamma
    :members:
 
+.. automodule:: physim.nuclear.levels
+   :members:
+
+.. automodule:: physim.nuclear.ensdf
+   :members:
+
 .. automodule:: physim.nuclear.rates
    :members:
 

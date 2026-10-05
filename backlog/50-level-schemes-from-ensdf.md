@@ -2,6 +2,21 @@
 
 **Priority:** P1 · **Size:** L · **Area:** Experiment workbench
 
+**Status: in progress.** Built (2026-10-05), and tested against hand-typed data in ENSDF's layout:
+- **Reader** (`python/physim/nuclear/ensdf.py`): the adopted dataset of a nuclide from a local copy, zipped or not.
+- **Level schemes** (`python/physim/nuclear/levels.py`): sources on every value, derived matrix elements, the
+  user's values kept, truncation, and the `[levels.beam]` and `[levels.target]` sections of the setup file.
+- **Planner and app:** look-up, level diagram, matrix-element table, and "Plan" for a chosen state.
+- **Download:** `scripts/fetch_ensdf.py`, into `~/.physim/ensdf` (outside the repository) or `$PHYSIM_ENSDF`.
+
+What remains:
+- **The real ENSDF copy has not been downloaded,** so nothing is checked against real data yet. Six tests in
+  `tests/python/test_nuclear_levels.py` wait for it, and so do the five nuclides to check by hand.
+- **A table of moments.** Quadrupole moments are read only where ENSDF's adopted levels give them.
+- **Editing in the app.** A matrix element can be changed in Python and in the setup file, not yet in the app.
+- **The request to the NNDC** (the user).
+- The rates and spectra still use the single state of `[reaction]`; items 54 and 58 use the whole scheme.
+
 ## Why
 Typing a level scheme by hand is the most tedious part of setting up a Coulomb-excitation calculation, and the data
 already exist. Today the setup file holds one excited state whose energy and B(E2) the user types (item 43). Every

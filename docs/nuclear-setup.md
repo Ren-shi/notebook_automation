@@ -209,6 +209,88 @@ data.material("CD2", density="1.06 g/cm3").atoms_per_cm2("200 ug/cm2")
 data.Material.enriched("C", {13: 0.99, 12: 0.01})   # isotopically enriched (Python only, for now)
 ```
 
+## Level schemes
+
+A setup can carry the level scheme of the beam nucleus and of a target nucleus: levels, γ-ray transitions and
+reduced matrix elements. Schemes are read from ENSDF, so they need not be typed.
+
+**Getting ENSDF.** physim does not ship ENSDF. Download a copy once (about 40 MB), into `~/.physim/ensdf` or the
+folder named by the `PHYSIM_ENSDF` environment variable:
+
+```
+python scripts/fetch_ensdf.py
+```
+
+**Looking up a scheme.** In the app, the *Excitation and γ rays* tab has a *Look up in ENSDF* button for the target
+and for the beam. In Python:
+
+```python
+from physim.nuclear.levels import LevelScheme
+
+pt = LevelScheme.from_ensdf("194Pt", max_energy_kev=1500)
+pt.levels[1].energy              # Value(328.464, 0.012, "ensdf")
+pt.b(0, 1, "E2")                 # B(E2; 0+ → 2+) in e² fm⁴
+pt.b_weisskopf(1, 0, "E2")       # B(E2; 2+ → 0+) in Weisskopf units
+exp.levels["target"] = pt        # saved with the setup
+```
+
+**Where each value comes from.** Every value has a source:
+
+| Source | Meaning |
+|---|---|
+| `ensdf` | as evaluated in ENSDF |
+| `derived` | computed by physim from ENSDF values; the note says how |
+| `assumed` | chosen because the data do not say |
+| `user` | set by you; it takes precedence, and a new look-up keeps it |
+
+**Matrix elements.** ENSDF gives transition strengths, not matrix elements, so physim derives the size of each
+E1, E2 and E3 matrix element:
+
+- from B(Eλ) in Weisskopf units where ENSDF gives it;
+- otherwise from the level's half-life and its γ-ray branching, with conversion coefficients and mixing ratios;
+- a quadrupole moment in ENSDF becomes the diagonal E2 matrix element of its level.
+
+ENSDF gives no signs. Derived matrix elements are positive, and the note says the sign is assumed.
+
+**Which levels are kept.** A look-up keeps the levels below the energy limit that are joined to the ground state by
+a chain of matrix elements, and every level their γ rays feed. Levels whose energy or spin ENSDF does not pin down
+cannot carry a matrix element.
+
+**In the setup file.** A scheme is written as `[levels.target]` or `[levels.beam]`:
+
+```toml
+[levels.target]
+nuclide = "58Ni"
+
+[[levels.target.level]]
+energy = "0 keV"
+jpi = "0+"
+
+[[levels.target.level]]
+energy = "1454.21 keV"
+jpi = "2+"
+half_life = "6.52e-13 s"
+
+[[levels.target.transition]]
+from = 1
+to = 0
+energy = "1454.2 keV"
+intensity = 100
+multipolarity = "E2"
+
+[[levels.target.matrix_element]]
+from = 0
+to = 1
+multipolarity = "E2"
+value = "0.26 eb"
+```
+
+Levels are numbered from 0 in order of energy, the ground state first. A matrix element is written in `efm2` or
+`eb` for E2, `efm` or `eb0.5` for E1, and `efm3` or `eb1.5` for E3. A value without a `source` is taken as yours.
+
+The rates and spectra still use the single state of `[reaction]`; *Plan* in the app (or `Planner.use_state`) fills
+that state in from a scheme.
+
 ## Rates, beam time and simulated spectra
 
 Once a setup reads cleanly, the planner works out what it will measure:

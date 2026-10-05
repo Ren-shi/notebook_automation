@@ -29,9 +29,13 @@ from typing import Any, Optional, Union
 import numpy as np
 
 from . import data
+from . import data as _data
+from . import ensdf as _ensdf
 from .detectors import Array, Response
 from .experiment import Experiment, SetupError, example_names
 from .kinematics import TwoBody
+from .levels import LevelScheme
+from .names import parse_nuclide
 from .quantity import Quantity
 from .rates import Rates, beam_energy_at, beam_ion, stack, stopping, tilt_deg
 from .rutherford import Rutherford
@@ -505,6 +509,93 @@ class Planner:
                 "xi": cx.xi, "eta": cx.eta, "safe_distance_fm": cx.safe_distance, "max_safe_angle": cx.max_safe_angle(),
                 "total_mb": cx.total(), "theta_cm": th, "probability": cx.probability(th),
                 "rates": rates, "particles": self._particle_energies(ch), "doppler": self._cache["gamma"]}
+
+    # -- level schemes ----------------------------------------------------------------------------------------------
+
+    def level_nuclides(self) -> dict:
+        """The nuclide whose level scheme each role takes: the beam, and the target's most abundant nuclide (all of
+        them are listed under "target_choices")."""
+        d = self._draft
+        out = {"beam": None, "target": None, "target_choices": []}
+        try:
+            z, a = parse_nuclide(d["beam"]["nuclide"])
+            out["beam"] = _data.nuclide((z, a)).name
+        except (KeyError, ValueError):
+            pass
+        try:
+            atoms = sorted(_data.material(d["target"]["material"]).atoms, key=lambda x: -x[2])
+            out["target_choices"] = [_data.nuclide((z, a)).name for z, a, _ in atoms]
+            out["target"] = out["target_choices"][0]
+        except (KeyError, ValueError, IndexError):
+            pass
+        return out
+
+    def levels(self) -> dict:
+        """The level schemes in the setup, as tables for display (:meth:`LevelScheme.table`), with whether a local
+        ENSDF copy is present and which nuclide each role would look up."""
+        schemes = self.experiment.levels if not self.problems else {}
+        return {"ensdf": _ensdf.available(), "ensdf_folder": str(_ensdf.folder()), "nuclides": self.level_nuclides(),
+                "beam": schemes["beam"].table() if "beam" in schemes else None,
+                "target": schemes["target"].table() if "target" in schemes else None}
+
+    def lookup_levels(self, role: str, max_energy: str = "3 MeV", nuclide: Optional[str] = None) -> bool:
+        """Read the level scheme of the beam or the target nuclide from the local ENSDF copy into the setup, up to
+        ``max_energy``. Matrix elements the user had set for the same nuclide are kept. Raises
+        :class:`~physim.nuclear.ensdf.EnsdfMissing` without a copy or without data for the nuclide."""
+        if role not in ("beam", "target"):
+            raise ValueError("role must be 'beam' or 'target'")
+        nuclide = nuclide or self.level_nuclides()[role]
+        if nuclide is None:
+            raise ValueError(f"the setup has no {role} nuclide yet")
+        scheme = LevelScheme.from_ensdf(nuclide, max_energy_kev=_q(max_energy).to("keV"))
+        d = self.draft
+        old = d.get("levels", {}).get(role)
+        if old and old.get("nuclide") == scheme.nuclide:
+            energies = [lv.energy.value for lv in scheme.levels]
+            old_energy = [_q(lv["energy"]).to("keV") for lv in old.get("level", [])]
+            for m in old.get("matrix_element", []):
+                if m.get("source") != "user":
+                    continue
+                try:  # the same pair of levels, found by energy
+                    a, b = (energies.index(old_energy[m[k]]) for k in ("from", "to"))
+                except (ValueError, IndexError, KeyError):
+                    continue
+                scheme.set_matrix_element(a, b, m.get("multipolarity", "E2"), m["value"], m.get("value_unc"),
+                                          note=m.get("note", ""))
+        d.setdefault("levels", {})[role] = scheme.to_dict()
+        return self._apply(d)
+
+    def remove_levels(self, role: str) -> bool:
+        """Take a level scheme out of the setup."""
+        d = self.draft
+        d.get("levels", {}).pop(role, None)
+        if not d.get("levels"):
+            d.pop("levels", None)
+        return self._apply(d)
+
+    def set_matrix_element(self, role: str, a: int, b: int, multipolarity: str, value: str) -> bool:
+        """Set a matrix element of a level scheme (text with a unit, e.g. ``"1.28 eb"``); it is marked as the
+        user's."""
+        scheme = self.experiment.levels[role]
+        scheme.set_matrix_element(a, b, multipolarity, value)
+        d = self.draft
+        d["levels"][role] = scheme.to_dict()
+        return self._apply(d)
+
+    def use_state(self, role: str, level: int, multipolarity: str = "E2") -> bool:
+        """Plan Coulomb excitation of one state of a level scheme: sets the reaction's excited nucleus, energy,
+        multipolarity and B(Eλ↑) from the scheme."""
+        scheme = self.experiment.levels[role]
+        b_up = scheme.b(0, level, multipolarity)
+        if not b_up:
+            raise ValueError(f"the scheme has no {multipolarity} matrix element between the ground state and "
+                             f"level {level}")
+        lam = int(multipolarity[1])
+        d = self.draft
+        d["reaction"] = {"type": "coulex", "excite": "target" if role == "target" else "projectile",
+                         "energy": f"{scheme.levels[level].energy.value:.10g} keV", "multipolarity": multipolarity,
+                         "b_up": f"{b_up:.6g} e2fm{2 * lam}"}
+        return self._apply(d)
 
     def _particle_energies(self, channel) -> list:
         """What each particle detector measures in a Coulomb-excitation run: the energy of the beam particle or
