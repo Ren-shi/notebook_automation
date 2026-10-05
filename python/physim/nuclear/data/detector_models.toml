@@ -1,0 +1,112 @@
+# Detector models: dimensions and segmentation of real detectors, for `model = "..."` in a setup file.
+#
+# Each model has:
+#   kind         "particle" (a [[detectors]] entry) or "gamma" (a [[gamma_detectors]] entry)
+#   title        what it is
+#   sources      where the numbers come from
+#   typical      the fields below that are NOT from a data sheet: typical values, to be replaced by the numbers of
+#                the detector actually used
+#   notes        what a user should know
+#   [X.fields]   default values of setup-file fields; a setup file may override any of them
+#   [X.facts]    data-sheet values that are recorded but not used in the calculation
+#   [[X.blocking]]  dead material that stops particles, in the plane of the detector face (particle models)
+#
+# Sources and terms are listed in SOURCES.md.
+
+[S3]
+kind = "particle"
+title = "Micron S3: annular double-sided silicon strip detector, 24 rings and 32 sectors"
+sources = [
+    "Micron Semiconductor Ltd, S3 product page, https://www.micronsemiconductor.co.uk/product/s3/ (read 2026-10-05)",
+]
+typical = ["thickness", "dead_layer", "board"]
+notes = [
+    "The data sheet gives 24 rings on an active area of 22 to 70 mm diameter, which is a ring pitch of 1 mm, and a 'junction pitch' of 886 um. The 886 um is taken here as the width of a ring's strip, leaving 114 um between strips. Charge from a hit between strips is shared by the two neighbours, so the rings are treated as 1 mm wide with no gap.",
+    "The S3 is made in several thicknesses. Set the thickness and the dead layer of the detector you have.",
+    "The size of the circuit board is not in the data sheet. The board here is a placeholder that stops particles out to 50 mm from the axis.",
+]
+
+[S3.fields]
+shape = "annular"
+inner_radius = "11 mm"
+outer_radius = "35 mm"
+rings = 24
+sectors = 32
+thickness = "1000 um"
+dead_layer = "0.5 um"
+
+[S3.facts]
+ring_pitch = "1 mm"
+ring_strip_width = "0.886 mm"
+sector_pitch = "11.25 deg"
+chip_inner_diameter = "20 mm"
+chip_outer_diameter = "76 mm"
+package = "Standard FR4"
+
+[[S3.blocking]]
+name = "chip edge"
+inner_radius = "10 mm"
+outer_radius = "38 mm"
+
+[[S3.blocking]]
+name = "board"
+inner_radius = "10 mm"
+outer_radius = "50 mm"
+
+[clover]
+kind = "gamma"
+title = "Germanium clover, four 50 mm x 70 mm crystals (EUROGAM, EUROBALL and AFRODITE type)"
+sources = [
+    "Mirion Technologies (Canberra), 'Clover Detectors: Four Coaxial Germanium Detectors', specification sheet C39840 (2017)",
+    "G. Duchene et al., Nucl. Instrum. Methods A 432, 90 (1999)",
+]
+typical = ["crystal_pitch", "housing_side", "window_gap"]
+notes = [
+    "Each crystal is 50 mm in diameter and 70 mm long before shaping. The crystals are cut flat where they meet, so their centres are closer than 50 mm: the pitch here is a typical value.",
+    "The specification sheet gives a gap of at most 0.7 mm between crystals, a relative efficiency of 21 to 22% per crystal, and a resolution below 2.1 keV at 1.33 MeV and 1.05 keV at 122 keV.",
+    "The end cap's size and the distance from its window to the crystals are typical values, not from the sheet.",
+]
+
+[clover.fields]
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+
+[clover.facts]
+crystal_gap_max = "0.7 mm"
+relative_efficiency_per_crystal = "21 %"
+resolution_at_122_keV = "1.05 keV"
+resolution_at_1332_keV = "2.1 keV"
+add_back_relative_efficiency = "130 %"
+material = "Ge"
+
+[LaBr3_2x2]
+kind = "gamma"
+title = "LaBr3(Ce) scintillator, 2 inch x 2 inch crystal"
+sources = [
+    "Saint-Gobain Crystals, 'Lanthanum Bromide Scintillators Performance Summary', technical note (revision June 2021)",
+]
+typical = ["housing_side", "window_gap", "resolution"]
+notes = [
+    "The technical note gives the resolution of a 3 inch x 3 inch crystal: 2.9% at 662 keV, 2.1% at 1332 keV and 1.6% at 2615 keV, which follows 1/sqrt(E). The value here is 2.1% of 1332 keV; item 53 makes the resolution depend on energy.",
+    "LaBr3 has its own background from 138La, with lines near 1436 and 1468 keV and Ba X-rays near 35 keV.",
+    "The housing's size and the distance from its window to the crystal are typical values.",
+]
+
+[LaBr3_2x2.fields]
+crystals = 1
+crystal_diameter = "50.8 mm"
+crystal_length = "50.8 mm"
+housing_side = "58 mm"
+window_gap = "2 mm"
+resolution = "28 keV"
+
+[LaBr3_2x2.facts]
+resolution_at_662_keV = "2.9 %"
+resolution_at_1332_keV = "2.1 %"
+resolution_at_2615_keV = "1.6 %"
+material = "LaBr3"

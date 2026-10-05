@@ -64,6 +64,20 @@ attribution to NIST and with the modifications noted above. NIST provides the da
 of any kind, express or implied; NIST does not warrant that the data are accurate or fit for any purpose and is not
 liable for any damages arising from their use. Contact: NIST Physical Measurement Laboratory, <https://www.nist.gov/pml>.
 
+## `detector_models.toml`: dimensions of real detectors
+
+- **Written for physim.** The file holds dimensions and specifications read from manufacturers' documents on
+  2026-10-05, each model with its sources; no text or drawing of a document is copied. Values that are not in a
+  document are listed under `typical` in each model.
+- **S3:** Micron Semiconductor Ltd, S3 product page, <https://www.micronsemiconductor.co.uk/product/s3/>:
+  24 rings, 32 sectors, active area 22 to 70 mm in diameter, chip 20 to 76 mm, junction pitch 886 µm, FR4 package.
+- **Clover:** Mirion Technologies (Canberra), "Clover Detectors: Four Coaxial Germanium Detectors", specification
+  sheet C39840 (2017): four crystals of 50 mm × 70 mm for the EUROGAM, EUROBALL and AFRODITE type, gaps of at most
+  0.7 mm, 21 to 22% relative efficiency per crystal, resolution below 2.1 keV at 1.33 MeV. The sheet cites
+  G. Duchêne et al., Nucl. Instrum. Methods A 432, 90 (1999).
+- **LaBr₃(Ce):** Saint-Gobain Crystals, "Lanthanum Bromide Scintillators Performance Summary", technical note
+  (revision June 2021): resolution 2.9% at 662 keV, 2.1% at 1332 keV and 1.6% at 2615 keV for a 3 × 3 inch crystal.
+
 ## ENSDF: level schemes (not in this folder)
 
 - **Not shipped.** Level schemes (`physim.nuclear.levels`) are read from a copy of the Evaluated Nuclear Structure

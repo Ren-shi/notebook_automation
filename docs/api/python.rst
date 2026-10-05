@@ -156,6 +156,9 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.levels
    :members:
 
+.. automodule:: physim.nuclear.catalogue
+   :members:
+
 .. automodule:: physim.nuclear.ensdf
    :members:
 

@@ -13,6 +13,8 @@ from typing import Optional
 
 import numpy as np
 
+from . import catalogue
+
 
 @dataclass(frozen=True)
 class Help:
@@ -139,6 +141,17 @@ HELP = {
                               "angle: less Doppler broadening, but less efficiency."),
     ("gamma", "radius"): _h("Radius of the crystal face.", "30–40 mm", "more efficiency, but a wider opening angle "
                             "and more Doppler broadening."),
+    ("gamma", "crystals"): _h("Number of crystals: 1, or 4 for a clover.", "4 for a clover",
+                              "each crystal is corrected for the Doppler shift on its own."),
+    ("gamma", "crystal_diameter"): _h("Diameter of one crystal.", "50 mm for a EUROGAM-type clover",
+                                      "more efficiency, but a wider opening angle per crystal."),
+    ("gamma", "crystal_length"): _h("Length of one crystal, behind its front face.", "70 mm for a EUROGAM-type "
+                                    "clover", "more efficiency at high γ-ray energy."),
+    ("gamma", "crystal_pitch"): _h("Distance between the centres of neighbouring crystals of a clover.",
+                                   "about 45 mm: check the detector's drawing", "moves each crystal's angle."),
+    ("gamma", "housing_side"): _h("Side of the square housing, which stops particles.", "about 100 mm for a clover",
+                                  "hides more of whatever lies behind it."),
+    ("gamma", "window_gap"): _h("Distance from the housing's front window to the crystals.", "a few mm", "—"),
     ("gamma", "resolution"): _h("Intrinsic energy resolution (FWHM) of the crystal.", "2–3 keV at 1.3 MeV for "
                                 "germanium", "wider γ peaks (added to the Doppler broadening)."),
     ("gamma", "efficiency"): _h("Full-energy-peak efficiency of this detector for the γ ray, as a percentage of all "
@@ -196,7 +209,34 @@ PLACEMENTS = (
               "CD", (("shape", "annular"), ("theta", "180 deg"), ("distance", "30 mm"), ("inner_radius", "9 mm"),
                      ("outer_radius", "41 mm"), ("rings", 16), ("sectors", 24), ("thickness", "300 um"),
                      ("resolution", "30 keV"), ("threshold", "300 keV"))),
+    Placement("s3", "Micron S3 around the beam (180°)",
+              "The real detector: 24 rings and 32 sectors on an active area of 22 to 70 mm in diameter, with its "
+              "circuit board. Set the thickness of the one you have.",
+              "S3-", (("model", "S3"), ("theta", "180 deg"), ("distance", "30 mm"), ("resolution", "30 keV"),
+                      ("threshold", "300 keV"))),
 )
+
+#: Ready-made γ-ray detectors for the app's Add menu: (key, label, why, name prefix, fields).
+GAMMA_PLACEMENTS = (
+    ("disc", "Single germanium crystal (a disc)", "A simple detector: one crystal face of a radius you choose.",
+     "Ge", (("theta", "90 deg"), ("phi", "90 deg"), ("distance", "120 mm"), ("radius", "35 mm"),
+            ("resolution", "2.5 keV"))),
+    ("clover", "Germanium clover, four 50 × 70 mm crystals",
+     "The EUROGAM, EUROBALL and AFRODITE type. Each of the four crystals gets its own Doppler correction.",
+     "Clover", (("model", "clover"), ("theta", "135 deg"), ("phi", "90 deg"), ("distance", "200 mm"))),
+    ("labr3", "LaBr₃(Ce), 2 × 2 inch", "A fast scintillator: good timing, about 2% resolution at 1.3 MeV.",
+     "LaBr", (("model", "LaBr3_2x2"), ("theta", "90 deg"), ("phi", "-90 deg"), ("distance", "150 mm"))),
+)
+
+
+def gamma_placement(key: str, taken=()) -> dict:
+    """The fields of a new γ-ray detector from :data:`GAMMA_PLACEMENTS`, with its model's values written out and a
+    name that does not clash with ``taken``."""
+    _, _, _, prefix, fields = next(x for x in GAMMA_PLACEMENTS if x[0] == key)
+    k = 1
+    while f"{prefix}{k}" in set(taken):
+        k += 1
+    return dict(catalogue.with_defaults(dict(fields), "gamma"), name=f"{prefix}{k}")
 
 
 def placement(key: str, taken=()) -> dict:
@@ -205,7 +245,8 @@ def placement(key: str, taken=()) -> dict:
     k = 1
     while f"{p.prefix}{k}" in set(taken):
         k += 1
-    return dict(p.fields, name=f"{p.prefix}{k}")
+    # A model's values are written out, so the setup panel shows them and they can be edited.
+    return dict(catalogue.with_defaults(dict(p.fields), "particle"), name=f"{p.prefix}{k}")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -501,5 +542,5 @@ def _report(p) -> list:
 _READINGS = {"geometry": _geometry, "kinematics": _kinematics, "rates": _rates, "energy_loss": _energy_loss,
              "spectra": _spectra, "trajectories": _trajectories, "gamma": _gamma, "report": _report}
 
-__all__ = ["GOALS", "HELP", "Help", "PLACEMENTS", "Placement", "STEPS", "Step", "help_for", "placement", "reading",
+__all__ = ["GAMMA_PLACEMENTS", "GOALS", "HELP", "Help", "PLACEMENTS", "Placement", "STEPS", "Step", "help_for", "gamma_placement", "placement", "reading",
            "steps_for"]

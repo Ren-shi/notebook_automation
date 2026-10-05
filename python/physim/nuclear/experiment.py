@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
-from . import _toml
+from . import _toml, catalogue
 from . import data as _data
 from .names import parse_material, parse_nuclide
 from .quantity import Quantity
@@ -316,6 +316,8 @@ class Detector:
     shape: str
     thickness: QuantityLike
     name: Optional[str] = None
+    #: A model of the detector catalogue (:mod:`physim.nuclear.catalogue`), whose values fill the fields not given.
+    model: Optional[str] = None
     theta: Optional[QuantityLike] = None
     phi: Optional[QuantityLike] = None
     distance: Optional[QuantityLike] = None
@@ -339,6 +341,7 @@ class Detector:
 
     SPECS = (
         _Field("name", "str"),
+        _Field("model", "str"),
         _Field("shape", "str", required=True),
         _Field("theta", "angle", check=_polar),
         _Field("phi", "angle"),
@@ -371,6 +374,14 @@ class Detector:
     def material_data(self) -> _data.Material:
         """Composition and density of the detector (and its dead layer)."""
         return _data.material(self.detector_material, _q(self.density))
+
+    def blocking(self) -> list:
+        """Dead material of the detector's model that stops particles: annuli in the plane of the face, as
+        (name, inner radius, outer radius) in mm. Empty without a model."""
+        if self.model is None:
+            return []
+        return [(b["name"], _q(b["inner_radius"]).to("mm"), _q(b["outer_radius"]).to("mm"))
+                for b in catalogue.model(self.model, "particle").blocking]
 
     def position_mm(self) -> tuple[float, float, float]:
         """Centre of the detector face, mm, in the coordinates described in the module docstring."""
@@ -441,13 +452,26 @@ class Excitation:
 
 @dataclass
 class GammaDetector:
-    """A γ-ray detector, for Doppler shifts and broadening: a disc of ``radius`` facing the target."""
+    """A γ-ray detector facing the target: one crystal, or the four crystals of a clover.
+
+    ``distance`` is from the target to the front face of the crystals. Give ``radius`` for a single disc, or a
+    ``model`` of the detector catalogue (or the crystal fields themselves) for real crystals: ``crystals`` (1 or 4,
+    four being a 2 × 2 clover with centres ``crystal_pitch`` apart), ``crystal_diameter`` and ``crystal_length``,
+    in a square housing of side ``housing_side`` whose window is ``window_gap`` in front of the crystals.
+    """
 
     theta: QuantityLike
     distance: QuantityLike
-    radius: QuantityLike
+    radius: Optional[QuantityLike] = None
     name: Optional[str] = None
+    model: Optional[str] = None
     phi: Optional[QuantityLike] = None
+    crystals: Optional[int] = None
+    crystal_diameter: Optional[QuantityLike] = None
+    crystal_length: Optional[QuantityLike] = None
+    crystal_pitch: Optional[QuantityLike] = None
+    housing_side: Optional[QuantityLike] = None
+    window_gap: Optional[QuantityLike] = None
     resolution: Optional[QuantityLike] = None
     #: Full-energy-peak efficiency for the γ ray, as a percentage of all γ rays emitted ("2.5 %"). Without it the
     #: planner uses the detector's geometric coverage, an upper limit.
@@ -455,18 +479,63 @@ class GammaDetector:
 
     SPECS = (
         _Field("name", "str"),
+        _Field("model", "str"),
         _Field("theta", "angle", required=True, check=_polar),
         _Field("phi", "angle"),
         _Field("distance", "length", required=True, check=_positive),
-        _Field("radius", "length", required=True, check=_positive),
+        _Field("radius", "length", check=_positive),
+        _Field("crystals", "int", check=lambda n: None if n in (1, 4) else "must be 1 or 4"),
+        _Field("crystal_diameter", "length", check=_positive),
+        _Field("crystal_length", "length", check=_positive),
+        _Field("crystal_pitch", "length", check=_positive),
+        _Field("housing_side", "length", check=_positive),
+        _Field("window_gap", "length", check=_non_negative),
         _Field("resolution", "energy", check=_non_negative),
         _Field("efficiency", "fraction", check=lambda q: None if 0 < q.value <= 100
                else f"must be above 0 and at most 100 %, got '{q}'"),
     )
 
     def geometric_efficiency(self) -> float:
-        """Fraction of all directions the crystal face covers, seen from the target: (1 − cos α)/2."""
-        return (1.0 - math.cos(math.radians(self.half_angle_deg()))) / 2.0
+        """Fraction of all directions the crystal faces cover, seen from the target: Σ (1 − cos α)/2 over the
+        crystals, α being the half-angle of each."""
+        return sum((1.0 - math.cos(math.atan2(r, math.hypot(*c)))) / 2.0 for _, c, r in self.elements())
+
+    def crystal_radius_mm(self) -> float:
+        """Radius of one crystal's front face, mm."""
+        if self.crystal_diameter is not None:
+            return _q(self.crystal_diameter).to("mm") / 2.0
+        return _q(self.radius).to("mm")
+
+    def face_axes(self) -> tuple:
+        """Two unit vectors across the front face, perpendicular to :meth:`direction`."""
+        u = self.direction()
+        ref = (0.0, 0.0, 1.0) if abs(u[2]) < 0.9 else (1.0, 0.0, 0.0)
+        a = (u[1] * ref[2] - u[2] * ref[1], u[2] * ref[0] - u[0] * ref[2], u[0] * ref[1] - u[1] * ref[0])
+        n = math.hypot(*a)
+        a = (a[0] / n, a[1] / n, a[2] / n)
+        b = (u[1] * a[2] - u[2] * a[1], u[2] * a[0] - u[0] * a[2], u[0] * a[1] - u[1] * a[0])
+        return a, b
+
+    def elements(self) -> list:
+        """The crystals, as (label, centre of the front face in mm, radius in mm). One crystal has an empty label;
+        the four of a clover are A to D."""
+        u, d, r = self.direction(), _q(self.distance).to("mm"), self.crystal_radius_mm()
+        centre = (d * u[0], d * u[1], d * u[2])
+        if (self.crystals or 1) == 1:
+            return [("", centre, r)]
+        a, b = self.face_axes()
+        h = _q(self.crystal_pitch).to("mm") / 2.0
+        return [(label, tuple(centre[k] + sa * h * a[k] + sb * h * b[k] for k in range(3)), r)
+                for label, sa, sb in (("A", 1, 1), ("B", -1, 1), ("C", -1, -1), ("D", 1, -1))]
+
+    def housing(self) -> Optional[tuple]:
+        """The housing's front window, which stops particles: (centre in mm, side in mm) of a square facing the
+        target, ``window_gap`` in front of the crystals. ``None`` when no housing is given."""
+        if self.housing_side is None:
+            return None
+        u = self.direction()
+        d = _q(self.distance).to("mm") - (_q(self.window_gap).to("mm") if self.window_gap is not None else 0.0)
+        return (d * u[0], d * u[1], d * u[2]), _q(self.housing_side).to("mm")
 
     def peak_efficiency(self) -> float:
         """Full-energy-peak efficiency as a fraction: :attr:`efficiency` if given, else the geometric coverage."""
@@ -479,8 +548,30 @@ class GammaDetector:
         return (math.sin(th) * math.cos(ph), math.sin(th) * math.sin(ph), math.cos(th))
 
     def half_angle_deg(self) -> float:
-        """Half the opening angle of the detector seen from the target."""
-        return math.degrees(math.atan2(_q(self.radius).to("mm"), _q(self.distance).to("mm")))
+        """Half the opening angle of the detector seen from the target: of the one crystal, or of the circle
+        around the four crystals of a clover."""
+        r = self.crystal_radius_mm()
+        if (self.crystals or 1) == 4:
+            r += _q(self.crystal_pitch).to("mm") / math.sqrt(2.0)
+        return math.degrees(math.atan2(r, _q(self.distance).to("mm")))
+
+
+@dataclass
+class Chamber:
+    """The scattering chamber: a sphere of ``radius`` around the target with a wall, and the beam pipe. Particle
+    detectors sit inside it and γ-ray detectors outside."""
+
+    radius: QuantityLike
+    wall_thickness: Optional[QuantityLike] = None
+    wall_material: Optional[str] = None
+    beam_pipe_radius: Optional[QuantityLike] = None
+
+    SPECS = (
+        _Field("radius", "length", required=True, check=_positive),
+        _Field("wall_thickness", "length", check=_positive),
+        _Field("wall_material", "material"),
+        _Field("beam_pipe_radius", "length", check=_positive),
+    )
 
 
 @dataclass
@@ -499,6 +590,7 @@ class Experiment:
     gamma_detectors: list = field(default_factory=list)
     #: Level schemes (:class:`~physim.nuclear.levels.LevelScheme`) of the nuclei, by role: "beam" and "target".
     levels: dict = field(default_factory=dict)
+    chamber: Optional[Chamber] = None
 
     # -- reading ------------------------------------------------------------------------------------------------
 
@@ -509,7 +601,7 @@ class Experiment:
         if not isinstance(data, dict):
             raise SetupError(["the setup must be a table of sections"])
         known = ("schema", "title", "description", "reaction", "beam", "target", "detectors", "run",
-                 "gamma_detectors", "levels")
+                 "gamma_detectors", "levels", "chamber")
         for key in data:
             if key not in known:
                 hint = difflib.get_close_matches(key, known, n=1)
@@ -617,9 +709,16 @@ class Experiment:
                 problems.append("gamma detectors must be written as [[gamma_detectors]] sections")
             else:
                 for i, raw in enumerate(raw_g, start=1):
-                    g = _read_section(raw, GammaDetector.SPECS, f"gamma detector {i}", problems)
-                    if all(k in g for k in ("theta", "distance", "radius")):
-                        gammas.append(GammaDetector(**g))
+                    g = _read_gamma_detector(raw, f"gamma detector {i}", problems)
+                    if g is not None:
+                        gammas.append(g)
+
+        chamber = None
+        if "chamber" in data:
+            c = _read_section(data["chamber"], Chamber.SPECS, "chamber", problems)
+            if "radius" in c:
+                chamber = Chamber(**c)
+                _check_chamber(chamber, detectors, gammas, problems)
 
         levels = _read_levels(data.get("levels"), beam, target, problems)
 
@@ -635,7 +734,7 @@ class Experiment:
             raise SetupError(problems)
         return cls(title=title, beam=beam, target=target, detectors=detectors, run=run,
                    description=description, reaction=reaction, excitation=excitation, gamma_detectors=gammas,
-                   levels=levels)
+                   levels=levels, chamber=chamber)
 
     @classmethod
     def from_toml(cls, text: str) -> Experiment:
@@ -678,6 +777,8 @@ class Experiment:
         d["detectors"] = [_to_dict(det) for det in self.detectors]
         if self.gamma_detectors:
             d["gamma_detectors"] = [_to_dict(g) for g in self.gamma_detectors]
+        if self.chamber is not None:
+            d["chamber"] = _to_dict(self.chamber)
         if self.levels:
             d["levels"] = {role: scheme.to_dict() for role, scheme in self.levels.items()}
         return d
@@ -700,8 +801,50 @@ class Experiment:
         Experiment.from_dict(d)
 
 
+def _read_gamma_detector(raw: dict[str, Any], label: str, problems: list[str]) -> Optional[GammaDetector]:
+    before = len(problems)
+    try:
+        raw = catalogue.with_defaults(raw, "gamma")
+    except ValueError as e:
+        problems.append(f"{label}: model {e}")
+        return None
+    g = _read_section(raw, GammaDetector.SPECS, label, problems)
+    if "radius" not in raw and "crystal_diameter" not in raw:
+        problems.append(f"{label}: give 'radius', or a 'model' (one of {', '.join(catalogue.names('gamma'))}), or "
+                        "'crystal_diameter'")
+    if g.get("crystals") == 4 and "crystal_pitch" not in raw:
+        problems.append(f"{label}: four crystals need 'crystal_pitch', the distance between their centres")
+    if "crystals" in raw and "crystal_diameter" not in raw:
+        problems.append(f"{label}: 'crystals' needs 'crystal_diameter'")
+    if len(problems) > before or not all(k in g for k in ("theta", "distance")):
+        return None
+    return GammaDetector(**g)
+
+
+def _check_chamber(chamber: Chamber, detectors: list, gammas: list, problems: list[str]) -> None:
+    """Particle detectors must fit inside the chamber, and γ-ray detectors must stand outside its wall."""
+    radius = _q(chamber.radius).to("mm")
+    outer = radius + (_q(chamber.wall_thickness).to("mm") if chamber.wall_thickness is not None else 0.0)
+    for i, d in enumerate(detectors, start=1):
+        far = math.hypot(*d.position_mm()) + max(_q(x).to("mm") for x in (
+            d.outer_radius, d.radius, d.width, d.height) if x is not None)
+        if far > radius:
+            problems.append(f"detector {i} ({d.name or f'D{i}'}): reaches {far:.0f} mm from the target, outside "
+                            f"the chamber (radius {radius:g} mm)")
+    for i, g in enumerate(gammas, start=1):
+        near = _q(g.distance).to("mm") - (_q(g.window_gap).to("mm") if g.window_gap is not None else 0.0)
+        if near < outer:
+            problems.append(f"gamma detector {i} ({g.name or f'G{i}'}): its front is {near:.0f} mm from the "
+                            f"target, inside the chamber wall (outer radius {outer:g} mm)")
+
+
 def _read_detector(raw: dict[str, Any], label: str, problems: list[str]) -> Optional[Detector]:
     before = len(problems)
+    try:
+        raw = catalogue.with_defaults(raw, "particle")
+    except ValueError as e:
+        problems.append(f"{label}: model {e}")
+        return None
     d = _read_section(raw, Detector.SPECS, label, problems)
     shape = d.get("shape")
     if shape is not None and shape not in SHAPES:
@@ -787,5 +930,5 @@ def _check_material(where: str, values: dict[str, Any], problems: list[str]) -> 
                                 "not known; give 'density' or the thickness in mg/cm2")
 
 
-__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "Beam", "Detector", "Excitation",
+__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "Beam", "Chamber", "Detector", "Excitation",
            "Experiment", "GammaDetector", "Layer", "Run", "SetupError", "Target"]

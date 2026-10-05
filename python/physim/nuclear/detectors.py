@@ -410,17 +410,39 @@ class Response:
 # A whole array
 
 
+#: How far behind its active face a detector model's dead material is placed, mm, so that the active face is met
+#: first where the two overlap.
+BEHIND_MM = 0.01
+
+
 class Array:
     """All detectors of an experiment."""
 
-    def __init__(self, geometries: Sequence[Geometry], setup_detectors: Optional[Sequence] = None):
+    def __init__(self, geometries: Sequence[Geometry], setup_detectors: Optional[Sequence] = None,
+                 blockers: Sequence[Geometry] = ()):
         self.geometries = list(geometries)
         self._setup = list(setup_detectors) if setup_detectors is not None else [None] * len(self.geometries)
+        #: Faces of dead material: they stop particles and count nothing (circuit boards, γ-detector housings).
+        self.blockers = list(blockers)
 
     @classmethod
     def from_experiment(cls, experiment) -> Array:
+        """The particle detectors of a setup, with the dead material that can hide them: the boards of detector
+        models, placed just behind their active faces, and the front windows of γ-detector housings."""
         dets = experiment.detectors
-        return cls([Geometry.from_setup(d, i) for i, d in enumerate(dets, start=1)], dets)
+        faces = [Geometry.from_setup(d, i) for i, d in enumerate(dets, start=1)]
+        blockers = []
+        for d, g in zip(dets, faces):
+            for name, r_in, r_out in d.blocking():
+                blockers.append(Geometry(f"{g.name} ({name})", "annular", g.centre - BEHIND_MM * g.n, g.n,
+                                         inner_radius=r_in, outer_radius=r_out))
+        for i, gd in enumerate(getattr(experiment, "gamma_detectors", ()), start=1):
+            housing = gd.housing()
+            if housing is not None:
+                centre, side = housing
+                blockers.append(Geometry(f"{gd.name or f'G{i}'} (housing)", "rectangle", centre,
+                                         [-c for c in centre], width=side, height=side))
+        return cls(faces, dets, blockers)
 
     def __getitem__(self, name: str) -> Geometry:
         for g in self.geometries:
@@ -440,7 +462,11 @@ class Array:
     def first_hit(self, d, source=(0.0, 0.0, 0.0)) -> Optional[Hit]:
         """The nearest detector face the line from ``source`` along ``d`` crosses."""
         hits = [h for g in self.geometries if (h := g.hit(d, source)) is not None]
-        return min(hits, key=lambda h: h.distance) if hits else None
+        best = min(hits, key=lambda h: h.distance) if hits else None
+        if best is not None and any((h := b.hit(d, source)) is not None and h.distance < best.distance
+                                    for b in self.blockers):
+            return None  # dead material stops the particle first
+        return best
 
     def visible(self, name: str, dirs: np.ndarray, source=(0.0, 0.0, 0.0)) -> np.ndarray:
         """Whether a particle leaving ``source`` along each direction reaches detector ``name`` before any other
@@ -448,7 +474,7 @@ class Array:
         g = self[name]
         own = g.distances(dirs, source)
         ok = np.ones(len(own), dtype=bool)
-        for other in self.geometries:
+        for other in self.geometries + self.blockers:
             if other is not g:
                 ok &= ~(other.distances(dirs, source) < own - 1e-9)
         return ok
@@ -462,7 +488,7 @@ class Array:
             r = np.linalg.norm(pts, axis=1)
             dom = w * np.clip(-(pts @ g.n) / r, 0, None) / r**2
             dirs = pts / r[:, None]
-            for other in self.geometries:
+            for other in self.geometries + self.blockers:
                 if other is g:
                     continue
                 hidden = other.distances(dirs) < r - 1e-9
@@ -478,7 +504,7 @@ class Array:
             amount = f"{100 * frac:.0f}%" if frac >= 0.01 else "<1%"
             out.append(f"{front} hides {amount} of {behind} from the target.")
         beam = np.array([0.0, 0.0, 1.0])
-        for g in self.geometries:
+        for g in self.geometries + self.blockers:
             if g.hit(beam, two_sided=True) is not None:
                 out.append(f"{g.name} sits in the beam path downstream of the target (the unscattered beam hits it).")
             h = g.hit(beam, source=(0.0, 0.0, -1e6), two_sided=True)

@@ -2,6 +2,41 @@
 
 **Priority:** P1 · **Size:** M · **Area:** Experiment workbench
 
+**Status: Done, except the values marked typical, which need the drawings of the detectors used (the user).**
+
+> **Done** (`python/physim/nuclear/catalogue.py`, `python/physim/nuclear/data/detector_models.toml`, models,
+> crystals and the chamber in `experiment.py`, dead material in `detectors.py` and `events.py`, crystals in
+> `gamma.py`, drawing in `planner.py` and `app.py`, presets in `guide.py`,
+> `tests/python/test_nuclear_catalogue.py`, guide section "Detector models and the chamber" in
+> `docs/nuclear-setup.md`).
+> - **Models:** `S3`, `clover` and `LaBr3_2x2`, each with its sources. A setup names a model and overrides what
+>   differs.
+> - **From the manufacturers' documents (read 2026-10-05):**
+>   - S3 (Micron's product page): 24 rings, 32 sectors, active area 22 to 70 mm in diameter, chip 20 to 76 mm.
+>   - Clover (Mirion's specification sheet): four crystals of 50 × 70 mm, gaps of at most 0.7 mm, 21–22%
+>     relative efficiency per crystal, below 2.1 keV at 1.33 MeV.
+>   - LaBr₃ (Saint-Gobain's technical note): 2.9% at 662 keV, 2.1% at 1332 keV, 1.6% at 2615 keV.
+> - **Ring pitch:** recorded as 1 mm. Micron's "junction pitch" of 886 µm does not fit 24 rings in 24 mm; it is
+>   taken as the strip width, and the rings are treated as 1 mm wide with no gap, because charge between strips
+>   is shared by the neighbours. This reading should be confirmed with Micron's drawing.
+> - **Dead material:** a model's board sits 0.01 mm behind its active face; a γ-ray detector's housing is a
+>   square at its front window. Both stop particles in the analytic rates and in the Monte Carlo, with no change
+>   to the Rust generator (a face whose threshold cannot be reached).
+> - **Crystals:** a clover is four crystal faces; the Doppler table has a row per crystal.
+> - **Chamber:** a `[chamber]` section, with detectors checked against it.
+> - **Results:**
+>   - Each S3 ring's solid angle matches the hand calculation to 0.1% (the whole detector to 1e-12).
+>   - A pad behind the S3's board, and a pad behind a clover, count nothing in the rates and in the events.
+>   - The Monte Carlo agrees with the analytic rate of an S3 within 4σ.
+>   - Setups without a model give unchanged results (all earlier tests pass).
+> - **Typical values, not from a document** (marked in the catalogue):
+>   - S3: thickness (1000 µm), dead layer (0.5 µm), and the board's size (50 mm from the axis).
+>   - Clover: the distance between crystal centres (45 mm), the housing's side (101 mm) and the window gap.
+>   - LaBr₃: the housing and the single resolution value (item 53 makes it depend on energy).
+> - **Not done here:** models added by the user in a file of their own (a setup can still give every dimension
+>   itself); solids for drawing to scale (the scene of item 52 builds them from these numbers); the
+>   chamber wall's effect on γ rays (item 53); tapered crystal fronts.
+
 ## Why
 A detector today is an infinitely thin face (item 38), and a γ detector is a circle with an efficiency number. There
 are no named models. The workbench needs real hardware: its dimensions, its segmentation and the volume it occupies.

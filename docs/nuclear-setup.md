@@ -183,6 +183,60 @@ Each is a disc facing the target.
 | `beam_time` | yes | time | How long the beam runs. |
 | `counts_wanted` | no | — | Counts needed per detector; the planner reports the beam time this takes. For Coulomb excitation these are particle–γ coincidences (excitation events seen with their γ ray), or excitation events if there are no γ detectors. |
 
+## Detector models and the chamber
+
+A detector can name a model of the catalogue. The model fills in every field the setup does not give, and any
+field can be overridden:
+
+```toml
+[[detectors]]
+name = "S3"
+model = "S3"
+theta = "180 deg"
+distance = "30 mm"
+thickness = "300 um"          # overrides the model's 1000 um
+
+[[gamma_detectors]]
+name = "Clover1"
+model = "clover"
+theta = "135 deg"
+phi = "90 deg"
+distance = "200 mm"           # from the target to the front face of the crystals
+```
+
+| Model | For | What it is |
+|---|---|---|
+| `S3` | `[[detectors]]` | Micron S3: an annular silicon detector with 24 rings and 32 sectors, active from 22 to 70 mm in diameter (rings 1 mm apart), on its circuit board |
+| `clover` | `[[gamma_detectors]]` | a germanium clover of four crystals, each 50 mm in diameter and 70 mm long |
+| `LaBr3_2x2` | `[[gamma_detectors]]` | a LaBr₃(Ce) scintillator, one crystal of 2 inches by 2 inches |
+
+**Typical values.** Not every dimension is in a data sheet. Each model lists which of its values are typical and
+should be replaced by those of the detector you have: `catalogue.model("S3").typical` in Python, and the `typical`
+and `notes` entries in `physim/nuclear/data/detector_models.toml`, which also names the source of every number.
+For the S3 these are the thickness, the dead layer and the size of the circuit board; for the clover, the distance
+between crystal centres and the housing.
+
+**Crystals.** A γ-ray detector with `crystals = 4` is a clover: four crystal faces in a square, `crystal_pitch`
+apart, labelled A to D. Each crystal has its own row in the Doppler table, since each is corrected for the Doppler
+shift on its own. A γ-ray detector without a model is a single disc of the `radius` given, as before.
+
+**Dead material.** A model's circuit board, and the front of a γ-ray detector's housing (`housing_side`), stop
+particles. A detector behind them is hidden in the rates and in the simulated events alike, and the warnings name
+what hides it.
+
+**The chamber.** An optional `[chamber]` section describes the scattering chamber:
+
+```toml
+[chamber]
+radius = "120 mm"
+wall_thickness = "3 mm"
+wall_material = "Al"
+beam_pipe_radius = "20 mm"
+```
+
+With a chamber, a particle detector that reaches beyond its radius, or a γ-ray detector whose front lies inside
+its wall, is reported as a problem.
+
 ## Materials
 
 A material can be written as:

@@ -45,10 +45,14 @@ REACTION_TYPES = {"elastic": "Elastic (Rutherford) scattering", "coulex": "Coulo
 GAMMA_FIELDS = [("name", "Name", "Ge1"), ("theta", "θ", "90 deg"), ("phi", "φ", "90 deg"),
                 ("distance", "Distance", "120 mm"), ("radius", "Crystal radius", "35 mm"),
                 ("resolution", "Resolution (FWHM)", "2.5 keV"), ("efficiency", "Efficiency (full peak)", "2 %")]
+#: Shown in place of the radius for a γ-ray detector with real crystals (a model of the catalogue).
+CRYSTAL_FIELDS = [("crystals", "Crystals", "4"), ("crystal_diameter", "Crystal diameter", "50 mm"),
+                  ("crystal_length", "Crystal length", "70 mm"), ("crystal_pitch", "Crystal pitch", "45 mm"),
+                  ("housing_side", "Housing side", "101 mm"), ("window_gap", "Window to crystal", "5 mm")]
 #: Which size fields each shape uses.
 SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circle": {"radius"},
                 "annular": {"inner_radius", "outer_radius", "rings", "sectors"}}
-INT_FIELDS = {"charge_state", "counts_wanted", "strips_x", "strips_y", "rings", "sectors"}
+INT_FIELDS = {"charge_state", "counts_wanted", "strips_x", "strips_y", "rings", "sectors", "crystals"}
 
 #: Detector and curve colours (Okabe–Ito first): distinguishable for colour-blind readers, legible on the light and
 #: the dark page.
@@ -155,6 +159,10 @@ def figure_geometry(planner: Planner):
         o = d["outline"]
         fig.add_trace(go.Scatter3d(x=o[:, 0], y=o[:, 1], z=o[:, 2], mode="lines", name=d["name"],
                                    line=dict(color=COLORS[i % len(COLORS)], width=5)))
+    for d in g.get("blocking", []):
+        o = d["outline"]
+        fig.add_trace(go.Scatter3d(x=o[:, 0], y=o[:, 1], z=o[:, 2], mode="lines", name=d["name"],
+                                   line=dict(color="#888", width=2), showlegend=False))
     for d in g.get("gamma_detectors", []):
         o = d["outline"]
         fig.add_trace(go.Scatter3d(x=o[:, 0], y=o[:, 1], z=o[:, 2], mode="lines", name=f"{d['name']} (γ)",
@@ -418,11 +426,12 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             setup_panel.refresh()
         return run
 
-    def add_gamma_detector() -> None:
-        n = len(P().draft.get("gamma_detectors", []))
-        changed(P().add_gamma_detector(name=f"Ge{n + 1}", theta="90 deg", phi="90 deg", distance="120 mm",
-                                       radius="35 mm", resolution="2.5 keV"))
-        setup_panel.refresh()
+    def add_gamma_detector(key: str = "disc"):
+        def run() -> None:
+            names = [g.get("name") for g in P().draft.get("gamma_detectors", [])]
+            changed(P().add_gamma_detector(**guide.gamma_placement(key, names)))
+            setup_panel.refresh()
+        return run
 
     def duplicate_gamma_detector(k: int):
         def run() -> None:
@@ -558,12 +567,22 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         with ui.row().classes("items-center mt-3 w-full"):
             ui.label("γ-ray detectors").classes("ps-section")
             ui.space()
-            ui.button("Add", icon="add", on_click=add_gamma_detector).props("dense flat")
-        ui.label("Germanium detectors: they see the γ ray emitted when the excited state decays.").classes(
+            with ui.button("Add", icon="add").props("dense flat"):
+                with ui.menu():
+                    for key, label, why, _, _ in guide.GAMMA_PLACEMENTS:
+                        with ui.menu_item(on_click=add_gamma_detector(key)).classes("max-w-sm"):
+                            with ui.column().classes("gap-0"):
+                                ui.label(label).classes("text-sm font-medium")
+                                ui.label(why).classes("text-xs ps-muted")
+        ui.label("They see the γ ray emitted when the excited state decays. Add offers a single crystal, a "
+                 "germanium clover and a LaBr₃ scintillator with their real dimensions.").classes(
             "text-xs ps-muted")
         for i, gd in enumerate(d.get("gamma_detectors", [])):
-            with ui.expansion(f"{gd.get('name') or f'γ{i + 1}'} · germanium").classes("w-full ps-card"):
-                section("", GAMMA_FIELDS, f"gamma detector {i + 1}", gd)
+            real = "crystal_diameter" in gd or "model" in gd
+            kind = gd.get("model") or ("crystals" if real else "disc")
+            with ui.expansion(f"{gd.get('name') or f'γ{i + 1}'} · {kind}").classes("w-full ps-card"):
+                fields = [f for f in GAMMA_FIELDS if not (real and f[0] == "radius")]
+                section("", fields + (CRYSTAL_FIELDS if real else []), f"gamma detector {i + 1}", gd)
                 with ui.row():
                     ui.button("Duplicate", icon="content_copy",
                               on_click=duplicate_gamma_detector(i)).props("dense flat")
