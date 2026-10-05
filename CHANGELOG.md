@@ -17,6 +17,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - A fully hidden detector's warning names the detector in front, and shadowing is now a warning, not a note.
 
 ### Changed
+- After an edit, the rates of detectors that did not change, and that nothing shadows, are kept instead of being
+  computed again.
 - The planner app has a new look: a quieter header and setup panel, numbers in a monospace face, and no fixed white
   page. It still loads no fonts or scripts from the network.
 - The planner app draws its Matplotlib figures off screen (Agg). The report builds them in a worker thread, where
@@ -25,6 +27,15 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The planner app's Geometry tab is an interactive scene, drawn to scale (`physim.nuclear.scene`, backlog 52).
+  - Detectors are solids with their rings, strips, crystals, circuit boards and housings; the target, the beam and
+    the chamber are drawn too.
+  - Clicking a detector, a ring or a crystal shows its angles, solid angle and rates in a side panel.
+  - A selected detector can be dragged, in angle or in distance; one around the beam slides along it. The panel's
+    numbers follow the drag.
+  - A drag cannot end in the beam, inside another solid or through the chamber wall.
+  - Rings closer than Cline's safe distance are marked, and the panel says where the kinematics send the particles.
+- `Planner.move`, `Planner.place`, `Planner.live`, `Planner.selection` and `Planner.safety` do the same from Python.
 - A detector catalogue (`physim.nuclear.catalogue`): `model = "S3"`, `"clover"` or `"LaBr3_2x2"` in a setup file fills
   in the real dimensions and segmentation, each with its source and with typical values marked.
   - A γ-ray detector can have real crystals: the four crystals of a clover each get their own Doppler correction.

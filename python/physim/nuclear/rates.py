@@ -383,10 +383,14 @@ class Rates:
 
     ``depth_points`` Gauss–Legendre points average over the target's thickness and ``order`` × ``order`` points
     integrate over each detector segment; the defaults are accurate to well below 0.1% for the examples.
+
+    ``only`` computes one detector alone (the others still cast their shadows): with a low ``order`` this is the
+    quick estimate shown while a detector is dragged. ``previous`` is an earlier :class:`Rates`; the rows of every
+    detector that has not changed, and that no other detector shadows before or after, are taken from it.
     """
 
     def __init__(self, experiment, depth_points: int = 4, order: int = 12, theta_floor: float = THETA_FLOOR,
-                 min_energy: Optional[float] = None):
+                 min_energy: Optional[float] = None, only: Optional[str] = None, previous: Optional[Rates] = None):
         self.experiment = experiment
         self.array = Array.from_experiment(experiment)
         self.layers = stack(experiment)
@@ -401,9 +405,28 @@ class Rates:
         self._depth_points, self._order = depth_points, order
         #: Detectors partly hidden behind others: integrated on a finer grid, as the edge of the shadow cuts across
         #: the face (fully hidden ones simply count nothing).
-        self._partly_hidden = {behind for (_, behind), frac in self.array.shadowing().items() if frac < 1 - 1e-6}
-        self.rows = self._compute()
+        shadows = self.array.shadowing()
+        self._partly_hidden = {behind for (_, behind), frac in shadows.items() if frac < 1 - 1e-6}
+        self._shadowed = {behind for _, behind in shadows}
+        self._only = only
+        #: Everything but the detectors that decides a detector's rows.
+        self._physics = repr((experiment.beam, experiment.target, experiment.reaction, experiment.excitation,
+                              experiment.run, depth_points, order, theta_floor, self.min_energy))
         self._peak_cache: dict = {}
+        #: Detectors whose rows were taken from ``previous``.
+        self.reused = self._unchanged(previous)
+        self.rows = self._compute(previous)
+
+    def _unchanged(self, previous: Optional[Rates]) -> set:
+        if previous is None or previous._only is not None or previous._physics != self._physics:
+            return set()
+        old = {g.name: d for g, d in zip(previous.array.geometries, previous.array._setup)}
+        out = set()
+        for g, d in zip(self.array.geometries, self.array._setup):
+            if (d is not None and g.name in old and old[g.name] == d and g.name not in self._shadowed
+                    and g.name not in previous._shadowed):
+                out.add(g.name)
+        return out
 
     def _depth_nodes(self, layer: int) -> tuple:
         x, w = np.polynomial.legendre.leggauss(self._depth_points)
@@ -417,9 +440,15 @@ class Rates:
             return self._order
         return max(self._order, math.ceil(SHADOW_ORDER / math.sqrt(len(g.segments))))
 
-    def _compute(self) -> list:
+    def _compute(self, previous: Optional[Rates] = None) -> list:
         rows = []
         for g in self.array:
+            if self._only is not None and g.name != self._only:
+                continue
+            if g.name in self.reused:
+                rows += [r for r in previous.rows if r.detector == g.name]
+                self._peak_cache.update({k: v for k, v in previous._peak_cache.items() if k[0] == g.name})
+                continue
             segs = g.segments
             parts = [g.directions(seg, self._order_for(g)) for seg in segs]
             dirs = np.concatenate([p[0] for p in parts])
