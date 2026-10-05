@@ -128,6 +128,27 @@ def test_shadowing_and_beam_warnings():
     assert not any(x.startswith("ring") and "beam" in x for x in w)
 
 
+def test_visible_part_of_a_hidden_detector():
+    """A small disc centred in front of a big one hides a cone: what the big one still sees is the difference of
+    two cones' solid angles, 2π(cos α_front − cos α_back)."""
+    from physim.nuclear.rates import SHADOW_ORDER
+
+    axis = _unit([0, 1, 1])
+    front = Geometry("front", "circle", 50 * axis, -axis, radius=2)
+    back = Geometry("back", "circle", 100 * axis, -axis, radius=10)
+    array = Array([front, back])
+    exact = 2 * math.pi * (math.cos(math.atan(2 / 50)) - math.cos(math.atan(10 / 100)))
+    dirs, dom = back.directions(None, SHADOW_ORDER)
+    assert float(np.sum(dom * array.visible("back", dirs))) == pytest.approx(exact, rel=5e-3)
+    # The front disc is not hidden at all, and directions that miss a detector do not reach it.
+    dirs, dom = front.directions(None, 12)
+    assert array.visible("front", dirs).all()
+    assert np.isinf(front.distances(np.array([[1.0, 0.0, 0.0]]))).all()
+    # Distances agree with hit().
+    d = _unit([0, 1.02, 1])
+    assert back.distances(d[None, :])[0] == pytest.approx(back.hit(d).distance)
+
+
 def _unit(v):
     v = np.asarray(v, dtype=float)
     return v / np.linalg.norm(v)

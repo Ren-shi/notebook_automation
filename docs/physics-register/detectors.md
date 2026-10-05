@@ -33,6 +33,7 @@ Backlog item 38 · modules `physim.nuclear.detectors`, `physim.nuclear.plot` · 
 | Tilted and rotated faces (no closed form) | Independent Monte Carlo, 4 × 10⁵ directions | 4σ (≈ 0.3%) | pass | `test_monte_carlo_agrees_for_tilted_faces` |
 | Strip indices, hit positions, θ and φ ranges | Construction; dense grid; atan(25/150) | 1e-9° | pass | `test_strips_add_up_and_are_hit_where_expected`, `test_angular_coverage` |
 | Shadowing fraction of a disc wholly in front of another | Ω_front / Ω_back | 0.1% | pass | `test_shadowing_and_beam_warnings` |
+| Visible solid angle of a disc behind a smaller one (what the rates integrate) | 2π(cos α_front − cos α_back) | 0.5% | pass | `test_visible_part_of_a_hidden_detector` |
 | Punch-through energy | Range from {doc}`stopping` | 1e-6 | pass | `test_response_dead_layer_punch_through_threshold_resolution` |
 | Resolution | σ = FWHM/2.355 from 40 000 samples | 2% | pass | same |
 | Example setups drawn in 3D and in (θ, φ) | Checked by eye (2026-10-04); outlines match the computed θ ranges | 0.05° | pass | `test_setup_pictures` |

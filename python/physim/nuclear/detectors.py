@@ -191,21 +191,33 @@ class Geometry:
         out = self.hits(np.atleast_2d(d), source, two_sided)
         return out[0]
 
-    def hits(self, dirs: np.ndarray, source=(0.0, 0.0, 0.0), two_sided: bool = False) -> list:
-        """:meth:`hit` for many directions at once (an (N, 3) array)."""
+    def _intersect(self, dirs: np.ndarray, source, two_sided: bool) -> tuple:
         s = np.asarray(source, dtype=float)
         d = np.asarray(dirs, dtype=float)
         d = d / np.linalg.norm(d, axis=1, keepdims=True)
         dn = d @ self.n
         with np.errstate(divide="ignore", invalid="ignore"):
             t = ((self.centre - s) @ self.n) / dn
-        p = s + t[:, None] * d
-        su, sv = (p - self.centre) @ self.u, (p - self.centre) @ self.v
-        inside, i, j = self._segment_of(su, sv)
-        ok = inside & (t > 0) & ((dn < 0) | two_sided)  # the face looks back towards the source
+        with np.errstate(invalid="ignore"):
+            p = s + t[:, None] * d
+            su, sv = (p - self.centre) @ self.u, (p - self.centre) @ self.v
+        finite = np.isfinite(su) & np.isfinite(sv)  # a direction parallel to the face never crosses it
+        su, sv = np.where(finite, su, np.inf), np.where(finite, sv, np.inf)
+        inside, i, j = self._segment_of(np.where(finite, su, 0.0), np.where(finite, sv, 0.0))
+        ok = finite & inside & (t > 0) & ((dn < 0) | two_sided)  # the face looks back towards the source
+        return ok, t, dn, su, sv, i, j
+
+    def hits(self, dirs: np.ndarray, source=(0.0, 0.0, 0.0), two_sided: bool = False) -> list:
+        """:meth:`hit` for many directions at once (an (N, 3) array)."""
+        ok, t, dn, su, sv, i, j = self._intersect(dirs, source, two_sided)
         inc = np.degrees(np.arccos(np.clip(-dn, -1, 1)))
         return [Hit(self.name, (int(i[k]), int(j[k])), float(t[k]), float(inc[k]), (float(su[k]), float(sv[k])))
-                if ok[k] else None for k in range(len(d))]
+                if ok[k] else None for k in range(len(ok))]
+
+    def distances(self, dirs: np.ndarray, source=(0.0, 0.0, 0.0)) -> np.ndarray:
+        """Distance (mm) from ``source`` along each direction to the front of this face; ``inf`` where it misses."""
+        ok, t = self._intersect(dirs, source, False)[:2]
+        return np.where(ok, t, np.inf)
 
     # -- solid angle ------------------------------------------------------------------------------------------
 
@@ -430,6 +442,17 @@ class Array:
         hits = [h for g in self.geometries if (h := g.hit(d, source)) is not None]
         return min(hits, key=lambda h: h.distance) if hits else None
 
+    def visible(self, name: str, dirs: np.ndarray, source=(0.0, 0.0, 0.0)) -> np.ndarray:
+        """Whether a particle leaving ``source`` along each direction reaches detector ``name`` before any other
+        detector's face (the nearest face a particle meets is the one that stops it, as in the event generator)."""
+        g = self[name]
+        own = g.distances(dirs, source)
+        ok = np.ones(len(own), dtype=bool)
+        for other in self.geometries:
+            if other is not g:
+                ok &= ~(other.distances(dirs, source) < own - 1e-9)
+        return ok
+
     def shadowing(self) -> dict:
         """{(front, behind): fraction of `behind`'s solid angle hidden by `front`} for every pair that overlaps."""
         out = {}
@@ -442,8 +465,7 @@ class Array:
             for other in self.geometries:
                 if other is g:
                     continue
-                hidden = np.array([(h is not None and h.distance < r[k] - 1e-9)
-                                   for k, h in enumerate(other.hits(dirs))])
+                hidden = other.distances(dirs) < r - 1e-9
                 frac = float(np.sum(dom[hidden]) / np.sum(dom))
                 if frac > 1e-4:
                     out[(other.name, g.name)] = frac

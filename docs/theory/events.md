@@ -26,6 +26,13 @@ Two cuts keep the integral finite where Rutherford's formula diverges:
 - **Particles leaving the reaction with less than the lowest detector threshold** are left out (at least 10 keV).
   Distant collisions send recoils out near 90° with almost no energy; they never leave the target or give a signal.
 
+**Detectors hiding each other.** A particle stops in the first detector face it meets. The integral therefore
+leaves out every direction that meets another detector first, the same rule the event generator follows track by
+track.
+- A detector entirely behind another counts nothing, and its warning names the one in front.
+- At the edge of a shadow the integrand jumps, so a partly hidden detector is integrated on a finer grid, about 48 × 48
+  points over its face. That is within 0.5% of the exact visible solid angle of a disc behind a smaller one.
+
 **Beam time.** The time needed for $N$ counts is $N/R$. The relative statistical error is then $1/\sqrt N$.
 
 **Counted rate.** `Rates.rate(..., counted=True)` scales each channel by the fraction of its particles whose mean
@@ -125,8 +132,11 @@ joined in order.
 
 ## Checks
 
-- **Monte Carlo against analytic rates.** Every detector of the examples, and a tilted-target variant, agrees
-  within 4 statistical standard deviations, per channel and in total, with $2 \times 10^6$ events.
+- **Monte Carlo against analytic rates.** Every detector agrees within 4 statistical standard deviations, per
+  channel and in total, with $2 \times 10^6$ events. The setups are the examples, a tilted-target variant, and a pad
+  half hidden behind a CD.
+- **Hidden detectors.** The visible solid angle of a disc behind a smaller one is checked against 2π(cos α_front −
+  cos α_back) within 0.5%. A pad entirely behind the CD counts nothing.
 - **Peaks.** Mean energies agree with kinematics plus mean energy loss within statistics. Widths agree with the
   quadrature sum within 5%. The α + gold peak at 30° matches a hand calculation within 1 keV.
 - **A small detector's rate.** It equals $I\,n\,(d\sigma/d\Omega)\,\Omega$ within 1%.
