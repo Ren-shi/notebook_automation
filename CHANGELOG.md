@@ -17,6 +17,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - A fully hidden detector's warning names the detector in front, and shadowing is now a warning, not a note.
 
 ### Changed
+- Particle–γ coincidence rates and beam times now include the angular correlation: each particle detector has its
+  own γ-ray efficiency (`gamma_efficiency` in each row of `Planner.rates()`). Particle rates are unchanged.
 - A γ-ray detector without `efficiency` now takes its efficiency from the response model, where it took its
   geometric coverage (an upper limit) before. Coincidence rates fall and beam times for Coulomb excitation grow
   accordingly: by a factor of about ten in the ⁵⁸Ni example. `gamma_efficiency_geometric` in `Planner.rates()` is
@@ -32,6 +34,15 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Orientation of Coulomb-excited states and the particle–γ angular correlation (`physim.nuclear.orientation`,
+  `physim.nuclear.angular`, backlog 54).
+  - First-order excitation amplitudes for every magnetic substate of every level of a level scheme, for any
+    ground-state spin, of the target or of the projectile.
+  - Statistical tensors, γ-ray angular distributions in the nucleus's frame and in the laboratory, mixed
+    transitions, internal conversion, and feeding from higher levels with the orientation carried down.
+  - `[reaction] emission = "isotropic"` turns the correlation off.
+  - The app's "Excitation and γ rays" tab shows the correlation factor of every particle-detector and crystal
+    pair, and the cross sections of all levels and γ rays of a looked-up level scheme.
 - γ-ray detectors have a response (`physim.nuclear.response`, backlog 53).
   - The full-energy-peak efficiency depends on energy, crystal size and distance, from a typical response per
     crystal material (germanium and LaBr₃). A measured `efficiency_curve` in the setup replaces it.

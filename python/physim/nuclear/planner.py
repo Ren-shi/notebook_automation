@@ -111,9 +111,11 @@ EXPLAIN = {
                    "Rutherford orbit (Alder and Winther); dσ/dΩ = P dσ_R/dΩ. γ energy E₀ √(1 − β²)/(1 − β cos α) "
                    "for a nucleus moving at β, emitting at α to its velocity.",
         "assumptions": "One state reached from a 0⁺ ground state; B(Eλ) as given in the setup; decay in flight after "
-                       "leaving the target, isotropic.",
+                       "leaving the target, with the particle–γ angular correlation of first-order excitation "
+                       "(or isotropic, by the switch).",
         "limits": "Closer than Cline's safe distance nuclear forces interfere; P ≳ 0.1 needs multi-step excitation "
-                  "(GOSIA); lifetimes, angular distributions and feeding are not modelled.",
+                  "(GOSIA); lifetimes and deorientation are not modelled. The table of all levels is first order "
+                  "too: no excitation in two steps.",
     },
     "report": {
         "title": "Beam-time report",
@@ -599,6 +601,8 @@ class Planner:
             if what != "all":
                 row["excitation_per_s"] = r.rate(g.name, what="excitations")
                 row["coincidence_per_s"] = r.rate(g.name, what="coincidences") if what == "coincidences" else None
+                # The γ-ray efficiency in coincidence with this detector, with the angular correlation.
+                row["gamma_efficiency"] = r.gamma_efficiency(g.name)[0] if what == "coincidences" else None
             rows.append(row)
             strips[g.name] = r.per_segment(g.name)
         eff, typical = r.gamma_efficiency() if what == "coincidences" else (None, False)
@@ -694,7 +698,59 @@ class Planner:
                                              "multipolarity": exc.multipolarity, "b_up_e2fm": exc.b_up_e2fm},
                 "xi": cx.xi, "eta": cx.eta, "safe_distance_fm": cx.safe_distance, "max_safe_angle": cx.max_safe_angle(),
                 "total_mb": cx.total(), "theta_cm": th, "probability": cx.probability(th),
-                "rates": rates, "particles": self._particle_energies(ch), "doppler": self._cache["gamma"]}
+                "rates": rates, "particles": self._particle_energies(ch), "doppler": self._cache["gamma"],
+                "emission": exc.emission or "correlated", "correlation": self.correlation()}
+
+    def correlation(self) -> list:
+        """For every particle detector × γ-ray crystal, the γ rays seen in coincidence relative to isotropic
+        emission (:func:`physim.nuclear.gamma.correlation_table`). Empty without γ-ray detectors."""
+        if "correlation" not in self._cache:
+            from .gamma import correlation_table
+
+            exp = self.experiment
+            self._cache["correlation"] = (correlation_table(exp) if exp.excitation is not None
+                                          and exp.gamma_detectors else [])
+        return self._cache["correlation"]
+
+    def populations(self, role: Optional[str] = None) -> dict:
+        """First-order Coulomb excitation of a whole level scheme of the setup (``role`` "target" or "beam"; by
+        default the nucleus the reaction excites, if it has a scheme, else whichever has one): for each level the
+        cross section for exciting it directly and with feeding from above, and for each transition the cross
+        section of its γ ray, integrated over all scattering angles at the mid-target energy.
+        ``{"available": False}`` without a level scheme."""
+        from .orientation import Excitation
+
+        exp = self.experiment
+        if role is None:
+            wanted = None if exp.excitation is None else ("target" if exp.excitation.excite == "target" else "beam")
+            role = wanted if wanted in exp.levels else next(iter(exp.levels), None)
+        if role not in exp.levels:
+            return {"available": False, "reason": "Look up a level scheme first."}
+        key = ("populations", role)
+        if key not in self._cache:
+            scheme = exp.levels[role]
+            layers = stack(exp)
+            e_mid = round(float(beam_energy_at(exp, 0, [layers[0].thickness / 2], layers)[0]), 9)
+            target = data.nuclide(max(layers[0].nuclides.items(), key=lambda kv: kv[1])[0]).name
+            if role == "target":
+                target = scheme.nuclide
+            try:
+                ex = Excitation(beam_ion(exp), target, e_mid, scheme,
+                                excite="target" if role == "target" else "projectile")
+            except ValueError as e:
+                return {"available": False, "reason": str(e)}
+            cs = ex.cross_sections()
+            levels = [{"index": n, "label": lev.label, "energy_kev": lev.energy.value,
+                       "direct_mb": cs["direct"].get(n, 0.0), "populated_mb": cs["populated"].get(n, 0.0)}
+                      for n, lev in enumerate(scheme.levels) if n and cs["populated"].get(n, 0.0) > 0]
+            gammas = [{"initial": i, "final": f, "energy_kev": scheme.levels[i].energy.value
+                       - scheme.levels[f].energy.value, "label": f"{scheme.levels[i].label} → "
+                       f"{scheme.levels[f].label}", "gamma_mb": v}
+                      for (i, f), v in cs["gamma"].items() if v > 0]
+            self._cache[key] = {"available": True, "role": role, "nuclide": scheme.nuclide, "levels": levels,
+                                "gammas": sorted(gammas, key=lambda g: -g["gamma_mb"]), "notes": list(ex.notes),
+                                "beam_energy_mev": e_mid}
+        return self._cache[key]
 
     # -- level schemes ----------------------------------------------------------------------------------------------
 

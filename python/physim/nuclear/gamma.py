@@ -21,6 +21,7 @@ targets), isotropically; the nucleus moves with its velocity just after the reac
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 
 import numpy as np
 
@@ -139,4 +140,110 @@ def doppler_table(experiment, depth_points: int = 8, order: int = 10) -> list:
     return rows
 
 
-__all__ = ["doppler_energy", "doppler_table"]
+def excitation_of(experiment, isotropic=None):
+    """The :class:`~physim.nuclear.orientation.Excitation` of the setup's excited state (the ``[reaction]``
+    section: one state reached from a 0⁺ ground state), at the beam energy in the middle of the target.
+    ``isotropic`` overrides the setup's ``emission`` switch."""
+    from . import data
+
+    exc = experiment.excitation
+    if exc is None:
+        raise ValueError("the setup has no excited state ([reaction] type = \"coulex\")")
+    layers = stack(experiment)
+    lay = layers[0]
+    target = data.nuclide(max(lay.nuclides.items(), key=lambda kv: kv[1])[0]).name
+    beam = beam_ion(experiment)
+    # The same energy, rounded the same way, as the rates use: the orbit integrals are then shared.
+    e_mid = round(float(beam_energy_at(experiment, 0, [lay.thickness / 2], layers)[0]), 9)
+    flat = (exc.emission == "isotropic") if isotropic is None else isotropic
+    return _excitation(beam, target, e_mid, exc.excite, exc.energy_mev, exc.multipolarity, exc.b_up_e2fm, flat)
+
+
+@lru_cache(maxsize=16)
+def _excitation(beam: str, target: str, e_mid: float, excite: str, e_star: float, multipolarity: str,
+                b_up: float, isotropic: bool):
+    from .orientation import Excitation, simple_scheme
+
+    scheme = simple_scheme(target if excite == "target" else beam, e_star, multipolarity, b_up)
+    return Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=isotropic)
+
+
+def correlation_table(experiment, order: int = 4, crystal_points: int = 3) -> list:
+    """For every particle detector × γ-ray crystal: how many γ rays the crystal sees when the particle is seen in
+    that detector, relative to isotropic emission (1 = isotropic).
+
+    The factor is 4π W / yield in the laboratory, averaged over the crystal's face and over the particle
+    detector, each point of which is weighted by the excitation cross section there. Both the scattered beam and
+    the recoil reaching the detector are counted, each with the orbit it belongs to. It holds the particle–γ
+    angular correlation and the forward throw of γ rays from a moving nucleus; with ``emission = "isotropic"``
+    only the second.
+
+    Each row also gives "detector_factor" for the γ-ray detector as a whole (its crystals averaged by the solid
+    angle each covers). The kinematics are those at the middle of the target; shadowing is not applied."""
+    from . import data
+    from .kinematics import TwoBody
+
+    exc = experiment.excitation
+    ex = excitation_of(experiment)
+    e0 = exc.energy_mev
+    excite = "recoil" if exc.excite == "target" else "ejectile"
+    tb = TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=e0, excite=excite)
+    m_emitter = data.nuclide(ex.scheme.nuclide).nuclear_mass_mev + e0
+    cx = ex.paths[1][0][2] if 1 in ex.paths else None
+    crystals = []
+    for i, gd in enumerate(experiment.gamma_detectors):
+        for label, centre, radius in gd.elements():
+            d = math.sqrt(sum(c * c for c in centre))
+            cover = (1 - math.cos(math.atan2(radius, d))) / 2
+            crystals.append((gd.name or f"G{i + 1}", label,
+                             _disc_directions(tuple(c / d for c in centre), math.degrees(math.atan2(radius, d)),
+                                              crystal_points), cover))
+    rows = []
+    all_dirs = np.concatenate([c[2] for c in crystals]) if crystals else np.zeros((0, 3))
+    for g in Array.from_experiment(experiment):
+        dirs, dom = g.directions(None, order)
+        theta, phi = angles(dirs)
+        sums = np.zeros(len(crystals))
+        weight = 0.0
+        if cx is not None:
+            for particle in ("ejectile", "recoil"):
+                for point in tb.at_lab(theta, particle):
+                    if point is None:
+                        continue
+                    th_p = np.asarray(point.theta_cm, dtype=float)
+                    jac = np.nan_to_num(np.asarray(point.jacobian, dtype=float))
+                    for k in range(len(theta)):
+                        if np.isnan(th_p[k]) or jac[k] <= 0:
+                            continue
+                        # The CM angle and azimuth of the scattered beam on this orbit.
+                        th_ej = th_p[k] if particle == "ejectile" else 180.0 - th_p[k]
+                        ph_ej = phi[k] if particle == "ejectile" else phi[k] + 180.0
+                        if not 0 < th_ej <= 180:
+                            continue
+                        state = ex.near(th_ej)
+                        w = state.direct.get(1, 0.0) * float(cx.rutherford_cm(th_ej)) * jac[k] * dom[k]
+                        if w <= 0:
+                            continue
+                        em = tb.recoil_for(th_ej) if excite == "recoil" else tb.at_cm(th_ej)
+                        ph_em = math.radians(ph_ej + (180.0 if excite == "recoil" else 0.0))
+                        th_em = math.radians(float(em.theta_lab))
+                        gam = 1 + float(em.energy) / m_emitter
+                        beta = math.sqrt(max(1 - 1 / gam**2, 0.0))
+                        vel = beta * np.array([math.sin(th_em) * math.cos(ph_em), math.sin(th_em) * math.sin(ph_em),
+                                               math.cos(th_em)])
+                        y = state.gamma_yield(1, 0)
+                        if y <= 0:
+                            continue
+                        seen = state.w_lab(1, 0, all_dirs, ph_ej, vel).reshape(len(crystals), -1).mean(axis=1)
+                        sums += w * seen * 4 * math.pi / y
+                        weight += w
+        factors = sums / weight if weight > 0 else np.ones(len(crystals))
+        for c, (name, label, _, cover) in enumerate(crystals):
+            same = [j for j, x in enumerate(crystals) if x[0] == name]
+            whole = sum(factors[j] * crystals[j][3] for j in same) / sum(crystals[j][3] for j in same)
+            rows.append({"particle_detector": g.name, "gamma_detector": name, "crystal": label,
+                         "factor": float(factors[c]), "detector_factor": float(whole)})
+    return rows
+
+
+__all__ = ["correlation_table", "doppler_energy", "doppler_table", "excitation_of"]

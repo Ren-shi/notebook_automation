@@ -96,6 +96,7 @@ distance **d** from the target. θ = 0° is straight downstream and θ = 180° s
 | `excite` | no | `"target"` (default) or `"projectile"`: which nucleus is excited (`coulex` only). |
 | `energy` | for `coulex` | Energy of the excited state, e.g. `"1.454 MeV"`. |
 | `multipolarity` | no | `"E2"` (default), `"E1"` or `"E3"`: the transition from the 0⁺ ground state. |
+| `emission` | no | `"correlated"` (default): the γ rays follow the particle–γ angular correlation. `"isotropic"`: they leave evenly in all directions. |
 | `b_up` | for `coulex` | B(Eλ↑), the reduced transition probability up, with its unit: `"0.0695 e2b2"` or `"695 e2fm4"` for E2 (`e2b`/`e2fm2` for E1, `e2b3`/`e2fm6` for E3). Take it from ENSDF; physim does not look it up. |
 
 A Coulomb-excitation setup:
@@ -293,6 +294,40 @@ response.source_run(exp, "60Co").peak_to_total("Ge90")
 - Not included: two γ rays of one decay summing in a crystal, the room background, dead time, add-back.
 
 Units of activity are `Bq`, `kBq`, `MBq`, `uCi` and `mCi`.
+
+## Orientation and the particle–γ correlation
+
+Coulomb excitation leaves the nucleus oriented: which magnetic substates are populated depends on the orbit, and
+so on the angle the particle scattered to. The γ rays that follow are therefore not emitted evenly, and a crystal
+sees more or fewer of them than its efficiency alone says. `physim.nuclear.orientation` keeps the amplitude of
+every substate, in first order:
+
+```python
+from physim.nuclear.orientation import Excitation, simple_scheme
+
+scheme = simple_scheme("58Ni", "1.454 MeV", "E2", "0.0695 e2b2")     # 0⁺ → 2⁺ → 0⁺
+ex = Excitation("16O", "58Ni", "30 MeV", scheme, excite="target")
+state = ex.at(150.0)                 # the projectile scattered to 150° in the CM frame
+state.population(1)                  # probability that the 2⁺ state is populated
+state.gamma_yield(1, 0)              # γ rays of 2⁺ → 0⁺ per collision
+state.w_lab(1, 0, directions, phi_particle_deg=0.0, velocity=(0, 0, 0.03))   # per steradian, in the laboratory
+ex.cross_sections()                  # mb, over all angles: each level directly and with feeding, each γ ray
+```
+
+- **Any level scheme.** `Excitation` takes a `LevelScheme` (see [Level schemes](#level-schemes)) and excites every
+  level that an E1, E2 or E3 matrix element connects to the ground state, whatever the ground state's spin.
+- **Decay.** Each level decays by its branching ratios. Internal conversion takes α/(1 + α) of a transition. A
+  level fed from above takes over its parent's orientation, reduced as the theory of angular correlations gives.
+  Mixed transitions use the mixing ratio (ENSDF's sign convention, that of Krane and Steffen).
+- **In the laboratory.** The γ rays are thrown forward by the motion of the emitting nucleus, which also changes
+  the solid angle.
+- **In the rates.** `correlation_table(experiment)` in `physim.nuclear.gamma` gives, for every particle detector
+  and γ-ray crystal, the γ rays seen in coincidence relative to isotropic emission. The coincidence rates and beam
+  times use these factors. For the ⁵⁸Ni example a detector at 90° sees 0.4 times the isotropic number when the
+  particle is in the backward ring, and those at 45° and 135° see 1.5 times.
+- **Not included:** excitation in two or more steps and reorientation (first order only, so the matrix elements
+  enter through their size and not their sign), deorientation in vacuum, and lifetimes: every state decays in
+  flight with the orientation it was given.
 
 ## Materials
 

@@ -1400,6 +1400,23 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                             "theta": f"{r['theta_lab']:.1f}", "el": f"{r['elastic_mev']:.2f}",
                             "ex": f"{r['excited_mev']:.2f}", "diff": f"{r['difference_mev']:.3f}",
                             "beta": f"{r['beta_excited']:.4f}"} for r in g["particles"]]).props("dense flat")
+        populations_block()
+        if g["correlation"]:
+            ui.label("γ rays in coincidence: the angular correlation").classes("font-semibold mt-2")
+            ui.label("How many γ rays each crystal sees when the particle is in each particle detector, relative "
+                     "to γ rays sent evenly in all directions (1 = even). The excited nucleus is left oriented by "
+                     "the collision, so its γ rays favour some directions; they are also thrown forward by its "
+                     "motion. The coincidence rates use these factors.").classes("text-xs ps-muted")
+            ui.toggle({"correlated": "Correlated with the particle", "isotropic": "Isotropic"}, value=g["emission"],
+                      on_change=lambda e: edit("reaction", "emission", e.value)).props("dense no-caps unelevated")
+            names = list(dict.fromkeys((r["gamma_detector"], r["crystal"]) for r in g["correlation"]))
+            cols = [("p", "Particle detector")] + [(f"c{i}", f"{n} {c}".strip()) for i, (n, c) in enumerate(names)]
+            by = {}
+            for r in g["correlation"]:
+                by.setdefault(r["particle_detector"], {})[(r["gamma_detector"], r["crystal"])] = r["factor"]
+            ui.table(columns=columns(cols),
+                     rows=[dict({"p": p_}, **{f"c{i}": f"{f.get(n, 1.0):.2f}" for i, n in enumerate(names)})
+                           for p_, f in by.items()]).props("dense flat")
         if g["doppler"]:
             ui.label("γ rays: Doppler-shifted energy and width").classes("font-semibold mt-2")
             ui.table(columns=columns((("p", "Particle detector"), ("g", "γ detector"), ("mean", "E_γ (keV)"),
@@ -1409,6 +1426,27 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                            for r in g["doppler"]]).props("dense flat")
         else:
             ui.label("Add γ-ray detectors in the setup panel for Doppler shifts.").classes("text-sm")
+
+    def populations_block() -> None:
+        """Every level of the scheme that first-order excitation reaches, and the γ rays that follow."""
+        pop = P().populations()
+        if not pop["available"] or not pop["levels"]:
+            return
+        ui.label(f"{pop['nuclide']}: all levels excited from the ground state").classes("font-semibold mt-2")
+        ui.label(f"First-order cross sections over all scattering angles at {pop['beam_energy_mev']:.2f} MeV, "
+                 "from the matrix elements of the level scheme. A level is also fed by the decay of the levels "
+                 "above it; internal conversion takes its share of each transition. Excitation in two steps is "
+                 "not included.").classes("text-xs ps-muted")
+        with ui.row().classes("items-start gap-4"):
+            ui.table(columns=columns((("lev", "Level"), ("e", "Energy (keV)"), ("d", "Excited directly (mb)"),
+                                      ("p", "With feeding (mb)"))),
+                     rows=[{"lev": x["label"], "e": f"{x['energy_kev']:.1f}", "d": _fmt(x["direct_mb"]),
+                            "p": _fmt(x["populated_mb"])} for x in pop["levels"]]).props("dense flat")
+            ui.table(columns=columns((("t", "γ ray"), ("e", "Energy (keV)"), ("g", "γ rays (mb)"))),
+                     rows=[{"t": x["label"], "e": f"{x['energy_kev']:.1f}", "g": _fmt(x["gamma_mb"])}
+                           for x in pop["gammas"][:12]]).props("dense flat")
+        for note in pop["notes"][:4]:
+            ui.label(note).classes("text-xs ps-muted")
 
     @ui.refreshable
     def report_panel():

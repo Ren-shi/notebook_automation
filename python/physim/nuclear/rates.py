@@ -519,15 +519,37 @@ class Rates:
             return "all"
         return "coincidences" if self.experiment.gamma_detectors else "excitations"
 
-    def gamma_efficiency(self) -> tuple:
+    def gamma_efficiency(self, detector: Optional[str] = None) -> tuple:
         """(full-energy-peak efficiency of all γ detectors together at the energy of the excited state's γ ray,
         whether any of it comes from the typical response model rather than from the setup's ``efficiency`` or
-        ``efficiency_curve``). See :mod:`physim.nuclear.response`."""
+        ``efficiency_curve``). See :mod:`physim.nuclear.response`.
+
+        With ``detector`` (a particle detector), each γ detector's efficiency is multiplied by its factor from
+        :func:`physim.nuclear.gamma.correlation_table`: the γ rays seen in coincidence with that detector are
+        not emitted evenly in all directions."""
         dets = self.experiment.gamma_detectors
         exc = self.experiment.excitation
         energy = exc.energy_mev if exc is not None else 1.332492
-        total = sum(g.peak_efficiency(energy, self.experiment) for g in dets)
-        return min(total, 1.0), any(g.efficiency is None and not g.efficiency_curve for g in dets)
+        if getattr(self, "_gamma_effs", None) is None:
+            self._gamma_effs = [g.peak_efficiency(energy, self.experiment) for g in dets]
+        effs = self._gamma_effs
+        if detector is not None and exc is not None:
+            factors = self.correlation().get(detector, {})
+            effs = [e * factors.get(g.name or f"G{i + 1}", 1.0) for i, (g, e) in enumerate(zip(dets, effs))]
+        return min(sum(effs), 1.0), any(g.efficiency is None and not g.efficiency_curve for g in dets)
+
+    def correlation(self) -> dict:
+        """{particle detector: {γ detector: factor}}: the γ rays each γ detector sees in coincidence with each
+        particle detector, relative to isotropic emission. Computed once."""
+        if getattr(self, "_correlation", None) is None:
+            from .gamma import correlation_table
+
+            out: dict = {}
+            if self.experiment.excitation is not None and self.experiment.gamma_detectors:
+                for row in correlation_table(self.experiment):
+                    out.setdefault(row["particle_detector"], {})[row["gamma_detector"]] = row["detector_factor"]
+            self._correlation = out
+        return self._correlation
 
     def rate(self, detector: str, segment: Optional[tuple] = None, counted: bool = True, what: str = "all") -> float:
         """Counts per second in a detector (or one segment). With ``counted``, each channel's rate is scaled by the
@@ -547,7 +569,7 @@ class Rates:
             excited = {c.label for c in self.channels if c.excitation is not None}
             rows = [r for r in rows if r.channel in excited]
         total = float(sum(r.rate for r in rows))
-        return total * self.gamma_efficiency()[0] if what == "coincidences" else total
+        return total * self.gamma_efficiency(detector)[0] if what == "coincidences" else total
 
     def per_detector(self, counted: bool = True) -> dict:
         """{detector: counts per second}."""
