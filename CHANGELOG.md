@@ -34,6 +34,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- A movable target and sources placed anywhere (backlog 60): `[target] position` moves the target along the beam
+  (every angle, distance and Doppler correction follows; the scene draws it there); `ladder` and `selected` for
+  a target ladder; `source_run(..., position=...)` for a source off centre. `physim.nuclear.alignment` shows what a
+  misplaced target does (the corrected peak with each geometry, the diagnostic plot of centroid against ring)
+  and fits the offset back; **Check the alignment** in the app, with the assumed target as a ghost in the scene;
+  the analysis can assume an offset and budgets the target's place.
 - Tracks in the scene (`physim.nuclear.tracks`, backlog 59): **Show tracks** animates a sample of simulated
   events, beam, scattered beam, recoil and γ ray, to the segment or crystal each hit, which lights up; filters
   for coincidences or one channel; a sample picked by rate or as generated, stated in the scene; play, pause,

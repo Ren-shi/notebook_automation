@@ -224,14 +224,20 @@ def _detector_solid(det, i: int) -> Solid:
         if name == "board":
             parts.append(Part("ring", "board", z0=-0.3, depth=BOARD_THICKNESS_MM, r_in=b_in, r_out=b_out, hull=True,
                               label="circuit board"))
-    return Solid(f"detector:{i}", g.name, "detector", g.centre, _frame(g.u, g.v, g.n), parts, det.model)
+    return Solid(f"detector:{i}", g.name, "detector", g.centre + _origin(det), _frame(g.u, g.v, g.n), parts,
+                 det.model)
+
+
+def _origin(det) -> np.ndarray:
+    """The target's place from the chamber's centre: the scene draws in the chamber's coordinates."""
+    return np.array(det._origin, dtype=float) if getattr(det, "_origin", None) else np.zeros(3)
 
 
 def _gamma_solid(gd, i: int) -> Solid:
     u = np.array(gd.direction())
     a, b = (np.array(x) for x in gd.face_axes())
-    dist = _mm(gd.distance)
-    centre = dist * u
+    dist = gd.distance_mm()
+    centre = dist * u + _origin(gd)
     r = gd.crystal_radius_mm()
     # Without crystal dimensions, a γ-ray detector is drawn as long as it is wide.
     length = _mm(gd.crystal_length, 2 * r)
@@ -274,8 +280,8 @@ def _target_solid(experiment) -> Solid:
     v = np.array([0.0, 1.0, 0.0])
     t = max(target_thickness_mm(experiment), 0.02)
     part = Part("ring", "foil", z0=t / 2, depth=t, r_out=TARGET_DIAMETER_MM / 2, hull=True, label="target foil")
-    return Solid("target", f"{experiment.target.material} target", "target", np.zeros(3), _frame(np.cross(v, n), v, n),
-                 [part])
+    return Solid("target", f"{experiment.target.material} target", "target",
+                 np.array([0.0, 0.0, experiment.target.position_mm]), _frame(np.cross(v, n), v, n), [part])
 
 
 def solids(experiment) -> list:
@@ -356,11 +362,11 @@ def _setup_object(experiment, key: str):
 
 
 def position_of(experiment, key: str) -> np.ndarray:
-    """Centre of a detector's front face, mm."""
+    """Centre of a detector's front face, mm, from the chamber's centre (the scene's coordinates)."""
     obj = _setup_object(experiment, key)
     if key.startswith("gamma"):
-        return _mm(obj.distance) * np.array(obj.direction())
-    return np.array(obj.position_mm(), dtype=float)
+        return np.array(obj.chamber_centre_mm(), dtype=float)
+    return np.array(obj.chamber_position_mm(), dtype=float)
 
 
 def on_axis(experiment, key: str) -> bool:

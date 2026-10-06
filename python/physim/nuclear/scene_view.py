@@ -206,6 +206,27 @@ class SceneView:
         for key, group in self._groups.items():
             group.draggable(key == self.selected and key != "target")
 
+    def show_ghost(self, offset_mm: Optional[float]) -> None:
+        """A faint outline of the target where the analysis assumes it, ``offset_mm`` along the beam from its
+        true place (None removes it)."""
+        for obj in getattr(self, "_ghost", []):
+            obj.delete()
+        self._ghost = []
+        if offset_mm is None or abs(offset_mm) < 1e-9:
+            return
+        target = self._solids.get("target")
+        if target is None:
+            return
+        c = self.colours
+        with self.scene as sc:
+            p = target.parts[0]
+            ring = sc.ring(0.0, p.r_out, 48).material(c["foil"], 0.3, side="both")
+            ring.move(*(target.centre + np.array([0.0, 0.0, offset_mm]))).rotate_R(target.axes.tolist())
+            style = (f"color: {c['ink']}; font-size: 11px; background: {c['label']}; padding: 0 4px; "
+                     "border-radius: 3px; margin-top: 18px")
+            self._ghost = [ring, sc.text(f"assumed target ({offset_mm:+g} mm)", style).move(
+                *(target.centre + np.array([0.0, 0.0, offset_mm])))]
+
     def _annotate(self) -> None:
         """The selected solid's name, place and size, written beside it, with a line from the target."""
         for obj in self._notes:
