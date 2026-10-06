@@ -734,6 +734,28 @@ class Planner:
         out.update(available=True, total_unc=r.total_unc, runs=len(self.analysis(events, seed).history))
         return out
 
+    def explanations(self, detector: Optional[str] = None, gamma_detector: Optional[str] = None,
+                     result=None) -> list:
+        """Every number of the plan (and of the analysis ``result``, if given) with its explanation, as dicts
+        (:mod:`physim.nuclear.record`)."""
+        from .record import analysis_explanations, explanations
+
+        out = [x.as_dict() for x in explanations(self, detector, gamma_detector)]
+        if result is not None:
+            out += [x.as_dict() for x in analysis_explanations(self, result)]
+        return out
+
+    def record_html(self, result=None, scene_png: Optional[str] = None) -> str:
+        """The run record as one HTML page (:func:`physim.nuclear.record.record_html`); ``result`` is the last
+        analysis result if None and one has been run."""
+        from .record import record_html
+
+        if result is None:
+            for key, value in self._cache.items():
+                if key[0] == "analysis" and value.history:
+                    result = value.history[-1]
+        return record_html(self, result, scene_png=scene_png)
+
     def trajectories(self, impact_parameters: Optional[list] = None, nuclide: Optional[str] = None) -> dict:
         """Coulomb orbits (CM frame, fm) for a range of impact parameters, from physim's engine."""
         exp = self.experiment

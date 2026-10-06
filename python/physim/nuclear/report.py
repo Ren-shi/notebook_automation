@@ -364,12 +364,16 @@ setup file and seed reproduce every number.</p>
 """
 
     def write(self, directory: Union[str, Path], figures: bool = True, root: Optional[bool] = None) -> list:
-        """report.html, the CSV tables, the figures (PNG and PDF), the setup file and, with ``uproot`` installed (or
-        ``root=True``), ``events.root`` with the simulated events and spectra (:mod:`physim.nuclear.rootio`)."""
+        """report.html, record.html (the run record: every number with its explanation, printable to PDF), the CSV
+        tables, the figures (PNG and PDF), the setup file and, with ``uproot`` installed (or ``root=True``),
+        ``events.root`` with the simulated events and spectra (:mod:`physim.nuclear.rootio`)."""
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         paths = [d / "report.html"]
         paths[0].write_text(self.to_html(), encoding="utf-8")
+        record = d / "record.html"
+        record.write_text(self.planner.record_html(), encoding="utf-8")
+        paths.append(record)
         paths += self.write_csv(d)
         if figures:
             paths += self.write_figures(d / "figures")
