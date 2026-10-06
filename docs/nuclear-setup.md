@@ -494,6 +494,25 @@ GOSIA input file.
 Not included: the E1 polarisation correction, deorientation, lifetimes, mutual excitation of both nuclei, and
 nuclear interference above the safe energy.
 
+## Tracks of simulated events
+
+`physim.nuclear.tracks` turns a sample of simulated events into straight paths for the scene:
+
+```python
+from physim.nuclear.tracks import sample_tracks, describe
+
+tracks = sample_tracks(exp, gammas, n=40, select="coincidences", weighted=True)
+tracks[0].paths          # beam, scattered beam, recoil and γ ray, each with the hit it ends in
+tracks[0].particles      # the event's rows of the particle events; .gammas its γ rays
+describe(tracks, "coincidences", True, gammas.events.n_events)
+```
+
+Each particle's path runs from the target to where its track crosses the detector face (inside the segment the
+event record names); an undetected partner runs to the edge of the scene; a γ ray runs to the crystal it hit.
+With `weighted=True` events are picked with probability proportional to the rate they stand for, so the sample
+looks like a run; with `weighted=False` they are picked as generated, so the rare large-angle scatterings show.
+The animation itself runs in the browser.
+
 ## Materials
 
 A material can be written as:

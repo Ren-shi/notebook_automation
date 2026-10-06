@@ -8,6 +8,7 @@ solid. Needs NiceGUI (``pip install physim-engine[app]``).
 
 from __future__ import annotations
 
+import json
 import math
 from typing import Callable, Optional
 
@@ -20,11 +21,15 @@ PALETTES = {
     "light": {"ground": "#FFFFFF", "ink": "#16191C", "label": "rgba(255,255,255,0.85)", "active": "#4C78A8",
               "active2": "#7FA3CC", "board": "#3F7D4E", "crystal": "#B58B4C", "housing": "#8C959C",
               "foil": "#C9A227", "beam": "#D1495B", "selected": "#F28E2B", "element": "#E15759", "unsafe": "#B07AA1",
-              "blocked": "#D62728", "wall": "#9AA3AA", "line": "#22272B"},
+              "blocked": "#D62728", "wall": "#9AA3AA", "line": "#22272B", "ejectile": "#1F77B4",
+              "recoil": "#2CA02C", "gamma": "#FFB000", "track_beam": "#D1495B", "hit": "#FF3B30",
+              "track_selected": "#FFFFFF"},
     "dark": {"ground": "#171B1E", "ink": "#E9EBE9", "label": "rgba(23,27,30,0.85)", "active": "#5B8FCC",
              "active2": "#86B0E0", "board": "#4E9A61", "crystal": "#C9A163", "housing": "#A9B2B9",
              "foil": "#E0BC45", "beam": "#F0707F", "selected": "#FFA94D", "element": "#FF7B7D", "unsafe": "#C99BD0",
-             "blocked": "#FF5A52", "wall": "#6F7A82", "line": "#DADDDB"},
+             "blocked": "#FF5A52", "wall": "#6F7A82", "line": "#DADDDB", "ejectile": "#6FB3FF",
+             "recoil": "#6FE08A", "gamma": "#FFD24D", "track_beam": "#F0707F", "hit": "#FF5A52",
+             "track_selected": "#FFFFFF"},
 }
 
 HEIGHT = 540
@@ -81,6 +86,11 @@ class SceneView:
         self._meshes: dict = {}
         self._solids: dict = {}
         self._notes: list = []
+        #: Objects of the tracks shown, and the tracks themselves.
+        self._track_objects: list = []
+        self.tracks: list = []
+        self.selected_track: Optional[int] = None
+        self.on_track: Optional[Callable] = None
         self._good: Optional[np.ndarray] = None
         self._tinted = False
         self.drawn = None
@@ -129,7 +139,8 @@ class SceneView:
         if self.selected not in self._solids:
             self.selected, self.element, self.limits = None, None, None
         self.scene.clear()
-        self._groups, self._meshes, self._notes = {}, {}, []
+        self._groups, self._meshes, self._notes, self._track_objects = {}, {}, [], []
+        self.tracks, self.selected_track = [], None
         e = self.extent
         with self.scene as sc:
             r = _scene.beam_radius_mm(exp)
@@ -258,11 +269,98 @@ class SceneView:
 
     def _clicked(self, e) -> None:
         for hit in e.hits:
-            key, element = parse_name(hit.object_name)
+            name = hit.object_name or ""
+            if name.startswith("track:"):
+                self.select_track(int(name.split(":")[1]))
+                return
+            key, element = parse_name(name)
             if key is not None:
                 self.select(key, element)
                 return
         self.select(None)
+
+    # -- tracks ---------------------------------------------------------------------------------------------------
+
+    def _segment_mesh_ids(self) -> dict:
+        """{(key, element): mesh id} of the rings, strips and crystals, for the hits to light up."""
+        out = {}
+        for key, meshes in self._meshes.items():
+            for m, p, _, _ in meshes:
+                if p.element is not None or p.role == "crystal":
+                    out[(key, p.element)] = m.id
+        return out
+
+    def show_tracks(self, tracks: list, speed: float = 1.0) -> None:
+        """Draw a sample of events (:func:`physim.nuclear.tracks.sample_tracks`) and animate them in the
+        browser: the beam to the target, then the particles and γ rays to what they hit, which lights up."""
+        self.clear_tracks()
+        self.tracks = list(tracks)
+        c = self.colours
+        ids = self._segment_mesh_ids()
+        items = []
+        with self.scene as sc:
+            for k, t in enumerate(self.tracks):
+                for p in t.paths:
+                    colour = c["track_beam"] if p["what"] == "beam" else c[p["what"]]
+                    a, b = p["points"]
+                    line = sc.line(a, b).material(colour, 0.55).with_name(f"track:{k}")
+                    ball = sc.sphere(0.012 * self.extent if p["what"] != "gamma" else 0.008 * self.extent, 12, 8)
+                    ball.material(colour, 1.0).with_name(f"track:{k}").move(*a)
+                    self._track_objects += [line, ball]
+                    hit_ids = []
+                    h = p.get("hit")
+                    if h and "segment" in h:
+                        hit_ids = [ids.get((f"detector:{h['index']}", h["segment"][0]))]
+                    elif h and "crystal" in h:
+                        gd_index = self._crystal_owner(h["index"])
+                        if gd_index is not None:
+                            hit_ids = [ids.get((f"gamma:{gd_index[0]}", gd_index[1]))]
+                    items.append({"ball": ball.id, "a": a, "b": b, "what": p["what"], "track": k,
+                                  "hits": [x for x in hit_ids if x]})
+        self._ui.run_javascript(_ANIMATION.replace("__ID__", str(self.scene.id))
+                                .replace("__ITEMS__", json.dumps(items)).replace("__SPEED__", repr(float(speed)))
+                                .replace("__HIT__", json.dumps(c["hit"])))
+
+    def _crystal_owner(self, crystal_index: int) -> Optional[tuple]:
+        """(γ-ray detector index, element or None) of the crystal numbered as the γ events number them."""
+        k = 0
+        for i, gd in enumerate(self.planner().experiment.gamma_detectors):
+            n = len(gd.elements())
+            if crystal_index < k + n:
+                return i, (crystal_index - k if n > 1 else None)
+            k += n
+        return None
+
+    def clear_tracks(self) -> None:
+        for obj in self._track_objects:
+            obj.delete()
+        self._track_objects, self.tracks, self.selected_track = [], [], None
+        self._ui.run_javascript(f"const el = getElement({self.scene.id}); if (el && el.__tracks) "
+                                "{ el.__tracks.stop = true; }")
+
+    def control_tracks(self, playing: Optional[bool] = None, speed: Optional[float] = None) -> None:
+        """Play or pause the animation, and set its speed (1 = the beam crosses the scene in about a second)."""
+        parts = []
+        if playing is not None:
+            parts.append(f"el.__tracks.playing = {'true' if playing else 'false'};")
+        if speed is not None:
+            parts.append(f"el.__tracks.speed = {float(speed)!r};")
+        self._ui.run_javascript(f"const el = getElement({self.scene.id}); if (el && el.__tracks) {{ {' '.join(parts)} }}")
+
+    def select_track(self, k: Optional[int]) -> None:
+        """Select one track: it is drawn bright and its event's numbers are reported through ``on_track``."""
+        self.selected_track = k
+        c = self.colours
+        for obj in self._track_objects:
+            if obj.name and obj.name.startswith("track:"):
+                tk = int(obj.name.split(":")[1])
+                if tk == k:
+                    obj.material(c["track_selected"], 1.0)
+                else:
+                    what = next((p["what"] for p in self.tracks[tk].paths), "beam")
+                    obj.material(c["track_beam"] if what == "beam" else c.get(what, c["line"]), 0.55)
+        if self.on_track:
+            self.on_track(self.tracks[k] if k is not None and k < len(self.tracks) else None)
 
     def _trial(self, x: float, y: float, z: float) -> tuple:
         pos = self.limits.apply((x, y, z))
@@ -320,5 +418,62 @@ class SceneView:
         if self.alive:
             self.draw()
 
+
+#: The animation, run in the browser: each ball moves along its path in turn (the beam first, then the
+#: particles and γ rays), what it hits lights up, and the cycle repeats. Pausing and the speed are fields of
+#: ``el.__tracks``.
+_ANIMATION = """
+(async () => {
+  const el = getElement(__ID__);
+  if (!el) return;
+  if (el.__tracks) el.__tracks.stop = true;
+  const items = __ITEMS__;
+  const state = { playing: true, speed: __SPEED__, stop: false, t: 0, last: null };
+  el.__tracks = state;
+  for (const it of items) {
+    const o = el.objects.get(it.ball);
+    if (!o) continue;
+    await o.ready_promise;
+    it.mesh = o.mesh;
+    it.hitMeshes = [];
+    for (const id of it.hits) {
+      const h = el.objects.get(id);
+      if (!h) continue;
+      await h.ready_promise;
+      it.hitMeshes.push(h.mesh);
+    }
+    it.length = Math.hypot(it.b[0] - it.a[0], it.b[1] - it.a[1], it.b[2] - it.a[2]);
+  }
+  const extent = Math.max(...items.map((it) => it.length), 1);
+  const original = new Map();
+  const setColour = (mesh, colour) => {
+    if (!mesh || !mesh.material) return;
+    if (!original.has(mesh)) original.set(mesh, mesh.material.color.getHex());
+    mesh.material.color.set(colour);
+  };
+  const reset = () => { for (const [mesh, hex] of original) mesh.material.color.setHex(hex); original.clear(); };
+  const period = 2.2;
+  const frame = (now) => {
+    if (state.stop) { reset(); return; }
+    if (state.last === null) state.last = now;
+    if (state.playing) state.t += (now - state.last) / 1000 * state.speed;
+    state.last = now;
+    const phase = state.t % period;
+    if (phase < 0.02) reset();
+    for (const it of items) {
+      if (!it.mesh) continue;
+      let f;
+      if (it.what === "beam") f = Math.min(phase / 1.0, 1);
+      else f = Math.max(0, Math.min((phase - 1.0) / 1.0 * extent / Math.max(it.length, 1e-9), 1));
+      it.mesh.position.set(it.a[0] + (it.b[0] - it.a[0]) * f, it.a[1] + (it.b[1] - it.a[1]) * f,
+                           it.a[2] + (it.b[2] - it.a[2]) * f);
+      it.mesh.visible = it.what === "beam" ? phase <= 1.0 : phase > 1.0;
+      if (f >= 1 && it.what !== "beam") for (const m of it.hitMeshes) setColour(m, __HIT__);
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+})();
+"""
 
 __all__ = ["HEIGHT", "PALETTES", "SceneView", "dimensions", "parse_name"]

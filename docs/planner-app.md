@@ -90,6 +90,13 @@ right shows its numbers.
 - For an exact value, type it under **Exact values** in the panel, or in the setup panel on the left. Typed values
   are not held back; the warnings report a detector in the beam and detectors that overlap.
 
+**Tracks.** **Show tracks** draws a sample of simulated events and animates them: the beam particle to the
+target, then the scattered beam, the recoil and the γ ray to what they hit, which lights up. Choose how many
+tracks (up to about 60 stay smooth on a laptop), which events (all, particle–γ coincidences, or one channel) and
+how the sample is picked: *as in a run* picks events by the rate each stands for, *as generated* shows the rare
+large-angle scatterings the generator over-represents. The scene states how the sample was chosen. Pause, the
+speed slider and Clear control the animation; clicking a track shows that event's numbers in the side panel.
+
 **Rings that are not safe.** For Coulomb excitation, a ring or strip that can see collisions closer than Cline's
 safe distance is drawn in violet, and the panel says how many there are.
 

@@ -34,6 +34,10 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Tracks in the scene (`physim.nuclear.tracks`, backlog 59): **Show tracks** animates a sample of simulated
+  events, beam, scattered beam, recoil and γ ray, to the segment or crystal each hit, which lights up; filters
+  for coincidences or one channel; a sample picked by rate or as generated, stated in the scene; play, pause,
+  speed; a selected track shows its event's numbers.
 - Multi-step Coulomb excitation and reorientation (`physim.nuclear.coupled`, `physim.nuclear.multistep`, backlog
   58): the coupled equations for every substate of every level of a scheme, with the interface of first order;
   the yields of the planned experiment per detector and ring with all orders; the prolate–zero–oblate comparison

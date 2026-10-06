@@ -703,6 +703,24 @@ class Planner:
                 "gamma_detectors": g.detector_names(), "particle_detectors": list(g.events.detectors),
                 "notes": g.notes, "n_gammas": len(g)}
 
+    def tracks(self, n: int = 30, select: str = "all", weighted: bool = True, seed: int = 1,
+               events: int = 400_000) -> dict:
+        """A sample of simulated events as tracks for the scene (:func:`physim.nuclear.tracks.sample_tracks`):
+        {"tracks": [...], "description": how the sample was chosen, "channels": the channel labels}. With
+        Coulomb excitation and γ-ray detectors the γ events are used, else the particle events alone."""
+        from .tracks import describe, sample_tracks
+
+        exp = self.experiment
+        if exp.excitation is not None and exp.gamma_detectors:
+            g = self.gamma_events(events, seed)
+            ev = g.events
+        else:
+            g = None
+            ev = self.spectra(events=events, seed=seed)["events"]
+        tracks = sample_tracks(exp, g, ev, n=n, select=select, weighted=weighted, seed=seed)
+        return {"tracks": tracks, "description": describe(tracks, select, weighted, ev.n_events),
+                "channels": list(ev.channels), "gammas": g is not None}
+
     def analysis(self, events: int = 400_000, seed: int = 1):
         """The :class:`~physim.nuclear.analysis.Analysis` of the simulated γ rays (:meth:`gamma_events`), kept
         with its history until the setup changes."""
