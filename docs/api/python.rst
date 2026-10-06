@@ -177,6 +177,12 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.record
    :members:
 
+.. automodule:: physim.nuclear.coupled
+   :members:
+
+.. automodule:: physim.nuclear.multistep
+   :members:
+
 .. automodule:: physim.nuclear.angular
    :members:
 

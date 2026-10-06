@@ -34,6 +34,11 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Multi-step Coulomb excitation and reorientation (`physim.nuclear.coupled`, `physim.nuclear.multistep`, backlog
+  58): the coupled equations for every substate of every level of a scheme, with the interface of first order;
+  the yields of the planned experiment per detector and ring with all orders; the prolate–zero–oblate comparison
+  of the 2⁺ state against the run's statistics; a fit of up to three matrix elements to measured counts; and a
+  GOSIA input file for the setup. **Solve with all orders** in the app's "Excitation and γ rays" tab.
 - The run record (`physim.nuclear.record`, backlog 57): every number of the plan and of the analysis with its
   formula, the formula with this run's numbers substituted, its physical meaning and its assumptions; the data's
   provenance; the method step by step; what is left out. The **?** beside a number in the app opens its

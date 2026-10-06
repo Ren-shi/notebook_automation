@@ -241,6 +241,10 @@ The example *coulex_ni58* is a complete one. To build your own:
      the γ-ray energies for the Doppler shift.
    - **All levels excited from the ground state:** with a level scheme looked up, the first-order cross section
      of every level, directly and with feeding from above, and of every γ ray.
+   - **Solve with all orders:** with a level scheme looked up, the coupled equations give the γ yields of
+     every transition with multi-step excitation and reorientation, next to first order; the 2⁺ state is run
+     prolate, spherical and oblate to see whether the planned run can tell them apart; and a GOSIA input file
+     for the setup can be saved.
    - **The angular correlation:** for each particle detector and crystal, the γ rays seen in coincidence relative
      to γ rays sent evenly in all directions. A switch turns the correlation off (isotropic emission).
    - **Doppler table:** the shifted γ-ray energy and peak width for every particle-detector and γ-detector pair.

@@ -113,9 +113,9 @@ EXPLAIN = {
         "assumptions": "One state reached from a 0⁺ ground state; B(Eλ) as given in the setup; decay in flight after "
                        "leaving the target, with the particle–γ angular correlation of first-order excitation "
                        "(or isotropic, by the switch).",
-        "limits": "Closer than Cline's safe distance nuclear forces interfere; P ≳ 0.1 needs multi-step excitation "
-                  "(GOSIA); lifetimes and deorientation are not modelled. The table of all levels is first order "
-                  "too: no excitation in two steps.",
+        "limits": "Closer than Cline's safe distance nuclear forces interfere; lifetimes and deorientation are not "
+                  "modelled. The rates and the table of all levels are first order; 'Solve with all orders' "
+                  "includes multi-step excitation and reorientation for the level scheme.",
     },
     "report": {
         "title": "Beam-time report",
@@ -755,6 +755,66 @@ class Planner:
                 if key[0] == "analysis" and value.history:
                     result = value.history[-1]
         return record_html(self, result, scene_png=scene_png)
+
+    def multistep(self, role: Optional[str] = None, angle_step: float = 4.0, energies: int = 2,
+                  shapes: bool = True) -> dict:
+        """Multi-step Coulomb excitation of the setup's level scheme (:mod:`physim.nuclear.multistep`): the γ
+        yields of every transition in every particle detector with all orders and with first order, the
+        populated levels, and (``shapes``) the prolate–zero–oblate comparison of the first 2⁺ state. Uses the
+        scheme of ``role`` ("target" or "beam"; the excited nucleus's by default). Kept until the setup changes.
+        ``{"available": False}`` without a level scheme."""
+        from .multistep import Multistep
+
+        exp = self.experiment
+        if role is None:
+            wanted = None if exp.excitation is None else ("target" if exp.excitation.excite == "target" else "beam")
+            role = wanted if wanted in exp.levels else next(iter(exp.levels), None)
+        if role not in exp.levels:
+            return {"available": False, "reason": "Look up a level scheme first (Excitation and γ rays)."}
+        key = ("multistep", role, angle_step, energies, shapes)
+        if key in self._cache:
+            return self._cache[key]
+        scheme = exp.levels[role]
+        ms = Multistep(exp, scheme, role, angle_step=angle_step, energies=energies)
+        try:
+            full = ms.yields()
+            first = Multistep(exp, scheme, role, angle_step=angle_step, energies=energies, first_order=True).yields()
+        except ValueError as e:
+            return {"available": False, "reason": str(e)}
+        labels = {t: f"{scheme.levels[t[0]].label} ({scheme.levels[t[0]].energy.value:g} keV) → "
+                     f"{scheme.levels[t[1]].label}" for t in full.transitions}
+        out = {"available": True, "role": role, "nuclide": scheme.nuclide, "detectors": list(full.detectors),
+               "transitions": [{"transition": t, "label": labels[t], "energy_kev": scheme.levels[t[0]].energy.value
+                                - scheme.levels[t[1]].energy.value,
+                                "all_orders": {d: full.detectors[d].get(t, 0.0) for d in full.detectors},
+                                "first_order": {d: first.detectors[d].get(t, 0.0) for d in first.detectors}}
+                               for t in full.transitions],
+               "levels": [{"index": n, "label": scheme.levels[n].label, "energy_kev": scheme.levels[n].energy.value,
+                           "all_orders": {d: full.levels[d].get(n, 0.0) for d in full.levels},
+                           "first_order": {d: first.levels[d].get(n, 0.0) for d in first.levels}}
+                          for n in range(1, len(scheme.levels)) if any(full.levels[d].get(n, 0.0) > 0
+                                                                       for d in full.levels)],
+               "notes": full.notes, "gosia_input": ms.gosia_input(full), "beam_time_s": _q(exp.run.beam_time).to("s")}
+        if shapes:
+            twos = [n for n, lev in enumerate(scheme.levels) if n and lev.spin == 2 and scheme.b(0, n, "E2")]
+            if twos:
+                sh = ms.shapes(twos[0])
+                out["shapes"] = {"level": twos[0], "q_efm2": sh["q_efm2"], "rings": sh["rings"],
+                                 "totals": sh["totals"], "separable": sh["separable"],
+                                 "total_difference_sigma": sh["total_difference_sigma"],
+                                 "transition": sh["transition"]}
+        self._cache[key] = out
+        return out
+
+    def fit_matrix_elements(self, measured: dict, free: list, role: Optional[str] = None) -> dict:
+        """Fit up to three matrix elements of the level scheme to measured counts (see
+        :meth:`physim.nuclear.multistep.Multistep.fit`)."""
+        from .multistep import Multistep
+
+        exp = self.experiment
+        if role is None:
+            role = "target" if exp.excitation is None or exp.excitation.excite == "target" else "beam"
+        return Multistep(exp, exp.levels[role], role).fit(measured, free)
 
     def trajectories(self, impact_parameters: Optional[list] = None, nuclide: Optional[str] = None) -> dict:
         """Coulomb orbits (CM frame, fm) for a range of impact parameters, from physim's engine."""

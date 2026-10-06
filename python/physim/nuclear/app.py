@@ -1636,6 +1636,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                             "ex": f"{r['excited_mev']:.2f}", "diff": f"{r['difference_mev']:.3f}",
                             "beta": f"{r['beta_excited']:.4f}"} for r in g["particles"]]).props("dense flat")
         populations_block()
+        multistep_block()
         if g["correlation"]:
             ui.label("γ rays in coincidence: the angular correlation").classes("font-semibold mt-2")
             ui.label("How many γ rays each crystal sees when the particle is in each particle detector, relative "
@@ -1661,6 +1662,65 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                            for r in g["doppler"]]).props("dense flat")
         else:
             ui.label("Add γ-ray detectors in the setup panel for Doppler shifts.").classes("text-sm")
+
+    def multistep_block() -> None:
+        """All orders: the coupled equations on the level scheme, the reorientation comparison, GOSIA input."""
+        if not P().experiment.levels:
+            return
+        ui.label("All orders: multi-step excitation and reorientation").classes("font-semibold mt-2")
+        ui.label("The coupled equations follow every substate of every level along the orbit, so excitation in "
+                 "several steps, the reorientation effect of the quadrupole moments and interference between paths "
+                 "are included. The same 2⁺ state is then run with its quadrupole moment at the prolate rotor "
+                 "value, zero and the oblate value, to see whether the planned run can tell them apart.").classes(
+            "text-xs ps-muted")
+        holder = ui.column().classes("w-full")
+
+        async def solve() -> None:
+            holder.clear()
+            with holder:
+                ui.spinner(size="md")
+                ui.label("Solving on a grid of angles and energies; a few levels take seconds, twenty take a "
+                         "minute.").classes("text-xs ps-muted")
+            m = await run.io_bound(P().multistep)
+            holder.clear()
+            with holder:
+                if not m["available"]:
+                    ui.label(m["reason"]).classes("text-sm ps-warn")
+                    return
+                t = m["beam_time_s"]
+                dets = m["detectors"]
+                cols = [("t", "γ ray"), ("e", "keV")] + [(f"d{i}", f"{d} (all / first order)")
+                                                         for i, d in enumerate(dets)]
+                rows = [dict({"t": x["label"], "e": f"{x['energy_kev']:.1f}"},
+                             **{f"d{i}": f"{_fmt(x['all_orders'][d] * t, 3)} / {_fmt(x['first_order'][d] * t, 3)}"
+                                for i, d in enumerate(dets)}) for x in m["transitions"]]
+                ui.label("γ rays in the run, with all orders and with first order").classes("ps-section mt-1")
+                ui.table(columns=columns(cols), rows=rows).props("dense flat")
+                if "shapes" in m:
+                    sh = m["shapes"]
+                    q = sh["q_efm2"]
+                    ui.label(f"Prolate or oblate: the {m['nuclide']} 2⁺ state with Q(2⁺) = {q['prolate']:+.1f} "
+                             f"(prolate rotor), 0 and {q['oblate']:+.1f} e fm² (oblate)").classes("ps-section mt-2")
+                    ui.label(("The planned run can tell prolate from oblate: " if sh["separable"] else
+                              "The planned run cannot tell prolate from oblate: ")
+                             + f"over all rings the two differ by {sh['total_difference_sigma']:.1f} standard "
+                             "deviations of the counts.").classes("text-sm " + ("ps-ok" if sh["separable"] else
+                                                                                   "ps-warn"))
+                    ui.table(columns=columns((("d", "Detector"), ("r", "Ring / strip"), ("p", "Prolate"),
+                                              ("s", "Q = 0"), ("o", "Oblate"), ("u", "± counts"), ("z", "Δ / σ"))),
+                             rows=[{"d": r_["detector"], "r": r_["ring"] + 1, "p": _fmt(r_["counts"]["prolate"], 3),
+                                    "s": _fmt(r_["counts"]["spherical"], 3), "o": _fmt(r_["counts"]["oblate"], 3),
+                                    "u": _fmt(r_["uncertainty"], 2), "z": f"{r_['difference_sigma']:.1f}"}
+                                   for r_ in sh["rings"]]).props("dense flat").classes("max-h-80")
+                for note in m["notes"][:4]:
+                    ui.label(note).classes("text-xs ps-muted")
+                ui.button("GOSIA input file for this setup", icon="download",
+                          on_click=lambda: ui.download.content(m["gosia_input"].encode("utf-8"),
+                                                               "gosia.inp")).props("dense flat no-caps").tooltip(
+                    "Written from the GOSIA manual's format and not checked against a run: GOSIA is not on this "
+                    "machine.")
+
+        ui.button("Solve with all orders", icon="calculate", on_click=solve).props("dense flat no-caps")
 
     def populations_block() -> None:
         """Every level of the scheme that first-order excitation reaches, and the γ rays that follow."""
