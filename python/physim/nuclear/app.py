@@ -917,11 +917,17 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         return [{"name": k, "label": lab, "field": k, "align": "left"} for k, lab in spec]
 
     # -- the scene and its side panel ---------------------------------------------------------------------------
-    scene_state = {"view": None, "key": None, "element": None, "live": {},
+    scene_state = {"view": None, "key": None, "element": None, "live": {}, "track": None,
+                   "tracks": {"n": 30, "select": "all", "weighted": True, "playing": True, "speed": 1.0},
                    "source": {"nuclide": "152Eu", "activity": "37 kBq", "time": "1 h", "run": False}}
 
     def scene_selected(key, element) -> None:
         scene_state["key"], scene_state["element"] = key, element
+        scene_state["track"] = None
+        selection_panel.refresh()
+
+    def scene_track(track) -> None:
+        scene_state["track"] = track
         selection_panel.refresh()
 
     def scene_live(values: dict) -> None:
@@ -1012,9 +1018,36 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             ui.button("Close", on_click=dialog.close).props("flat no-caps")
         dialog.open()
 
+    def track_panel(t) -> None:
+        """One event's numbers, for a selected track."""
+        with ui.column().classes("w-full ps-card p-3 gap-1"):
+            ui.label("One event").classes("ps-section")
+            ui.label(f"Event {t.event}: {t.channel}").classes("text-base font-medium")
+            ui.label(f"Stands for {t.weight:.3g} events per second; "
+                     + ("a particle–γ coincidence." if t.coincidence else "no γ ray recorded.")).classes(
+                "text-sm ps-muted")
+            for pr in t.particles:
+                ui.label(f"{'Recoil' if pr['recoil'] else 'Scattered beam'} in {P().experiment.detectors[pr['detector']].name} "
+                         f"segment ({pr['segment_i'] + 1}, {pr['segment_j'] + 1}): θ {pr['theta']:.1f}°, "
+                         f"φ {pr['phi']:.1f}°, {pr['energy']:.2f} MeV at the reaction, {pr['measured']:.2f} MeV "
+                         f"measured" + ("" if pr["counted"] else " (below threshold)")).classes("text-sm")
+            ui.label(f"Reaction at {t.particles[0]['depth']:.3f} mg/cm² into the target, beam at "
+                     f"{t.particles[0]['beam_energy']:.2f} MeV, θ_CM {t.particles[0]['theta_cm']:.1f}°").classes(
+                "text-sm")
+            for g in t.gammas:
+                ui.label(f"γ ray of {1e3 * g['energy0']:.1f} keV in {t.crystal_hits[t.gammas.index(g)]}: "
+                         f"{1e3 * g['energy_lab']:.1f} keV in the laboratory, {1e3 * g['measured']:.1f} keV measured, "
+                         f"corrected {1e3 * g['corrected_recoil']:.1f} (recoil) / {1e3 * g['corrected_projectile']:.1f} "
+                         f"(projectile) keV; β = {g['beta']:.4f}").classes("text-sm")
+            ui.button("Back to the detectors", on_click=lambda: scene_state["view"].select_track(None)).props(
+                "dense flat no-caps")
+
     @ui.refreshable
     def selection_panel() -> None:
         key, element = scene_state["key"], scene_state["element"]
+        if scene_state["track"] is not None:
+            track_panel(scene_state["track"])
+            return
         try:
             s = P().selection(key, element)
         except (IndexError, KeyError, ValueError):
@@ -1187,6 +1220,56 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             duration = ui.input("Time", value=src["time"]).props("dense outlined").classes("min-w-0")
         ui.button("Run the source", icon="play_arrow", on_click=run_source).props("dense flat no-caps")
 
+    def tracks_toolbar() -> None:
+        """Animated tracks of a sample of events: how many, which, and the play controls."""
+        ts = scene_state["tracks"]
+        note = ui.label("").classes("text-xs ps-muted")
+
+        async def show() -> None:
+            view = scene_state["view"]
+            if view is None:
+                return
+            try:
+                r = await run.io_bound(P().tracks, int(count.value), ts["select"], ts["weighted"], 1,
+                                       max(state["events"], 200_000))
+            except ValueError as err:
+                ui.notify(str(err), type="warning")
+                return
+            view.show_tracks(r["tracks"], ts["speed"])
+            view.control_tracks(playing=ts["playing"])
+            note.set_text(r["description"])
+            channels = {"all": "all events", "coincidences": "particle–γ coincidences"}
+            channels.update({ch: ch for ch in r["channels"]})
+            which.set_options(channels, value=ts["select"] if ts["select"] in channels else "all")
+
+        def toggle_play() -> None:
+            ts["playing"] = not ts["playing"]
+            play.set_text("Pause" if ts["playing"] else "Play")
+            play.props(f"icon={'pause' if ts['playing'] else 'play_arrow'}")
+            if scene_state["view"] is not None:
+                scene_state["view"].control_tracks(playing=ts["playing"])
+
+        def set_speed(e) -> None:
+            ts["speed"] = float(e.value)
+            if scene_state["view"] is not None:
+                scene_state["view"].control_tracks(speed=ts["speed"])
+
+        with ui.row().classes("w-full items-center gap-2"):
+            count = ui.number("Tracks", value=ts["n"], min=1, max=200, step=5).props("dense outlined").classes(
+                "w-24").tooltip("Up to about 60 stay smooth on a laptop")
+            which = ui.select({"all": "all events", "coincidences": "particle–γ coincidences"}, value=ts["select"],
+                              label="Which events", on_change=lambda e: ts.update(select=e.value)).props(
+                "dense outlined").classes("w-52")
+            ui.select({True: "as in a run (by rate)", False: "as generated (rare ones show)"}, value=ts["weighted"],
+                      label="Sample", on_change=lambda e: ts.update(weighted=e.value)).props(
+                "dense outlined").classes("w-56")
+            ui.button("Show tracks", icon="timeline", on_click=show).props("dense flat no-caps")
+            play = ui.button("Pause", icon="pause", on_click=toggle_play).props("dense flat no-caps")
+            ui.slider(min=0.2, max=4.0, step=0.2, value=ts["speed"], on_change=set_speed).classes("w-32").tooltip(
+                "Speed")
+            ui.button("Clear", on_click=lambda: (scene_state["view"].clear_tracks(), note.set_text(""))).props(
+                "dense flat no-caps")
+
     @ui.refreshable
     def geometry_panel():
         from .scene_view import SceneView
@@ -1206,7 +1289,9 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                     ui.button("Paper figure", icon="article", on_click=lambda: open_export("geometry", {})).props(
                         "dense flat no-caps").tooltip("Export the layout as a figure in a journal's style")
                 view = SceneView(P, state["theme"], scene_selected, scene_live, scene_moved)
+                view.on_track = scene_track
                 scene_state["view"] = view
+                tracks_toolbar()
                 if scene_state["key"] is not None:
                     view.select(scene_state["key"], scene_state["element"], notify=False)
                 ui.label("To scale; the numbers along the beam are mm from the target. Click a detector, a ring "
