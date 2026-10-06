@@ -703,6 +703,37 @@ class Planner:
                 "gamma_detectors": g.detector_names(), "particle_detectors": list(g.events.detectors),
                 "notes": g.notes, "n_gammas": len(g)}
 
+    def analysis(self, events: int = 400_000, seed: int = 1):
+        """The :class:`~physim.nuclear.analysis.Analysis` of the simulated γ rays (:meth:`gamma_events`), kept
+        with its history until the setup changes."""
+        from .analysis import Analysis
+
+        key = ("analysis", events, seed)
+        if key not in self._cache:
+            self._cache[key] = Analysis(self.experiment, self.gamma_events(events, seed))
+        return self._cache[key]
+
+    def analyse(self, settings=None, events: int = 400_000, seed: int = 1) -> dict:
+        """Run the automatic analysis with ``settings`` (a :class:`~physim.nuclear.analysis.Settings`, or a dict
+        of its fields) and return the result as a dict for display. ``{"available": False}`` without Coulomb
+        excitation and γ-ray detectors."""
+        from dataclasses import asdict
+
+        from .analysis import Settings
+
+        exp = self.experiment
+        if exp.excitation is None or not exp.gamma_detectors:
+            return {"available": False, "reason": "Coulomb excitation with γ-ray detectors is needed."}
+        if isinstance(settings, dict):
+            settings = Settings(**settings)
+        try:
+            r = self.analysis(events, seed).run(settings)
+        except ValueError as e:
+            return {"available": False, "reason": str(e)}
+        out = asdict(r)
+        out.update(available=True, total_unc=r.total_unc, runs=len(self.analysis(events, seed).history))
+        return out
+
     def trajectories(self, impact_parameters: Optional[list] = None, nuclide: Optional[str] = None) -> dict:
         """Coulomb orbits (CM frame, fm) for a range of impact parameters, from physim's engine."""
         exp = self.experiment

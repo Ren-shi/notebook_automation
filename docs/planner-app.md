@@ -249,6 +249,10 @@ The example *coulex_ni58* is a complete one. To build your own:
    Doppler-corrected from the segment and crystal that fired. Random coincidences and the room background come
    from the `[run]` section of the setup file (`coincidence_window`, `room_background`, `extra_lines`,
    `dead_time`).
+10. **Analyse**, below it, extracts B(E2) from the simulated γ-ray peak as an experimentalist would: particle gate,
+    Doppler correction, peak fit, yield, normalisation (to the elastic particles, or to a known transition),
+    uncertainties with a budget of systematics, the shape readings, and the beam time for the precision you want.
+    Change a choice and analyse again: the result says what changed.
 
 ## What it does not do yet
 

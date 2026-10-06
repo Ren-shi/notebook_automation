@@ -2,6 +2,40 @@
 
 **Priority:** P1 · **Size:** L · **Area:** Experiment workbench
 
+**Status: Done.**
+
+> **Done** (`python/physim/nuclear/analysis.py`, `Planner.analysis` and `Planner.analyse`, the Analyse block of
+> the app's Spectra tab, `tests/python/test_nuclear_analysis.py`, guide section "Automatic analysis" in
+> `docs/nuclear-setup.md`).
+> - **Steps:** particle gate (inelastic group, chosen detectors and rings), Doppler correction, peak fit
+>   (Gaussian on a line, then the counts within ±3σ over the line, so a flat-topped corrected peak is counted
+>   whole), random coincidences subtracted, yield over efficiency × correlation × branch × gate share,
+>   normalisation, B(E2), budget, shape, truth, beam time. Each run is kept with its settings; a change is
+>   named with the previous B(E2).
+> - **The inelastic gate** predicts each particle's measured energy as the generator does (two-body kinematics,
+>   the way out of the target, the dead layer), and is as wide as the spread the reaction depth gives. In the
+>   ⁵⁸Ni example the elastic and inelastic groups overlap for backward ¹⁶O, so the gate keeps about half of
+>   the excitations; the share is known from the simulation and divided out, with a note.
+> - **Results:**
+>   - ⁵⁸Ni example, 400 000 reactions: B(E2↑) = 737 ± 2.8% (stat.) ± 7.8% (syst.) e²fm⁴ against 695 put in,
+>     a pull of +0.7 with the gate and +0.7 without; 670 (−0.4) with the backward ring alone.
+>   - Target normalisation, checked on ¹⁶O excited at 70 MeV with the ⁵⁸Ni 2⁺ state as reference: agrees with
+>     the Rutherford normalisation to 1% and with the input within 2σ.
+>   - Over six seeds the scatter of B(E2) equals the Monte Carlo uncertainty the result quotes (6.5% for
+>     150 000 reactions), which is larger than the experiment's statistical uncertainty (2% for the 24 h run);
+>     the two meet when the sample is as large as the run.
+>   - Each systematic is found by changing its input by one standard deviation: beam energy 4.8% (the orbit
+>     changes), detector positions 1.6%, efficiency and correlation as assumed.
+>   - A changed fit window, ring selection or detector selection changes the result and is recorded.
+> - **Not done here, or to confirm:**
+>   - The reference transition of the target normalisation is analytic with Poisson noise; the simulation
+>     excites one state.
+>   - A high-energy γ ray on a large Compton continuum (the 6.9 MeV ¹⁶O line without a gate) is not always
+>     found by the peak finder; with the gate it is.
+>   - The gate's share of excitations comes from the simulation's truth; a real analysis would estimate it the
+>     same way, from a simulation.
+>   - "Matrix elements assumed" is zero in first order; item 58 fills it.
+
 ## Why
 The purpose of the simulated experiment is the number it would measure. The app should analyse its own events as an
 experimentalist would, and state how precisely the planned beam time determines the result.

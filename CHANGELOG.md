@@ -34,6 +34,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Automatic analysis of the simulated experiment (`physim.nuclear.analysis`, backlog 56): particle gate, Doppler
+  correction, peak fit with random coincidences subtracted, yield, normalisation to the elastic particles or to a
+  known transition, B(E2↑) with statistical and systematic uncertainties (a budget, each by varying its input),
+  the Monte Carlo's own uncertainty, shape readings (β₂, Weisskopf units, rotor quadrupole moment), the
+  comparison with the value put in, and the beam time for a wanted precision. **Analyse** on the app's Spectra
+  tab; `Planner.analyse`.
 - Particle–γ events (`physim.nuclear.gamma_events`, backlog 55): every simulated excitation whose particle reached a
   detector emits its γ ray with the angular correlation from the moving nucleus; the crystals record it with
   their response.
