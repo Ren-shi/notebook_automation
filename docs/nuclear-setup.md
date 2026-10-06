@@ -373,6 +373,50 @@ In the app, **Simulate the γ rays** on the Spectra tab shows the particle × γ
 corrected spectrum. `write_root(..., gammas=g)` adds a `gammas` tree and `gamma_<detector>` histograms to the
 ROOT file.
 
+## Automatic analysis
+
+`physim.nuclear.analysis` analyses the simulated events as an experimentalist would, and says how precisely the
+planned beam time determines B(E2):
+
+```python
+from physim.nuclear.analysis import Analysis, Settings
+
+a = Analysis(exp, simulate_gammas(exp, 400_000, seed=1))
+r = a.run()                                # the default settings
+r.b_e2fm4, r.statistical, r.systematic     # B(E2↑) and its relative uncertainties
+r.budget                                   # each systematic contribution
+r.steps                                    # what was done, step by step, in words and numbers
+a.run(Settings(rings=range(4, 16), normalisation="target",
+               reference={"energy": "328.5 keV", "b_up": "1.65 e2b2", "unc": 0.03}))
+```
+
+The steps, each adjustable through `Settings`:
+
+1. **Particle gate:** the particle must sit in the inelastic group of its detector (its measured energy nearer
+   the kinematic value for a particle that excited the state than for an elastic one, within `gate_width`
+   resolutions), in the chosen `detectors` and `rings`. The share of excitations the gate keeps is known from the
+   simulation and divided out, as an experimentalist takes it from one.
+2. **Doppler correction** for the excited nucleus, or for the other one to see what that does.
+3. **Peak fit:** a Gaussian on a straight line within `fit_half_width` resolutions, then the counts within ±3σ
+   over the line, with the random coincidences expected in the window subtracted.
+4. **Yield:** the area over the full-energy-peak efficiency, the γ-ray branch and the angular-correlation factor.
+5. **Normalisation:** `"rutherford"`, to the elastic particles counted in the same rings (beam current and target
+   thickness cancel); or `"target"`, to a `reference` transition of known B(E2↑). Since the simulation excites one
+   state, the reference peak is its analytic expectation with Poisson noise.
+6. **B(E2↑)** from the first-order proportionality of the excitation probability to B(E2), in e²fm⁴, e²b² and
+   Weisskopf units; the statistical uncertainty from the fit and the normalisation; a budget of systematics
+   (efficiency, angular correlation, beam energy, detector positions, the reference's B(E2)), each found by
+   changing its input by one standard deviation and running again; and the Monte Carlo sample's own uncertainty,
+   quoted separately.
+7. **Shape:** β₂ from B(E2), the strength in Weisskopf units, E(4⁺)/E(2⁺) when a level scheme is there, and the
+   quadrupole moment a rigid rotor would have, with the note that these readings depend on the rotor model.
+
+The result also compares the extracted value with the one put in (the pull), and gives the counts in the peak per
+8-hour shift and the beam time for the `wanted_precision`. Every run is kept in `Analysis.history`, and a changed
+setting is named in the result's notes with the previous value of B(E2).
+
+In the app, **Analyse** on the Spectra tab runs it with the choices made in the row above the button.
+
 ## Materials
 
 A material can be written as:

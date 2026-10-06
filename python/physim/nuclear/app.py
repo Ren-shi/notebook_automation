@@ -21,6 +21,7 @@ from typing import Optional
 import numpy as np
 
 from . import guide
+from .analysis import SHIFT_H
 from .planner import TABS, Planner
 
 #: Fields of each setup section shown in the setup panel, in order: (field, label, placeholder).
@@ -1342,6 +1343,115 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                 draw()
 
         ui.button("Simulate the γ rays", icon="play_arrow", on_click=build).props("dense flat no-caps")
+        analysis_block()
+
+    def analysis_block() -> None:
+        """From the γ-ray peak to B(E2): the steps, each adjustable, and what the beam time determines."""
+        ui.label("Analysis: from the peak area to B(E2)").classes("font-semibold mt-3")
+        ui.label("The simulated events are analysed as an experimentalist would: a gate on the inelastic particle "
+                 "group, the Doppler correction, a peak fit over a line with the random coincidences subtracted, "
+                 "the yield over the efficiency and the angular correlation, a normalisation, and B(E2) from the "
+                 "first-order proportionality. Each systematic is found by changing its input by one standard "
+                 "deviation and running again.").classes("text-xs ps-muted")
+        with ui.row().classes("w-full items-end gap-2"):
+            norm = ui.select({"rutherford": "to the elastic particles in the same rings",
+                              "target": "to a known transition"}, value="rutherford",
+                             label="Normalisation").props("dense outlined").classes("w-72")
+            gate = ui.select({"inelastic": "inelastic group", "all": "every particle"}, value="inelastic",
+                             label="Particle gate").props("dense outlined").classes("w-44")
+            corr = ui.select({"emitter": "the excited nucleus", "projectile": "the projectile",
+                              "recoil": "the recoil"}, value="emitter", label="Doppler correction").props(
+                "dense outlined").classes("w-48")
+            width = ui.number("Fit window (FWHM)", value=4.0, min=1.5, max=10, step=0.5).props(
+                "dense outlined").classes("w-36")
+            rings = ui.input("Rings or strips", placeholder="all, or 4-15").props("dense outlined").classes("w-36")
+        with ui.row().classes("w-full items-end gap-2"):
+            ref_e = ui.input("Reference transition", placeholder="328 keV").props("dense outlined").classes("w-40")
+            ref_b = ui.input("Its B(E2↑)", placeholder="1.65 e2b2").props("dense outlined").classes("w-40")
+            ref_u = ui.number("Its uncertainty (%)", value=3.0, min=0, max=100).props("dense outlined").classes(
+                "w-40")
+            eff_u = ui.number("Efficiency unc. (%)", value=5.0, min=0, max=100).props("dense outlined").classes(
+                "w-40")
+            prec = ui.number("Wanted precision (%)", value=5.0, min=0.1, max=100).props("dense outlined").classes(
+                "w-40")
+        out_box = ui.column().classes("w-full")
+
+        def parse_rings(text: str):
+            text = (text or "").strip()
+            if not text or text == "all":
+                return None
+            picked = []
+            for part in text.split(","):
+                a, _, b = part.strip().partition("-")
+                picked += list(range(int(a), int(b or a) + 1))
+            return picked
+
+        async def analyse() -> None:
+            settings = {"normalisation": norm.value, "particle_gate": gate.value, "correction": corr.value,
+                        "fit_half_width": float(width.value), "efficiency_unc": float(eff_u.value) / 100,
+                        "wanted_precision": float(prec.value) / 100}
+            try:
+                settings["rings"] = parse_rings(rings.value)
+            except ValueError:
+                ui.notify("Rings: write 'all', a number, or a range such as 4-15", type="warning")
+                return
+            if norm.value == "target":
+                if not ref_e.value or not ref_b.value:
+                    ui.notify("Give the reference transition's energy and B(E2↑)", type="warning")
+                    return
+                settings["reference"] = {"energy": ref_e.value, "b_up": ref_b.value, "unc": float(ref_u.value) / 100}
+            out_box.clear()
+            with out_box:
+                ui.spinner(size="md")
+            r = await run.io_bound(P().analyse, settings, max(state["events"], 400_000), 1)
+            out_box.clear()
+            with out_box:
+                show(r)
+
+        def show(r: dict) -> None:
+            if not r["available"]:
+                ui.label(r["reason"]).classes("text-sm ps-warn")
+                return
+            for step in r["steps"]:
+                with ui.row().classes("items-start no-wrap gap-2"):
+                    ui.label(step["step"]).classes("text-xs ps-section w-40")
+                    ui.label(step["text"]).classes("text-sm")
+            b = r["b_e2fm4"]
+            if b != b:
+                ui.label("No result: " + "; ".join(r["notes"])).classes("text-sm ps-warn")
+                return
+            with ui.element("div").classes("ps-readouts mt-2"):
+                for title, value, sub in (
+                        ("B(E2↑)", f"{r['b_e2b2']:.4g} e²b²", f"{b:.4g} e²fm⁴ · {r['b_wu']:.3g} W.u."),
+                        ("Uncertainty", f"± {100 * r['total_unc']:.1f} %",
+                         f"statistical {100 * r['statistical']:.1f} %, systematic {100 * r['systematic']:.1f} %; "
+                         f"the Monte Carlo sample itself adds {100 * r['monte_carlo']:.1f} %"),
+                        ("Put in", f"{1e-4 * r['truth_e2fm4']:.4g} e²b²", f"pull {r['pull']:+.2f} σ"),
+                        ("Beam time", f"{r['hours_for_precision']:.3g} h",
+                         f"for {100 * r['settings']['wanted_precision']:.3g} % statistics; "
+                         f"{r['counts_per_shift']:.3g} counts in the peak per {SHIFT_H:g} h shift")):
+                    with ui.element("div").classes("ps-readout"):
+                        ui.label(title).classes("text-xs ps-muted")
+                        ui.label(value).classes("ps-readout-value")
+                        ui.label(sub).classes("text-xs ps-muted")
+            with ui.row().classes("items-start gap-4 mt-2"):
+                ui.table(columns=columns((("source", "Systematic"), ("value", "Relative (%)"))),
+                         rows=[{"source": k, "value": f"{100 * v:.2f}"} for k, v in r["budget"].items()]).props(
+                    "dense flat")
+                sh = r["shape"]
+                if sh:
+                    rows = [{"q": "β₂", "v": f"{sh['beta2']:.3f}"}, {"q": "B(E2↑) in W.u.", "v": f"{r['b_wu']:.3g}"},
+                            {"q": "Q₀ of a rigid rotor", "v": f"{sh['q0_efm2']:.3g} e fm²"},
+                            {"q": "Q_s(2⁺) of that rotor", "v": f"{sh['qs_2plus_efm2']:.3g} e fm²"}]
+                    if "e4_over_e2" in sh:
+                        rows.append({"q": "E(4⁺)/E(2⁺)", "v": f"{sh['e4_over_e2']:.3f}"})
+                    ui.table(columns=columns((("q", "Shape"), ("v", "Value"))), rows=rows).props("dense flat")
+            if r["shape"]:
+                ui.label(r["shape"]["note"]).classes("text-xs ps-muted")
+            for note in r["notes"]:
+                ui.label(note).classes("text-xs ps-muted")
+
+        ui.button("Analyse", icon="functions", on_click=analyse).props("dense flat no-caps")
 
     @ui.refreshable
     def trajectories_panel():
