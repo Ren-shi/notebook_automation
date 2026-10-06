@@ -30,6 +30,7 @@ BEAM_FIELDS = [("nuclide", "Nuclide", "4He"), ("energy", "Energy", "5.5 MeV or 4
                ("current", "Current", "1 pnA or 10 enA"), ("charge_state", "Charge state", "6"),
                ("energy_spread", "Energy spread (FWHM)", "0.1 %"), ("spot_size", "Spot size (FWHM)", "2 mm")]
 TARGET_FIELDS = [("material", "Material", "Au, 208Pb, CD2"), ("thickness", "Thickness", "0.5 mg/cm2 or 1 um"),
+                 ("position", "Position along the beam", "0 mm"),
                  ("tilt", "Tilt", "0 deg"), ("density", "Density", "19.3 g/cm3")]
 BACKING_FIELDS = [("material", "Backing material", "C"), ("thickness", "Backing thickness", "20 ug/cm2")]
 RUN_FIELDS = [("beam_time", "Beam time", "12 h"), ("counts_wanted", "Counts wanted", "5000")]
@@ -311,6 +312,45 @@ def figure_gamma_spectra(planner: Planner, detector: str, events: int = 400_000,
     fig.add_vline(x=g["energy_kev"], line=dict(color="#888", width=1, dash="dot"))
     fig.update_layout(xaxis=dict(title="γ-ray energy (keV)"), yaxis=dict(title="counts / bin in the run"),
                       margin=dict(l=50, r=10, t=10, b=40), height=320, legend=dict(orientation="h", y=-0.3, x=0))
+    return fig
+
+
+def figure_alignment(planner: Planner, result: dict):
+    """The diagnostic plot of a misplaced target: the corrected peak's centroid against ring, one line per
+    crystal, with the transition energy as a dashed line. Flat when the geometry assumed is right."""
+    go = _go()
+    fig = go.Figure()
+    rows = result["diagnostic"]
+    crystals = list(dict.fromkeys(r["crystal"] for r in rows))
+    dets = list(dict.fromkeys(r["detector"] for r in rows))
+    for i, cr in enumerate(crystals):
+        for j, d in enumerate(dets):
+            mine = [r for r in rows if r["crystal"] == cr and r["detector"] == d]
+            if not mine:
+                continue
+            fig.add_trace(go.Scatter(x=[r["ring"] + 1 for r in mine], y=[r["centroid_kev"] for r in mine],
+                                     error_y=dict(type="data", array=[r["error_kev"] for r in mine], width=0,
+                                                  thickness=1),
+                                     mode="lines+markers", name=f"{cr} with {d}",
+                                     line=dict(color=COLORS[i % len(COLORS)], width=1, dash=("solid", "dash", "dot")[j % 3]),
+                                     marker=dict(size=5)))
+    fig.add_hline(y=result["energy_kev"], line=dict(color="#888", width=1, dash="dot"))
+    fig.update_layout(xaxis=dict(title="ring or strip"), yaxis=dict(title="corrected centroid (keV)"), height=360,
+                      margin=dict(l=55, r=10, t=10, b=40), legend=dict(font=dict(size=10)))
+    return fig
+
+
+def figure_overlay(result: dict):
+    """The corrected peak with the true geometry and with the assumed one."""
+    go = _go()
+    o = result["overlay"]
+    x = 1e3 * np.repeat(o["edges"], 2)[1:-1]
+    fig = go.Figure()
+    for i, (key, label) in enumerate((("true", "true geometry"), ("assumed", f"target assumed {result['offset_mm']:+g} mm off"))):
+        y = np.repeat(o[key], 2)
+        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=label, line=dict(color=COLORS[i], width=1.2)))
+    fig.update_layout(xaxis=dict(title="corrected γ-ray energy (keV)"), yaxis=dict(title="counts / bin in the run"),
+                      height=300, margin=dict(l=55, r=10, t=10, b=40), legend=dict(orientation="h", y=-0.3, x=0))
     return fig
 
 
@@ -1585,6 +1625,48 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                 ui.label(note).classes("text-xs ps-muted")
 
         ui.button("Analyse", icon="functions", on_click=analyse).props("dense flat no-caps")
+        alignment_block()
+
+    def alignment_block() -> None:
+        """A misplaced target: what the analysis sees, and how it finds the offset."""
+        ui.label("A misplaced target").classes("font-semibold mt-3")
+        ui.label("The analysis may assume the target somewhere else than it is. The Doppler correction then uses "
+                 "wrong angles: each corrected peak shifts and broadens, ring by ring and crystal by crystal. The "
+                 "diagnostic plot below, the corrected centroid against ring, is what one uses on real data to "
+                 "find a misplaced target; the fit gives the offset back.").classes("text-xs ps-muted")
+        with ui.row().classes("items-end gap-2"):
+            off = ui.number("Assumed offset along the beam (mm)", value=2.0, min=-20, max=20, step=0.5).props(
+                "dense outlined").classes("w-64")
+            fit_too = ui.checkbox("Fit the offset back (about 15 s)", value=True)
+        box = ui.column().classes("w-full")
+
+        async def check() -> None:
+            box.clear()
+            with box:
+                ui.spinner(size="md")
+            r = await run.io_bound(P().alignment, float(off.value), max(state["events"], 400_000), 1,
+                                   bool(fit_too.value))
+            if scene_state["view"] is not None and scene_state["view"].alive:
+                scene_state["view"].show_ghost(float(off.value))
+            box.clear()
+            with box:
+                if not r["available"]:
+                    ui.label(r["reason"]).classes("text-sm ps-warn")
+                    return
+                o = r["overlay"]
+                ui.label(f"With the target assumed {r['offset_mm']:+g} mm off, the corrected peak shifts by "
+                         f"{o['shift_kev']:+.2f} keV and its width changes by {o['broadening_kev']:+.2f} keV "
+                         f"(FWHM {o['fwhm_true_kev']:.1f} → {o['fwhm_assumed_kev']:.1f} keV).").classes("text-sm")
+                ui.plotly(themed(figure_overlay(r), state["theme"])).classes("w-full")
+                ui.plotly(themed(figure_alignment(P(), r), state["theme"])).classes("w-full")
+                if "fit" in r:
+                    f = r["fit"]
+                    ui.label(f"Fitted: the target is {f['offset_mm']:+.2f} ± {f['uncertainty_mm']:.2f} mm from "
+                             f"where the analysis assumed it (truth {f['truth_mm']:+g} mm; χ² {f['chi2']:.0f} for "
+                             f"{f['degrees_of_freedom']} points, judged against a simulation with the assumed "
+                             "geometry). The scene shows the assumed target as a faint outline.").classes("text-sm")
+
+        ui.button("Check the alignment", icon="straighten", on_click=check).props("dense flat no-caps")
 
     @ui.refreshable
     def trajectories_panel():

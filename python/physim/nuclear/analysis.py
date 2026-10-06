@@ -77,6 +77,9 @@ class Settings:
     #: For "target": the reference transition, {"energy": "328 keV", "b_up": "1.65 e2b2", "unc": 0.03}, its
     #: B(E2↑) known to the relative uncertainty ``unc``. The reference is in the other nucleus of the collision.
     reference: Optional[dict] = None
+    #: The target's offset along the beam assumed in the Doppler correction, mm from its true place (0: the
+    #: analysis knows the geometry); and the uncertainty of the target's place, mm, for the budget.
+    target_offset_mm: float = 0.0
     #: Relative systematic uncertainties of the inputs.
     efficiency_unc: float = 0.05
     beam_energy_unc: float = 0.005
@@ -358,13 +361,14 @@ class Analysis:
         which = s.correction if s.correction != "emitter" else ("recoil" if exc.excite == "target" else "projectile")
         key = {"projectile": "corrected_projectile", "recoil": "corrected_recoil"}[which]
         g = self.gammas
+        energies = self._energies(s, key)
         sigma = max(float(np.mean([c.response.fwhm(self.e0) for c in g.crystals])) / FWHM_PER_SIGMA, 1e-4)
         width = sigma / 4
         # The window holds the peak however much Doppler width the segments leave: up to ±5% of the energy.
         half = max(12 * sigma, 0.05 * self.e0)
         edges = np.arange(self.e0 - half, self.e0 + half + width, width)
         t = g.events.beam_time_s * g.live_fraction
-        counts, _ = np.histogram(g[key][keep], bins=edges, weights=g["weight"][keep] * t)
+        counts, _ = np.histogram(energies[keep], bins=edges, weights=g["weight"][keep] * t)
         sigma = min(max(_half_maximum_sigma(counts, edges, self.e0), sigma), 0.03 * self.e0)
         rnd = np.zeros(len(edges) - 1)
         if s.subtract_randoms:
@@ -375,6 +379,17 @@ class Analysis:
             rng = np.random.default_rng(g.seed + 104729)
             counts = counts + rng.poisson(rnd)
         return counts, edges, rnd, sigma, which
+
+    def _energies(self, s: Settings, key: str, offset_mm: Optional[float] = None) -> np.ndarray:
+        """The corrected energies with the geometry the analysis assumes: the true one, or the target moved by
+        ``Settings.target_offset_mm`` (or ``offset_mm``) along the beam."""
+        offset = s.target_offset_mm if offset_mm is None else offset_mm
+        if not offset:
+            return self.gammas[key]
+        from .alignment import with_offset
+        from .gamma_events import recorrect
+
+        return recorrect(self.gammas, with_offset(self.experiment, offset))[key]
 
     def _mean_probability(self, s: Settings, keep: np.ndarray, beam_energy: Optional[float] = None,
                           energy: Optional[float] = None, b_up: Optional[float] = None) -> float:
@@ -561,14 +576,40 @@ class Analysis:
         # Beam energy: ⟨P⟩/B changes with the orbit.
         shifted = self._mean_probability(s, keep, beam_energy=self._e_mid * (1 + s.beam_energy_unc))
         out["beam energy"] = abs(shifted / p_per_b - 1) if p_per_b > 0 else 0.0
-        # Detector positions: the γ-ray efficiency goes as 1/d², the particle solid angle cancels in the ratio
-        # of excitations to elastic particles in the same rings only to first order; take the efficiency's part.
-        d_mm = float(np.mean([_q(gd.distance).to("mm") for gd in self.experiment.gamma_detectors]))
-        out["detector positions"] = 2 * s.position_unc_mm / d_mm
+        # The target's place: the Doppler correction with the target moved by its uncertainty shifts and broadens
+        # the peak, and the γ-ray efficiency goes as 1/d²; the peak area is found again with the moved target.
+        d_mm = float(np.mean([gd.distance_mm() for gd in self.experiment.gamma_detectors]))
+        out["detector positions"] = math.hypot(2 * s.position_unc_mm / d_mm,
+                                               self._area_change(s, keep, s.position_unc_mm))
         if s.normalisation == "target":
             out["reference B(E2)"] = ref_unc
         out["matrix elements assumed"] = 0.0  # first order: no other matrix element enters
         return out
+
+    def _area_change(self, s: Settings, keep: np.ndarray, delta_mm: float) -> float:
+        """The relative change of the peak area when the target assumed in the correction moves by ±delta."""
+        exc = self.experiment.excitation
+        which = s.correction if s.correction != "emitter" else ("recoil" if exc.excite == "target" else "projectile")
+        key = {"projectile": "corrected_projectile", "recoil": "corrected_recoil"}[which]
+        g = self.gammas
+        t = g.events.beam_time_s * g.live_fraction
+        sigma = max(float(np.mean([c.response.fwhm(self.e0) for c in g.crystals])) / FWHM_PER_SIGMA, 1e-4)
+        areas = []
+        for offset in (s.target_offset_mm, s.target_offset_mm + delta_mm, s.target_offset_mm - delta_mm):
+            x = self._energies(s, key, offset)
+            half = max(12 * sigma, 0.05 * self.e0)
+            edges = np.arange(self.e0 - half, self.e0 + half + sigma / 4, sigma / 4)
+            counts, _ = np.histogram(x[keep], bins=edges, weights=g["weight"][keep] * t)
+            guess = min(max(_half_maximum_sigma(counts, edges, self.e0), sigma), 0.03 * self.e0)
+            try:
+                first = fit_peak(counts, edges, self.e0, guess, 3 * s.fit_half_width, max_sigma=0.03 * self.e0)
+                areas.append(fit_peak(counts, edges, self.e0, first.sigma, s.fit_half_width,
+                                      max_sigma=0.03 * self.e0).area)
+            except ValueError:
+                areas.append(float("nan"))
+        if not areas[0] or not all(a == a for a in areas):
+            return 0.0
+        return float(max(abs(areas[1] - areas[0]), abs(areas[2] - areas[0])) / areas[0])
 
     def _shape(self, b: float, a_mass: int) -> dict:
         z = data.nuclide(ex_nuclide(self.experiment)).Z

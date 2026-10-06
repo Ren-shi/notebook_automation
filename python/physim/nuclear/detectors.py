@@ -249,8 +249,16 @@ class Geometry:
         W = np.outer(w, w) * (r1 - r0) / 2 * (a1 - a0) / 2 * R
         return (R * np.cos(A)).ravel(), (R * np.sin(A)).ravel(), W.ravel()
 
-    def segment_centre(self, segment: Optional[tuple] = None) -> np.ndarray:
-        """The middle of a segment (or of the face), mm: what a Doppler correction knows of where a particle hit."""
+    def segment_centre(self, segment: Optional[tuple] = None, weighted: bool = False) -> np.ndarray:
+        """The middle of a segment (or of the face), mm: what a Doppler correction knows of where a particle hit.
+        With ``weighted`` it is the mean point of the segment weighted by the solid angle and by Rutherford's
+        1/sin⁴(θ/2), nearer to where the particles of a steep distribution hit."""
+        if weighted and segment is not None:
+            dirs, d_omega = self.directions(segment, 6)
+            theta = np.arccos(np.clip(dirs[:, 2], -1.0, 1.0))
+            w = d_omega / np.maximum(np.sin(theta / 2), 1e-3) ** 4
+            su, sv, _ = self._nodes(segment, 6)
+            return self.centre + float(np.average(su, weights=w)) * self.u + float(np.average(sv, weights=w)) * self.v
         if segment is None:
             return self.centre.copy()
         if self.shape == "rectangle":

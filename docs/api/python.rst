@@ -186,6 +186,9 @@ The setup file and its Python form; see :doc:`../nuclear-setup` for every field.
 .. automodule:: physim.nuclear.tracks
    :members:
 
+.. automodule:: physim.nuclear.alignment
+   :members:
+
 .. automodule:: physim.nuclear.angular
    :members:
 

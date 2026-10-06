@@ -152,6 +152,9 @@ HELP = {
     ("gamma", "housing_side"): _h("Side of the square housing, which stops particles.", "about 100 mm for a clover",
                                   "hides more of whatever lies behind it."),
     ("gamma", "window_gap"): _h("Distance from the housing's front window to the crystals.", "a few mm", "—"),
+    ("target", "position"): _h("Where the target sits along the beam, from the chamber's centre: a target "
+                               "ladder, or a target set off centre.", "0 mm", "every detector's angle and distance "
+                               "from the target change, and with them the rates and the Doppler corrections."),
     ("reaction", "emission"): _h("How the γ rays leave the excited nucleus: correlated with the direction of the "
                                  "scattered particle, as in nature, or evenly in all directions.", "correlated",
                                  "—"),

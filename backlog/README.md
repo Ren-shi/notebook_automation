@@ -65,7 +65,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 57 | ~~[The run record: every number explains itself](57-run-record.md)~~ **Done** (reader's check pending) | Experiment workbench | P1 | M | 42, 56 |
 | 58 | ~~[Multi-step Coulomb excitation, reorientation and the shape of the nucleus](58-multi-step-coulomb-excitation.md)~~ **Done** (GOSIA comparisons pending) | Experiment workbench | P1 | L | 50, 54, 56 |
 | 59 | ~~[Particle and γ-ray tracks in the scene](59-particle-tracks.md)~~ **Done** (smoothness to confirm) | Experiment workbench | P2 | M | 52, 55 |
-| 60 | [A movable target and sources placed anywhere](60-movable-target-and-sources.md) | Experiment workbench | P2 | M | 52, 53 |
+| 60 | ~~[A movable target and sources placed anywhere](60-movable-target-and-sources.md)~~ **Done** | Experiment workbench | P2 | M | 52, 53 |
 | 61 | [The planner in its own desktop window](61-desktop-window.md) | Experiment workbench | P2 | S | 44, 52 |
 | 62 | [Add-back and Compton suppression for clovers](62-add-back-and-compton-suppression.md) | Experiment workbench | P3 | M | 53, 55 |
 

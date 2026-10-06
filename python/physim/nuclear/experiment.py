@@ -240,7 +240,8 @@ def _out(v: Any) -> Any:
 def _to_dict(obj: Any) -> dict[str, Any]:
     """Fields in the order of the section's specs (the order a setup file is written in), omitting unset ones."""
     names = [s.name for s in obj.SPECS] + [f.name for f in fields(obj) if f.name not in {s.name for s in obj.SPECS}]
-    return {n: _out(getattr(obj, n)) for n in names if getattr(obj, n) is not None and n != "backing"}
+    return {n: _out(getattr(obj, n)) for n in names
+            if getattr(obj, n) is not None and n != "backing" and not n.startswith("_")}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -325,13 +326,27 @@ class Target:
     tilt: Optional[QuantityLike] = None
     density: Optional[QuantityLike] = None
     backing: Optional[Layer] = None
+    #: Where the target sits along the beam, from the chamber's centre (0 if left out). Detectors are placed
+    #: from the chamber's centre; every angle and distance in the results is from the target.
+    position: Optional[QuantityLike] = None
+    #: A target ladder: pairs of a material and a thickness; ``selected`` (from 1) is the one in the beam, and
+    #: ``material`` and ``thickness`` are then its values.
+    ladder: Optional[list] = None
+    selected: Optional[int] = None
 
     SPECS = (
-        _Field("material", "material", required=True),
-        _Field("thickness", "areal_density|length", required=True, check=_positive),
+        _Field("material", "material"),
+        _Field("thickness", "areal_density|length", check=_positive),
         _Field("density", "density", check=_positive),
         _Field("tilt", "angle", check=_tilt),
+        _Field("position", "length"),
+        _Field("ladder", "absorbers"),
+        _Field("selected", "int", check=lambda n: None if n >= 1 else "counts from 1"),
     )
+
+    @property
+    def position_mm(self) -> float:
+        return _q(self.position).to("mm") if self.position is not None else 0.0
 
     def material_data(self) -> _data.Material:
         """Composition and density of the target (see :func:`physim.nuclear.data.material`)."""
@@ -367,6 +382,9 @@ class Detector:
     dead_layer: Optional[QuantityLike] = None
     resolution: Optional[QuantityLike] = None
     threshold: Optional[QuantityLike] = None
+    #: The target's place from the chamber's centre, mm (set by the setup; positions in the file are from the
+    #: chamber's centre, results are from the target).
+    _origin: Optional[tuple] = None
 
     SPECS = (
         _Field("name", "str"),
@@ -412,8 +430,8 @@ class Detector:
         return [(b["name"], _q(b["inner_radius"]).to("mm"), _q(b["outer_radius"]).to("mm"))
                 for b in catalogue.model(self.model, "particle").blocking]
 
-    def position_mm(self) -> tuple[float, float, float]:
-        """Centre of the detector face, mm, in the coordinates described in the module docstring."""
+    def chamber_position_mm(self) -> tuple[float, float, float]:
+        """Centre of the detector face, mm, from the chamber's centre (as the setup file places it)."""
         if self.position is not None:
             x, y, z = (_q(c).to("mm") for c in self.position)
             return (x, y, z)
@@ -421,6 +439,13 @@ class Detector:
         ph = math.radians(_q(self.phi).to("deg")) if self.phi is not None else 0.0
         d = _q(self.distance).to("mm")
         return (d * math.sin(th) * math.cos(ph), d * math.sin(th) * math.sin(ph), d * math.cos(th))
+
+    def position_mm(self) -> tuple[float, float, float]:
+        """Centre of the detector face, mm, from the target (the coordinates of the module docstring)."""
+        x, y, z = self.chamber_position_mm()
+        if self._origin:
+            return (x - self._origin[0], y - self._origin[1], z - self._origin[2])
+        return (x, y, z)
 
     def facing_direction(self) -> tuple[float, float, float]:
         """Unit vector the sensitive face looks along; towards the target unless ``facing`` is given."""
@@ -531,6 +556,8 @@ class GammaDetector:
     efficiency_curve: Optional[list] = None
     #: Energy below which the crystal records nothing.
     threshold: Optional[QuantityLike] = None
+    #: The target's place from the chamber's centre, mm (set by the setup).
+    _origin: Optional[tuple] = None
 
     SPECS = (
         _Field("name", "str"),
@@ -578,7 +605,7 @@ class GammaDetector:
     def elements(self) -> list:
         """The crystals, as (label, centre of the front face in mm, radius in mm). One crystal has an empty label;
         the four of a clover are A to D."""
-        u, d, r = self.direction(), _q(self.distance).to("mm"), self.crystal_radius_mm()
+        u, d, r = self.direction(), self.distance_mm(), self.crystal_radius_mm()
         centre = (d * u[0], d * u[1], d * u[2])
         if (self.crystals or 1) == 1:
             return [("", centre, r)]
@@ -593,7 +620,7 @@ class GammaDetector:
         if self.housing_side is None:
             return None
         u = self.direction()
-        d = _q(self.distance).to("mm") - (_q(self.window_gap).to("mm") if self.window_gap is not None else 0.0)
+        d = self.distance_mm() - (_q(self.window_gap).to("mm") if self.window_gap is not None else 0.0)
         return (d * u[0], d * u[1], d * u[2]), _q(self.housing_side).to("mm")
 
     def peak_efficiency(self, energy_mev: float = 1.332492, experiment=None) -> float:
@@ -604,11 +631,29 @@ class GammaDetector:
 
         return float(Response(experiment, self).peak_efficiency(energy_mev))
 
-    def direction(self) -> tuple:
-        """Unit vector from the target to the centre of the detector."""
+    def chamber_centre_mm(self) -> tuple:
+        """Centre of the front face from the chamber's centre, mm, as the setup file places it."""
         th = math.radians(_q(self.theta).to("deg"))
         ph = math.radians(_q(self.phi).to("deg")) if self.phi is not None else 0.0
-        return (math.sin(th) * math.cos(ph), math.sin(th) * math.sin(ph), math.cos(th))
+        d = _q(self.distance).to("mm")
+        return (d * math.sin(th) * math.cos(ph), d * math.sin(th) * math.sin(ph), d * math.cos(th))
+
+    def centre_mm(self) -> tuple:
+        """Centre of the front face from the target, mm."""
+        x, y, z = self.chamber_centre_mm()
+        if self._origin:
+            return (x - self._origin[0], y - self._origin[1], z - self._origin[2])
+        return (x, y, z)
+
+    def distance_mm(self) -> float:
+        """Distance from the target to the front face, mm."""
+        return math.hypot(*self.centre_mm())
+
+    def direction(self) -> tuple:
+        """Unit vector from the target to the centre of the detector."""
+        c = self.centre_mm()
+        d = math.hypot(*c)
+        return (c[0] / d, c[1] / d, c[2] / d)
 
     def half_angle_deg(self) -> float:
         """Half the opening angle of the detector seen from the target: of the one crystal, or of the circle
@@ -616,7 +661,7 @@ class GammaDetector:
         r = self.crystal_radius_mm()
         if (self.crystals or 1) == 4:
             r += _q(self.crystal_pitch).to("mm") / math.sqrt(2.0)
-        return math.degrees(math.atan2(r, _q(self.distance).to("mm")))
+        return math.degrees(math.atan2(r, self.distance_mm()))
 
 
 @dataclass
@@ -743,6 +788,15 @@ class Experiment:
                 _check_material("target.backing", lb, problems)
                 if "material" in lb and "thickness" in lb:
                     backing = Layer(**lb)
+            if "ladder" in t:
+                k = t.get("selected", 1)
+                if not 1 <= k <= len(t["ladder"]):
+                    problems.append(f"target: selected = {k}, but the ladder has {len(t['ladder'])} targets")
+                else:
+                    t["material"], t["thickness"] = t["ladder"][k - 1]
+            for name in ("material", "thickness"):
+                if name not in t and not any(p.startswith(f"target: {name}") for p in problems):
+                    problems.append(f"target: '{name}' is missing" + (" (or a ladder)" if name == "material" else ""))
             _check_material("target", t, problems)
             if "material" in t and "thickness" in t:
                 target = Target(**t, backing=backing)
@@ -783,6 +837,10 @@ class Experiment:
                 chamber = Chamber(**c)
                 _check_chamber(chamber, detectors, gammas, problems)
 
+        if target is not None and target.position is not None:
+            origin = (0.0, 0.0, target.position_mm)
+            for d in detectors + gammas:
+                d._origin = origin
         levels = _read_levels(data.get("levels"), beam, target, problems)
 
         run = None
@@ -901,13 +959,14 @@ def _check_chamber(chamber: Chamber, detectors: list, gammas: list, problems: li
     radius = _q(chamber.radius).to("mm")
     outer = radius + (_q(chamber.wall_thickness).to("mm") if chamber.wall_thickness is not None else 0.0)
     for i, d in enumerate(detectors, start=1):
-        far = math.hypot(*d.position_mm()) + max(_q(x).to("mm") for x in (
+        far = math.hypot(*d.chamber_position_mm()) + max(_q(x).to("mm") for x in (
             d.outer_radius, d.radius, d.width, d.height) if x is not None)
         if far > radius:
             problems.append(f"detector {i} ({d.name or f'D{i}'}): reaches {far:.0f} mm from the target, outside "
                             f"the chamber (radius {radius:g} mm)")
     for i, g in enumerate(gammas, start=1):
-        near = _q(g.distance).to("mm") - (_q(g.window_gap).to("mm") if g.window_gap is not None else 0.0)
+        near = math.hypot(*g.chamber_centre_mm()) - (_q(g.window_gap).to("mm") if g.window_gap is not None
+                                                      else 0.0)
         if near < outer:
             problems.append(f"gamma detector {i} ({g.name or f'G{i}'}): its front is {near:.0f} mm from the "
                             f"target, inside the chamber wall (outer radius {outer:g} mm)")

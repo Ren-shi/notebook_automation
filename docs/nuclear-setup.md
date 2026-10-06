@@ -130,6 +130,8 @@ See {doc}`theory/coulex` for the physics, and the example `coulex_ni58`.
 | `material` | yes | — | See [Materials](#materials). |
 | `thickness` | yes | areal density or length | Thickness along the target normal. A length needs a known density. |
 | `density` | no | density | Overrides the tabulated density, or supplies one for a formula. |
+| `position` | no | length | Where the target sits along the beam, from the chamber's centre (0 if left out). Detectors are placed from the chamber's centre; every angle, distance and Doppler correction in the results is from the target. |
+| `ladder` | no | pairs | A target ladder: `[["58Ni", "0.5 mg/cm2"], ["208Pb", "1 mg/cm2"]]`; `selected` (from 1) is the one in the beam and gives `material` and `thickness`. |
 | `tilt` | no | angle | Rotation of the target about the vertical (y) axis, between −90° and 90°. |
 
 `[target.backing]` takes `material`, `thickness` and `density` for a backing layer on the downstream side of the target.
@@ -512,6 +514,32 @@ event record names); an undetected partner runs to the edge of the scene; a γ r
 With `weighted=True` events are picked with probability proportional to the rate they stand for, so the sample
 looks like a run; with `weighted=False` they are picked as generated, so the rare large-angle scatterings show.
 The animation itself runs in the browser.
+
+## A misplaced target
+
+The analysis may assume the target somewhere else than it is. `physim.nuclear.alignment` shows what that does and
+finds the offset back, as one does with real data:
+
+```python
+from physim.nuclear.alignment import diagnostic, fit_offset, overlay, with_offset
+
+assumed = with_offset(exp, 2.0)                  # the target assumed 2 mm further along the beam
+overlay(gammas, exp, assumed)                    # the corrected peak with each geometry: shift and broadening
+diagnostic(gammas, assumed)                      # centroid against ring, per crystal: flat when right, sloped when not
+fit_offset(gammas, assumed)                      # the offset that flattens it, with its uncertainty
+```
+
+- `gamma_events.recorrect(gammas, experiment)` makes the Doppler correction again with another geometry.
+- The diagnostic's centroids are judged against the pattern of a simulation made with the assumed geometry and
+  corrected with it, because large crystals and the energy loss leave the corrected centroids a little
+  ring-dependent even when the geometry is right.
+- `Settings.target_offset_mm` in the analysis makes it assume the offset; the budget's "detector positions" entry
+  includes the change of the peak area when the target moves by `position_unc_mm`.
+- In the app, **Check the alignment** on the Spectra tab shows the overlay, the diagnostic plot and the fitted
+  offset, and the scene shows the assumed target as a faint outline.
+
+A calibration source can be placed anywhere: `source_run(exp, "152Eu", position=(0, 60, 0))` puts it 60 mm along
+y from the target, and each crystal's rate follows its solid angle from there.
 
 ## Materials
 

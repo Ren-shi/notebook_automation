@@ -350,7 +350,7 @@ class Planner:
             gd = exp.gamma_detectors[i]
             return {"name": gd.name or f"γ{i + 1}", "theta": _q(gd.theta).to("deg"),
                     "phi": _q(gd.phi).to("deg") if gd.phi is not None else 0.0,
-                    "distance_mm": _q(gd.distance).to("mm"), "half_angle_deg": gd.half_angle_deg(),
+                    "distance_mm": gd.distance_mm(), "half_angle_deg": gd.half_angle_deg(),
                     "geometric_efficiency": gd.geometric_efficiency(),
                     "peak_efficiency": gd.peak_efficiency(self.gamma_energy_mev(), exp),
                     "problem": found[0].text if found else None}
@@ -518,7 +518,7 @@ class Planner:
         gap = np.full((1, 3), np.nan)
         for i, gd in enumerate(self.experiment.gamma_detectors):
             u = np.array(gd.direction())
-            dist = _q(gd.distance).to("mm")
+            dist = gd.distance_mm()
             a, b = (np.array(x) for x in gd.face_axes())
             t = np.linspace(0.0, 2 * np.pi, 49)[:, None]
             # The front face of each crystal, and the crystal's length behind it where the setup gives one.
@@ -720,6 +720,28 @@ class Planner:
         tracks = sample_tracks(exp, g, ev, n=n, select=select, weighted=weighted, seed=seed)
         return {"tracks": tracks, "description": describe(tracks, select, weighted, ev.n_events),
                 "channels": list(ev.channels), "gammas": g is not None}
+
+    def alignment(self, offset_mm: float = 0.0, events: int = 400_000, seed: int = 1, fit: bool = True) -> dict:
+        """What a misplaced target does to the analysis: the corrected peak with the true geometry and with the
+        target assumed ``offset_mm`` along the beam from its true place (an overlay with the shift and the
+        broadening), the diagnostic plot (centroid against ring, per crystal) with the assumed geometry, and the
+        offset the plot gives back when fitted (:mod:`physim.nuclear.alignment`). ``{"available": False}``
+        without Coulomb excitation and γ-ray detectors."""
+        from .alignment import diagnostic, fit_offset, overlay, with_offset
+
+        exp = self.experiment
+        if exp.excitation is None or not exp.gamma_detectors:
+            return {"available": False, "reason": "Coulomb excitation with γ-ray detectors is needed."}
+        g = self.gamma_events(events, seed)
+        assumed = with_offset(exp, offset_mm) if offset_mm else exp
+        out = {"available": True, "offset_mm": offset_mm, "overlay": overlay(g, exp, assumed),
+               "diagnostic": diagnostic(g, assumed), "energy_kev": 1e3 * g.energy_mev}
+        if fit:
+            found = fit_offset(g, assumed)
+            # The fit says where the target is, from where the analysis assumed it: the truth is −offset.
+            out["fit"] = found
+            out["fit"]["truth_mm"] = -offset_mm
+        return out
 
     def analysis(self, events: int = 400_000, seed: int = 1):
         """The :class:`~physim.nuclear.analysis.Analysis` of the simulated γ rays (:meth:`gamma_events`), kept

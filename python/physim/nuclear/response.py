@@ -216,10 +216,13 @@ class Absorber:
 class Response:
     """The response of one γ-ray detector of an experiment (all its crystals together, or one of them)."""
 
-    def __init__(self, experiment, detector):
+    def __init__(self, experiment, detector, source=None):
         #: The experiment the detector stands in (``None``: no chamber wall).
         self.experiment = experiment
         self.detector = detector
+        #: Where the γ rays come from, mm from the target (the target itself if None): a source placed
+        #: elsewhere sees each crystal under another solid angle.
+        self.source_point = None if source is None else np.asarray(source, dtype=float)
         self.material = detector.material or "Ge"
         if self.material not in CRYSTALS:
             raise ValueError(f"no response for a crystal of '{self.material}'; the crystal materials are "
@@ -231,15 +234,39 @@ class Response:
         self.length_mm = (_q(detector.crystal_length).to("mm") if detector.crystal_length is not None
                           else 2.0 * radius)
         self.assumed_length = detector.crystal_length is None
-        self.coverage = [(1.0 - math.cos(math.atan2(r, math.hypot(*c)))) / 2.0 for _, c, r in self.elements]
+        self.coverage = [self._coverage(c, r) for _, c, r in self.elements]
         self.absorbers = self._absorbers()
         self._curve = self._measured_curve()
+
+    def _coverage(self, centre, radius: float) -> float:
+        """The fraction of all directions a crystal face covers from the source point: the solid angle of a disc
+        seen from a point, by quadrature over the disc (the on-axis formula when the source is on the axis)."""
+        c = np.asarray(centre, dtype=float) - (self.source_point if self.source_point is not None else 0.0)
+        d = float(np.linalg.norm(c))
+        if self.source_point is None or d < 1e-9:
+            return (1.0 - math.cos(math.atan2(radius, d))) / 2.0
+        n = c / d
+        ref = np.array([0.0, 0.0, 1.0]) if abs(n[2]) < 0.9 else np.array([1.0, 0.0, 0.0])
+        a = np.cross(n, ref)
+        a /= np.linalg.norm(a)
+        b = np.cross(n, a)
+        # The face stays perpendicular to the target's direction; integrate (r̂ · n̂) dA / r² over it.
+        face_n = np.asarray(centre, dtype=float) / np.linalg.norm(centre)
+        x, w = np.polynomial.legendre.leggauss(12)
+        rr = radius * (x + 1) / 2
+        wr = w * radius / 2
+        phi = (np.arange(24) + 0.5) / 24 * 2 * math.pi
+        pts = (c[None, None, :] + rr[:, None, None] * (np.cos(phi)[None, :, None] * a + np.sin(phi)[None, :, None] * b))
+        dist = np.linalg.norm(pts, axis=2)
+        cos_i = np.abs(pts @ face_n) / dist
+        d_omega = (cos_i / dist**2) * (rr[:, None] * wr[:, None]) * (2 * math.pi / 24)
+        return float(d_omega.sum() / (4 * math.pi))
 
     def _absorbers(self) -> list:
         out = []
         ch = self.experiment.chamber if self.experiment is not None else None
         if ch is not None and ch.wall_thickness is not None and ch.wall_material is not None:
-            if _q(self.detector.distance).to("mm") >= _q(ch.radius).to("mm"):
+            if math.hypot(*self.detector.chamber_centre_mm()) >= _q(ch.radius).to("mm"):
                 out.append(Absorber(ch.wall_material, areal_density_g_cm2(ch.wall_material, ch.wall_thickness),
                                     "chamber wall"))
         for material, thickness in self.detector.absorbers or ():
@@ -550,8 +577,9 @@ class SourceRun:
 
 
 def source_run(experiment, nuclide: str = "152Eu", activity="37 kBq", time="1 h", seed: int = 1,
-               bin_kev: Optional[float] = None, max_mev: Optional[float] = None) -> SourceRun:
-    """Simulate a run with a calibration source at the target position, without beam.
+               bin_kev: Optional[float] = None, max_mev: Optional[float] = None, position=None) -> SourceRun:
+    """Simulate a run with a calibration source at the target position, or at ``position`` (x, y, z in mm from
+    the target), without beam.
 
     Each line of the source gives, in each crystal, activity × time × intensity × total efficiency interacting
     γ rays on average, spread over the spectrum by :meth:`Response.shape`; the counts in each bin are then drawn
@@ -567,7 +595,7 @@ def source_run(experiment, nuclide: str = "152Eu", activity="37 kBq", time="1 h"
     decays = a0 * (1 - math.exp(-lam * t)) / lam
     responses = {}
     for i, gd in enumerate(experiment.gamma_detectors):
-        r = Response(experiment, gd)
+        r = Response(experiment, gd, source=position)
         for k, (label, _, _) in enumerate(r.elements):
             name = (gd.name or f"G{i + 1}") + (f" {label}" if label else "")
             responses[name] = (r, k if len(r.elements) > 1 else None)

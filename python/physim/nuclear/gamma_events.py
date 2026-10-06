@@ -445,20 +445,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     weight, deposited, measured, counted = weight[keep], deposited[keep], measured[keep], counted[keep]
 
     # -- the Doppler correction from what the detectors know -------------------------------------------------
-    dets = array.geometries
-    seg_centre = np.zeros((len(rows), 3))
-    for i, g in enumerate(dets):
-        m = c["detector"][rows] == i
-        for j in np.flatnonzero(m):
-            seg_centre[j] = g.segment_centre((int(c["segment_i"][rows[j]]), int(c["segment_j"][rows[j]])))
-    p_dir = _unit(seg_centre)
-    theta_lab_p = np.degrees(np.arccos(np.clip(p_dir[:, 2], -1, 1)))
-    crystal_dir = normals[which]
-    corrected = {}
-    for assumed in ("ejectile", "recoil"):
-        d_em, b_em = _reconstruct(experiment, tb, layers, p_dir, theta_lab_p, c["recoil"][rows], assumed, e_mid)
-        cos_a = np.einsum("ij,ij->i", crystal_dir, d_em)
-        corrected[assumed] = measured * (1 - b_em * cos_a) / np.sqrt(1 - b_em**2)
+    corrected = doppler_correct(experiment, c, rows, which, measured)
 
     # -- singles, randoms, dead time ---------------------------------------------------------------------------
     run = experiment.run
@@ -467,8 +454,8 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     room = _q(run.room_background).to("/s") if run.room_background is not None else 0.0
     extra = run.extra_lines or []
     rates = Rates(experiment)
-    particle_rate = {g.name: rates.rate(g.name) for g in dets}
-    excitation_rate = sum(rates.rate(g.name, what="excitations") for g in dets)
+    particle_rate = {g.name: rates.rate(g.name) for g in array.geometries}
+    excitation_rate = sum(rates.rate(g.name, what="excitations") for g in array.geometries)
     # All excitations, whether or not a particle was detected: the γ-ray singles.
     cx = ex.paths[1][0][2]
     pps = experiment.beam.particles_per_second
@@ -500,6 +487,52 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
             "weight": weight}
     return GammaEvents(cols, ev, crystals, int(seed), e0, emitter, window, dead, live, singles_rate,
                        singles_spectrum, edges, particle_rate, notes)
+
+
+def doppler_correct(experiment, columns: dict, rows: np.ndarray, crystal: np.ndarray, measured: np.ndarray) -> dict:
+    """The Doppler correction an experimentalist makes with the geometry of ``experiment``: from the centre of
+    the segment each particle row hit (``columns`` of the particle events, ``rows`` their indices), the centre of
+    the crystal (``crystal`` indices) and two-body kinematics at the nominal beam energy. Returns
+    {"ejectile": corrected energies, "recoil": ...}.
+
+    Given an experiment whose target sits elsewhere than the one that made the events, this is the correction with
+    a misplaced target: the peaks shift and broaden, ring by ring."""
+    layers = stack(experiment)
+    exc = experiment.excitation
+    ex = excitation_of(experiment)
+    tb = TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=exc.energy_mev,
+                 excite="recoil" if exc.excite == "target" else "ejectile")
+    array = Array.from_experiment(experiment)
+    centres = []
+    for gd in experiment.gamma_detectors:
+        centres += [np.array(c, dtype=float) for _, c, _ in gd.elements()]
+    normals = _unit(np.array(centres))
+    seg_centre = np.zeros((len(rows), 3))
+    cache: dict = {}
+    for i, g in enumerate(array.geometries):
+        m = columns["detector"][rows] == i
+        for j in np.flatnonzero(m):
+            key = (i, int(columns["segment_i"][rows[j]]), int(columns["segment_j"][rows[j]]))
+            if key not in cache:  # one segment's centre serves every hit in it
+                cache[key] = g.segment_centre(key[1:], weighted=True)
+            seg_centre[j] = cache[key]
+    p_dir = _unit(seg_centre)
+    theta_lab_p = np.degrees(np.arccos(np.clip(p_dir[:, 2], -1, 1)))
+    crystal_dir = normals[crystal]
+    out = {}
+    for assumed in ("ejectile", "recoil"):
+        d_em, b_em = _reconstruct(experiment, tb, layers, p_dir, theta_lab_p, columns["recoil"][rows], assumed,
+                                  ex.beam_energy)
+        cos_a = np.einsum("ij,ij->i", crystal_dir, d_em)
+        out[assumed] = measured * (1 - b_em * cos_a) / np.sqrt(1 - b_em**2)
+    return out
+
+
+def recorrect(gammas: GammaEvents, experiment) -> dict:
+    """The γ rays of ``gammas`` corrected with the geometry of ``experiment`` (the assumed one), as
+    {"corrected_projectile": ..., "corrected_recoil": ...}."""
+    out = doppler_correct(experiment, gammas.events.columns, gammas["particle"], gammas["crystal"], gammas["measured"])
+    return {"corrected_projectile": out["ejectile"], "corrected_recoil": out["recoil"]}
 
 
 def _deposit(r: Response, energy: np.ndarray, rng) -> np.ndarray:
@@ -541,4 +574,5 @@ def _deposit(r: Response, energy: np.ndarray, rng) -> np.ndarray:
     return out
 
 
-__all__ = ["Crystal", "GAMMA_COLUMNS", "GammaEvents", "ROOM_LINES", "simulate_gammas"]
+__all__ = ["Crystal", "GAMMA_COLUMNS", "GammaEvents", "ROOM_LINES", "doppler_correct", "recorrect",
+           "simulate_gammas"]
