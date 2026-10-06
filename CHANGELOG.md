@@ -34,6 +34,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The planner in its own window (backlog 61): `physim app --window`, and the installed shortcut (`--desktop`), open
+  the same app in a desktop window on the system's web view (pywebview; the `window` extra, 5 MB). `--browser`
+  keeps the browser; without pywebview the browser opens and the command says so.
 - A movable target and sources placed anywhere (backlog 60): `[target] position` moves the target along the beam
   (every angle, distance and Doppler correction follows; the scene draws it there); `ladder` and `selected` for
   a target ladder; `source_run(..., position=...)` for a source off centre. `physim.nuclear.alignment` shows what a

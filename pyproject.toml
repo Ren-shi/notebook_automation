@@ -41,6 +41,8 @@ io = ["h5py"]
 root = ["uproot"]
 # The experiment planner app (physim app).
 app = ["nicegui", "matplotlib", "plotly"]
+# The planner in its own window (physim app --window): pywebview on the system's web view.
+window = ["pywebview"]
 test = ["pytest"]
 
 [tool.maturin]

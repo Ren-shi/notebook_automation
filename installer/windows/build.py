@@ -52,7 +52,7 @@ def install(wheel: Path, site: Path) -> None:
     major, minor = PYTHON_VERSION.split(".")[:2]
     cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check",
            "--target", str(site), "--platform", "win_amd64", "--python-version", f"{major}.{minor}",
-           "--implementation", "cp", "--only-binary=:all:", f"{wheel.resolve()}[app,root]"]
+           "--implementation", "cp", "--only-binary=:all:", f"{wheel.resolve()}[app,root,window]"]
     print(" ".join(cmd))
     subprocess.run(cmd, check=True)
 
