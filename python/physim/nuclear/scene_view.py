@@ -19,13 +19,13 @@ from . import scene as _scene
 #: The scene's colours in each theme of the page.
 PALETTES = {
     "light": {"ground": "#FFFFFF", "ink": "#16191C", "label": "rgba(255,255,255,0.85)", "active": "#4C78A8",
-              "active2": "#7FA3CC", "board": "#3F7D4E", "crystal": "#B58B4C", "housing": "#8C959C",
+              "active2": "#7FA3CC", "board": "#3F7D4E", "crystal": "#B58B4C", "housing": "#8C959C", "shield": "#6E8F7A",
               "foil": "#C9A227", "beam": "#D1495B", "selected": "#F28E2B", "element": "#E15759", "unsafe": "#B07AA1",
               "blocked": "#D62728", "wall": "#9AA3AA", "line": "#22272B", "ejectile": "#1F77B4",
               "recoil": "#2CA02C", "gamma": "#FFB000", "track_beam": "#D1495B", "hit": "#FF3B30",
               "track_selected": "#FFFFFF"},
     "dark": {"ground": "#171B1E", "ink": "#E9EBE9", "label": "rgba(23,27,30,0.85)", "active": "#5B8FCC",
-             "active2": "#86B0E0", "board": "#4E9A61", "crystal": "#C9A163", "housing": "#A9B2B9",
+             "active2": "#86B0E0", "board": "#4E9A61", "crystal": "#C9A163", "housing": "#A9B2B9", "shield": "#86A894",
              "foil": "#E0BC45", "beam": "#F0707F", "selected": "#FFA94D", "element": "#FF7B7D", "unsafe": "#C99BD0",
              "blocked": "#FF5A52", "wall": "#6F7A82", "line": "#DADDDB", "ejectile": "#6FB3FF",
              "recoil": "#6FE08A", "gamma": "#FFD24D", "track_beam": "#F0707F", "hit": "#FF5A52",
@@ -176,7 +176,7 @@ class SceneView:
                 colour = c[p.role] if p.role in c else c["active"]
                 if p.role == "active" and p.element is not None:
                     colour = c["unsafe"] if p.element in unsafe else c["active2" if p.element % 2 else "active"]
-                opacity = 0.22 if p.role == "housing" else 1.0
+                opacity = 0.22 if p.role in ("housing", "shield") else 1.0
                 name = _name(s.key, p.element)
                 mid = p.z0 - p.depth / 2
                 meshes = []

@@ -183,8 +183,14 @@ faces the target: a single disc, or the crystals of a [model](#detector-models-a
 | `efficiency_curve` | no | pairs | A measured full-energy-peak efficiency of the detector where it stands: `[["122 keV", "1.2 %"], ["1408 keV", "0.2 %"]]`, at least two points. |
 | `efficiency` | no | fraction (`%`) | One full-energy-peak efficiency, used at every energy. |
 | `threshold` | no | energy | Energy below which the crystal records nothing. |
+| `addback` | no | true/false | Add-back for a clover (`crystals = 4`): the crystals' energies are summed, so a γ ray that scatters from one crystal into the next still ends in the full-energy peak. |
+| `addback_factor` | no | number | The add-back factor at 1332 keV, the peak with add-back over the peak without (1.5 if left out). |
+| `shield` | no | — | A Compton-suppression shield around the housing: `"BGO"`. Events that scatter out of the crystals are rejected; the shield stops particles like the housing. |
+| `shield_thickness` | no | length | The shield's wall (25 mm if left out). |
+| `suppression_factor` | no | number | By how much the shield lowers the continuum at 1332 keV, the peak unchanged (3 if left out). |
 
-Without `efficiency` or `efficiency_curve`, the efficiency comes from the typical response of such a crystal.
+Without `efficiency` or `efficiency_curve`, the efficiency comes from the typical response of such a crystal. See
+[add-back and Compton suppression](#add-back-and-compton-suppression) for the two switches of a clover.
 
 ### `[run]`
 
@@ -302,6 +308,25 @@ response.source_run(exp, "60Co").peak_to_total("Ge90")
 
 Units of activity are `Bq`, `kBq`, `MBq`, `uCi` and `mCi`.
 
+### Add-back and Compton suppression
+
+A clover is normally run with **add-back**: the energies its four crystals record together are summed, so a γ
+ray that scatters from one crystal into a neighbour still ends in the full-energy peak. Many clovers also sit in
+a **BGO shield** that sees a γ ray scattering out of the crystals and rejects the event, which lowers the
+Compton continuum. Both are switches on the detector (`addback = true`, `shield = "BGO"`), with a number each:
+
+| Switch | What it does | The number | Typical |
+|---|---|---|---|
+| `addback` | of the γ rays that leave a Compton deposit, a share returns to the peak; the γ ray goes to the crystal with the larger deposit, which the Doppler correction uses | `addback_factor`, the peak with add-back over the peak without at 1332 keV; it grows with energy as 1 + (F₀ − 1)(E / 1332 keV)^0.8 | 1.5 (about 1.5 for the EUROGAM clover, Duchêne et al. 1999) |
+| `shield` | every deposit that is not the full energy is kept with probability 1/S(E); the peak is unchanged, so the peak-to-total ratio rises | `suppression_factor`, S at 1332 keV; it grows as 1 + (S₀ − 1)(E / 1332 keV)^0.3 | 3 (a suppressed clover's P/T is about 0.5 against 0.2 bare) |
+
+The efficiency, the peak-to-total ratio and the spectrum shapes follow (`Response.addback_factor`,
+`Response.suppression_factor`; `Response(..., bare=True)` is the crystals as they are). A measured
+`efficiency_curve` or `efficiency` is taken as the detector runs, with add-back. The simulated γ rays
+(`simulate_gammas`) apply both to the deposits, and `simulate_gammas(..., plain=True)` leaves them out on the
+same γ rays, for a comparison. The exponents are typical values; the scattered photon is not transported and
+the shield's own spectrum is not made.
+
 ## Orientation and the particle–γ correlation
 
 Coulomb excitation leaves the nucleus oriented: which magnetic substates are populated depends on the orbit, and
@@ -372,8 +397,8 @@ g["corrected_recoil"], g["weight"]            # per γ ray (see gamma_events.GAM
 - **Not included:** cascades (one γ ray per excitation), summing, pile-up, lifetimes, contaminant reactions.
 
 In the app, **Simulate the γ rays** on the Spectra tab shows the particle × γ matrix and each detector's raw and
-corrected spectrum. `write_root(..., gammas=g)` adds a `gammas` tree and `gamma_<detector>` histograms to the
-ROOT file.
+corrected spectrum, and for a clover with add-back or a shield the spectrum without them too. `write_root(...,
+gammas=g)` adds a `gammas` tree and `gamma_<detector>` histograms to the ROOT file.
 
 ## Automatic analysis
 

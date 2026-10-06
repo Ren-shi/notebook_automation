@@ -171,6 +171,20 @@ HELP = {
                                 "empty, the planner uses the typical response of such a crystal at this distance.",
                                 "0.5–3 % per germanium crystal at 1.3 MeV",
                                 "more particle–γ coincidences: a shorter beam time."),
+    ("gamma", "addback"): _h("Add-back for a clover: the energies its four crystals record together are summed, "
+                             "so a γ ray that scatters from one crystal into the next still counts in the "
+                             "full-energy peak.", "on for a clover", "more counts in the peak, most at high "
+                             "energy (the add-back factor), and fewer in the continuum."),
+    ("gamma", "addback_factor"): _h("The add-back factor at 1332 keV: the full-energy peak with add-back over "
+                                    "the peak without.", "1.4–1.6 for a clover", "more counts in the peak."),
+    ("gamma", "shield"): _h("A Compton-suppression shield around the crystals (BGO): a γ ray that scatters out "
+                            "of the crystals is seen by the shield and the event is rejected.", "BGO", "—"),
+    ("gamma", "shield_thickness"): _h("Thickness of the shield's wall; the shield stops particles like the "
+                                      "housing, and the scene draws it.", "20–30 mm",
+                                      "hides more of whatever lies behind the detector."),
+    ("gamma", "suppression_factor"): _h("By how much the shield lowers the Compton continuum at 1332 keV; the "
+                                        "peak is unchanged.", "3–4 for a clover in BGO",
+                                        "a cleaner spectrum: the peak-to-total ratio rises."),
 }
 
 

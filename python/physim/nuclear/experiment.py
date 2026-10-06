@@ -102,6 +102,14 @@ def _read_value(spec: _Field, raw: Any) -> Any:
         if isinstance(raw, bool) or not isinstance(raw, int):
             raise ValueError(f"must be a whole number, got {raw!r}")
         return raw
+    if kind == "bool":
+        if not isinstance(raw, bool):
+            raise ValueError(f"must be true or false, got {raw!r}")
+        return raw
+    if kind == "number":
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise ValueError(f"must be a number without a unit, got {raw!r}")
+        return float(raw)
     if kind == "nuclide":
         parse_nuclide(raw)
         return raw
@@ -556,6 +564,19 @@ class GammaDetector:
     efficiency_curve: Optional[list] = None
     #: Energy below which the crystal records nothing.
     threshold: Optional[QuantityLike] = None
+    #: Add-back for a clover: the energies its crystals record together are summed, so a γ ray that scatters from
+    #: one crystal into the next still ends in the full-energy peak.
+    addback: Optional[bool] = None
+    #: The add-back factor at 1332 keV: the full-energy peak with add-back over the peak without
+    #: (:data:`physim.nuclear.response.ADDBACK_FACTOR` if left out).
+    addback_factor: Optional[float] = None
+    #: A Compton-suppression shield around the crystals ("BGO"): a γ ray that scatters out of the crystals is
+    #: seen by the shield and the event is rejected. The shield stops particles, as the housing does.
+    shield: Optional[str] = None
+    shield_thickness: Optional[QuantityLike] = None
+    #: By how much the shield lowers the continuum at 1332 keV; the peak is unchanged
+    #: (:data:`physim.nuclear.response.SUPPRESSION_FACTOR` if left out).
+    suppression_factor: Optional[float] = None
     #: The target's place from the chamber's centre, mm (set by the setup).
     _origin: Optional[tuple] = None
 
@@ -579,6 +600,11 @@ class GammaDetector:
         _Field("absorbers", "absorbers"),
         _Field("efficiency_curve", "curve"),
         _Field("threshold", "energy", check=_non_negative),
+        _Field("addback", "bool"),
+        _Field("addback_factor", "number", check=lambda x: None if x >= 1 else "must be at least 1"),
+        _Field("shield", "str"),
+        _Field("shield_thickness", "length", check=_positive),
+        _Field("suppression_factor", "number", check=lambda x: None if x >= 1 else "must be at least 1"),
     )
 
     def geometric_efficiency(self) -> float:
@@ -614,14 +640,26 @@ class GammaDetector:
         return [(label, tuple(centre[k] + sa * h * a[k] + sb * h * b[k] for k in range(3)), r)
                 for label, sa, sb in (("A", 1, 1), ("B", -1, 1), ("C", -1, -1), ("D", 1, -1))]
 
+    def shield_mm(self) -> float:
+        """Thickness of the shield's wall, mm (the typical value of :data:`physim.nuclear.response.SHIELDS` when
+        the setup gives none); 0 without a shield."""
+        if self.shield is None:
+            return 0.0
+        if self.shield_thickness is not None:
+            return _q(self.shield_thickness).to("mm")
+        from .response import SHIELDS
+
+        return SHIELDS.get(self.shield, 25.0)
+
     def housing(self) -> Optional[tuple]:
         """The housing's front window, which stops particles: (centre in mm, side in mm) of a square facing the
-        target, ``window_gap`` in front of the crystals. ``None`` when no housing is given."""
+        target, ``window_gap`` in front of the crystals; with a shield, the shield's outer side. ``None`` when no
+        housing is given."""
         if self.housing_side is None:
             return None
         u = self.direction()
         d = self.distance_mm() - (_q(self.window_gap).to("mm") if self.window_gap is not None else 0.0)
-        return (d * u[0], d * u[1], d * u[2]), _q(self.housing_side).to("mm")
+        return (d * u[0], d * u[1], d * u[2]), _q(self.housing_side).to("mm") + 2 * self.shield_mm()
 
     def peak_efficiency(self, energy_mev: float = 1.332492, experiment=None) -> float:
         """Full-energy-peak efficiency at a γ-ray energy, as a fraction of all γ rays emitted at the target:
@@ -951,6 +989,15 @@ def _read_gamma_detector(raw: dict[str, Any], label: str, problems: list[str]) -
         except ValueError as e:
             problems.append(f"{label}: absorber {material}: {e}")
             return None
+    if g.get("addback") and g.get("crystals") != 4:
+        problems.append(f"{label}: add-back needs a clover (crystals = 4)")
+    if g.get("shield") is not None:
+        if g["shield"] not in response.SHIELDS:
+            problems.append(f"{label}: shield '{g['shield']}' is not known; use one of {', '.join(response.SHIELDS)}")
+        if "housing_side" not in g:
+            problems.append(f"{label}: a shield needs 'housing_side', the housing it surrounds")
+    if len(problems) > before:
+        return None
     return GammaDetector(**g)
 
 

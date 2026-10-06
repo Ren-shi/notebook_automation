@@ -34,6 +34,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Add-back and Compton suppression for clovers (backlog 62): `addback = true` sums the crystals' energies, so a
+  Compton deposit returns to the full-energy peak with the share the `addback_factor` asks for (1.5 at 1332 keV,
+  growing with energy) and the γ ray goes to the crystal with the larger deposit; `shield = "BGO"` rejects every
+  deposit that is not the full energy with 1 − 1/S(E) (`suppression_factor`, 3 at 1332 keV) and stands as a
+  blocking volume round the housing. The efficiency, the peak-to-total ratio, the spectrum shapes and the
+  simulated γ rays follow; `simulate_gammas(..., plain=True)` and `Response(..., bare=True)` leave both out. In
+  the app, two switches per clover, and the spectrum with and without.
 - A movable target and sources placed anywhere (backlog 60): `[target] position` moves the target along the beam
   (every angle, distance and Doppler correction follows; the scene draws it there); `ladder` and `selected` for
   a target ladder; `source_run(..., position=...)` for a source off centre. `physim.nuclear.alignment` shows what a
