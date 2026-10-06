@@ -34,6 +34,11 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The run record (`physim.nuclear.record`, backlog 57): every number of the plan and of the analysis with its
+  formula, the formula with this run's numbers substituted, its physical meaning and its assumptions; the data's
+  provenance; the method step by step; what is left out. The **?** beside a number in the app opens its
+  explanation; **Show the run record** on the Report tab shows the page, which the report's zip holds as
+  `record.html`.
 - Automatic analysis of the simulated experiment (`physim.nuclear.analysis`, backlog 56): particle gate, Doppler
   correction, peak fit with random coincidences subtracted, yield, normalisation to the elastic particles or to a
   known transition, B(E2↑) with statistical and systematic uncertainties (a budget, each by varying its input),

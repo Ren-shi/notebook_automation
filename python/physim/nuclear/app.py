@@ -22,6 +22,7 @@ import numpy as np
 
 from . import guide
 from .analysis import SHIFT_H
+from .record import record_css
 from .planner import TABS, Planner
 
 #: Fields of each setup section shown in the setup panel, in order: (field, label, placeholder).
@@ -984,6 +985,33 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             setup_panel.refresh()
         return run_
 
+    def open_explanation(key: str, detector: Optional[str] = None, gamma_detector: Optional[str] = None,
+                         result=None) -> None:
+        """A dialog with one number's explanation: formula, the numbers substituted, meaning, assumptions."""
+        try:
+            found = [x for x in P().explanations(detector, gamma_detector, result) if x["key"] == key]
+        except Exception as err:  # noqa: BLE001 -- an explanation must never break the page
+            ui.notify(f"No explanation: {err}", type="warning")
+            return
+        if not found:
+            ui.notify("No explanation for this number yet.", type="warning")
+            return
+        x = found[0]
+        with ui.dialog() as dialog, ui.card().classes("ps-card").style("max-width: min(760px, 95vw)"):
+            ui.label(x["title"]).classes("text-base font-medium")
+            ui.label(f"{_fmt(x['value'])} {x['unit']}".strip()).classes("ps-readout-value")
+            ui.label("Formula").classes("ps-section mt-2")
+            ui.label(x["formula"]).classes("text-sm ps-num")
+            ui.label("With this run's numbers").classes("ps-section mt-2")
+            ui.label(x["substituted"]).classes("text-sm ps-num")
+            ui.label("What it means").classes("ps-section mt-2")
+            ui.label(x["meaning"]).classes("text-sm")
+            ui.label("Assumptions").classes("ps-section mt-2")
+            ui.label(x["assumptions"]).classes("text-sm ps-muted")
+            ui.link("The theory page", x["reference"], new_tab=True).classes("text-sm")
+            ui.button("Close", on_click=dialog.close).props("flat no-caps")
+        dialog.open()
+
     @ui.refreshable
     def selection_panel() -> None:
         key, element = scene_state["key"], scene_state["element"]
@@ -993,9 +1021,16 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             key, s = None, P().selection()
         live = scene_state["live"] = {}
 
-        def row(label: str, value: str, name: Optional[str] = None, classes: str = "") -> None:
-            with ui.row().classes("w-full justify-between no-wrap gap-3"):
-                ui.label(label).classes("text-sm ps-muted")
+        def row(label: str, value: str, name: Optional[str] = None, classes: str = "",
+                explain: Optional[str] = None) -> None:
+            with ui.row().classes("w-full justify-between no-wrap gap-3 items-center"):
+                with ui.row().classes("items-center no-wrap gap-1"):
+                    ui.label(label).classes("text-sm ps-muted")
+                    if explain:
+                        ui.button(icon="help_outline", on_click=lambda e_=explain: open_explanation(
+                            e_, s.get("name") if s["kind"] == "detector" else None,
+                            s.get("name") if s["kind"] == "gamma" else None)).props(
+                            "dense flat round size=xs").tooltip("How this number is obtained")
                 lab = ui.label(value).classes("text-sm ps-num text-right " + classes)
             if name:
                 live[name] = lab
@@ -1040,12 +1075,12 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             row("Centre", f"θ {s['theta']:.1f}°, φ {s['phi']:.1f}°, {s['distance_mm']:.1f} mm", "place")
             if s["kind"] == "detector":
                 row("Covers θ", f"{s['theta_range'][0]:.1f}–{s['theta_range'][1]:.1f}°", "covers")
-                row("Solid angle", f"{_fmt(s['solid_angle_msr'])} msr", "omega")
+                row("Solid angle", f"{_fmt(s['solid_angle_msr'])} msr", "omega", explain="solid_angle")
                 row("Hidden by others", f"{100 * s['hidden']:.0f} %", "hidden")
-                row("Particles reaching it", f"{_fmt(s['rate_per_s'])} /s", "rate")
+                row("Particles reaching it", f"{_fmt(s['rate_per_s'])} /s", "rate", explain="rate")
                 if s["measured"] != "all":
                     row(f"Of these, {s['measured']}", f"{_fmt(s['measured_rate_per_s'])} /s")
-                row("Counts in the run", _fmt(s["counts_in_run"]))
+                row("Counts in the run", _fmt(s["counts_in_run"]), explain="counts")
                 if s["rate_per_s"] == 0:
                     ui.label("Nothing reaches this detector: the kinematics send no particle here, or another "
                              "detector hides it.").classes("text-sm ps-warn")
@@ -1057,9 +1092,9 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                 row("Half-angle", f"{s['half_angle_deg']:.1f}°", "half")
                 row("Geometric coverage", f"{100 * s['geometric_efficiency']:.2f} %", "geometric")
                 row(f"Full-energy-peak efficiency at {s['gamma_energy_kev']:.0f} keV",
-                    f"{100 * s['peak_efficiency']:.3f} %")
+                    f"{100 * s['peak_efficiency']:.3f} %", explain="gamma_efficiency")
                 if s["coincidence_rate_per_s"] is not None:
-                    row("Particle–γ coincidences", f"{_fmt(s['coincidence_rate_per_s'])} /s")
+                    row("Particle–γ coincidences", f"{_fmt(s['coincidence_rate_per_s'])} /s", explain="coincidences")
                 if len(s["crystals"]) > 1:
                     row("Crystals", ", ".join(s["crystals"]))
             status = ui.label("").classes("text-xs ps-warn")
@@ -1420,20 +1455,33 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             if b != b:
                 ui.label("No result: " + "; ".join(r["notes"])).classes("text-sm ps-warn")
                 return
+            last = P().analysis(max(state["events"], 400_000), 1).history[-1]
             with ui.element("div").classes("ps-readouts mt-2"):
-                for title, value, sub in (
-                        ("B(E2↑)", f"{r['b_e2b2']:.4g} e²b²", f"{b:.4g} e²fm⁴ · {r['b_wu']:.3g} W.u."),
+                for title, value, sub, key in (
+                        ("B(E2↑)", f"{r['b_e2b2']:.4g} e²b²", f"{b:.4g} e²fm⁴ · {r['b_wu']:.3g} W.u.", "b_e2"),
                         ("Uncertainty", f"± {100 * r['total_unc']:.1f} %",
                          f"statistical {100 * r['statistical']:.1f} %, systematic {100 * r['systematic']:.1f} %; "
-                         f"the Monte Carlo sample itself adds {100 * r['monte_carlo']:.1f} %"),
-                        ("Put in", f"{1e-4 * r['truth_e2fm4']:.4g} e²b²", f"pull {r['pull']:+.2f} σ"),
+                         f"the Monte Carlo sample itself adds {100 * r['monte_carlo']:.1f} %", "uncertainty"),
+                        ("Put in", f"{1e-4 * r['truth_e2fm4']:.4g} e²b²", f"pull {r['pull']:+.2f} σ", None),
                         ("Beam time", f"{r['hours_for_precision']:.3g} h",
                          f"for {100 * r['settings']['wanted_precision']:.3g} % statistics; "
-                         f"{r['counts_per_shift']:.3g} counts in the peak per {SHIFT_H:g} h shift")):
+                         f"{r['counts_per_shift']:.3g} counts in the peak per {SHIFT_H:g} h shift", None)):
                     with ui.element("div").classes("ps-readout"):
-                        ui.label(title).classes("text-xs ps-muted")
+                        with ui.row().classes("items-center no-wrap gap-1"):
+                            ui.label(title).classes("text-xs ps-muted")
+                            if key:
+                                ui.button(icon="help_outline", on_click=lambda k=key: open_explanation(
+                                    k, result=last)).props("dense flat round size=xs").tooltip(
+                                    "How this number is obtained")
                         ui.label(value).classes("ps-readout-value")
                         ui.label(sub).classes("text-xs ps-muted")
+            with ui.row().classes("gap-1 mt-1 items-center"):
+                ui.label("The chain, step by step:").classes("text-xs ps-muted")
+                for key, label in (("area", "area"), ("yield", "yield"), ("mean_probability", "⟨P⟩"),
+                                   ("b_e2", "B(E2)"), ("weisskopf", "W.u."), ("beta2", "β₂"), ("q0", "Q₀"),
+                                   ("lifetime", "lifetime")):
+                    ui.button(label, on_click=lambda k=key: open_explanation(k, result=last)).props(
+                        "dense flat no-caps size=sm")
             with ui.row().classes("items-start gap-4 mt-2"):
                 ui.table(columns=columns((("source", "Systematic"), ("value", "Relative (%)"))),
                          rows=[{"source": k, "value": f"{100 * v:.2f}"} for k, v in r["budget"].items()]).props(
@@ -1669,6 +1717,38 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                       label="Figure width", on_change=lambda e: pick("width", e.value)).props(
                 "dense outlined").classes("w-56")
         ui.button("Build and download the report", icon="description", on_click=download)
+        record_block()
+
+    def record_block() -> None:
+        """The run record: every number with its explanation, viewed here and saved as a page to print."""
+        ui.label("The run record").classes("font-semibold mt-4")
+        ui.label("Every number of the plan, and of the analysis once one has been run, with its formula, the "
+                 "formula with this run's numbers in it, what it means and what it assumes; the nuclear data and "
+                 "its provenance; the method step by step; and what the simulation leaves out. The same page is "
+                 "in the report's zip as record.html, to print to PDF.").classes("text-xs ps-muted")
+        holder = ui.column().classes("w-full")
+
+        def scene_png() -> Optional[str]:
+            try:
+                return base64.b64encode(paper.preview(P(), "geometry", state["journal"], state["width"])).decode()
+            except Exception:  # noqa: BLE001 -- the record stands without the picture
+                return None
+
+        async def show() -> None:
+            holder.clear()
+            with holder:
+                ui.spinner(size="md")
+            page = await run.io_bound(lambda: P().record_html(scene_png=scene_png()))
+            holder.clear()
+            with holder:
+                ui.add_css(record_css(".ps-record"))
+                ui.html('<div class="ps-record">' + page.split("<body>", 1)[1].rsplit("</body>", 1)[0] + "</div>",
+                        sanitize=False).classes("w-full ps-plate")
+                ui.button("Save the record (HTML; print it to PDF)", icon="download",
+                          on_click=lambda: ui.download.content(page.encode("utf-8"), "run-record.html")).props(
+                    "dense flat no-caps")
+
+        ui.button("Show the run record", icon="menu_book", on_click=show).props("dense flat no-caps")
 
     panels = {"geometry": geometry_panel, "kinematics": kinematics_panel, "rates": rates_panel,
               "energy_loss": energy_loss_panel, "spectra": spectra_panel, "trajectories": trajectories_panel,

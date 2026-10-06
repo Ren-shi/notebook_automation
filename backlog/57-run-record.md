@@ -2,6 +2,34 @@
 
 **Priority:** P1 · **Size:** M · **Area:** Experiment workbench
 
+**Status: Done, except the reading by a reader from the intended audience (the user).**
+
+> **Done** (`python/physim/nuclear/record.py`, `Planner.explanations` and `Planner.record_html`, `record.html`
+> in the report's zip, the **?** buttons and the record view in the app, `tests/python/test_nuclear_record.py`,
+> guide section "The run record" in `docs/nuclear-setup.md`).
+> - **Explanations:** eight for the plan (solid angle, rate, counts, beam time, excitation probability, γ-ray
+>   efficiency, coincidences, Doppler shift) and nine for the analysis chain (area, yield, ⟨P⟩, B(E2), Weisskopf
+>   units, β₂, Q₀ and Q_s, lifetime, uncertainty), each with the formula, the numbers substituted, the meaning,
+>   the assumptions and a link to the theory page. The numbers are passed in from the calculation that produced
+>   the result.
+> - **One source for the app and the page:** `record_html` builds the page; the app shows its body with the
+>   same style scoped to its box, and the report's zip holds it as `record.html` to print to PDF.
+> - **Results:**
+>   - A test recomputes every substituted formula from the numbers shown and gets the reported value to 10⁻⁹,
+>     for the plan and for the analysis chain.
+>   - The values are those of the results panels: the solid angle, counts, beam time, coincidence rate,
+>     efficiency and Doppler shift equal the planner's own numbers; B(E2), W.u., β₂ and the uncertainty equal
+>     the analysis result's.
+>   - The record and the app's view are the same page (the app shows its body).
+>   - Checked in the running app: the **?** by the γ-ray efficiency opens its explanation; the record shows on
+>     the Report tab.
+> - **Not done here, or to confirm:**
+>   - A reader from the intended audience has not read it (the user, or a student they choose).
+>   - Numbers in the result tables (Rates, Doppler table) have no **?** of their own; the side panel's and the
+>     analysis's do. The explanations are for one detector at a time (the selected one).
+>   - The theory links point at the documentation's pages, which hold the derivations only as far as they
+>     exist today.
+
 ## Why
 A result is of little use to someone who cannot see how it was obtained. Not every user knows how a particle–γ
 coincidence is counted, or how a peak area becomes a B(E2) and what that says about the nucleus. The report of

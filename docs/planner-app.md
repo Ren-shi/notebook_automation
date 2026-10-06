@@ -253,6 +253,10 @@ The example *coulex_ni58* is a complete one. To build your own:
     Doppler correction, peak fit, yield, normalisation (to the elastic particles, or to a known transition),
     uncertainties with a budget of systematics, the shape readings, and the beam time for the precision you want.
     Change a choice and analyse again: the result says what changed.
+11. The **?** beside a number in the scene's side panel, or in the analysis, opens its explanation: the formula,
+    the formula with this run's numbers, what it means and what it assumes. **Show the run record** on the
+    Report tab puts all of them on one page with the setup, the data's provenance, the method and what is left
+    out; the report's zip holds the same page as `record.html`, to print to PDF.
 
 ## What it does not do yet
 

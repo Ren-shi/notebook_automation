@@ -417,6 +417,31 @@ setting is named in the result's notes with the previous value of B(E2).
 
 In the app, **Analyse** on the Spectra tab runs it with the choices made in the row above the button.
 
+## The run record
+
+Every number of the plan and of the analysis comes with an explanation in four parts: the formula, the formula
+with this run's numbers in it, what the quantity means physically, and the assumptions with a link to the theory
+page. The numbers are those of the calculation that produced the result, and each explanation carries a rule that
+recomputes its value from the numbers shown, which the tests check.
+
+```python
+from physim.nuclear.record import explanations, analysis_explanations, record_html
+
+for x in explanations(planner, "CD", "Ge45"):   # solid angle, rate, counts, beam time, P(θ), ε, coincidences, Doppler
+    print(x.title, x.value, x.unit)
+    print(x.formula); print(x.substituted); print(x.meaning)
+analysis_explanations(planner, result)          # area → yield → ⟨P⟩ → B(E2) → W.u., β₂, Q₀, lifetime, uncertainty
+page = record_html(planner, result)             # the record as one page, printable to PDF
+```
+
+The record holds the setup (with the scene), every piece of nuclear data with its provenance (ENSDF, derived,
+assumed, user), the method step by step from scattering to the Doppler-corrected spectrum, every number explained,
+the chain from the peak area to B(E2) and the shape, the uncertainty budget, and what the simulation leaves out.
+It is written for a reader who knows nuclear physics and is new to Coulomb excitation.
+
+In the app, the **?** beside a number in the scene's side panel and in the analysis opens its explanation, and
+**Show the run record** on the Report tab shows the page; the report's zip holds the same page as `record.html`.
+
 ## Materials
 
 A material can be written as:
