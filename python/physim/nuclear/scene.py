@@ -59,7 +59,7 @@ class Part:
     cylinder, centred at ``cx``, ``cy``), "box" (``w`` × ``h``) or "line" (``points``, drawn only). The piece lies
     between local z = ``z0`` (its front) and ``z0 − depth``.
 
-    ``role`` says what it is ("active", "board", "crystal", "housing", "foil", "divider"); ``element`` is the ring,
+    ``role`` says what it is ("active", "board", "crystal", "housing", "shield", "foil", "divider"); ``element`` is the ring,
     strip or crystal number for a piece that can be selected on its own; ``hull`` marks the pieces used when
     checking for overlaps (the whole active volume, not each ring of it)."""
 
@@ -253,6 +253,11 @@ def _gamma_solid(gd, i: int) -> Solid:
         side = _mm(gd.housing_side)
         parts.append(Part("box", "housing", z0=gap, depth=gap + length + gap, w=side, h=side, hull=True,
                           label="housing"))
+        if gd.shield is not None:
+            # The shield's wall around the housing: a blocking volume, drawn as a box round the crystals.
+            t = gd.shield_mm()
+            parts.append(Part("box", "shield", z0=gap, depth=gap + length + gap, w=side + 2 * t, h=side + 2 * t,
+                              hull=True, label=f"{gd.shield} shield"))
     # (b, a, −u) is right-handed, as a rotation needs.
     return Solid(f"gamma:{i}", gd.name or f"γ{i + 1}", "gamma", centre, _frame(b, a, -u), parts, gd.model)
 

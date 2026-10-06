@@ -67,7 +67,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 59 | ~~[Particle and γ-ray tracks in the scene](59-particle-tracks.md)~~ **Done** (smoothness to confirm) | Experiment workbench | P2 | M | 52, 55 |
 | 60 | ~~[A movable target and sources placed anywhere](60-movable-target-and-sources.md)~~ **Done** | Experiment workbench | P2 | M | 52, 53 |
 | 61 | ~~[The planner in its own desktop window](61-desktop-window.md)~~ **Done** (clean-machine test pending) | Experiment workbench | P2 | S | 44, 52 |
-| 62 | [Add-back and Compton suppression for clovers](62-add-back-and-compton-suppression.md) | Experiment workbench | P3 | M | 53, 55 |
+| 62 | ~~[Add-back and Compton suppression for clovers](62-add-back-and-compton-suppression.md)~~ **Done** | Experiment workbench | P3 | M | 53, 55 |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - `NewtonianGravity` is direct O(N²); `TreeGravity` (item 10) is O(N log N) but its per-interaction cost is not yet

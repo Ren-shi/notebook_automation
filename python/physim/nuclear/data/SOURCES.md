@@ -93,6 +93,11 @@ liable for any damages arising from their use. Contact: NIST Physical Measuremen
 - **Typical values, not from a document:** the peak-to-total ratios and their slopes, the window thicknesses,
   the shares of the escape peaks and of the flat part of the continuum, and LaBr₃'s factor k. They are listed
   per crystal in `response.CRYSTALS[...].typical`.
+- **Add-back and Compton suppression of a clover** (`response.ADDBACK_FACTOR` 1.5, `SUPPRESSION_FACTOR` 3, the
+  shield's 25 mm and the two exponents of their growth with energy): typical values, in the range of what
+  G. Duchêne et al., Nucl. Instrum. Methods A 432, 90 (1999) report for the EUROGAM clover (an add-back factor of
+  about 1.5 at 1.33 MeV; a peak-to-total ratio of about 0.5 suppressed against 0.2 bare). No number is copied
+  from the paper.
 
 ## `detector_models.toml`: dimensions of real detectors
 

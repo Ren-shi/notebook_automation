@@ -53,6 +53,10 @@ GAMMA_FIELDS = [("name", "Name", "Ge1"), ("theta", "θ", "90 deg"), ("phi", "φ"
 CRYSTAL_FIELDS = [("crystals", "Crystals", "4"), ("crystal_diameter", "Crystal diameter", "50 mm"),
                   ("crystal_length", "Crystal length", "70 mm"), ("crystal_pitch", "Crystal pitch", "45 mm"),
                   ("housing_side", "Housing side", "101 mm"), ("window_gap", "Window to crystal", "5 mm")]
+#: Shown for a clover: the numbers behind its add-back and Compton-suppression switches.
+CLOVER_FIELDS = [("addback_factor", "Add-back factor at 1332 keV", "1.5"),
+                 ("shield_thickness", "Shield thickness", "25 mm"),
+                 ("suppression_factor", "Suppression factor at 1332 keV", "3")]
 #: Which size fields each shape uses.
 SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circle": {"radius"},
                 "annular": {"inner_radius", "outer_radius", "rings", "sectors"}}
@@ -122,6 +126,20 @@ def _shown(field: str, value) -> str:
     return str(value)
 
 
+def _crystals_of(gd: dict) -> Optional[int]:
+    """How many crystals a γ-ray detector of the draft has, from its fields or its model."""
+    if gd.get("crystals") is not None:
+        return gd["crystals"] if isinstance(gd["crystals"], int) else None
+    if gd.get("model"):
+        from . import catalogue
+
+        try:
+            return catalogue.model(gd["model"], "gamma").fields.get("crystals")
+        except ValueError:
+            return None
+    return None
+
+
 def _value(field: str, text):
     """A typed field value from the text the user entered ("" removes an optional field)."""
     if text is None:
@@ -137,6 +155,13 @@ def _value(field: str, text):
             return int(text)
         except ValueError:
             return text  # the setup checks report it
+    if field == "addback":
+        return text.lower() in ("true", "yes", "on", "1")
+    if field in ("addback_factor", "suppression_factor"):
+        try:
+            return float(text)
+        except ValueError:
+            return text
     return text
 
 
@@ -309,6 +334,16 @@ def figure_gamma_spectra(planner: Planner, detector: str, events: int = 400_000,
         fig.add_trace(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines", name=label,
                                  line=dict(color=COLORS[i % len(COLORS)], width=1.2 if i < 2 else 0.8),
                                  visible=True if i < 2 else "legendonly"))
+    if "plain" in s:
+        # The same γ rays without add-back or suppression, for the comparison.
+        m = g["modes"][detector]
+        what = " and ".join(w for w, on in (("add-back", m["addback"]), ("suppression", m["shield"])) if on)
+        for i, (key, label) in enumerate(((g["emitter"], f"corrected, without {what}"),
+                                          ("measured", f"measured, without {what}"))):
+            y = np.repeat(s["plain"][key], 2)
+            fig.add_trace(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines", name=label,
+                                     line=dict(color=COLORS[(3 + i) % len(COLORS)], width=1, dash="dash"),
+                                     visible=True if i == 0 else "legendonly"))
     fig.add_vline(x=g["energy_kev"], line=dict(color="#888", width=1, dash="dot"))
     fig.update_layout(xaxis=dict(title="γ-ray energy (keV)"), yaxis=dict(title="counts / bin in the run"),
                       margin=dict(l=50, r=10, t=10, b=40), height=320, legend=dict(orientation="h", y=-0.3, x=0))
@@ -717,11 +752,25 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             with ui.expansion(f"{gd.get('name') or f'γ{i + 1}'} · {kind}").classes("w-full ps-card"):
                 fields = [f for f in GAMMA_FIELDS if not (real and f[0] == "radius")]
                 section("", fields + (CRYSTAL_FIELDS if real else []), f"gamma detector {i + 1}", gd)
+                if _crystals_of(gd) == 4:
+                    clover_switches(i, gd)
                 with ui.row():
                     ui.button("Duplicate", icon="content_copy",
                               on_click=duplicate_gamma_detector(i)).props("dense flat")
                     ui.button("Remove", icon="delete", on_click=remove_gamma_detector(i)).props(
                         "dense flat color=negative")
+
+    def clover_switches(i: int, gd: dict) -> None:
+        """Add-back and Compton suppression for a clover: two switches, and the numbers behind them."""
+        sec = f"gamma detector {i + 1}"
+        with ui.row().classes("items-center gap-4"):
+            ui.switch("Add-back", value=bool(gd.get("addback")),
+                      on_change=lambda e: edit(sec, "addback", "yes" if e.value else None)).props("dense").tooltip(
+                guide.help_for("gamma", "addback").text())
+            ui.switch("Compton suppression (BGO shield)", value=gd.get("shield") is not None,
+                      on_change=lambda e: edit(sec, "shield", "BGO" if e.value else None)).props("dense").tooltip(
+                guide.help_for("gamma", "shield").text())
+        section("", CLOVER_FIELDS, sec, gd)
 
     def reaction_section(reaction: dict, title: str = "Reaction") -> None:
         if title:
@@ -1460,7 +1509,8 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                  "correlation, from the moving nucleus; the crystals record it with their response. The Doppler "
                  "correction uses the centre of the segment and of the crystal that fired. Random coincidences "
                  "come from the singles rates and the coincidence window, and the room background from the "
-                 "[run] section.").classes("text-xs ps-muted")
+                 "[run] section. A clover with add-back or a BGO shield (its switches are in the setup panel) "
+                 "also shows its spectrum without them.").classes("text-xs ps-muted")
         holder = ui.column().classes("w-full")
 
         async def build() -> None:

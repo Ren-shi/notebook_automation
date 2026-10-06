@@ -29,6 +29,13 @@ No photon is tracked inside the crystal. The response is built from a few number
 For germanium, k is fixed so that a 50 mm × 70 mm crystal has the relative efficiency of the clover's
 specification sheet (21.5% of a 3 inch × 3 inch NaI crystal at 1332 keV and 25 cm, that is, 1.2 × 10⁻³).
 
+**Add-back and Compton suppression** (clovers). With ``addback`` the crystals' energies are summed: of the γ rays
+that leave a Compton deposit, the share that the add-back factor F(E) asks for returns to the full-energy peak,
+F(E) = 1 + (F₀ − 1)(E / 1332 keV)^p with F₀ the setup's ``addback_factor``. With a ``shield`` ("BGO") every
+deposit that is not the full energy is kept with probability 1/S(E), S(E) = 1 + (S₀ − 1)(E / 1332 keV)^s; the peak
+is unchanged. Both are typical parametrisations (:data:`ADDBACK_FACTOR`, :data:`SUPPRESSION_FACTOR` and their
+slopes); the scattered photon is not transported and the shield's own spectrum is not made.
+
 These are typical responses, not the calibration of any real detector. A measured curve in the setup
 (``efficiency_curve``) replaces the efficiency model for that detector.
 """
@@ -109,6 +116,19 @@ CRYSTALS = {
 #: The germanium crystal whose relative efficiency fixes the factor k: diameter and length in mm, and the relative
 #: efficiency (the middle of the specification's 21 to 22%).
 GE_REFERENCE = (50.0, 70.0, 0.215)
+
+#: Add-back of a clover, typical values: the add-back factor at 1332 keV (the full-energy peak with add-back over
+#: the peak without; about 1.5 for the EUROGAM clover, G. Duchêne et al., Nucl. Instrum. Methods A 432, 90 (1999))
+#: and the power p of its growth with energy, F(E) = 1 + (F₀ − 1)(E / 1332 keV)^p.
+ADDBACK_FACTOR = 1.5
+ADDBACK_SLOPE = 0.8
+#: Compton suppression by a BGO shield, typical values: the factor by which the continuum is lowered at 1332 keV
+#: (a suppressed clover's peak-to-total ratio is about 0.5 against 0.2 bare, Duchêne et al.) and the power s of its
+#: growth with energy, S(E) = 1 + (S₀ − 1)(E / 1332 keV)^s.
+SUPPRESSION_FACTOR = 3.0
+SUPPRESSION_SLOPE = 0.3
+#: Shield materials a setup may name, with the typical thickness of the shield's wall, mm.
+SHIELDS = {"BGO": 25.0}
 
 
 def _q(x) -> Optional[Quantity]:
@@ -216,10 +236,15 @@ class Absorber:
 class Response:
     """The response of one γ-ray detector of an experiment (all its crystals together, or one of them)."""
 
-    def __init__(self, experiment, detector, source=None):
+    def __init__(self, experiment, detector, source=None, bare=False):
         #: The experiment the detector stands in (``None``: no chamber wall).
         self.experiment = experiment
         self.detector = detector
+        #: Whether the setup's add-back and shield are applied here; ``bare`` leaves them out (the crystals as
+        #: they are, which the event chain starts from).
+        self.bare = bare
+        self.addback = bool(detector.addback) and not bare
+        self.suppressed = detector.shield is not None and not bare
         #: Where the γ rays come from, mm from the target (the target itself if None): a source placed
         #: elsewhere sees each crystal under another solid angle.
         self.source_point = None if source is None else np.asarray(source, dtype=float)
@@ -299,13 +324,64 @@ class Response:
         return t
 
     def peak_to_total(self, energy_mev) -> np.ndarray:
-        """Of the γ rays that interact in a crystal, the fraction that leaves its full energy there."""
-        return _peak_to_total(self.crystal, energy_mev)
+        """Of the γ rays that interact in a crystal (and are kept), the fraction that ends in the full-energy
+        peak: raised by add-back, and by a shield that rejects the rest."""
+        pt = _peak_to_total(self.crystal, energy_mev)
+        if self.addback:
+            pt = pt * self.addback_factor(energy_mev)
+        if self.suppressed:
+            pt = pt / (pt + (1 - pt) / self.suppression_factor(energy_mev))
+        return pt
+
+    def _escapes(self, energy_mev) -> tuple:
+        """(single escape, double escape) shares of the interacting γ rays, vectorised and capped as the spectrum
+        shape caps them."""
+        e = np.asarray(energy_mev, dtype=float)
+        pt = _peak_to_total(self.crystal, e)
+        x = np.maximum(e - 2 * ELECTRON_MEV, 0.0)
+        de = np.minimum(self.crystal.escape_cap, self.crystal.double_escape * x**1.5)
+        de = np.minimum(de, (1 - pt) / 2)
+        se = np.minimum(self.crystal.single_escape * de, (1 - pt) / 2)
+        return se, de
+
+    def addback_factor(self, energy_mev) -> np.ndarray:
+        """The add-back factor at γ-ray energies in MeV: the full-energy peak with add-back over the peak without
+        (1 for a detector without add-back, whatever ``bare``). It grows with energy as
+        F = 1 + (F₀ − 1)(E / 1332 keV)^p and cannot take more than the whole continuum into the peak."""
+        e = np.asarray(energy_mev, dtype=float)
+        if not self.detector.addback:
+            return np.ones_like(e)
+        f0 = self.detector.addback_factor if self.detector.addback_factor is not None else ADDBACK_FACTOR
+        f = 1 + (f0 - 1) * (e / REFERENCE_MEV) ** ADDBACK_SLOPE
+        pt = _peak_to_total(self.crystal, e)
+        se, de = self._escapes(e)
+        return np.minimum(f, 1 + np.maximum(1 - pt - se - de, 0.0) / pt)
+
+    def addback_share(self, energy_mev) -> np.ndarray:
+        """Of the γ rays that leave a Compton deposit, the share that add-back returns to the peak: what the
+        add-back factor asks for, (F − 1) P/T over the continuum's share."""
+        e = np.asarray(energy_mev, dtype=float)
+        pt = _peak_to_total(self.crystal, e)
+        se, de = self._escapes(e)
+        rest = 1 - pt - se - de
+        share = np.where(rest > 1e-9, (self.addback_factor(e) - 1) * pt / np.maximum(rest, 1e-9), 0.0)
+        return np.clip(share, 0.0, 1.0)
+
+    def suppression_factor(self, energy_mev) -> np.ndarray:
+        """By how much the shield lowers everything but the full-energy peak at γ-ray energies in MeV (1 without
+        a shield, whatever ``bare``): S = 1 + (S₀ − 1)(E / 1332 keV)^s."""
+        e = np.asarray(energy_mev, dtype=float)
+        if self.detector.shield is None:
+            return np.ones_like(e)
+        s0 = (self.detector.suppression_factor if self.detector.suppression_factor is not None
+              else SUPPRESSION_FACTOR)
+        return 1 + (s0 - 1) * (e / REFERENCE_MEV) ** SUPPRESSION_SLOPE
 
     def _model_peak(self, energy_mev, element: Optional[int] = None) -> np.ndarray:
         e = np.asarray(energy_mev, dtype=float)
         cover = sum(self.coverage) if element is None else self.coverage[element]
-        intrinsic = _collection(self.material) * _interaction(self.crystal, self.length_mm, e) * self.peak_to_total(e)
+        intrinsic = (_collection(self.material) * _interaction(self.crystal, self.length_mm, e)
+                     * _peak_to_total(self.crystal, e))
         return cover * self.transmission(e) * np.minimum(intrinsic, 1.0)
 
     def peak_efficiency(self, energy_mev, element: Optional[int] = None) -> np.ndarray:
@@ -313,8 +389,19 @@ class Response:
         that leave their full energy in the detector (``element`` picks one crystal of a clover).
 
         A measured ``efficiency_curve`` is interpolated on log–log axes, and beyond its ends follows the model's
-        shape. A single ``efficiency`` in the setup is used at every energy."""
+        shape. A single ``efficiency`` in the setup is used at every energy. With add-back the model's peak is
+        multiplied by the add-back factor; a measured curve or a given efficiency is taken as the detector runs,
+        with add-back, and the bare response divides it out."""
         e = np.asarray(energy_mev, dtype=float)
+        given = self._given_peak(e, element)
+        if not self.detector.addback:
+            return given
+        f = self.addback_factor(e)
+        if self.source == "model":
+            return given * f if self.addback else given
+        return given if self.addback else given / f
+
+    def _given_peak(self, e: np.ndarray, element: Optional[int] = None) -> np.ndarray:
         share = 1.0 if element is None else self.coverage[element] / sum(self.coverage)
         if self._curve is not None:
             le, leff = self._curve
@@ -353,14 +440,22 @@ class Response:
         the full-energy peak, the escape peaks and the Compton continuum, each with the detector's resolution.
         Sums to 1, apart from what falls outside the bins."""
         e0 = float(energy_mev)
-        pt = float(self.peak_to_total(e0))
+        pt = float(_peak_to_total(self.crystal, e0))
         se, de = self.escape_fractions(e0)
         se, de = min(se, (1 - pt) / 2), min(de, (1 - pt) / 2)
+        if self.addback:
+            pt = pt * float(self.addback_factor(e0))
+        rest = max(1 - pt - se - de, 0.0)
+        if self.suppressed:
+            s = float(self.suppression_factor(e0))
+            se, de, rest = se / s, de / s, rest / s
+        total = pt + se + de + rest
+        pt, se, de = pt / total, se / total, de / total
         out = pt * _gauss_bins(e0, float(self.fwhm(e0)), edges)
         for share, energy in ((se, e0 - ELECTRON_MEV), (de, e0 - 2 * ELECTRON_MEV)):
             if share > 0:
                 out = out + share * _gauss_bins(energy, float(self.fwhm(energy)), edges)
-        rest = 1 - pt - se - de
+        rest = rest / total
         if rest > 0:
             out = out + rest * _smeared(compton_continuum(e0, edges, self.crystal.multiple), edges,
                                         float(self.fwhm(max(compton_edge(e0), 0.02))))
@@ -372,7 +467,10 @@ class Response:
                 "length_mm": self.length_mm, "assumed_length": self.assumed_length,
                 "coverage": sum(self.coverage),
                 "absorbers": [{"material": a.material, "g_cm2": a.g_cm2, "origin": a.origin} for a in self.absorbers],
-                "typical": list(self.crystal.typical), "sources": list(self.crystal.sources)}
+                "typical": list(self.crystal.typical), "sources": list(self.crystal.sources),
+                "addback": self.addback, "shield": self.detector.shield if self.suppressed else None,
+                "addback_factor": float(self.addback_factor(REFERENCE_MEV)) if self.addback else None,
+                "suppression_factor": float(self.suppression_factor(REFERENCE_MEV)) if self.suppressed else None}
 
 
 def compton_edge(energy_mev: float) -> float:
@@ -619,6 +717,6 @@ def source_run(experiment, nuclide: str = "152Eu", activity="37 kBq", time="1 h"
     return SourceRun(src, decays, t, edges, spectra, expected, responses)
 
 
-__all__ = ["CRYSTALS", "Absorber", "Crystal", "Line", "NAI_STANDARD", "REFERENCE_MEV", "Response", "Source",
+__all__ = ["ADDBACK_FACTOR", "ADDBACK_SLOPE", "SHIELDS", "SUPPRESSION_FACTOR", "SUPPRESSION_SLOPE", "CRYSTALS", "Absorber", "Crystal", "Line", "NAI_STANDARD", "REFERENCE_MEV", "Response", "Source",
            "SourceRun", "areal_density_g_cm2", "attenuation_elements", "compton_continuum", "compton_edge",
            "mass_attenuation", "source", "source_names", "source_run", "transmission"]
