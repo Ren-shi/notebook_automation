@@ -33,6 +33,12 @@ rates and the coincidence window (``[run] coincidence_window``); room-background
 uranium series) at ``[run] room_background`` counts per second per crystal; and ``[run] extra_lines`` added by
 hand. A simple non-paralysable dead time (``[run] dead_time``) scales every count by the live fraction.
 
+**Add-back and Compton suppression** (clovers, :mod:`physim.nuclear.response`): a Compton deposit in a clover with
+``addback`` is summed with what the scattered photon left in the neighbouring crystal, with the share the add-back
+factor asks for, and the γ ray is then attributed to the crystal with the larger deposit, which the Doppler
+correction uses. In a detector with a ``shield``, a deposit that is not the full energy is rejected with
+probability 1 − 1/S(E). ``simulate_gammas(..., plain=True)`` leaves both out: the crystals as they are.
+
 Everything here runs in NumPy on the particle events; the per-event loop of the generator stays in Rust.
 """
 
@@ -294,12 +300,15 @@ def _room_spectrum(experiment, crystal: Crystal, edges: np.ndarray, rate: float,
 
 
 def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_events: Optional[Events] = None,
-                    bin_kev: float = 1.0, gammas_per_event: int = 10) -> GammaEvents:
+                    bin_kev: float = 1.0, gammas_per_event: int = 10, plain: bool = False) -> GammaEvents:
     """Generate the particle events (or take ``particle_events``) and follow the γ ray of every excited event to
     the crystals. The same setup and seed give the same γ rays.
 
     Coincidences are rare, so each excited event emits its γ ray ``gammas_per_event`` times over, each with a
-    share of the event's weight: the rates are unchanged and the spectra are smoother."""
+    share of the event's weight: the rates are unchanged and the spectra are smoother.
+
+    ``plain`` switches off the add-back and the shields of every γ-ray detector (the geometry stays): the same
+    γ rays as the setup's own run up to the add-back and the rejections, for a comparison."""
     exc = experiment.excitation
     if exc is None:
         raise ValueError("the setup has no excited state ([reaction] type = \"coulex\")")
@@ -320,14 +329,17 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     array = Array.from_experiment(experiment)
 
     # -- the crystals and their responses ----------------------------------------------------------------------
-    crystals = []
+    # The chain starts from the bare crystals; add-back and suppression are applied to the deposits afterwards.
+    crystals, bare = [], []
     for i, gd in enumerate(experiment.gamma_detectors):
-        r = Response(experiment, gd)
+        r = Response(experiment, gd, bare=plain)
+        rb = Response(experiment, gd, bare=True)
         thr = _q(gd.threshold).to("MeV") if gd.threshold is not None else 0.0
         for k, (label, centre, radius) in enumerate(r.elements):
             name = (gd.name or f"G{i + 1}") + (f" {label}" if label else "")
             crystals.append(Crystal(name, i, k if len(r.elements) > 1 else None, np.array(centre, dtype=float),
                                     radius, r, thr))
+            bare.append(rb)
     centres = np.array([c.centre for c in crystals])
     normals = _unit(centres)
     radii = np.array([c.radius for c in crystals])
@@ -424,23 +436,27 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     measured = np.zeros(len(rows))
     counted = np.zeros(len(rows), dtype=bool)
     keep = np.zeros(len(rows), dtype=bool)
+    kind = np.zeros(len(rows), dtype=int)
     for k, cr in enumerate(crystals):
         m = which == k
         if not m.any():
             continue
         e = energy_lab[m]
-        r = cr.response
+        r = bare[k]
         element = cr.element
         p_int = (r.transmission(e) * np.minimum(r.total_efficiency(e, element)
                                                 / (sum(r.coverage) if element is None else r.coverage[element])
                                                 / r.transmission(e), 1.0))
         interact = rng.uniform(0.0, 1.0, m.sum()) <= p_int
-        dep = _deposit(r, e, rng)
+        dep, kd = _deposit(r, e, rng)
         meas = dep + rng.normal(0.0, 1.0, len(dep)) * r.fwhm(np.maximum(dep, 1e-3)) / FWHM_PER_SIGMA
         idx = np.flatnonzero(m)
-        deposited[idx], measured[idx] = dep, meas
+        deposited[idx], measured[idx], kind[idx] = dep, meas, kd
         counted[idx] = interact & (meas >= cr.threshold)
         keep[idx] = interact
+    # Add-back and suppression draw their own numbers, so the chain above is the same with and without them.
+    done = {} if plain else _addback_and_suppression(crystals, which, energy_lab, deposited, measured, counted, keep,
+                                                     kind, np.random.default_rng(seed + 2_000_003))
     rows, which, lab, energy_lab, beta = rows[keep], which[keep], lab[keep], energy_lab[keep], beta[keep]
     weight, deposited, measured, counted = weight[keep], deposited[keep], measured[keep], counted[keep]
 
@@ -479,6 +495,9 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
              f"each); {ev.n_events} reactions "
              f"generated. The particle events stand for {excitation_rate:.3g} excitations/s with a detected "
              f"particle out of {all_excitations:.3g}/s in all."]
+    if done.get("added_back") or done.get("suppressed"):
+        notes.append(f"Add-back returned {done.get('added_back', 0)} γ rays to the full-energy peak; the shields "
+                     f"rejected {done.get('suppressed', 0)}.")
     cols = {"event": c["event"][rows], "particle": rows, "crystal": which, "energy0": np.full(len(rows), e0),
             "energy_lab": energy_lab, "deposited": deposited, "measured": measured, "counted": counted,
             "theta": np.degrees(np.arccos(np.clip(lab[:, 2], -1, 1))),
@@ -535,9 +554,54 @@ def recorrect(gammas: GammaEvents, experiment) -> dict:
     return {"corrected_projectile": out["ejectile"], "corrected_recoil": out["recoil"]}
 
 
-def _deposit(r: Response, energy: np.ndarray, rng) -> np.ndarray:
+def _addback_and_suppression(crystals: list, which: np.ndarray, energy_lab: np.ndarray, deposited: np.ndarray,
+                             measured: np.ndarray, counted: np.ndarray, keep: np.ndarray, kind: np.ndarray,
+                             rng) -> dict:
+    """Add-back and Compton suppression on the deposits, in place. In a clover with add-back, a Compton deposit
+    is summed with what the scattered photon left in a neighbouring crystal (one of the two beside it round the
+    square), with the share :meth:`Response.addback_share` gives, and the γ ray goes to the crystal with the
+    larger deposit; in a shielded detector a deposit that is not the full energy is kept with probability 1/S(E).
+    Returns {"added_back": n, "suppressed": n}."""
+    done = {"added_back": 0, "suppressed": 0}
+    by_detector: dict = {}
+    for k, cr in enumerate(crystals):
+        by_detector.setdefault(cr.detector, []).append(k)
+    for members in by_detector.values():
+        r = crystals[members[0]].response
+        mine = np.isin(which, members) & keep
+        if r.addback and len(members) == 4:
+            idx = np.flatnonzero(mine & (kind == 3))
+            if len(idx):
+                idx = idx[rng.uniform(0.0, 1.0, len(idx)) <= r.addback_share(energy_lab[idx])]
+            if len(idx):
+                first = deposited[idx]
+                second = energy_lab[idx] - first
+                noise = np.sqrt(r.fwhm(np.maximum(first, 1e-3)) ** 2
+                                + r.fwhm(np.maximum(second, 1e-3)) ** 2) / FWHM_PER_SIGMA
+                deposited[idx] = energy_lab[idx]
+                measured[idx] = energy_lab[idx] + rng.normal(0.0, 1.0, len(idx)) * noise
+                element = np.array([crystals[w].element for w in which[idx]])
+                step = np.where(rng.uniform(0.0, 1.0, len(idx)) < 0.5, 1, -1)
+                neighbour = np.array(members)[(element + step) % 4]
+                switch = second > first
+                which[idx[switch]] = neighbour[switch]
+                kind[idx] = 0
+                counted[idx] = measured[idx] >= np.array([crystals[w].threshold for w in which[idx]])
+                done["added_back"] += int(len(idx))
+        if r.suppressed:
+            idx = np.flatnonzero(mine & (kind != 0))
+            if len(idx):
+                reject = rng.uniform(0.0, 1.0, len(idx)) > 1.0 / r.suppression_factor(energy_lab[idx])
+                keep[idx[reject]] = False
+                done["suppressed"] += int(reject.sum())
+    return done
+
+
+def _deposit(r: Response, energy: np.ndarray, rng) -> tuple:
     """The energy each interacting γ ray leaves: the full energy, an escape peak, or a Compton deposit
-    (Klein–Nishina for one scattering, or the flat part up to the full energy for several)."""
+    (Klein–Nishina for one scattering, or the flat part up to the full energy for several). Returns (deposit,
+    kind) with kind 0 for the full energy, 1 and 2 for the single and double escape peaks, 3 for a Compton
+    deposit."""
     e = np.asarray(energy, dtype=float)
     pt = r.peak_to_total(e)
     u = rng.uniform(0.0, 1.0, len(e))
@@ -571,7 +635,9 @@ def _deposit(r: Response, energy: np.ndarray, rng) -> np.ndarray:
         pick = np.array([np.interp(v[i], cdf[:, i], s[:, i]) for i in range(len(v))])
         out_c[~flat] = pick * ec[~flat]
         out[compton] = out_c
-    return out
+    kind = np.zeros(len(e), dtype=int)
+    kind[single], kind[double], kind[compton] = 1, 2, 3
+    return out, kind
 
 
 __all__ = ["Crystal", "GAMMA_COLUMNS", "GammaEvents", "ROOM_LINES", "doppler_correct", "recorrect",

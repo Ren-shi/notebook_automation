@@ -662,19 +662,27 @@ class Planner:
             out[name] = {"counts": h, "edges": edges}
         return {"events": ev, "spectra": out}
 
-    def gamma_events(self, events: int = 400_000, seed: int = 1):
+    def gamma_events(self, events: int = 400_000, seed: int = 1, plain: bool = False):
         """γ rays in coincidence with the detected particles (:func:`physim.nuclear.gamma_events.simulate_gammas`),
-        built on the same particle events as :meth:`spectra`. Kept until the setup changes."""
+        built on the same particle events as :meth:`spectra`; ``plain`` leaves out the add-back and the shields.
+        Kept until the setup changes."""
         from .events import simulate
         from .gamma_events import simulate_gammas
 
-        key = ("gammas", events, seed)
+        key = ("gammas", events, seed, plain)
         if key not in self._cache:
             ev_key = ("events", events, seed)
             if ev_key not in self._cache:
                 self._cache[ev_key] = simulate(self.experiment, events, seed)
-            self._cache[key] = simulate_gammas(self.experiment, events, seed, particle_events=self._cache[ev_key])
+            self._cache[key] = simulate_gammas(self.experiment, events, seed, particle_events=self._cache[ev_key],
+                                               plain=plain)
         return self._cache[key]
+
+    def gamma_modes(self) -> dict:
+        """Per γ-ray detector, {"addback": bool, "shield": material or None}: which run with add-back or a
+        Compton-suppression shield."""
+        return {gd.name or f"G{i + 1}": {"addback": bool(gd.addback), "shield": gd.shield}
+                for i, gd in enumerate(self.experiment.gamma_detectors)}
 
     def gamma_spectra(self, events: int = 400_000, seed: int = 1, bins: int = 300) -> dict:
         """The γ-ray side of the Monte Carlo: for each γ-ray detector the raw and Doppler-corrected spectra in
@@ -686,22 +694,28 @@ class Planner:
             return {"available": False, "reason": "Coulomb excitation with γ-ray detectors is needed."}
         g = self.gamma_events(events, seed)
         emitter = "recoil" if exp.excitation.excite == "target" else "projectile"
-        spectra = {}
-        for name in g.detector_names():
-            total = None
+
+        def spectrum_set(gg, name: str) -> dict:
             out = {}
             for key in (None, "projectile", "recoil"):
-                parts = [g.spectrum(name, d, corrected=key, bins=bins, range=(0.0, 1.3 * g.energy_mev))
-                         for d in g.events.detectors]
-                counts = np.sum([h for h, _ in parts], axis=0)
-                edges = parts[0][1]
-                out[key or "measured"] = counts
-                total = edges
-            spectra[name] = {"edges": total, **out, "counts": g.counts(name)}
+                parts = [gg.spectrum(name, d, corrected=key, bins=bins, range=(0.0, 1.3 * gg.energy_mev))
+                         for d in gg.events.detectors]
+                out[key or "measured"] = np.sum([h for h, _ in parts], axis=0)
+                out["edges"] = parts[0][1]
+            return {**out, "counts": gg.counts(name)}
+
+        modes = self.gamma_modes()
+        spectra = {name: spectrum_set(g, name) for name in g.detector_names()}
+        # A detector with add-back or a shield also shows its spectrum without them, on the same γ rays.
+        if any(m["addback"] or m["shield"] for m in modes.values()):
+            plain = self.gamma_events(events, seed, plain=True)
+            for name, m in modes.items():
+                if (m["addback"] or m["shield"]) and name in spectra:
+                    spectra[name]["plain"] = spectrum_set(plain, name)
         return {"available": True, "spectra": spectra, "emitter": emitter, "energy_kev": 1e3 * g.energy_mev,
                 "coincidences": g.coincidences(), "live_fraction": g.live_fraction, "window_s": g.window_s,
                 "gamma_detectors": g.detector_names(), "particle_detectors": list(g.events.detectors),
-                "notes": g.notes, "n_gammas": len(g)}
+                "notes": g.notes, "n_gammas": len(g), "modes": modes}
 
     def tracks(self, n: int = 30, select: str = "all", weighted: bool = True, seed: int = 1,
                events: int = 400_000) -> dict:
