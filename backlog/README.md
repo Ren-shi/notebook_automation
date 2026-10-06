@@ -63,7 +63,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 55 | ~~[Particle–γ events, Doppler correction, coincidences and background](55-coincidence-events-and-background.md)~~ **Done** | Experiment workbench | P1 | L | 39, 53, 54 |
 | 56 | ~~[Automatic analysis: from peak areas to B(E2) and the shape](56-automatic-analysis.md)~~ **Done** | Experiment workbench | P1 | L | 55 |
 | 57 | ~~[The run record: every number explains itself](57-run-record.md)~~ **Done** (reader's check pending) | Experiment workbench | P1 | M | 42, 56 |
-| 58 | [Multi-step Coulomb excitation, reorientation and the shape of the nucleus](58-multi-step-coulomb-excitation.md) | Experiment workbench | P1 | L | 50, 54, 56 |
+| 58 | ~~[Multi-step Coulomb excitation, reorientation and the shape of the nucleus](58-multi-step-coulomb-excitation.md)~~ **Done** (GOSIA comparisons pending) | Experiment workbench | P1 | L | 50, 54, 56 |
 | 59 | [Particle and γ-ray tracks in the scene](59-particle-tracks.md) | Experiment workbench | P2 | M | 52, 55 |
 | 60 | [A movable target and sources placed anywhere](60-movable-target-and-sources.md) | Experiment workbench | P2 | M | 52, 53 |
 | 61 | [The planner in its own desktop window](61-desktop-window.md) | Experiment workbench | P2 | S | 44, 52 |

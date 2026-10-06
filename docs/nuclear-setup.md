@@ -442,6 +442,58 @@ It is written for a reader who knows nuclear physics and is new to Coulomb excit
 In the app, the **?** beside a number in the scene's side panel and in the analysis opens its explanation, and
 **Show the run record** on the Report tab shows the page; the report's zip holds the same page as `record.html`.
 
+## Multi-step excitation and reorientation
+
+`physim.nuclear.coupled` integrates the coupled equations for the amplitudes of every magnetic substate of every
+level along the orbit, so excitation in several steps, the reorientation effect of the quadrupole moments and
+interference between paths are all included. It has the interface of first order, so the populations, tensors,
+decay and correlation work unchanged:
+
+```python
+from physim.nuclear.coupled import CoupledChannels
+
+cc = CoupledChannels("16O", "194Pt", "60 MeV", scheme, excite="target")
+cc.probabilities(150.0)           # every level, summing to one
+cc.at(150.0).gamma_yield(1, 0)    # with the decay through the scheme
+```
+
+- **The orbit** is the symmetrised one of the ground state and a reference level (the lowest with a matrix element
+  to the ground state); with weak coupling the solution is first order exactly.
+- **Matrix elements** enter with their signs, from the level scheme; a diagonal E2 element is the quadrupole
+  moment's, through `quadrupole_factor`.
+- **Speed:** a Runge–Kutta integration whose steps follow the fastest phase. 25 levels (265 substates) take
+  about 0.4 s per angle; a grid of 45 angles and 2 energies for an experiment about 40 s.
+
+`physim.nuclear.multistep` applies it to the planned experiment:
+
+```python
+from physim.nuclear.multistep import Multistep
+
+ms = Multistep(exp, scheme, role="target")
+y = ms.yields()                     # γ rays per second of each transition in each detector and ring
+ms.shapes(level=1)                  # Q(2⁺) prolate, zero, oblate: can the run tell them apart?
+ms.fit({"CD": {(1, 0): (counts, unc)}}, free=[(0, 1, "E2"), (1, 1, "E2")])
+ms.gosia_input(y)                   # a GOSIA input file for this setup, with the yields
+```
+
+- The probabilities are solved on a grid of CM angles at a few beam energies through the target and interpolated
+  to every quadrature direction of every segment, weighted by the Rutherford cross section of the symmetrised
+  orbit (the analytic rates use the elastic one, 6% apart at the ⁵⁸Ni example's energy).
+- **Prolate or oblate:** the same experiment with the 2⁺ state's quadrupole moment at the rigid-rotor value,
+  at zero and at its opposite; the yields per ring are compared with the counting uncertainties of the run.
+- **The fit** adjusts up to three matrix elements by Gauss–Newton least squares to measured counts; its
+  uncertainties come from the curvature at the minimum.
+- **GOSIA** is not part of physim. The input file follows the published format so that GOSIA, run elsewhere, can
+  check these numbers or fit the matrix elements; it has not been checked against a run, since no GOSIA
+  installation exists on the development machine.
+
+In the app, **Solve with all orders** in the "Excitation and γ rays" tab (once a level scheme is looked up) shows
+the yields with all orders and with first order, the prolate–zero–oblate comparison per ring, and offers the
+GOSIA input file.
+
+Not included: the E1 polarisation correction, deorientation, lifetimes, mutual excitation of both nuclei, and
+nuclear interference above the safe energy.
+
 ## Materials
 
 A material can be written as:
