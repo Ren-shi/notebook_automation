@@ -126,8 +126,9 @@ NOT_SIMULATED = (
     (72, "Summing and pile-up in part", "γ rays of one cascade sum in a crystal, and pile-up follows the "
                                         "shaping time, but a summed or piled signal is one Gaussian, without the "
                                         "electronics' shapes; dead time is a simple correction"),
-    (73, "Lifetimes", "every state decays in flight after leaving the target: no stopped or partly shifted "
-                      "components"),
+    (73, "Lifetimes in part", "a state with a half-life in the level scheme slows down and decays on its way, "
+                              "but without angular straggling or time dilation; a state without one decays after "
+                              "the target"),
     (74, "Contaminant reactions", "no scattering on carbon, oxygen or other contaminants of the target and backing"),
     (74, "Beam halo", "the beam spot is a Gaussian of the setup's spot size; no halo on a frame or the chamber"),
 )

@@ -43,6 +43,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Lifetimes (backlog 73): a level with a half-life in the setup's level scheme decays after a time drawn from its
+  lifetime, with the levels above it adding theirs in a cascade. Meanwhile the nucleus slows down along its path
+  through the target and backing (the time to stop is ∫ dR / (ρ v) from the stopping tables and the layer
+  densities), so its γ ray is emitted at the velocity it has then. A nucleus that has stopped emits at rest. The
+  spectra show the stopped and the shifted components and the slowing-down continuum between them, and γ rays
+  carry `stopped`. A short lifetime gives item 55's result. Not included: angular straggling, time dilation, and
+  fitting the lifetime from the line shape.
 - Summing and pile-up (backlog 72). A calibration source whose lines come in cascade (⁶⁰Co, ⁸⁸Y;
   `response.CASCADES`) sums in a crystal: each line loses the share of decays whose partner also interacts there,
   and a sum peak appears with the product of the peak efficiencies. The efficiency points are corrected for
