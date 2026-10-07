@@ -520,9 +520,10 @@ def _gamma_events(run: RunData, a: dict, plain: bool):
              "once."]
     from .gamma import excitation_of
 
+    shaping = _seconds(exp.run.shaping_time) if exp.run.shaping_time is not None else 0.0
     return GammaEvents(cols, ev, crystals, int(run.summary["seed"]), e0, excitation_of(exp).scheme.nuclide,
                        bg["window_s"], bg["dead_time_s"], bg["live_fraction"], bg["singles_rate"],
-                       bg["singles_spectrum"], bg["singles_edges"], bg["particle_rate"], notes)
+                       bg["singles_spectrum"], bg["singles_edges"], bg["particle_rate"], notes, shaping)
 
 
 # -- taking a run -------------------------------------------------------------------------------------------------

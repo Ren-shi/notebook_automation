@@ -137,6 +137,8 @@ class GammaEvents:
     #: Particle singles rates, 1/s, by detector name (counted particles).
     particle_rate: dict = field(default_factory=dict)
     notes: list = field(default_factory=list)
+    #: The γ-ray amplifiers' shaping time (s), for pile-up; 0 for none.
+    shaping_time_s: float = 0.0
 
     def __len__(self) -> int:
         return len(self.columns["event"])
@@ -279,7 +281,33 @@ class GammaEvents:
             rng = np.random.default_rng(self.seed + 7919 if seed is None else seed)
             expected = self.random_spectrum(crystal, detector, edges) * t
             h = h + rng.poisson(expected)
+        if crystal is not None:
+            h = self.pile_up(h, edges, crystal)
         return h, edges
+
+    def pile_rate(self, crystal: str) -> float:
+        """The singles rate (1/s) of a crystal, or the mean of a detector's crystals, that sets its pile-up."""
+        rates = [sum(self.singles_rate[c.name].values()) for c in self.crystals if self._in(c, crystal)]
+        return float(np.mean(rates)) if rates else 0.0
+
+    def pile_up(self, counts: np.ndarray, edges: np.ndarray, crystal: str, singles: bool = False) -> np.ndarray:
+        """A spectrum of a crystal (or detector) with pile-up from ``[run] shaping_time`` and its singles rate: a
+        loss from every bin and a shoulder above each peak (:func:`physim.nuclear.response.pile_up`); a γ ray in
+        coincidence piles with one of the crystal's singles, a singles spectrum with itself (``singles``).
+        Unchanged without a shaping time, or on bins that do not start at 0."""
+        if not self.shaping_time_s or abs(edges[0]) > 1e-12:
+            return counts
+        from .response import pile_up
+
+        partner = None
+        if not singles:
+            centres = (self.singles_edges[:-1] + self.singles_edges[1:]) / 2
+            partner = np.zeros(len(edges) - 1)
+            for c in self.crystals:
+                if self._in(c, crystal):
+                    partner += np.histogram(centres, bins=edges, weights=self.singles_spectrum[c.name])[0]
+        piled, _ = pile_up(counts, self.pile_rate(crystal), self.shaping_time_s, partner)
+        return piled
 
     def random_spectrum(self, crystal: str, detector: str, edges: np.ndarray) -> np.ndarray:
         """The expected rate per bin (1/s) of random coincidences of a particle detector with a crystal (or a
@@ -495,6 +523,9 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
         deposited[idx], measured[idx], kind[idx] = dep, meas, kd
         counted[idx] = interact & (meas >= cr.threshold)
         keep[idx] = interact
+    # γ rays of one cascade in one crystal add up: one signal at the sum of their deposits (backlog item 72).
+    summed = _sum_cascades(cascade, which, deposited, measured, counted, keep, kind, energy_lab, crystals) \
+        if cex is not None else 0
     # Add-back and suppression draw their own numbers, so the chain above is the same with and without them.
     done = {} if plain else _addback_and_suppression(crystals, which, energy_lab, deposited, measured, counted, keep,
                                                      kind, np.random.default_rng(seed + 2_000_003))
@@ -515,6 +546,8 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     if done.get("added_back") or done.get("suppressed"):
         notes.append(f"Add-back returned {done.get('added_back', 0)} γ rays to the full-energy peak; the shields "
                      f"rejected {done.get('suppressed', 0)}.")
+    if summed:
+        notes.append(f"{summed} pairs of γ rays of one cascade summed in a crystal.")
     if cex is not None:
         notes.append(f"Each excitation decays by the level scheme's cascade: {len(cex.transitions())} transitions "
                      "followed, each with its own orientation; the angular correlation between successive γ rays of "
@@ -526,9 +559,10 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
             "phi": np.degrees(np.arctan2(lab[:, 1], lab[:, 0])), "beta": beta,
             "corrected_projectile": corrected["ejectile"], "corrected_recoil": corrected["recoil"],
             "weight": weight}
+    shaping = _q(experiment.run.shaping_time).to("s") if experiment.run.shaping_time is not None else 0.0
     return GammaEvents(cols, ev, crystals, int(seed), e0, emitter, bg["window_s"], bg["dead_time_s"],
                        bg["live_fraction"], bg["singles_rate"], bg["singles_spectrum"], bg["singles_edges"],
-                       bg["particle_rate"], notes)
+                       bg["particle_rate"], notes, shaping)
 
 
 def crystals_of(experiment, plain: bool = False) -> tuple:
@@ -584,6 +618,36 @@ def backgrounds(experiment, crystals: list, rates: Optional[Rates] = None, bin_k
     return {"window_s": window, "dead_time_s": dead, "live_fraction": 1 / (1 + dead * total_rate),
             "particle_rate": particle_rate, "singles_rate": singles_rate, "singles_spectrum": singles_spectrum,
             "singles_edges": edges, "excitation_rate": excitation_rate, "all_excitations": all_excitations}
+
+
+def _sum_cascades(cascade, which, deposited, measured, counted, keep, kind, energy_lab, crystals) -> int:
+    """Two γ rays of one cascade that interact in one crystal give one signal: the second's deposit is added to
+    the first's, and the second is dropped. In place; returns how many were summed."""
+    done = 0
+    for _ in range(8):  # a cascade of more than two γ rays in one crystal sums step by step
+        idx = np.flatnonzero(keep)
+        if len(idx) < 2:
+            break
+        order = idx[np.lexsort((which[idx], cascade[idx]))]
+        same = (cascade[order[1:]] == cascade[order[:-1]]) & (which[order[1:]] == which[order[:-1]])
+        if not same.any():
+            break
+        first, second = order[:-1][same], order[1:][same]
+        # One pair per γ ray in this pass.
+        _, unique_first = np.unique(first, return_index=True)
+        first, second = first[unique_first], second[unique_first]
+        clash = np.isin(second, first)
+        first, second = first[~clash], second[~clash]
+        deposited[first] += deposited[second]
+        measured[first] += measured[second]
+        energy_lab[first] += energy_lab[second]
+        kind[first] = np.where((kind[first] == 0) & (kind[second] == 0), 0, 3)
+        thresholds = np.array([c.threshold for c in crystals])
+        counted[first] = measured[first] >= thresholds[which[first]]
+        keep[second] = False
+        counted[second] = False
+        done += len(first)
+    return done
 
 
 def _rest_directions(table: tuple, theta_cm: np.ndarray, rng) -> np.ndarray:

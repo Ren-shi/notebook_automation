@@ -43,6 +43,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Summing and pile-up (backlog 72). A calibration source whose lines come in cascade (⁶⁰Co, ⁸⁸Y;
+  `response.CASCADES`) sums in a crystal: each line loses the share of decays whose partner also interacts there,
+  and a sum peak appears with the product of the peak efficiencies. The efficiency points are corrected for
+  summing and say so (`efficiency`, `uncorrected`, `summing_correction`). Two γ rays of one cascade (item 71) that
+  interact in one crystal give one signal at their sum. `[run] shaping_time` adds pile-up (`response.pile_up`):
+  the share 1 − exp(−2τR) of the signals leaves its bins and reappears above, as a shoulder. It applies to source
+  runs, singles and coincidence spectra (a coincident γ ray piles with the crystal's singles).
 - Cascades (backlog 71): with a level scheme for the excited nucleus whose decays follow more than one
   transition, each excitation starts in a level drawn from the direct excitation probabilities at its scattering
   angle. It then decays through the scheme's branches, with internal conversion taking its share; each γ ray is

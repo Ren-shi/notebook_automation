@@ -475,6 +475,8 @@ class Run:
     room_background: Optional[QuantityLike] = None
     #: Extra γ-ray lines in every crystal, by hand: pairs of an energy and a rate (``[["1274 keV", "0.5 /s"]]``).
     extra_lines: Optional[list] = None
+    #: Shaping time of the γ-ray amplifiers: two signals closer than twice it pile up (none if left out).
+    shaping_time: Optional[QuantityLike] = None
 
     SPECS = (
         _Field("beam_time", "time", required=True, check=_positive),
@@ -483,6 +485,7 @@ class Run:
         _Field("dead_time", "time", check=_non_negative),
         _Field("room_background", "rate", check=_non_negative),
         _Field("extra_lines", "lines"),
+        _Field("shaping_time", "time", check=_non_negative),
     )
 
 

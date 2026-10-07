@@ -205,7 +205,8 @@ def test_the_planner_and_the_app_figures(ni):
     assert g["available"] and set(g["gamma_detectors"]) == {"Ge90", "Ge45", "Ge135", "Ge0"}
     s = g["spectra"]["Ge90"]
     assert len(s["measured"]) == len(s["recoil"]) == len(s["edges"]) - 1 and s["counts"] > 0
-    assert set(g["coincidences"]) == {"true", "random", "gamma_gamma_random"}
+    assert set(g["coincidences"]) == {"true", "random", "gamma_gamma_random", "gamma_gamma_true"}
+    assert not any(g["coincidences"]["gamma_gamma_true"].values())  # one state: no cascade
     assert p.gamma_events(150_000, 1) is p.gamma_events(150_000, 1)
     app.figure_gamma_spectra(p, "Ge45", 150_000, 1).to_json()
     assert not Planner.example("alpha_on_gold").gamma_spectra()["available"]

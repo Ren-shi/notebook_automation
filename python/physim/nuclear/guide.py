@@ -83,6 +83,9 @@ HELP = {
                                       "under the peak."),
     ("run", "dead_time"): _h("Time the acquisition is busy after each count (non-paralysable); empty for none.",
                              "2–10 µs", "a smaller live fraction at high rates: every count is scaled down."),
+    ("run", "shaping_time"): _h("Shaping time of the γ-ray amplifiers: two γ rays in one crystal closer than twice "
+                                "it pile up into one signal; empty for no pile-up.", "2–6 µs for germanium",
+                                "more pile-up at high rates: lost peak counts and a shoulder above each peak."),
     ("run", "room_background"): _h("Counts per second in each γ-ray crystal from the room (⁴⁰K, thorium and uranium "
                                    "series), empty for none.", "0.5–5 /s unshielded", "more random coincidences "
                                    "and room lines in the spectra."),

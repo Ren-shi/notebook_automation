@@ -62,7 +62,8 @@ CLOVER_FIELDS = [("addback_factor", "Add-back factor at 1332 keV", "1.5"),
                  ("suppression_factor", "Suppression factor at 1332 keV", "3")]
 RUN_FIELDS = [("beam_time", "Beam time", "12 h"), ("counts_wanted", "Counts wanted", "5000")]
 RUN_MORE = [("coincidence_window", "Coincidence window", "100 ns"), ("dead_time", "Dead time", "5 us"),
-            ("room_background", "Room background per crystal", "1 /s")]
+            ("room_background", "Room background per crystal", "1 /s"),
+            ("shaping_time", "Shaping time (pile-up)", "3 us")]
 #: Which size fields each particle-detector shape uses.
 SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circle": {"radius"},
                 "annular": {"inner_radius", "outer_radius", "rings", "sectors"}}
@@ -122,8 +123,9 @@ def physics_for(key: str) -> str:
 NOT_SIMULATED = (
     (71, "Cascades in part", "without a level scheme each excitation emits one γ ray; with one, the cascade is "
                              "followed, but the angular correlation between its successive γ rays is not"),
-    (72, "Summing and pile-up", "two γ rays in one crystal do not sum, and close events do not pile up; dead "
-                                "time is a simple correction"),
+    (72, "Summing and pile-up in part", "γ rays of one cascade sum in a crystal, and pile-up follows the "
+                                        "shaping time, but a summed or piled signal is one Gaussian, without the "
+                                        "electronics' shapes; dead time is a simple correction"),
     (73, "Lifetimes", "every state decays in flight after leaving the target: no stopped or partly shifted "
                       "components"),
     (74, "Contaminant reactions", "no scattering on carbon, oxygen or other contaminants of the target and backing"),
