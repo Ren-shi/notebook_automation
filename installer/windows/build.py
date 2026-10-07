@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -29,6 +30,11 @@ EMBED_URL = "https://www.python.org/ftp/python/{v}/python-{v}-embed-amd64.zip"
 #: Large parts of the bundled packages that the planner never loads.
 PRUNE = ["numpy/_core/tests", "numpy/tests", "numpy/*/tests", "matplotlib/tests", "matplotlib/mpl-data/sample_data",
          "pandas/tests", "plotly/tests", "pip", "setuptools"]
+
+#: Pure-Python dependencies published only as source. The bundle is installed with --only-binary (it targets another
+#: platform), so these are built into wheels first; without proxy_tools, pip falls back to pywebview 3.4, which
+#: NiceGUI's native mode cannot import.
+SOURCE_ONLY = ["proxy_tools"]
 
 
 def fetch_python(dest: Path) -> None:
@@ -50,11 +56,15 @@ def enable_site_packages(python: Path) -> None:
 
 def install(wheel: Path, site: Path) -> None:
     major, minor = PYTHON_VERSION.split(".")[:2]
-    cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check",
-           "--target", str(site), "--platform", "win_amd64", "--python-version", f"{major}.{minor}",
-           "--implementation", "cp", "--only-binary=:all:", f"{wheel.resolve()}[app,root]"]
-    print(" ".join(cmd))
-    subprocess.run(cmd, check=True)
+    with tempfile.TemporaryDirectory() as local:  # outside the bundle, which planner.iss packs whole
+        subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--disable-pip-version-check",
+                        "--wheel-dir", local, *SOURCE_ONLY], check=True)
+        cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", "--disable-pip-version-check",
+               "--target", str(site), "--platform", "win_amd64", "--python-version", f"{major}.{minor}",
+               "--implementation", "cp", "--only-binary=:all:", "--find-links", local,
+               f"{wheel.resolve()}[app,root,window]"]
+        print(" ".join(cmd))
+        subprocess.run(cmd, check=True)
 
 
 def prune(site: Path) -> None:
