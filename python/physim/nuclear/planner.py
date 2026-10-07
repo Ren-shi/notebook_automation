@@ -16,6 +16,17 @@ text) that any front end, or a notebook, can draw::
     p.sweep("beam energy", ["4 MeV", "5 MeV", "6 MeV"], "rate", detector="A45")
 
 Tabs: :data:`TABS`. Each ``Planner.<tab>()`` returns a dict; :meth:`Planner.tab` calls one by name.
+
+**Experiments and runs** (backlog item 63, :mod:`physim.nuclear.runs`): a planner can belong to an experiment folder,
+where every valid edit is saved and runs are taken and kept::
+
+    p.create_experiment(root="~/.physim/experiments")
+    run = p.start_run("beam", duration="10 min")   # unweighted events for the real part, the rest scaled
+    p.run_status()                                # which run is current, and whether the setup changed since
+    p.gamma_spectra()                             # read from the current run: nothing simulates on its own
+
+While a run is being taken the setup is locked (:class:`~physim.nuclear.runs.RunInProgress`). Without a current
+run the spectra, γ rays, analysis, alignment and tracks simulate their own sample as before.
 """
 
 from __future__ import annotations
@@ -41,6 +52,7 @@ from .names import parse_nuclide
 from .quantity import Quantity
 from .rates import Rates, beam_energy_at, beam_ion, stack, stopping, tilt_deg
 from .rutherford import Rutherford
+from . import runs as _runs
 
 #: The result tabs, in display order.
 TABS = ("geometry", "kinematics", "rates", "energy_loss", "spectra", "trajectories", "gamma", "report")
@@ -158,6 +170,13 @@ class Planner:
         self._earlier_rates: Optional[Rates] = None
         #: The Coulomb-excitation settings while the reaction is switched to elastic, so switching back restores them.
         self._stashed_excitation: dict = {}
+        #: The experiment folder this setup belongs to (None until one is created or opened).
+        self.folder: Optional[_runs.ExperimentFolder] = None
+        #: The current run, which the spectra, analysis and the other views read (None: they simulate their own).
+        self.run: Optional[_runs.RunData] = None
+        #: A run being taken on a thread.
+        self._background: Optional[_runs.Background] = None
+        self._taking: Optional[_runs.RunTaker] = None
 
     # -- loading and saving -----------------------------------------------------------------------------------------
 
@@ -190,6 +209,8 @@ class Planner:
         return copy.deepcopy(self._draft)
 
     def _apply(self, draft: dict) -> bool:
+        if self.running:
+            raise _runs.RunInProgress("the setup cannot change while a run is being taken; stop the run first")
         self._draft = draft
         try:
             exp = Experiment.from_dict(copy.deepcopy(draft))
@@ -200,7 +221,174 @@ class Planner:
         self.experiment = exp
         self._earlier_rates = self._cache.get("rates", self._earlier_rates)
         self._cache.clear()
+        if self.folder is not None:
+            self.folder.save_setup(exp)
         return True
+
+    # -- experiments and runs ---------------------------------------------------------------------------------------
+
+    @property
+    def experiment_folder(self) -> Optional[Path]:
+        """The folder of the experiment this setup belongs to, or None."""
+        return self.folder.path if self.folder is not None else None
+
+    @property
+    def name(self) -> str:
+        """The experiment's name ("58Ni on 208Pb" by default)."""
+        return self.folder.name if self.folder is not None else _runs.default_name(self.experiment)
+
+    @staticmethod
+    def experiments(root=None) -> list:
+        """The experiments on disk, newest first (:func:`physim.nuclear.runs.list_experiments`)."""
+        return _runs.list_experiments(root)
+
+    def create_experiment(self, name: Optional[str] = None, root=None) -> Path:
+        """Make an experiment folder for the current setup (under ``root``, by default ``~/.physim/experiments``)
+        and work in it from now on. Returns its path."""
+        if self.problems:
+            raise SetupError(self.problems)
+        self.folder = _runs.ExperimentFolder.create(self.experiment, name, root)
+        self.run = None
+        return self.folder.path
+
+    @classmethod
+    def open_experiment(cls, path) -> Planner:
+        """A planner on an experiment folder's current setup, with its last run current."""
+        folder = _runs.ExperimentFolder(path)
+        p = cls(folder.setup())
+        p.folder = folder
+        runs = folder.runs()
+        if runs:
+            p.run = folder.load_run(runs[-1]["number"])
+        return p
+
+    def rename_experiment(self, name: str) -> None:
+        if self.folder is None:
+            raise ValueError("there is no experiment folder yet (create_experiment)")
+        self.folder.rename(name)
+
+    def runs(self) -> list:
+        """The summaries of the experiment's runs, in order, each with a one-line description and whether the
+        setup's physics changed since (``stale``)."""
+        if self.folder is None:
+            return []
+        out = []
+        current = self.experiment.to_dict()
+        for s in self.folder.runs():
+            r = _runs.RunData(Path(s["_folder"]), s, _runs.Experiment.load(Path(s["_folder"]) / "setup.toml").to_dict())
+            s = dict(s, describe=r.describe(), stale=bool(r.changes(current)), label=s["_label"])
+            out.append(s)
+        return out
+
+    @property
+    def running(self) -> bool:
+        """Whether a run is being taken (the setup is locked meanwhile)."""
+        return self._taking is not None
+
+    def _plan_numbers(self) -> dict:
+        """The Plan's predictions at this moment, kept in the next run's summary (to compare with what it
+        measured)."""
+        try:
+            t = self.rates()
+        except Exception:  # noqa: BLE001 - a setup whose rates fail still runs; it just has no predictions
+            return {}
+        rows = [{k: v for k, v in row.items() if not isinstance(v, (np.ndarray, tuple))} for row in t["rows"]]
+        return {"rows": rows, "beam_time_s": t["beam_time_s"], "counts_wanted": t["counts_wanted"],
+                "particles_per_second": t["particles_per_second"], "measured": t["measured"],
+                "gamma_efficiency": t["gamma_efficiency"]}
+
+    def start_run(self, kind: str = "beam", duration=None, budget=_runs.DEFAULT_BUDGET_S, seed: Optional[int] = None,
+                  background: bool = False, progress=None, **options):
+        """Take a run with the current setup: ``kind`` "beam", "source" or "alignment"; ``duration`` (text with a
+        unit, by default the setup's beam time); ``budget``, the part simulated event by event (10 min by default,
+        at most an hour). Source runs take ``source``, ``activity``, ``position``; alignment runs ``offset_mm``.
+
+        Creates an experiment folder first if there is none. The setup is locked until the run ends. With
+        ``background`` the run is taken on a thread and this returns at once (see :meth:`run_progress`,
+        :meth:`stop_run`); otherwise it returns the stored run, which becomes current."""
+        if self.running:
+            raise _runs.RunInProgress("a run is already being taken")
+        if self.problems:
+            raise SetupError(self.problems)
+        if self.folder is None:
+            self.create_experiment()
+        out = _runs.start(self.folder, kind, duration, budget, seed, self.experiment, self._plan_numbers(), **options)
+        if isinstance(out, _runs.RunData):
+            self._set_run(out)
+            return out
+        return self._take(out, background, progress)
+
+    def _take(self, taker: _runs.RunTaker, background: bool, progress):
+        self._taking = taker
+        if background:
+            def done(bg):
+                self._taking = None
+                if bg.result is not None:
+                    self._set_run(bg.result)
+
+            self._background = _runs.Background(taker, done)
+            return self._background
+        try:
+            while not taker.done:
+                taker.step()
+                if progress is not None:
+                    progress(taker.progress())
+            run = taker.write()
+        finally:
+            self._taking = None
+        self._set_run(run)
+        return run
+
+    def _set_run(self, run: Optional[_runs.RunData]) -> None:
+        self.run = run
+        for key in [k for k in self._cache if isinstance(k, tuple) and k and k[0] in ("run",)]:
+            self._cache.pop(key)
+
+    def stop_run(self) -> Optional[_runs.RunData]:
+        """Stop the run being taken: what is accumulated is kept (the run's duration becomes the beam time taken).
+        Returns the stored run once it is written."""
+        if self._background is None or self._taking is None:
+            return self.run
+        self._background.stop()
+        return self._background.join()
+
+    def extend_run(self, more, background: bool = False, progress=None):
+        """Add ``more`` beam time to the current run, with its own setup and seed stream; the real part grows up to
+        the run's budget."""
+        if self.run is None:
+            raise ValueError("there is no current run to extend")
+        if self.running:
+            raise _runs.RunInProgress("a run is already being taken")
+        return self._take(_runs.extend(self.run, more), background, progress)
+
+    def load_run(self, number: int) -> _runs.RunData:
+        """Make run ``number`` current (its events are loaded when a view asks for them; one run at a time)."""
+        if self.folder is None:
+            raise ValueError("there is no experiment folder")
+        self._set_run(self.folder.load_run(number))
+        return self.run
+
+    def run_progress(self) -> Optional[dict]:
+        """The live counters of the run being taken (None when none is)."""
+        return self._taking.progress() if self._taking is not None else None
+
+    def run_status(self, run: Optional[_runs.RunData] = None) -> Optional[dict]:
+        """About the current run (or ``run``): number, label, one-line description, and whether the setup's
+        physics changed since it was taken (``stale``, with the ``changes``). None without a run."""
+        run = run or self.run
+        if run is None:
+            return None
+        changes = run.changes(self.experiment.to_dict())
+        return {"number": run.number, "label": run.label, "kind": run.kind, "describe": run.describe(),
+                "duration_s": run.duration_s, "real_s": run.real_s, "scaled": run.scale > 1.000001,
+                "stale": bool(changes), "changes": changes}
+
+    def _data_experiment(self) -> Experiment:
+        """The setup the data views read: the current beam run's own, or the current setup without one."""
+        return self.run.experiment if self._beam_run() else self.experiment
+
+    def _beam_run(self) -> Optional[_runs.RunData]:
+        return self.run if self.run is not None and self.run.kind != "source" else None
 
     def place(self, key: str, **fields) -> bool:
         """Set several fields of one detector at once; ``key`` is "detector:N" or "gamma:N", counting from 0 as
@@ -644,13 +832,17 @@ class Planner:
                 "detectors": dets}
 
     def spectra(self, events: int = 200_000, seed: int = 1, bins: int = 200) -> dict:
-        """Simulated measured-energy spectra per detector (counts in the planned beam time per bin)."""
-        key = ("events", events, seed)
-        if key not in self._cache:
-            from .events import simulate
+        """Measured-energy spectra per detector: of the current run's real part (counts per bin), or without a
+        run simulated (counts in the planned beam time per bin)."""
+        if self._beam_run():
+            ev = self.run.events()
+        else:
+            key = ("events", events, seed)
+            if key not in self._cache:
+                from .events import simulate
 
-            self._cache[key] = simulate(self.experiment, events, seed)
-        ev = self._cache[key]
+                self._cache[key] = simulate(self.experiment, events, seed)
+            ev = self._cache[key]
         out = {}
         for name in ev.detectors:
             m = ev.select(name)
@@ -660,15 +852,20 @@ class Planner:
             hi = float(ev["measured"][m].max()) * 1.03
             h, edges = ev.spectrum(name, bins=bins, range=(0.0, hi))
             out[name] = {"counts": h, "edges": edges}
-        return {"events": ev, "spectra": out}
+        return {"events": ev, "spectra": out, "run": self.run_status() if self._beam_run() else None}
 
     def gamma_events(self, events: int = 400_000, seed: int = 1, plain: bool = False):
         """γ rays in coincidence with the detected particles (:func:`physim.nuclear.gamma_events.simulate_gammas`),
         built on the same particle events as :meth:`spectra`; ``plain`` leaves out the add-back and the shields.
-        Kept until the setup changes."""
+        Kept until the setup changes. With a current beam run, its γ rays (nothing is simulated)."""
         from .events import simulate
         from .gamma_events import simulate_gammas
 
+        if self._beam_run():
+            g = self.run.gammas(plain)
+            if g is None:
+                raise ValueError("the current run has no γ rays")
+            return g
         key = ("gammas", events, seed, plain)
         if key not in self._cache:
             ev_key = ("events", events, seed)
@@ -682,14 +879,15 @@ class Planner:
         """Per γ-ray detector, {"addback": bool, "shield": material or None}: which run with add-back or a
         Compton-suppression shield."""
         return {gd.name or f"G{i + 1}": {"addback": bool(gd.addback), "shield": gd.shield}
-                for i, gd in enumerate(self.experiment.gamma_detectors)}
+                for i, gd in enumerate(self._data_experiment().gamma_detectors)}
 
     def gamma_spectra(self, events: int = 400_000, seed: int = 1, bins: int = 300) -> dict:
         """The γ-ray side of the Monte Carlo: for each γ-ray detector the raw and Doppler-corrected spectra in
         coincidence with all particle detectors (counts in the run per bin, random coincidences included), the
         particle × γ matrix of true and random coincidences, and the live fraction.
-        ``{"available": False}`` without an excited state or γ-ray detectors."""
-        exp = self.experiment
+        ``{"available": False}`` without an excited state or γ-ray detectors. With a current beam run, its real part
+        (``"run"`` says which run, and whether the setup changed since)."""
+        exp = self._data_experiment()
         if exp.excitation is None or not exp.gamma_detectors:
             return {"available": False, "reason": "Coulomb excitation with γ-ray detectors is needed."}
         g = self.gamma_events(events, seed)
@@ -715,7 +913,8 @@ class Planner:
         return {"available": True, "spectra": spectra, "emitter": emitter, "energy_kev": 1e3 * g.energy_mev,
                 "coincidences": g.coincidences(), "live_fraction": g.live_fraction, "window_s": g.window_s,
                 "gamma_detectors": g.detector_names(), "particle_detectors": list(g.events.detectors),
-                "notes": g.notes, "n_gammas": len(g), "modes": modes}
+                "notes": g.notes, "n_gammas": len(g), "modes": modes,
+                "run": self.run_status() if self._beam_run() else None}
 
     def tracks(self, n: int = 30, select: str = "all", weighted: bool = True, seed: int = 1,
                events: int = 400_000) -> dict:
@@ -724,7 +923,7 @@ class Planner:
         Coulomb excitation and γ-ray detectors the γ events are used, else the particle events alone."""
         from .tracks import describe, sample_tracks
 
-        exp = self.experiment
+        exp = self._data_experiment()
         if exp.excitation is not None and exp.gamma_detectors:
             g = self.gamma_events(events, seed)
             ev = g.events
@@ -735,15 +934,19 @@ class Planner:
         return {"tracks": tracks, "description": describe(tracks, select, weighted, ev.n_events),
                 "channels": list(ev.channels), "gammas": g is not None}
 
-    def alignment(self, offset_mm: float = 0.0, events: int = 400_000, seed: int = 1, fit: bool = True) -> dict:
+    def alignment(self, offset_mm: Optional[float] = None, events: int = 400_000, seed: int = 1,
+                  fit: bool = True) -> dict:
         """What a misplaced target does to the analysis: the corrected peak with the true geometry and with the
         target assumed ``offset_mm`` along the beam from its true place (an overlay with the shift and the
         broadening), the diagnostic plot (centroid against ring, per crystal) with the assumed geometry, and the
         offset the plot gives back when fitted (:mod:`physim.nuclear.alignment`). ``{"available": False}``
-        without Coulomb excitation and γ-ray detectors."""
+        without Coulomb excitation and γ-ray detectors. ``offset_mm`` defaults to the current alignment run's
+        assumed offset, or 0."""
         from .alignment import diagnostic, fit_offset, overlay, with_offset
 
-        exp = self.experiment
+        if offset_mm is None:
+            offset_mm = float(self.run.summary.get("assumed_offset_mm", 0.0)) if self._beam_run() else 0.0
+        exp = self._data_experiment()
         if exp.excitation is None or not exp.gamma_detectors:
             return {"available": False, "reason": "Coulomb excitation with γ-ray detectors is needed."}
         g = self.gamma_events(events, seed)
@@ -762,9 +965,9 @@ class Planner:
         with its history until the setup changes."""
         from .analysis import Analysis
 
-        key = ("analysis", events, seed)
+        key = ("analysis", events, seed) if not self._beam_run() else ("run", "analysis", self.run.label)
         if key not in self._cache:
-            self._cache[key] = Analysis(self.experiment, self.gamma_events(events, seed))
+            self._cache[key] = Analysis(self._data_experiment(), self.gamma_events(events, seed))
         return self._cache[key]
 
     def analyse(self, settings=None, events: int = 400_000, seed: int = 1) -> dict:
@@ -775,7 +978,7 @@ class Planner:
 
         from .analysis import Settings
 
-        exp = self.experiment
+        exp = self._data_experiment()
         if exp.excitation is None or not exp.gamma_detectors:
             return {"available": False, "reason": "Coulomb excitation with γ-ray detectors is needed."}
         if isinstance(settings, dict):
@@ -806,7 +1009,7 @@ class Planner:
 
         if result is None:
             for key, value in self._cache.items():
-                if key[0] == "analysis" and value.history:
+                if "analysis" in key[:2] and value.history:
                     result = value.history[-1]
         return record_html(self, result, scene_png=scene_png)
 

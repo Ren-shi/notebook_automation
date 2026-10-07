@@ -278,6 +278,27 @@ The example *coulex_ni58* is a complete one. To build your own:
     Report tab puts all of them on one page with the setup, the data's provenance, the method and what is left
     out; the report's zip holds the same page as `record.html`, to print to PDF.
 
+## Experiments and runs (from Python)
+
+The app's model is being rebuilt around experiments and runs (backlog 63–70). The model is in place and can be
+used from a notebook; the tabs that show it follow.
+
+```python
+from physim.nuclear.planner import Planner
+
+p = Planner.example("coulex_ni58")
+p.create_experiment()                          # ~/.physim/experiments/16O-on-58Ni, every edit saved there
+p.start_run("source", duration="1 h", source="152Eu")
+run = p.start_run("beam", duration="24 h")     # the first 10 min event by event, the rest scaled
+run.describe()                                 # 'Beam run, 24h; the first 10min simulated event by event, ...'
+p.gamma_spectra()                              # read from the run; nothing simulates on its own
+p.set("target", "thickness", "1.0 mg/cm2")
+p.run_status()["changes"]                      # ['target.thickness: 0.5 mg/cm2 → 1.0 mg/cm2']
+```
+
+Each run folder holds `setup.toml` (the setup it was taken with), `summary.json` (counters, rates, the Plan's
+predictions at the time) and `events.npz` (named NumPy arrays: one row per counted particle and per γ ray).
+
 ## What it does not do yet
 
 - Elastic (Rutherford) scattering and Coulomb excitation of one state. Transfer and fusion-evaporation come

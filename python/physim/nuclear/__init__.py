@@ -5,7 +5,7 @@ energy loss and count rates build on the :class:`Experiment` described here.
 """
 
 from . import (alignment, analysis, angular, catalogue, coulex, coupled, data, detectors, ensdf, events, export, gamma, gamma_events, guide, kinematics, levels, multistep, orientation, paper, planner, rates,
-               record, report, response, rootio, rutherford, scene, stopping, tracks, validation)
+               record, report, response, rootio, rutherford, runs, scene, stopping, tracks, validation)
 from .experiment import (
     EXAMPLES,
     REACTIONS,
@@ -55,6 +55,7 @@ __all__ = [
     "response",
     "rootio",
     "rutherford",
+    "runs",
     "scene",
     "stopping",
     "tracks",
