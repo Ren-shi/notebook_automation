@@ -1054,7 +1054,8 @@ class Planner:
 
         key = ("analysis", events, seed) if not self._beam_run() else ("run", "analysis", self.run.label)
         if key not in self._cache:
-            self._cache[key] = Analysis(self._data_experiment(), self.gamma_events(events, seed))
+            self._cache[key] = Analysis(self._data_experiment(), self.gamma_events(events, seed),
+                                        run=self._beam_run())
         return self._cache[key]
 
     def analyse(self, settings=None, events: int = 400_000, seed: int = 1, gate: Optional[str] = None) -> dict:
@@ -1082,6 +1083,85 @@ class Planner:
         out = asdict(r)
         out.update(available=True, total_unc=r.total_unc, runs=len(self.analysis(events, seed).history))
         return out
+
+    def compare(self, run=None) -> dict:
+        """Predicted against measured (backlog item 68): the Plan's numbers kept in the run's summary beside what
+        the run measured, with the measured value's statistical uncertainty and whether the two agree (within three
+        standard deviations). Rates per detector, full-energy-peak coincidences per detector, the beam time for
+        the counts wanted, and each γ-ray detector's efficiency at the transition (measured from the experiment's
+        latest source run, if there is one). {"rows": [...], "run": number, "source_run": number or None}."""
+        run = run or self.run
+        if run is None or run.kind == "source":
+            return {"rows": [], "run": None, "source_run": None}
+        plan = run.summary.get("plan") or {}
+        real = run.real_s
+        rows = []
+
+        def row(quantity, what, predicted, measured, unc, unit):
+            agree = None
+            if predicted is not None and measured is not None and unc is not None:
+                agree = abs(measured - predicted) <= 3 * max(unc, 1e-300) or (measured == predicted)
+            rows.append({"quantity": quantity, "what": what, "predicted": predicted, "measured": measured,
+                         "uncertainty": unc, "unit": unit, "agree": agree})
+
+        counts = run.summary.get("counts", {})
+        peak = run.summary.get("peak_coincidences", {})
+        for d in plan.get("detectors", []):
+            n = counts.get(d["detector"], 0)
+            row("Rate", d["detector"], d["rate_per_s"], n / real, math.sqrt(max(n, 1)) / real, "1/s")
+        for d in plan.get("detectors", []):
+            if d.get("coincidence_per_s") is None:
+                continue
+            k = sum(v for key, v in peak.items() if key.split("|")[0] == d["detector"])
+            row("Coincidences in the peak", d["detector"], d["coincidence_per_s"], k / real,
+                math.sqrt(max(k, 1)) / real, "1/s")
+        limiting = plan.get("limiting_detector")
+        if limiting and plan.get("counts_wanted"):
+            what = plan.get("measured", "all")
+            if what == "coincidences":
+                k = sum(v for key, v in peak.items() if key.split("|")[0] == limiting)
+            else:
+                k = counts.get(limiting, 0)
+            rate = k / real
+            t = plan["counts_wanted"] / rate if rate > 0 else math.inf
+            row("Beam time for the counts wanted", limiting, plan.get("beam_time_needed_s"), t,
+                t / math.sqrt(k) if k > 0 else None, "s")
+        source = next((r for r in reversed(self.runs()) if r["kind"] == "source"), None) if self.folder else None
+        if plan.get("gamma_detectors"):
+            sr = self.folder.load_run(source["number"]).source() if source else None
+            for g in plan["gamma_detectors"]:
+                measured = unc = None
+                if sr is not None:
+                    measured, unc = _efficiency_at(sr, g["detector"], g["energy_kev"] * 1e-3)
+                row("Efficiency at the transition", g["detector"], g["efficiency"], measured, unc, "")
+        return {"rows": rows, "run": run.number, "source_run": source["number"] if source else None}
+
+    def run_yields(self, gate: Optional[str] = None, settings=None) -> dict:
+        """The γ-ray yields the current run measured, per particle detector, for the multi-step fit
+        (:meth:`fit_matrix_elements`): the analysis of each detector's gated, corrected peak, its area over the
+        efficiency and the correlation, as {detector: {(1, 0): (γ rays emitted, uncertainty)}} in the run's real
+        part, and the beam time that is (s)."""
+        from .analysis import Settings
+
+        run = self._beam_run()
+        if run is None:
+            raise ValueError("take a beam run first")
+        a = self.analysis()
+        out = {}
+        for d in run.events().detectors:
+            base = self.gate(gate).settings() if gate else (settings or Settings())
+            s = Settings(**{**base.as_dict(), "detectors": [d]})
+            try:
+                r = a.run(s)
+            except ValueError:
+                continue
+            if not r.area > 0:
+                continue
+            # The inelastic gate keeps a share of the excitations; the analysis knows it from the simulation.
+            gate_eff = getattr(a, "_gate_efficiency", 1.0) if s.particle_gate == "inelastic" else 1.0
+            y = r.area / (r.efficiency * r.correlation * r.branch * gate_eff)
+            out[d] = {(1, 0): (y, y * math.hypot(r.fit.area_unc / r.area, 0.0))}
+        return {"measured": out, "beam_time_s": run.real_s}
 
     def explanations(self, detector: Optional[str] = None, gamma_detector: Optional[str] = None,
                      result=None) -> list:
@@ -1155,15 +1235,25 @@ class Planner:
         self._cache[key] = out
         return out
 
-    def fit_matrix_elements(self, measured: dict, free: list, role: Optional[str] = None) -> dict:
+    def fit_matrix_elements(self, measured: Optional[dict] = None, free: Optional[list] = None,
+                            role: Optional[str] = None, beam_time_s: Optional[float] = None,
+                            gate: Optional[str] = None) -> dict:
         """Fit up to three matrix elements of the level scheme to measured counts (see
-        :meth:`physim.nuclear.multistep.Multistep.fit`)."""
+        :meth:`physim.nuclear.multistep.Multistep.fit`). Without ``measured``, to the current run's yields
+        (:meth:`run_yields`, in its real part); ``free`` defaults to the ground state's E2 to the first excited
+        state."""
         from .multistep import Multistep
 
-        exp = self.experiment
+        exp = self._data_experiment()
         if role is None:
             role = "target" if exp.excitation is None or exp.excitation.excite == "target" else "beam"
-        return Multistep(exp, exp.levels[role], role).fit(measured, free)
+        if measured is None:
+            y = self.run_yields(gate)
+            measured, beam_time_s = y["measured"], y["beam_time_s"]
+            if not measured:
+                raise ValueError("the run has no peak to fit in any particle detector")
+        free = free or [(0, 1, "E2")]
+        return Multistep(exp, exp.levels[role], role).fit(measured, free, beam_time_s=beam_time_s)
 
     def trajectories(self, impact_parameters: Optional[list] = None, nuclide: Optional[str] = None) -> dict:
         """Coulomb orbits (CM frame, fm) for a range of impact parameters, from physim's engine."""
@@ -1427,6 +1517,32 @@ class Planner:
             out.append(y)
         return {"parameter": parameter, "values": list(values), "x": [_q(v).value for v in values],
                 "quantity": quantity, "detector": detector, "y": np.array(out, dtype=float)}
+
+
+#: The relative uncertainty allowed for reading an efficiency between (or beyond) a source's lines.
+INTERPOLATION_UNC = 0.03
+
+
+def _efficiency_at(source_run, name: str, energy_mev: float) -> tuple:
+    """A γ-ray detector's (or crystal's) full-energy efficiency at ``energy_mev`` from a source run's efficiency
+    points, interpolated in log–log between the lines: (efficiency, uncertainty), or (None, None). The uncertainty
+    is the nearest line's, with 3 % added for the interpolation (or the extrapolation beyond the last line)."""
+    names = [n for n in source_run.names() if n == name or n.rsplit(" ", 1)[0] == name]
+    if not names:
+        return None, None
+    pts = {}
+    for n in names:  # a detector of several crystals: their efficiencies add
+        for p in source_run.efficiency_points(n):
+            e, u = pts.get(p["energy_mev"], (0.0, 0.0))
+            pts[p["energy_mev"]] = (e + p["efficiency"], math.hypot(u, p["uncertainty"]))
+    good = sorted((e, v) for e, v in pts.items() if v[0] > 0)
+    if len(good) < 2:
+        return None, None
+    x = np.log([e for e, _ in good])
+    y = np.log([v[0] for _, v in good])
+    eff = float(np.exp(np.interp(math.log(energy_mev), x, y)))
+    k = int(np.argmin([abs(e - energy_mev) for e, _ in good]))
+    return eff, eff * math.hypot(good[k][1][1] / good[k][1][0], INTERPOLATION_UNC)
 
 
 __all__ = ["EXPLAIN", "REGISTER", "TABS", "Planner", "Warning"]

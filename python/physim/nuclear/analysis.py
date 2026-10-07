@@ -239,6 +239,10 @@ class Result:
     counts_per_shift: float
     hours_for_precision: float
     notes: list = field(default_factory=list)
+    #: For the analysis of a run (backlog 63): where the statistical uncertainty comes from ("the run's real
+    #: events"), and what it would be for the whole run, scaled beyond the real part.
+    statistics_from: str = "the Monte Carlo sample"
+    whole_run_statistical: Optional[float] = None
 
     @property
     def total_unc(self) -> float:
@@ -250,10 +254,12 @@ class Analysis:
     :func:`physim.nuclear.gamma_events.simulate_gammas`). Every :meth:`run` is kept in :attr:`history` with
     its settings, so a change and its effect are on record."""
 
-    def __init__(self, experiment, gammas):
+    def __init__(self, experiment, gammas, run=None):
         self.experiment = experiment
         self.gammas = gammas
         self.events = gammas.events
+        #: The run the γ rays were taken in (:class:`physim.nuclear.runs.RunData`), or None for a weighted sample.
+        self.taken = run
         self.history: list = []
         exc = experiment.excitation
         if exc is None:
@@ -504,9 +510,23 @@ class Analysis:
         hours = (1 / s.wanted_precision**2) / (area / t_s) / 3600 if area > 0 else float("inf")
         if s.particle_gate == "inelastic":
             notes.append(notes_gate)
+        whole = None
+        source = "the Monte Carlo sample"
+        if self.taken is not None:
+            # Every event of a run counts once: there are no Monte Carlo weights, and the statistical uncertainty is
+            # the run's own, from its real part. The whole run, scaled beyond it, would have scale× the counts.
+            mc = 0.0
+            scale = self.taken.scale
+            whole = statistical / math.sqrt(scale) if scale > 1 else statistical
+            source = f"the run's real events ({int(round(area))} in the peak, {self.taken.real_s / 60:.3g} min of beam)"
+            notes.append(f"The statistical uncertainty comes from {source}; each event counts once, so there is no "
+                         "separate Monte Carlo uncertainty."
+                         + (f" The whole {self.taken.duration_s / 3600:.3g} h run, scaled from it with its own Poisson "
+                            f"statistics, would give {100 * whole:.2g}% instead of {100 * statistical:.2g}%."
+                            if scale > 1 else ""))
         result = Result(s.as_dict(), steps, fit, area, eff, corr, branch, s.normalisation, norm_counts, b,
                         statistical, systematic, mc, b * 1e-4, b / wu, budget, truth, pull, shape, per_shift, hours,
-                        notes)
+                        notes, source, whole)
         if self.history:
             changed = {k: v for k, v in s.as_dict().items() if v != self.history[-1].settings.get(k)}
             if changed:
