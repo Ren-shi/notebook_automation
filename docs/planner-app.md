@@ -193,8 +193,12 @@ The tabs are the stages of an experiment, left to right:
 
 - **Setup:** the experiment to scale; click a detector for its numbers and drag it to move it (see
   [The scene](#the-scene)).
-- **Plan:** what you check before asking for beam: the key numbers, the rates and beam time per detector and
-  strip (with the sweep), the excitation and its γ rays, the energy loss.
+- **Plan:** what you check before asking for beam, answers first: the beam time your counts need against the
+  beam time planned; each particle detector's rate, busy fraction, share of the excitations and safe rings; each
+  γ-ray detector's efficiency and coincidence rate; the particle × γ coincidence rates. The **?** beside a number
+  shows how it is worked out. Below the answers, the checks open one at a time: kinematics, energy loss, the orbit
+  and safe distance, the correlation and Doppler shifts, the γ efficiency curves, the rates per strip and the sweep.
+  The next run keeps these numbers, so the Analysis can put them beside what the run measured.
 - **Run:** take a run of a duration, watch the counters, and pick which run is current (see
   [Experiments and runs](#experiments-and-runs-from-python)).
 - **Data:** the spectra of the current run.

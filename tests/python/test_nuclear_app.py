@@ -88,13 +88,15 @@ def test_the_app_serves_every_example(tmp_path):
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/{query}", timeout=120) as r:
                 assert r.status == 200
                 body = r.read().decode()
-            assert "physim" in body and "Rates and beam time" in body, query
+            assert "physim" in body and "Count rates and beam time" in body, query
             # One mode: the seven stages, in order; no guided steps, no mode switch, no example drop-down.
             at = [body.find(f'"label":"{label}"') for label in stages]
             assert all(i >= 0 for i in at) and at == sorted(at), (query, at)
             for gone in ("What do you want to measure?", "Expert view", "Start from example"):
                 assert gone not in body, (query, gone)
             assert "New experiment" in body and "Run conditions" in body
+            # The Plan tab answers without a button pressed, and its checks are there (backlog 65).
+            assert "Beam time needed" in body and "Kinematics: where the particles go" in body, query
     finally:
         proc.terminate()
         proc.wait(timeout=30)
