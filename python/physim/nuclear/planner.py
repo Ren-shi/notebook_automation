@@ -151,6 +151,18 @@ def _q(x) -> Quantity:
     return Quantity.parse(x) if isinstance(x, str) else x
 
 
+def first_state(nuclide: str, multipolarity: str = "E2", max_energy_kev: float = 3000.0) -> tuple:
+    """The lowest state of ``nuclide`` reached from the ground state by ``multipolarity`` with a known B(Eλ↑), from
+    the local ENSDF copy: (scheme, level index, B(Eλ↑) in e²fm^2λ). Raises when there is no copy, no data for the
+    nuclide or no such state."""
+    scheme = LevelScheme.from_ensdf(nuclide, max_energy_kev=max_energy_kev)
+    lam = int(multipolarity[1])
+    for n in range(1, len(scheme.levels)):
+        if scheme.b(0, n, multipolarity):
+            return scheme, n, scheme.b(0, n, multipolarity)
+    raise ValueError(f"no state with a known B({multipolarity}↑) from the ground state of {nuclide}")
+
+
 class Planner:
     """An editable setup and the results computed from it.
 
@@ -452,11 +464,20 @@ class Planner:
         "gamma detector N", counting from 1); ``None`` removes an optional field. Returns whether the setup is valid
         afterwards.
 
-        Setting the reaction ``type`` to ``"coulex"`` fills in E2 excitation of the target (the state's energy and
-        B(E2↑) still have to be given); switching back to ``"elastic"`` keeps the excitation settings for later."""
+        Setting the reaction ``type`` to ``"coulex"`` fills in E2 excitation of the target, with the first state
+        that has a known B(E2↑) from the local ENSDF copy when there is one; changing the excited nucleus or the
+        multipolarity looks the state up again. Switching back to ``"elastic"`` keeps the excitation settings for
+        later."""
         d = self.draft
         if section == "reaction" and field == "type":
             return self._set_reaction_type(d, value)
+        if section == "reaction" and field in ("excite", "multipolarity") and value is not None:
+            d.setdefault("reaction", {})[field] = value
+            if d["reaction"].get("type") == "coulex":
+                d["reaction"].pop("energy", None)
+                d["reaction"].pop("b_up", None)
+                self._fill_state(d)
+            return self._apply(d)
         if section == "backing":
             sec = d["target"].setdefault("backing", {})
         elif section.startswith("gamma detector"):
@@ -474,19 +495,58 @@ class Planner:
             sec[field] = value
         if section == "backing" and not sec:
             d["target"].pop("backing")
+        if (section, field) in (("beam", "nuclide"), ("target", "material")):
+            self._new_nucleus(d, section)
         return self._apply(d)
+
+    def _new_nucleus(self, d: dict, role: str) -> None:
+        """After the beam or target changed: its old level scheme goes, and when it is the excited nucleus its state
+        is looked up again."""
+        nuclide = self.level_nuclides(d)[role]
+        if nuclide == self.level_nuclides()[role]:
+            return
+        scheme = d.get("levels", {}).get(role)
+        if scheme is not None and scheme.get("nuclide") != nuclide:
+            d["levels"].pop(role)
+            if not d["levels"]:
+                d.pop("levels")
+        reaction = d.get("reaction", {})
+        excited = "target" if reaction.get("excite", "target") == "target" else "beam"
+        if reaction.get("type") == "coulex" and excited == role:
+            reaction.pop("energy", None)
+            reaction.pop("b_up", None)
+            self._fill_state(d)
 
     def _set_reaction_type(self, d: dict, value: str) -> bool:
         reaction = d.setdefault("reaction", {"type": "elastic"})
         if value == "coulex":
             reaction.update(self._stashed_excitation or {"excite": "target", "multipolarity": "E2"})
             reaction["type"] = "coulex"
+            if not reaction.get("energy") or not reaction.get("b_up"):
+                self._fill_state(d)
         else:
             kept = {k: v for k, v in reaction.items() if k != "type"}
             if kept:
                 self._stashed_excitation = kept
             d["reaction"] = {"type": value}
         return self._apply(d)
+
+    def _fill_state(self, d: dict) -> None:
+        """The Coulomb-excitation reaction of ``d`` gets the excited nucleus's first state with a known B(Eλ↑) from
+        the local ENSDF copy, and its level scheme; without a copy or data it is left for the user to enter."""
+        reaction = d["reaction"]
+        role = "target" if reaction.get("excite", "target") == "target" else "beam"
+        multipolarity = reaction.get("multipolarity", "E2")
+        nuclide = self.level_nuclides(d)[role]
+        if nuclide is None:
+            return
+        try:
+            scheme, level, b_up = first_state(nuclide, multipolarity)
+        except Exception:  # noqa: BLE001 - no ENSDF copy, or no such state: the user enters it
+            return
+        reaction["energy"] = f"{scheme.levels[level].energy.value:.10g} keV"
+        reaction["b_up"] = f"{b_up:.6g} e2fm{2 * int(multipolarity[1])}"
+        d.setdefault("levels", {})[role] = scheme.to_dict()
 
     def _index(self, which, kind: str = "detectors") -> int:
         n = len(self._draft.get(kind, []))
@@ -1347,10 +1407,10 @@ class Planner:
 
     # -- level schemes ----------------------------------------------------------------------------------------------
 
-    def level_nuclides(self) -> dict:
+    def level_nuclides(self, draft: Optional[dict] = None) -> dict:
         """The nuclide whose level scheme each role takes: the beam, and the target's most abundant nuclide (all of
-        them are listed under "target_choices")."""
-        d = self._draft
+        them are listed under "target_choices"); of the setup, or of ``draft`` (a setup being edited)."""
+        d = draft if draft is not None else self._draft
         out = {"beam": None, "target": None, "target_choices": []}
         try:
             z, a = parse_nuclide(d["beam"]["nuclide"])
@@ -1427,9 +1487,10 @@ class Planner:
                              f"level {level}")
         lam = int(multipolarity[1])
         d = self.draft
-        d["reaction"] = {"type": "coulex", "excite": "target" if role == "target" else "projectile",
-                         "energy": f"{scheme.levels[level].energy.value:.10g} keV", "multipolarity": multipolarity,
-                         "b_up": f"{b_up:.6g} e2fm{2 * lam}"}
+        d.setdefault("reaction", {}).update(
+            {"type": "coulex", "excite": "target" if role == "target" else "projectile",
+             "energy": f"{scheme.levels[level].energy.value:.10g} keV", "multipolarity": multipolarity,
+             "b_up": f"{b_up:.6g} e2fm{2 * lam}"})
         return self._apply(d)
 
     def _particle_energies(self, channel) -> list:
@@ -1545,4 +1606,4 @@ def _efficiency_at(source_run, name: str, energy_mev: float) -> tuple:
     return eff, eff * math.hypot(good[k][1][1] / good[k][1][0], INTERPOLATION_UNC)
 
 
-__all__ = ["EXPLAIN", "REGISTER", "TABS", "Planner", "Warning"]
+__all__ = ["EXPLAIN", "REGISTER", "TABS", "Planner", "Warning", "first_state"]

@@ -12,6 +12,7 @@ from .. import guide
 from ..analysis import SHIFT_H
 from ..record import record_css
 from ..planner import Planner
+from ..quantity import Quantity
 
 from .. import dataviews as dv
 from .figures import (CLOVER_FIELDS, REACTION_FIELDS, REACTION_TYPES, STYLE, THEMES, _shown, _value,
@@ -187,6 +188,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     def use(planner: Planner) -> None:
         state["planner"] = planner
         state["open"] = None
+        state["compound"] = False
         setup_panel.refresh()
         status_strip.refresh()
         refresh_results()
@@ -284,10 +286,53 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         with ui.grid(columns=2).classes("w-full gap-1"):
             for field, label, placeholder in fields:
                 v = values.get(field)
+                if (sec_name, field) in (("beam", "nuclide"), ("target", "material")):
+                    nuclide_picker(sec_name, field, v, placeholder)
+                    continue
                 inp = ui.input(label, value=_shown(field, v), placeholder=placeholder).props(
                     "dense outlined").classes("w-full")
                 bind(inp, sec_name, field)
                 help_icon(inp, sec_name, field)
+
+    def nuclide_picker(sec_name: str, field: str, value, placeholder: str) -> None:
+        """The beam's nuclide or the target's material as two choices, the element and its mass number (a target may
+        also be the element's natural mix, or a compound typed in), in place of one text field."""
+        target = sec_name == "target"
+        parts = wb.split_nuclide(value)
+        options = dict(wb.elements())
+        if target:
+            options = {wb.COMPOUND: "Compound or other material", **options}
+        compound = target and (state.get("compound") or (value and parts is None))
+        symbol = wb.COMPOUND if compound else (parts[0] if parts else None)
+
+        def set_element(new: str) -> None:
+            if new == wb.COMPOUND:
+                state["compound"] = True
+                setup_panel.refresh()
+                return
+            state["compound"] = False
+            a = wb.most_abundant(new)
+            edit(sec_name, field, (new if target else f"{a}{new}") if a else f"{next(iter(wb.mass_numbers(new)))}{new}")
+
+        el = ui.select(options, value=symbol if symbol in options else None, with_input=True,
+                       label="Target element" if target else "Beam element",
+                       on_change=lambda e: set_element(e.value)).props("dense outlined options-dense").classes("w-full")
+        help_icon(el, sec_name, field)
+        if compound:
+            inp = ui.input("Material", value=_shown(field, value), placeholder=placeholder).props(
+                "dense outlined").classes("w-full")
+            bind(inp, sec_name, field)
+            return
+        if symbol is None:
+            ui.label("")
+            return
+        masses = {str(a): label for a, label in wb.mass_numbers(symbol).items()}
+        if target:
+            masses = {wb.NATURAL: "natural mix", **masses}
+        current = str(parts[1]) if parts and parts[1] is not None else (wb.NATURAL if target else None)
+        ui.select(masses, value=current if current in masses else None, label="Mass number",
+                  on_change=lambda e: edit(sec_name, field, symbol if e.value == wb.NATURAL else f"{e.value}{symbol}")
+                  ).props("dense outlined options-dense").classes("w-full")
 
     @ui.refreshable
     def setup_panel():
@@ -325,7 +370,38 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             mul = ui.select(["E1", "E2", "E3"], value=reaction.get("multipolarity", "E2"), label="Multipolarity",
                             on_change=lambda e: edit("reaction", "multipolarity", e.value)).props("dense outlined")
             help_icon(mul, "reaction", "multipolarity")
+        state_picker(reaction)
         section("", REACTION_FIELDS, "reaction", reaction)
+
+    def state_picker(reaction: dict) -> None:
+        """The excited state, chosen from the excited nucleus's level scheme (read from ENSDF); choosing one fills in
+        its energy and B(Eλ↑) below, which can still be typed over."""
+        role = "target" if reaction.get("excite", "target") == "target" else "beam"
+        multipolarity = reaction.get("multipolarity", "E2")
+        scheme = P().experiment.levels.get(role) if not P().problems else None
+        choices = wb.states(scheme, multipolarity)
+        nuclide = P().level_nuclides()[role] or role
+        if not choices:
+            ui.label(f"No state of {nuclide} with a known B({multipolarity}↑) in the local ENSDF copy: enter the "
+                     "state's energy and B(Eλ↑) below.").classes("text-xs ps-muted")
+            return
+        try:
+            kev = Quantity.parse(str(reaction.get("energy"))).to("keV")
+        except Exception:  # noqa: BLE001 - no energy yet, or one being typed
+            kev = None
+        current = next((n for n in choices if kev is not None and abs(scheme.levels[n].energy.value - kev) < 0.5),
+                       None)
+
+        def pick(level) -> None:
+            if level is None or level == current:
+                return
+            try:
+                changed(P().use_state(role, level, multipolarity))
+            except ValueError as err:
+                ui.notify(str(err), type="warning")
+
+        ui.select(choices, value=current, label=f"State of {nuclide}",
+                  on_change=lambda e: pick(e.value)).props("dense outlined options-dense").classes("w-full")
 
     # -- figures and their export ---------------------------------------------------------------------------------
     def plot(fig, name: str, **options) -> None:

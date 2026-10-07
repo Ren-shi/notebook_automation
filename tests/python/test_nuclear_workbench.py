@@ -3,7 +3,7 @@ strip, new experiments and templates, the seven stages."""
 
 import pytest
 
-from physim.nuclear import guide
+from physim.nuclear import ensdf, guide
 from physim.nuclear import workbench as wb
 from physim.nuclear.planner import Planner
 
@@ -48,6 +48,47 @@ def test_an_elastic_run_with_gamma_detectors_has_no_gamma_rays(tmp_path):
     run = p.start_run("beam", duration="1 h", budget="5 s")
     assert run.gammas() is None and run.gammas(plain=True) is None
     assert len(run.events().columns["event"])
+
+
+@pytest.mark.skipif(not ensdf.available(), reason="no local copy of ENSDF (scripts/fetch_ensdf.py)")
+def test_choosing_coulex_on_the_card_fills_in_the_first_2plus_state():
+    p = Planner(wb.new_setup("62Ni", "237 MeV", "184Pt", measure="elastic"))
+    assert p.set("reaction", "type", "coulex")
+    exc = p.experiment.excitation
+    assert exc.excite == "target" and exc.energy_mev == pytest.approx(0.163, abs=1e-3)
+    assert p.experiment.levels["target"].nuclide == "184Pt"
+    # The other nucleus: its own state, not the target's.
+    assert p.set("reaction", "excite", "projectile")
+    assert p.experiment.excitation.energy_mev == pytest.approx(1.1729, abs=1e-3)
+    assert p.experiment.levels["beam"].nuclide == "62Ni"
+    # Values the user typed are kept when switching to elastic and back.
+    assert p.set("reaction", "energy", "1.2 MeV") and p.set("reaction", "type", "elastic")
+    assert p.set("reaction", "type", "coulex")
+    assert p.experiment.excitation.energy_mev == pytest.approx(1.2)
+
+
+def test_the_pickers_offer_elements_mass_numbers_and_compounds():
+    assert wb.elements()["Ni"].startswith("Ni · nickel")
+    masses = wb.mass_numbers("Ni")
+    assert masses[62] == "62 · 3.63 %" and 56 in masses  # stable with its abundance, and radioactive ones
+    assert wb.most_abundant("Pt") == 195 and wb.most_abundant("Tc") is None
+    assert wb.split_nuclide("62Ni") == ("Ni", 62) and wb.split_nuclide("Pt") == ("Pt", None)
+    assert wb.split_nuclide("CD2") is None and wb.split_nuclide("") is None
+
+
+@pytest.mark.skipif(not ensdf.available(), reason="no local copy of ENSDF (scripts/fetch_ensdf.py)")
+def test_the_state_picker_lists_states_with_a_known_b_up():
+    p = Planner(wb.new_setup("62Ni", "237 MeV", "184Pt", measure="coulex-target"))
+    choices = wb.states(p.experiment.levels["target"])
+    first = next(iter(choices))
+    assert choices[first].startswith("2+ · 163.0 keV · B(E2↑) 39,477")
+    # A new target: its own state, and the old target's scheme is gone.
+    assert p.set("target", "material", "194Pt")
+    assert p.experiment.levels["target"].nuclide == "194Pt"
+    assert p.experiment.excitation.energy_mev == pytest.approx(0.3285, abs=1e-3)
+    # The beam is not the excited nucleus: changing it leaves the target's state alone.
+    assert p.set("beam", "nuclide", "58Ni")
+    assert p.experiment.excitation.energy_mev == pytest.approx(0.3285, abs=1e-3)
 
 
 def test_every_card_has_a_consequence_that_follows_its_fields():
