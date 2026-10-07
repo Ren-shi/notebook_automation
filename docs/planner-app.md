@@ -16,12 +16,14 @@ It runs on your own computer, in your web browser. There are no accounts, and no
 2. The installer needs no administrator rights. It puts everything, including its own copy of Python, in
    `%LOCALAPPDATA%\Programs\physim planner`, and adds **physim planner** to the Start menu (and, if you tick the
    box, to the desktop).
-3. Click **physim planner**. Your browser opens the planner after a few seconds. There is no window to keep open:
-   the planner stops by itself a minute after you close its last browser tab. Clicking the shortcut again while it
-   runs just opens another tab.
+3. Click **physim planner**. The planner opens in its own window after a few seconds (on Edge WebView2, which
+   Windows 10 and 11 bring). Closing the window stops it. Clicking the shortcut again while it runs opens the
+   running planner.
 4. To remove it: *Settings → Apps → physim planner → Uninstall*. To update, run a newer installer over the old one.
 
-If the browser does not open, the log is in `%LOCALAPPDATA%\physim\planner.log`.
+If the window does not open, the log is in `%LOCALAPPDATA%\physim\planner.log`. The browser is still there:
+`physim app` (or the shortcut's command with `--browser`) opens the planner in a browser tab, for a planner on a
+server that others reach from their own machines.
 
 **If you have never used Python (macOS, Linux, or Windows without the installer):**
 
@@ -45,6 +47,9 @@ If the browser does not open, the log is in `%LOCALAPPDATA%\physim\planner.log`.
 
 **If you already use Python:** `pip install "physim-engine[app,root]"`, then `physim app` (or `python -m physim app`).
 `physim app --example oxygen_on_lead_array` opens an example; `--port` picks another port.
+
+`physim app --window` opens the planner in its own window instead of a browser tab (`pip install
+"physim-engine[app,window]"` adds pywebview, 5 MB; without it the browser opens and the command says so).
 
 `physim app` listens only on this computer (127.0.0.1). `--host 0.0.0.0` serves the local network too, for
 example to show the planner on a lab PC; anyone on that network can then open it.
