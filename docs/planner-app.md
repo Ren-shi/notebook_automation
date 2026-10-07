@@ -239,7 +239,10 @@ The tabs are the stages of an experiment, left to right:
   page, or download it as a zip with the run record, the setup, the beam-time report and every run's data; or
   download the whole experiment folder. Below it, the beam-time report of the current setup and the run record,
   which now explains the run's counters and gates as well as the plan's numbers.
-- **Physics:** kinematics, energy loss, trajectories and the excitation, as a reference.
+- **Physics:** the physics behind the numbers, as a reference, in the order of the physics register: nuclear
+  data and level schemes, kinematics, energy loss, the Rutherford orbit, the detectors and the γ-ray response,
+  rates and events, and Coulomb excitation. Each section links to its register page and names the tests behind it.
+  **See the physics** in a number's explanation, or the flask on a setup card, opens the section it belongs to.
 
 Each result opens with **How to read this**, using your numbers, and ends with an **Explain** panel giving the
 formula, the assumptions and where they stop being valid.

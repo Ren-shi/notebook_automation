@@ -78,6 +78,46 @@ TEMPLATES = (
     ("blank", "Blank: one detector, chosen from the kinematics", None),
 )
 
+#: The Physics tab's sections, in the order of the physics register: (key, title, register page, the tests that
+#: validate it). Each holds panels that need no run.
+PHYSICS = (
+    ("data", "Nuclear data: masses and level schemes", "physics-register/nuclear-data",
+     ("test_nuclear_data.py", "test_nuclear_levels.py")),
+    ("kinematics", "Two-body kinematics", "physics-register/kinematics", ("test_nuclear_kinematics.py",)),
+    ("stopping", "Energy loss and straggling", "physics-register/stopping", ("test_nuclear_stopping.py",)),
+    ("rutherford", "Rutherford scattering: the orbit and the safe distance", "physics-register/rutherford",
+     ("test_nuclear_rutherford.py",)),
+    ("detectors", "Detectors: solid angles and the γ-ray response", "physics-register/detectors",
+     ("test_nuclear_detectors.py", "test_nuclear_response.py")),
+    ("rates", "Count rates and events", "physics-register/rates-and-events",
+     ("test_nuclear_validation.py", "test_nuclear_events.py")),
+    ("coulex", "Coulomb excitation: the excitation, the correlation and the Doppler shift", "theory/coulex",
+     ("test_nuclear_coulex.py", "test_nuclear_orientation.py", "test_nuclear_gamma_events.py")),
+)
+
+#: Which Physics section shows the physics behind a number: by the key of its explanation (the ? of the Plan, the
+#: Analysis and the run record) or of a setup card.
+PHYSICS_FOR = {
+    "solid_angle": "detectors", "rate": "rates", "counts": "rates", "beam_time": "rates",
+    "excitation_probability": "coulex", "gamma_efficiency": "detectors", "coincidences": "coulex",
+    "doppler": "coulex", "area": "coulex", "yield": "coulex", "mean_probability": "coulex", "b_e2": "coulex",
+    "weisskopf": "data", "beta2": "data", "q0": "data", "lifetime": "data", "uncertainty": "rates",
+    "run_rate": "rates", "run_counts": "rates", "run_busy": "rates", "run_live": "rates",
+    "run_coincidences": "coulex",
+    "beam": "rutherford", "target": "stopping", "run": "rates", "detector": "detectors", "gamma": "detectors",
+}
+
+
+def physics_for(key: str) -> str:
+    """The Physics section for an explanation's key, or a setup card's ("detector:2" → "detectors")."""
+    base = key.split(":")[0]
+    if base.startswith("gate_"):
+        return "kinematics"  # a gate sorts the particles by their kinematic lines
+    if base.startswith("compare_"):
+        return "rates"
+    return PHYSICS_FOR.get(base, "coulex")
+
+
 #: What the runs do not simulate yet, with the backlog item that adds it: the realism is claimed only where it holds.
 NOT_SIMULATED = (
     (71, "Cascades", "each excitation emits one γ ray, so there are no true γ–γ coincidences and no lines from "
@@ -404,5 +444,5 @@ def new_setup_notes(experiment) -> list:
     return list(getattr(experiment, "_new_setup_notes", []))
 
 
-__all__ = ["GROUPS", "MEASUREMENTS", "NOT_SIMULATED", "STAGES", "TEMPLATES", "Decision", "checks", "decisions", "new_setup",
+__all__ = ["GROUPS", "MEASUREMENTS", "NOT_SIMULATED", "PHYSICS", "PHYSICS_FOR", "physics_for", "STAGES", "TEMPLATES", "Decision", "checks", "decisions", "new_setup",
            "new_setup_notes", "status_strip", "template"]
