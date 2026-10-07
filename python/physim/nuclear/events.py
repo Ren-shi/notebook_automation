@@ -67,6 +67,8 @@ COLUMNS = {
     "phi": "lab azimuth of the track, degrees",
     "theta_cm": "CM angle of the ejectile, degrees",
     "weight": "rate this particle stands for, per second",
+    "x": "where on the target the reaction happened, across the beam (the spot or the halo), mm",
+    "y": "the same, vertically, mm",
 }
 
 
@@ -172,6 +174,10 @@ def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
         "faces": faces,
         "max_path_factor": MAX_PATH_FACTOR,
         "species": species,
+        # The beam halo (backlog item 74): a share of the beam spread evenly over the frame's aperture.
+        "halo_fraction": (_q(experiment.beam.halo_fraction).to("%") / 100
+                          if experiment.beam.halo_fraction is not None else 0.0),
+        "halo_radius": _q(experiment.beam.halo_radius).to("mm") if experiment.beam.halo_radius is not None else 0.0,
     }
     return config, used
 

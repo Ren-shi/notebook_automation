@@ -56,7 +56,8 @@ from .events import Events, simulate
 from .gamma import cascade_excitation, excitation_of
 from .kinematics import TwoBody
 from .quantity import Quantity
-from .rates import Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels, exit_energy, stack, stopping
+from .rates import (Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels, exit_energy, stack, stopping,
+                    tilt_deg)
 from .response import FWHM_PER_SIGMA, Response, compton_edge
 
 #: Lines of the room background and their typical relative strengths (counts, not intensities): ⁴⁰K, the
@@ -507,11 +508,17 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     energy_lab = e0s * np.sqrt(1 - beta**2) / (1 - beta * np.einsum("ij,ij->i", lab, nvel))
 
     # -- which crystal, and what it records ------------------------------------------------------------------
+    # The γ ray leaves from where the reaction happened: the beam spot or halo moves it off the axis (item 74).
+    origin = np.zeros((n, 3))
+    if "x" in c:
+        tilt = math.radians(tilt_deg(experiment))
+        origin[:, 0], origin[:, 1] = c["x"][rows], c["y"][rows]
+        origin[:, 2] = -origin[:, 0] * math.tan(tilt)
     along = lab @ normals.T                                          # (n, crystals)
     dist = np.linalg.norm(centres, axis=1)
     with np.errstate(divide="ignore", invalid="ignore"):
-        t = np.where(along > 1e-9, dist[None, :] / along, np.inf)
-    point = lab[:, None, :] * t[:, :, None]
+        t = np.where(along > 1e-9, (dist[None, :] - origin @ normals.T) / along, np.inf)
+    point = origin[:, None, :] + lab[:, None, :] * t[:, :, None]
     inside = np.linalg.norm(point - centres[None, :, :], axis=2) <= radii[None, :]
     t = np.where(inside, t, np.inf)
     which = np.argmin(t, axis=1)

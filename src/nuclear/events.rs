@@ -109,6 +109,11 @@ pub struct Generator {
     /// the same physics, but the random numbers are drawn in another order than without it, so a
     /// seed gives other events; used by the real-statistics runs, where most tracks miss.
     pub skip_misses: bool,
+    /// A beam halo: this share of the beam particles arrives spread evenly over a disc of
+    /// `halo_radius` (mm, the target frame's aperture) instead of the spot. 0 for none; with 0
+    /// no random number is drawn for it, so a seed gives the same events as without the option.
+    pub halo_fraction: f64,
+    pub halo_radius: f64,
 }
 
 /// One particle that reached a detector face.
@@ -129,6 +134,9 @@ pub struct Record {
     pub energy_face: f64,
     pub deposited: f64,
     pub measured: f64,
+    /// Where on the target the reaction happened (the beam spot or halo), mm.
+    pub x: f64,
+    pub y: f64,
     /// Reached the face with energy left and was measured above threshold.
     pub counted: bool,
     /// Lab angles of the track and the CM angle of the ejectile, radians.
@@ -271,7 +279,12 @@ impl Generator {
             .min(cumulative.len() - 1);
         let ch = &self.channels[k];
         let mut e = self.beam_energy + self.energy_sigma * d.normal();
-        let (sx, sy) = (self.spot_sigma * d.normal(), self.spot_sigma * d.normal());
+        let (sx, sy) = if self.halo_fraction > 0.0 && d.uniform() < self.halo_fraction {
+            let (r, a) = (self.halo_radius * d.uniform().sqrt(), TAU * d.uniform());
+            (r * a.cos(), r * a.sin())
+        } else {
+            (self.spot_sigma * d.normal(), self.spot_sigma * d.normal())
+        };
         let (st, ct) = self.tilt.sin_cos();
         // The spot lies on the tilted target plane n · p = 0, with n = (sin t, 0, cos t).
         let source = Vec3::new(sx, sy, -sx * st / ct);
@@ -398,6 +411,8 @@ impl Generator {
                 phi: ph.rem_euclid(TAU),
                 theta_cm,
                 weight,
+                x: sx,
+                y: sy,
             });
         }
     }
@@ -493,6 +508,8 @@ impl Generator {
             faces: vec![disc(30.0, 1), disc(60.0, 1), disc(135.0, 1), cd],
             max_path_factor: 1e3,
             skip_misses: false,
+            halo_fraction: 0.0,
+            halo_radius: 0.0,
         }
     }
 }

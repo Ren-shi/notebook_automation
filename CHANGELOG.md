@@ -43,6 +43,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Contaminant reactions, beam spot and halo (backlog 74). `[target] contaminants` (`[["C", "10 ug/cm2"], ...]`) adds
+  thin layers on the target's downstream face, each a channel of elastic scattering with its own kinematic line
+  on the Data tab's energy-against-ring view; the backing's lines are drawn too. `[beam] halo_fraction` and
+  `halo_radius` spread that share of the beam evenly over the frame's aperture, in the event generator. The
+  generator now reports where each reaction happened (`x`, `y`). The γ rays leave from that point, so the spot and
+  the halo blur both the particle and the γ side of the Doppler correction, and the scattering angles sampled reach
+  as far as the halo does. Not included: fusion-evaporation and transfer, and particles that hit the frame itself.
 - Lifetimes (backlog 73): a level with a half-life in the setup's level scheme decays after a time drawn from its
   lifetime, with the levels above it adding theirs in a cascade. Meanwhile the nucleus slows down along its path
   through the target and backing (the time to stop is ∫ dR / (ρ v) from the stopping tables and the layer

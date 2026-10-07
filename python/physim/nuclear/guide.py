@@ -83,6 +83,15 @@ HELP = {
                                       "under the peak."),
     ("run", "dead_time"): _h("Time the acquisition is busy after each count (non-paralysable); empty for none.",
                              "2–10 µs", "a smaller live fraction at high rates: every count is scaled down."),
+    ("beam", "halo_fraction"): _h("Share of the beam outside the spot, spread over the target frame's aperture "
+                                  "(the halo).", "0–2 %", "blurred kinematic lines and a broader Doppler-corrected "
+                                  "peak."),
+    ("beam", "halo_radius"): _h("Radius over which the halo is spread: the target frame's aperture.", "5–10 mm",
+                                "the halo's particles come from farther off the axis."),
+    ("target", "contaminants"): _h("Thin layers of other material on the target's downstream face, as a material "
+                                   "and an areal density each: carbon build-up, oxidation.",
+                                   "C 5–20 µg/cm², O a few µg/cm²",
+                                   "more elastic scattering on light nuclei: lines of their own in every ring."),
     ("run", "shaping_time"): _h("Shaping time of the γ-ray amplifiers: two γ rays in one crystal closer than twice "
                                 "it pile up into one signal; empty for no pile-up.", "2–6 µs for germanium",
                                 "more pile-up at high rates: lost peak counts and a shoulder above each peak."),

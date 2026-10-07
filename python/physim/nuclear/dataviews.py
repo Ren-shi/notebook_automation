@@ -170,6 +170,35 @@ def kinematic_lines(experiment, detector: str) -> list:
         except ValueError:
             pass
     out = []
+    # The other layers (the backing and the contaminants): their elastic scattering, a line for each nuclide.
+    for j, lay in enumerate(layers):
+        for key, share in lay.nuclides.items():
+            nuc = data.nuclide(key).name
+            if (j == 0 and nuc == target) or share < 0.01 * sum(lay.nuclides.values()):
+                continue
+            e_layer = float(beam_energy_at(experiment, j, [lay.thickness / 2], layers)[0])
+            try:
+                tb = TwoBody(ion, nuc, e_layer)
+            except ValueError:
+                continue
+            for particle, species in (("ejectile", ion), ("recoil", nuc)):
+                e = np.asarray(tb.at_lab(theta, particle)[0].energy, dtype=float)
+                ok = np.isfinite(e) & (e > 0)
+                if not ok.any():
+                    continue
+                e_out = exit_energy(experiment, layers, j, np.full(ok.sum(), lay.thickness / 2), species, e[ok],
+                                    dirs[ok])
+                resp = array.response(g.name, species)
+                cos_i = np.clip(-(dirs[ok] @ g.n), 1e-6, 1.0)
+                dep = np.array([float(np.asarray(resp.deposited(np.array([x]),
+                                                                float(np.degrees(np.arccos(ci)))))[0])
+                                for x, ci in zip(e_out, cos_i)])
+                keep = dep > 0
+                if keep.any():
+                    what = f"scattered {ion} on {nuc}" if particle == "ejectile" else f"{nuc} recoil"
+                    out.append({"label": f"{what} ({lay.name})", "group": "elastic", "particle": particle,
+                                "layer": lay.name, "rings": [r for r, k in zip(np.array(rings)[ok], keep) if k],
+                                "energy": [float(x) for x in dep[keep]]})
     for group, tb in kinds:
         for particle, species in (("ejectile", ion), ("recoil", target)):
             e = np.asarray(tb.at_lab(theta, particle)[0].energy, dtype=float)

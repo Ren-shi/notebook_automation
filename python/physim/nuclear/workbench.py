@@ -35,10 +35,12 @@ STAGES = (("setup", "Setup"), ("plan", "Plan"), ("run", "Run"), ("data", "Data")
 BEAM_FIELDS = [("nuclide", "Nuclide", "4He"), ("energy", "Energy", "5.5 MeV or 4 MeV/u"),
                ("current", "Current", "1 pnA or 10 enA")]
 BEAM_MORE = [("charge_state", "Charge state", "6"), ("energy_spread", "Energy spread (FWHM)", "0.1 %"),
-             ("spot_size", "Spot size (FWHM)", "2 mm")]
+             ("spot_size", "Spot size (FWHM)", "2 mm"), ("halo_fraction", "Halo (share of the beam)", "1 %"),
+             ("halo_radius", "Halo radius (frame aperture)", "8 mm")]
 TARGET_FIELDS = [("material", "Material", "Au, 208Pb, CD2"), ("thickness", "Thickness", "0.5 mg/cm2 or 1 um")]
 TARGET_MORE = [("position", "Position along the beam", "0 mm"), ("tilt", "Tilt", "0 deg"),
-               ("density", "Density", "19.3 g/cm3")]
+               ("density", "Density", "19.3 g/cm3"),
+               ("contaminants", "Contaminants", "C 10 ug/cm2, O 3 ug/cm2")]
 BACKING_FIELDS = [("material", "Backing material", "C"), ("thickness", "Backing thickness", "20 ug/cm2")]
 REACTION_FIELDS = [("energy", "State energy", "1.454 MeV"), ("b_up", "B(Eλ↑)", "0.0695 e2b2 or 695 e2fm4")]
 REACTION_TYPES = {"elastic": "Elastic (Rutherford) scattering", "coulex": "Coulomb excitation"}
@@ -129,8 +131,10 @@ NOT_SIMULATED = (
     (73, "Lifetimes in part", "a state with a half-life in the level scheme slows down and decays on its way, "
                               "but without angular straggling or time dilation; a state without one decays after "
                               "the target"),
-    (74, "Contaminant reactions", "no scattering on carbon, oxygen or other contaminants of the target and backing"),
-    (74, "Beam halo", "the beam spot is a Gaussian of the setup's spot size; no halo on a frame or the chamber"),
+    (74, "Contaminant reactions in part", "elastic scattering on the backing and on the [target] contaminants is "
+                                          "simulated; fusion-evaporation and transfer channels are not"),
+    (74, "Beam halo in part", "the halo spreads over the frame's aperture and blurs the lines; particles that hit "
+                              "the frame itself are not followed"),
 )
 
 #: What a new experiment can measure. (key, label)
