@@ -91,10 +91,34 @@ experiment that the user can see and rearrange.
 | 6 | 58 | Multi-step excitation, reorientation and the prolate–oblate comparison |
 | 7 | 59–62 | Tracks, movable target, desktop window, add-back |
 
+## Redesign (2026-10-07)
+
+Items 50–62 built the physics; the app that exposes it grew one block per item and does not read like a lab. The
+review of 2026-10-07 settled the following, written up as items 63–74:
+
+- **The lab's model:** an *experiment* (name, setup, runs) with *runs* of a duration (beam, source, alignment),
+  each keeping its setup snapshot; one dataset per run that every view reads; the setup locked while a run is
+  in progress; a run marked stale when the physics of the setup changes afterwards. (63)
+- **Real statistics for the beam time:** unweighted events for the first part of the run (10 min by default, up
+  to an hour), the rest scaled and labelled; compact columns in a compressed `.npz` per run (about 30 bytes per
+  event); stop and extend. (63)
+- **One mode,** the setup as a list of decisions with their consequences, checks always visible, a status strip,
+  experiments instead of the example drop-down (the examples become templates). (64)
+- **Tabs left to right as the stages of the experiment:** Setup · Plan · Run · Data · Analysis · Report ·
+  Physics (the register as a reference, last). (64–70)
+- **The Run tab:** one button, a duration, live counters that are the Plan's numbers measured, watch events,
+  a "not simulated" list. (66)
+- **The Data tab:** every spectrum visible at once; Doppler correction, gates, randoms, add-back as operations
+  applied by the user; gates and conditions as named objects reused by the analysis; energy-against-ring and
+  energy-against-crystal views; run overlays; export. (67)
+- **Analysis and Report read the run** and show predicted against measured. (68, 69)
+- **Physics still missing** from the runs is on the list, not in the claims: cascades, summing and pile-up,
+  lifetimes, contaminants and beam spot. (71–74)
+
 ## Parked
 - **Educational mode:** historical experiments (Rutherford, Compton, Chadwick) as limited-movement scenes with
   modern equipment. It reuses the scene of item 52.
-- **Lifetimes:** decays inside the target or a backing, with stopped and shifted components.
+- **Lifetimes:** now item 73.
 - **Deorientation** of the angular correlation in vacuum.
 - **Radioactive beams:** mixed beams and decay background from stopped beam. The design leaves room for both.
 - **GRSISort export layout.**
