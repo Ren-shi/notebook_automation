@@ -207,12 +207,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     async def create_experiment(beam: str, energy: str, target: str, thickness: str, measure: str,
                                 template_key: str, name: str) -> None:
         def make() -> tuple:
-            if template_key and template_key != "blank":
-                exp = wb.template(template_key)
-                notes = []
-            else:
-                exp = wb.new_setup(beam, energy, target, thickness or "0.5 mg/cm2", measure)
-                notes = wb.new_setup_notes(exp)
+            exp = wb.new_setup(beam, energy, target, thickness or "0.5 mg/cm2", measure,
+                               detectors_from=template_key)
+            notes = wb.new_setup_notes(exp)
             planner = Planner(exp)
             planner.create_experiment(name or None)
             planner.rates()
@@ -1750,7 +1747,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         tmpl = ui.select({k: label for k, label, _ in wb.TEMPLATES}, value="blank", label="Detectors from").props(
             "dense outlined").classes("w-full")
         name = ui.input("Name (made from the beam and target if empty)").props("dense outlined").classes("w-full")
-        ui.label("A template brings its own beam and target as well as its detectors.").classes("text-xs ps-muted")
+        ui.label("A template brings only its detectors; the beam, target and measurement are the ones above.").classes(
+            "text-xs ps-muted")
         ui.button("Make the experiment", icon="science",
                   on_click=lambda: create_experiment(beam.value, energy.value, target.value, thickness.value,
                                                      measure.value, tmpl.value, name.value)).props(

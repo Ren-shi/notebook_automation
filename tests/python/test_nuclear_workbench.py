@@ -30,6 +30,17 @@ def test_new_experiment_without_a_form_of_every_field(tmp_path):
     assert wb.new_setup("208Pb", "1 GeV", "12C").detectors[0].theta.to("deg") == 45
 
 
+def test_a_template_brings_only_its_detectors():
+    exp = wb.new_setup("62Ni", "237 MeV", "194Pt", measure="elastic", detectors_from="coulex-cd-clovers")
+    d = exp.to_dict()
+    assert d["beam"]["nuclide"] == "62Ni" and d["beam"]["energy"] == "237 MeV"
+    assert d["target"]["material"] == "194Pt"
+    template = wb.template("coulex-cd-clovers").to_dict()
+    assert [x["name"] for x in d["detectors"]] == [x["name"] for x in template["detectors"]]
+    assert [x["name"] for x in d["gamma_detectors"]] == [x["name"] for x in template["gamma_detectors"]]
+    assert len(wb.new_setup("62Ni", "237 MeV", "194Pt", detectors_from="blank").detectors) == 1
+
+
 def test_every_card_has_a_consequence_that_follows_its_fields():
     p = Planner.example("coulex_ni58")
     cards = wb.decisions(p)
