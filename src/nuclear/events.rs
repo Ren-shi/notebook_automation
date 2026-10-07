@@ -364,7 +364,11 @@ impl Generator {
                     ep = self.cross(&mut d, species, layer.material, ep, path(dz));
                 }
             }
-            let best = if self.skip_misses { early } else { nearest(source, dir) };
+            let best = if self.skip_misses {
+                early
+            } else {
+                nearest(source, dir)
+            };
             let Some((f, hit)) = best else { continue };
             let face = &self.faces[f];
             let (mut deposited, mut measured) = (0.0, 0.0);
