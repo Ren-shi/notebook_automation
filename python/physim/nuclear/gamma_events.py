@@ -53,7 +53,7 @@ import numpy as np
 from . import angular, data
 from .detectors import Array
 from .events import Events, simulate
-from .gamma import excitation_of
+from .gamma import cascade_excitation, excitation_of
 from .kinematics import TwoBody
 from .quantity import Quantity
 from .rates import Rates, _q, beam_energy_at, beam_ion, channels, exit_energy, stack
@@ -72,6 +72,9 @@ ROOM_LINES = (
 GAMMA_COLUMNS = {
     "event": "event number, as in the particle events",
     "particle": "row of the particle events used for the Doppler correction",
+    "cascade": "which decay of the excited nucleus the γ ray belongs to (γ rays of one cascade share it)",
+    "initial": "level the γ ray leaves (index in the level scheme; 1 without a scheme)",
+    "final": "level the γ ray goes to",
     "crystal": "index into GammaEvents.crystals",
     "energy0": "γ-ray energy in the nucleus's rest frame, MeV",
     "energy_lab": "γ-ray energy in the laboratory (Doppler shifted), MeV",
@@ -196,22 +199,66 @@ class GammaEvents:
     def _in(self, c: Crystal, name: str) -> bool:
         return c.name == name or (c.element is not None and c.name.rsplit(" ", 1)[0] == name)
 
+    def _cascades(self) -> np.ndarray:
+        """Which cascade each γ ray belongs to (the particle row, for γ rays made before cascades were kept)."""
+        return self.columns["cascade"] if "cascade" in self.columns else self.columns["particle"]
+
+    def gamma_gamma(self, first: Optional[tuple] = None, second: Optional[tuple] = None,
+                    first_detector: Optional[str] = None, second_detector: Optional[str] = None,
+                    corrected: Optional[str] = None) -> tuple:
+        """True γ–γ coincidences: cascades with one counted γ ray in ``first_detector`` (any, if None) with an
+        energy in the window ``first`` (MeV; any if None) and another in ``second_detector`` in the window
+        ``second``. ``corrected`` is None (measured energies), "projectile" or "recoil". Returns (per second, its
+        statistical error); each cascade counts once."""
+        key = {None: "measured", "projectile": "corrected_projectile", "recoil": "corrected_recoil"}[corrected]
+        x = self.columns[key]
+        ok = self.columns["counted"]
+
+        def mask(window, name):
+            m = ok.copy()
+            if window is not None:
+                m &= (x >= window[0]) & (x <= window[1])
+            if name is not None:
+                m &= self._crystal_mask(name)
+            return m
+
+        a, b = mask(first, first_detector), mask(second, second_detector)
+        cas = self._cascades()
+        ia, ib = np.flatnonzero(a), np.flatnonzero(b)
+        if not len(ia) or not len(ib):
+            return 0.0, 0.0
+        # Pairs of different γ rays of one cascade.
+        by_cascade: dict = {}
+        for i in ib:
+            by_cascade.setdefault(int(cas[i]), []).append(i)
+        weights = {}
+        for i in ia:
+            others = [j for j in by_cascade.get(int(cas[i]), ()) if j != i]
+            if others:
+                weights[int(cas[i])] = float(self.columns["weight"][i])
+        w = np.array(list(weights.values()))
+        return float(w.sum()), float(math.sqrt(np.sum(w**2)))
+
     def coincidences(self) -> dict:
         """The particle × γ-detector matrix: {"true": {(detector, γ detector): counts in the run},
-        "random": {...}, "gamma_gamma_random": {(γ detector, γ detector): counts}} after dead time. True γ–γ
-        coincidences need a cascade, which one excited state does not give."""
+        "random": {...}, "gamma_gamma_random": {(γ detector, γ detector): counts}, "gamma_gamma_true": {...}}
+        after dead time. True γ–γ coincidences come from cascades (a level scheme with more than one transition);
+        one excited state gives none."""
         t = self.events.beam_time_s * self.live_fraction
         true, random = {}, {}
         for d in self.events.detectors:
             for g in self.detector_names():
                 true[(d, g)] = self.counts(g, d)
                 random[(d, g)] = self.random_rate(g, d) * t
-        gg = {}
+        gg, gg_true = {}, {}
         names = self.detector_names()
+        cascades = len(np.unique(self._cascades())) < len(self)
         for i, a in enumerate(names):
             for b in names[i + 1:]:
                 gg[(a, b)] = self.gamma_random_rate(a, b) * t
-        return {"true": true, "random": random, "gamma_gamma_random": gg}
+                gg_true[(a, b)] = (self.gamma_gamma(first_detector=a, second_detector=b)[0] * t if cascades
+                                   else 0.0)
+        return {"true": true, "random": random, "gamma_gamma_random": gg, "gamma_gamma_true": gg_true}
 
     def spectrum(self, crystal: Optional[str] = None, detector: Optional[str] = None,
                  corrected: Optional[str] = None, bins: int = 400, range: Optional[tuple] = None,
@@ -328,7 +375,6 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     e_mid = ex.beam_energy
     tb = TwoBody(ex.beam, ex.target, e_mid, excitation_mev=e0, excite="recoil" if excite_recoil else "ejectile")
     m_emitter = data.nuclide(emitter).nuclear_mass_mev + e0
-    array = Array.from_experiment(experiment)
 
     # -- the crystals and their responses ----------------------------------------------------------------------
     # The chain starts from the bare crystals; add-back and suppression are applied to the deposits afterwards.
@@ -369,28 +415,29 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     velocity, beta, gam = np.repeat(velocity, k_rep, axis=0), np.repeat(beta, k_rep), np.repeat(gam, k_rep)
     n = len(rows)
 
+    excited_rows = n // k_rep
+    # -- the cascade: which levels each excitation passes through, and its γ rays (backlog item 71) -----------------
+    cex = cascade_excitation(experiment)
+    cascade = np.arange(n)
+    initial = np.ones(n, dtype=int)
+    final = np.zeros(n, dtype=int)
+    e0s = np.full(n, e0)
+    if cex is not None:
+        src, initial, final, e0s = _cascade_steps(cex, theta_cm, rng)
+        cascade = src
+        rows, theta_cm, phi_ej = rows[src], theta_cm[src], phi_ej[src]
+        velocity, beta, gam = velocity[src], beta[src], gam[src]
+        n = len(rows)
+
     # -- emission in the rest frame, with the correlation ----------------------------------------------------
-    grid, coeff, _ = ex.coefficient_table(1, 0)
-    a_kq = {key: np.interp(theta_cm, grid, v.real) + 1j * np.interp(theta_cm, grid, v.imag)
-            for key, v in coeff.items()}
-    bound = sum(np.abs(v) for v in a_kq.values())  # W × 4π ≤ Σ |a_kq|, since |Y_kq| ≤ √((2k+1)/4π)
-    local = np.zeros((n, 3))
-    todo = np.ones(n, dtype=bool)
-    for _ in range(200):
-        idx = np.flatnonzero(todo)
-        if not len(idx):
-            break
-        u = rng.uniform(-1.0, 1.0, len(idx))
-        ph = rng.uniform(0.0, 2 * math.pi, len(idx))
-        th = np.arccos(u)
-        w = np.zeros(len(idx))
-        for (k, q), v in a_kq.items():
-            w += (v[idx] * math.sqrt(4 * math.pi / (2 * k + 1)) * angular.spherical_harmonic(k, q, th, ph)).real
-        accept = rng.uniform(0.0, 1.0, len(idx)) * bound[idx] <= w
-        hit = idx[accept]
-        local[hit] = np.c_[np.sin(th[accept]) * np.cos(ph[accept]), np.sin(th[accept]) * np.sin(ph[accept]),
-                           u[accept]]
-        todo[hit] = False
+    if cex is None:
+        local = _rest_directions(ex.coefficient_table(1, 0), theta_cm, rng)
+    else:
+        # Each transition with its own orientation (with the feeding from above), at the event's CM angle.
+        local = np.zeros((n, 3))
+        for i_lev, f_lev in sorted(set(zip(initial.tolist(), final.tolist()))):
+            m = (initial == i_lev) & (final == f_lev)
+            local[m] = _rest_directions(cex.coefficient_table(i_lev, f_lev), theta_cm[m], rng)
     # The orbit's frame in the laboratory for each event (as Populated.axes, vectorised).
     th = np.radians(theta_cm)
     ph = np.radians(phi_ej)
@@ -411,7 +458,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     perp = rest - cos_r[:, None] * nvel
     scale = 1 / (gam * (1 + beta * cos_r))
     lab = _unit(perp * scale[:, None] + par[:, None] * nvel)
-    energy_lab = e0 * np.sqrt(1 - beta**2) / (1 - beta * np.einsum("ij,ij->i", lab, nvel))
+    energy_lab = e0s * np.sqrt(1 - beta**2) / (1 - beta * np.einsum("ij,ij->i", lab, nvel))
 
     # -- which crystal, and what it records ------------------------------------------------------------------
     along = lab @ normals.T                                          # (n, crystals)
@@ -424,6 +471,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     which = np.argmin(t, axis=1)
     reached = np.isfinite(t[np.arange(n), which])
     rows, which, lab, energy_lab, beta = rows[reached], which[reached], lab[reached], energy_lab[reached], beta[reached]
+    cascade, initial, final, e0s = cascade[reached], initial[reached], final[reached], e0s[reached]
     weight = c["weight"][rows] / k_rep
     deposited = np.zeros(len(rows))
     measured = np.zeros(len(rows))
@@ -452,6 +500,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
                                                      kind, np.random.default_rng(seed + 2_000_003))
     rows, which, lab, energy_lab, beta = rows[keep], which[keep], lab[keep], energy_lab[keep], beta[keep]
     weight, deposited, measured, counted = weight[keep], deposited[keep], measured[keep], counted[keep]
+    cascade, initial, final, e0s = cascade[keep], initial[keep], final[keep], e0s[keep]
 
     # -- the Doppler correction from what the detectors know -------------------------------------------------
     corrected = doppler_correct(experiment, c, rows, which, measured)
@@ -459,14 +508,19 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     # -- singles, randoms, dead time ---------------------------------------------------------------------------
     bg = backgrounds(experiment, crystals, rates, bin_kev)
     excitation_rate, all_excitations = bg["excitation_rate"], bg["all_excitations"]
-    notes = [f"{len(rows)} γ rays from {n // k_rep} excited events with a detected particle ({k_rep} emissions "
+    notes = [f"{len(rows)} γ rays from {excited_rows} excited events with a detected particle ({k_rep} emissions "
              f"each); {ev.n_events} reactions "
              f"generated. The particle events stand for {excitation_rate:.3g} excitations/s with a detected "
              f"particle out of {all_excitations:.3g}/s in all."]
     if done.get("added_back") or done.get("suppressed"):
         notes.append(f"Add-back returned {done.get('added_back', 0)} γ rays to the full-energy peak; the shields "
                      f"rejected {done.get('suppressed', 0)}.")
-    cols = {"event": c["event"][rows], "particle": rows, "crystal": which, "energy0": np.full(len(rows), e0),
+    if cex is not None:
+        notes.append(f"Each excitation decays by the level scheme's cascade: {len(cex.transitions())} transitions "
+                     "followed, each with its own orientation; the angular correlation between successive γ rays of "
+                     "one cascade is not included.")
+    cols = {"event": c["event"][rows], "particle": rows, "cascade": cascade, "initial": initial, "final": final,
+            "crystal": which, "energy0": e0s,
             "energy_lab": energy_lab, "deposited": deposited, "measured": measured, "counted": counted,
             "theta": np.degrees(np.arccos(np.clip(lab[:, 2], -1, 1))),
             "phi": np.degrees(np.arctan2(lab[:, 1], lab[:, 0])), "beta": beta,
@@ -530,6 +584,82 @@ def backgrounds(experiment, crystals: list, rates: Optional[Rates] = None, bin_k
     return {"window_s": window, "dead_time_s": dead, "live_fraction": 1 / (1 + dead * total_rate),
             "particle_rate": particle_rate, "singles_rate": singles_rate, "singles_spectrum": singles_spectrum,
             "singles_edges": edges, "excitation_rate": excitation_rate, "all_excitations": all_excitations}
+
+
+def _rest_directions(table: tuple, theta_cm: np.ndarray, rng) -> np.ndarray:
+    """Unit vectors in the orbit's frame drawn from a transition's distribution W(θ, φ), its coefficients a_kq
+    (``table`` from :meth:`~physim.nuclear.orientation.Excitation.coefficient_table`) interpolated at each event's
+    CM angle; by acceptance against Σ |a_kq|."""
+    grid, coeff, _ = table
+    n = len(theta_cm)
+    a_kq = {key: np.interp(theta_cm, grid, v.real) + 1j * np.interp(theta_cm, grid, v.imag)
+            for key, v in coeff.items()}
+    bound = sum(np.abs(v) for v in a_kq.values())  # W × 4π ≤ Σ |a_kq|, since |Y_kq| ≤ √((2k+1)/4π)
+    local = np.zeros((n, 3))
+    todo = np.ones(n, dtype=bool)
+    for _ in range(200):
+        idx = np.flatnonzero(todo)
+        if not len(idx):
+            break
+        u = rng.uniform(-1.0, 1.0, len(idx))
+        ph = rng.uniform(0.0, 2 * math.pi, len(idx))
+        th = np.arccos(u)
+        w = np.zeros(len(idx))
+        for (k, q), v in a_kq.items():
+            w += (v[idx] * math.sqrt(4 * math.pi / (2 * k + 1)) * angular.spherical_harmonic(k, q, th, ph)).real
+        accept = rng.uniform(0.0, 1.0, len(idx)) * bound[idx] <= w
+        hit = idx[accept]
+        local[hit] = np.c_[np.sin(th[accept]) * np.cos(ph[accept]), np.sin(th[accept]) * np.sin(ph[accept]),
+                           u[accept]]
+        todo[hit] = False
+    return local
+
+
+def _cascade_steps(cex, theta_cm: np.ndarray, rng) -> tuple:
+    """The decay of each excitation through the level scheme: the level it starts in, drawn from the direct
+    excitation probabilities at its CM angle, then each step down by the scheme's branches (a converted transition
+    gives no γ ray). Returns (index of the excitation each γ ray belongs to, initial level, final level, energy in
+    the nucleus's frame in MeV), one entry per γ ray emitted."""
+    grid, states = cex.table()
+    starts = sorted(cex.paths)
+    p = np.array([[s.direct.get(lev, 0.0) for s in states] for lev in starts])
+    p_at = np.array([np.interp(theta_cm, grid, row) for row in p])  # (levels, events)
+    cum = np.cumsum(p_at, axis=0)
+    u = rng.uniform(0.0, 1.0, len(theta_cm)) * cum[-1]
+    pick = np.minimum((u[None, :] > cum).sum(axis=0), len(starts) - 1)
+    current = np.array(starts)[pick]
+    levels = cex.scheme.levels
+    decays: dict = {}
+    for (i, f) in cex.transitions():
+        decays.setdefault(i, []).append(cex.decay(i, f))
+    src, ini, fin = [], [], []
+    alive = np.ones(len(current), dtype=bool)
+    for _ in range(4 * len(levels) + 4):
+        idx = np.flatnonzero(alive)
+        if not len(idx):
+            break
+        for lev in np.unique(current[idx]):
+            here = idx[current[idx] == lev]
+            ways = decays.get(int(lev))
+            if not ways:
+                alive[here] = False
+                continue
+            share = np.array([d.branch for d in ways])
+            cum_b = np.cumsum(share / share.sum())
+            k = np.minimum((rng.uniform(0.0, 1.0, len(here))[:, None] > cum_b[None, :]).sum(axis=1), len(ways) - 1)
+            gamma_share = np.array([d.gamma / d.branch if d.branch > 0 else 0.0 for d in ways])[k]
+            emits = rng.uniform(0.0, 1.0, len(here)) < gamma_share
+            finals = np.array([d.final for d in ways])[k]
+            src.append(here[emits])
+            ini.append(np.full(emits.sum(), int(lev)))
+            fin.append(finals[emits])
+            current[here] = finals
+    if not src:
+        return (np.zeros(0, dtype=int), np.zeros(0, dtype=int), np.zeros(0, dtype=int), np.zeros(0))
+    src, ini, fin = np.concatenate(src), np.concatenate(ini), np.concatenate(fin)
+    energy = np.array([levels[i].energy.value - levels[f].energy.value for i, f in zip(ini, fin)]) * 1e-3
+    order = np.argsort(src, kind="stable")
+    return src[order], ini[order], fin[order], energy[order]
 
 
 def doppler_correct(experiment, columns: dict, rows: np.ndarray, crystal: np.ndarray, measured: np.ndarray) -> dict:

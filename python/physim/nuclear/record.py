@@ -395,7 +395,8 @@ def provenance(experiment) -> list:
 LEFT_OUT = (
     "Excitation in more than one step and the reorientation effect (first-order theory only).",
     "Lifetimes and deorientation: every state decays in flight with the orientation it was given.",
-    "Cascades: one γ ray per excitation, so no true γ–γ coincidences.",
+    "Cascades: followed through the level scheme when the setup has one (one γ ray per excitation otherwise); the "
+    "angular correlation between successive γ rays of a cascade is not included.",
     "Pile-up, summing, and reactions on contaminants of the target.",
     "Photon transport inside the crystals: the response is parametrised and typical unless measured.",
 )

@@ -159,6 +159,35 @@ def excitation_of(experiment, isotropic=None):
     return _excitation(beam, target, e_mid, exc.excite, exc.energy_mev, exc.multipolarity, exc.b_up_e2fm, flat)
 
 
+def cascade_excitation(experiment, isotropic=None):
+    """The :class:`~physim.nuclear.orientation.Excitation` of the excited nucleus's whole level scheme (the setup's
+    ``[levels]`` of the target or the beam, whichever the reaction excites), when its decays follow more than one
+    transition: then each excitation decays by a cascade (backlog item 71). None when the setup has no such scheme,
+    so a single state keeps the one-γ-ray chain of item 55."""
+    from . import data
+    from .orientation import Excitation
+
+    exc = experiment.excitation
+    if exc is None:
+        return None
+    role = "target" if exc.excite == "target" else "beam"
+    scheme = experiment.levels.get(role)
+    if scheme is None:
+        return None
+    layers = stack(experiment)
+    lay = layers[0]
+    target = data.nuclide(max(lay.nuclides.items(), key=lambda kv: kv[1])[0]).name
+    e_mid = round(float(beam_energy_at(experiment, 0, [lay.thickness / 2], layers)[0]), 9)
+    flat = (exc.emission == "isotropic") if isotropic is None else isotropic
+    try:
+        ex = Excitation(beam_ion(experiment), target, e_mid, scheme, excite=exc.excite, isotropic=flat)
+    except ValueError:
+        return None
+    if not ex.paths or len(ex.transitions()) < 2:
+        return None
+    return ex
+
+
 @lru_cache(maxsize=16)
 def _excitation(beam: str, target: str, e_mid: float, excite: str, e_star: float, multipolarity: str,
                 b_up: float, isotropic: bool):
