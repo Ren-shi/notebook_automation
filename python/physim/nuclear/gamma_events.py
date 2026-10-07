@@ -56,7 +56,7 @@ from .events import Events, simulate
 from .gamma import cascade_excitation, excitation_of
 from .kinematics import TwoBody
 from .quantity import Quantity
-from .rates import Rates, _q, beam_energy_at, beam_ion, channels, exit_energy, stack
+from .rates import Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels, exit_energy, stack, stopping
 from .response import FWHM_PER_SIGMA, Response, compton_edge
 
 #: Lines of the room background and their typical relative strengths (counts, not intensities): ⁴⁰K, the
@@ -434,6 +434,8 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     ph_em = np.where(is_emitter, phi_det, phi_det + 180.0)
     dir_em = _directions(th_em, ph_em)
     e_out = exit_energy(experiment, layers, 0, c["depth"][rows], emitter, e_em, dir_em)
+    # Kept for the lifetimes (backlog item 73): where and how fast each emitter starts.
+    start = {"energy": e_em, "direction": dir_em, "depth": c["depth"][rows]}
     gam = 1 + np.maximum(e_out, 0.0) / m_emitter
     beta = np.sqrt(np.maximum(1 - 1 / gam**2, 0.0))
     velocity = dir_em * beta[:, None]
@@ -441,6 +443,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     k_rep = max(int(gammas_per_event), 1)
     rows, theta_cm, phi_ej = np.repeat(rows, k_rep), np.repeat(theta_cm, k_rep), np.repeat(phi_ej, k_rep)
     velocity, beta, gam = np.repeat(velocity, k_rep, axis=0), np.repeat(beta, k_rep), np.repeat(gam, k_rep)
+    start = {k: np.repeat(v, k_rep, axis=0) for k, v in start.items()}
     n = len(rows)
 
     excited_rows = n // k_rep
@@ -455,7 +458,22 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
         cascade = src
         rows, theta_cm, phi_ej = rows[src], theta_cm[src], phi_ej[src]
         velocity, beta, gam = velocity[src], beta[src], gam[src]
+        start = {k: v[src] for k, v in start.items()}
         n = len(rows)
+
+    # -- lifetimes: the emitter slows down in the target and its backing before it decays (backlog item 73) ------
+    taus = _mean_lives(experiment, cex, initial)
+    stopped = np.zeros(n, dtype=bool)
+    if taus is not None and np.any(taus > 0):
+        lrng = np.random.default_rng(seed + 4_000_003)
+        draws = lrng.exponential(1.0, n) * taus
+        # A level fed from above starts its own clock when the level above decays: the times add up the cascade.
+        t_decay = _cumulative_by(cascade, draws)
+        e_at, stopped = _slowing(experiment, layers, start["depth"], start["direction"], emitter, start["energy"],
+                                 t_decay, m_emitter)
+        gam = 1 + np.maximum(e_at, 0.0) / m_emitter
+        beta = np.sqrt(np.maximum(1 - 1 / gam**2, 0.0))
+        velocity = start["direction"] * beta[:, None]
 
     # -- emission in the rest frame, with the correlation ----------------------------------------------------
     if cex is None:
@@ -500,6 +518,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     reached = np.isfinite(t[np.arange(n), which])
     rows, which, lab, energy_lab, beta = rows[reached], which[reached], lab[reached], energy_lab[reached], beta[reached]
     cascade, initial, final, e0s = cascade[reached], initial[reached], final[reached], e0s[reached]
+    stopped = stopped[reached]
     weight = c["weight"][rows] / k_rep
     deposited = np.zeros(len(rows))
     measured = np.zeros(len(rows))
@@ -532,6 +551,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     rows, which, lab, energy_lab, beta = rows[keep], which[keep], lab[keep], energy_lab[keep], beta[keep]
     weight, deposited, measured, counted = weight[keep], deposited[keep], measured[keep], counted[keep]
     cascade, initial, final, e0s = cascade[keep], initial[keep], final[keep], e0s[keep]
+    stopped = stopped[keep]
 
     # -- the Doppler correction from what the detectors know -------------------------------------------------
     corrected = doppler_correct(experiment, c, rows, which, measured)
@@ -548,6 +568,9 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
                      f"rejected {done.get('suppressed', 0)}.")
     if summed:
         notes.append(f"{summed} pairs of γ rays of one cascade summed in a crystal.")
+    if taus is not None and np.any(taus > 0):
+        notes.append(f"Lifetimes: each emitter slows down in the target and backing and decays after its level's "
+                     f"lifetime; {stopped.mean():.1%} of the γ rays kept come from nuclei that had stopped.")
     if cex is not None:
         notes.append(f"Each excitation decays by the level scheme's cascade: {len(cex.transitions())} transitions "
                      "followed, each with its own orientation; the angular correlation between successive γ rays of "
@@ -556,7 +579,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
             "crystal": which, "energy0": e0s,
             "energy_lab": energy_lab, "deposited": deposited, "measured": measured, "counted": counted,
             "theta": np.degrees(np.arccos(np.clip(lab[:, 2], -1, 1))),
-            "phi": np.degrees(np.arctan2(lab[:, 1], lab[:, 0])), "beta": beta,
+            "phi": np.degrees(np.arctan2(lab[:, 1], lab[:, 0])), "beta": beta, "stopped": stopped,
             "corrected_projectile": corrected["ejectile"], "corrected_recoil": corrected["recoil"],
             "weight": weight}
     shaping = _q(experiment.run.shaping_time).to("s") if experiment.run.shaping_time is not None else 0.0
@@ -618,6 +641,97 @@ def backgrounds(experiment, crystals: list, rates: Optional[Rates] = None, bin_k
     return {"window_s": window, "dead_time_s": dead, "live_fraction": 1 / (1 + dead * total_rate),
             "particle_rate": particle_rate, "singles_rate": singles_rate, "singles_spectrum": singles_spectrum,
             "singles_edges": edges, "excitation_rate": excitation_rate, "all_excitations": all_excitations}
+
+
+LN2 = math.log(2)
+#: The speed of light, cm/s.
+C_CM_S = 2.99792458e10
+
+
+def _mean_lives(experiment, cex, initial: np.ndarray) -> Optional[np.ndarray]:
+    """The mean life (s) of the level each γ ray leaves, from the level scheme's half-lives: the scheme of the
+    cascade, or for one state the setup's scheme level at the state's energy. None when no level has a half-life
+    (every decay then happens after the target, as before)."""
+    exc = experiment.excitation
+    if cex is not None:
+        scheme = cex.scheme
+        lives = np.array([(lv.half_life.value / LN2) if lv.half_life is not None else 0.0 for lv in scheme.levels])
+        return lives[initial] if np.any(lives > 0) else None
+    scheme = experiment.levels.get("target" if exc.excite == "target" else "beam")
+    if scheme is None:
+        return None
+    for lv in scheme.levels:
+        if abs(lv.energy.value - 1e3 * exc.energy_mev) < 1.0 and lv.half_life is not None and lv.half_life.value > 0:
+            return np.full(len(initial), lv.half_life.value / LN2)
+    return None
+
+
+def _cumulative_by(group: np.ndarray, x: np.ndarray) -> np.ndarray:
+    """Running sums of ``x`` within runs of equal ``group`` (``group`` sorted, as the cascade steps are)."""
+    if not len(x):
+        return x
+    total = np.cumsum(x)
+    starts = np.r_[0, np.flatnonzero(np.diff(group)) + 1]
+    offset = np.repeat(np.r_[0.0, total[starts[1:] - 1]], np.diff(np.r_[starts, len(x)]))
+    return total - offset
+
+
+_CLOCKS: dict = {}
+
+
+def _clock(species: str, material, density: float, mass_mev: float) -> tuple:
+    """The time (s) a nucleus of ``species`` takes to stop from each energy of its stopping table in ``material``
+    of density ``density`` (g/cm³): t(E) = ∫ dR / (ρ v), on the table's energies (MeV). Kept once computed."""
+    key = (species, material.name, density, mass_mev)
+    if key in _CLOCKS:
+        return _CLOCKS[key]
+    st = stopping(species, material)
+    e, r = np.asarray(st._e, dtype=float), np.asarray(st._range, dtype=float)  # MeV, mg/cm²
+    beta = np.sqrt(np.maximum(e * (e + 2 * mass_mev), 0.0)) / (e + mass_mev)
+    mid = 0.5 * (beta[1:] + beta[:-1])
+    dt = np.diff(r) / (1000.0 * density * C_CM_S * np.maximum(mid, 1e-12))
+    t = np.r_[r[0] / (1000.0 * density * C_CM_S * max(beta[0], 1e-12)), 0.0]
+    t = np.cumsum(np.r_[t[0], dt])
+    _CLOCKS[key] = (np.r_[0.0, e], np.r_[0.0, t])
+    return _CLOCKS[key]
+
+
+def _slowing(experiment, layers: list, depth, dirs, species: str, energy, t_decay, mass_mev: float) -> tuple:
+    """The emitter's energy (MeV) at its decay time ``t_decay`` (s after the reaction): it slows along its path
+    through the rest of the stack, then flies at its exit energy; one that stops first decays at rest. Returns
+    (energy at the decay, whether it had stopped). The direction is kept (no angular straggling); time dilation
+    (a few parts in a thousand here) is left out."""
+    fwd, steps = _exit_paths(experiment, layers, 0, depth, dirs)
+    e = np.asarray(energy, dtype=float).copy()
+    elapsed = np.zeros(len(e))
+    done = np.zeros(len(e), dtype=bool)
+    stopped = np.zeros(len(e), dtype=bool)
+    out = np.full(len(e), np.nan)
+    for j, path, forward in steps:
+        m = (fwd == forward) & ~done & (np.asarray(path) > 0)
+        if not m.any():
+            continue
+        mat = layers[j].material
+        density = mat.density_g_cm3
+        if not density:
+            raise ValueError(f"lifetimes need the density of {mat.name}, which is not known")
+        grid_e, grid_t = _clock(species, mat, float(density), float(mass_mev))
+        idx = np.flatnonzero(m)
+        e_in = e[idx]
+        e_out = _after(stopping(species, mat), e_in, np.asarray(path)[idx])
+        t_in, t_out = np.interp(e_in, grid_e, grid_t), np.interp(e_out, grid_e, grid_t)
+        here = t_decay[idx] < elapsed[idx] + (t_in - t_out)
+        out[idx[here]] = np.interp(t_in[here] - (t_decay[idx[here]] - elapsed[idx[here]]), grid_t, grid_e)
+        done[idx[here]] = True
+        rest = (e_out <= 0) & ~here
+        out[idx[rest]] = 0.0
+        stopped[idx[rest]] = True
+        done[idx[rest]] = True
+        go = ~here & ~rest
+        elapsed[idx[go]] += (t_in - t_out)[go]
+        e[idx[go]] = e_out[go]
+    out[~done] = e[~done]  # out of the stack: in flight at the exit energy
+    return out, stopped
 
 
 def _sum_cascades(cascade, which, deposited, measured, counted, keep, kind, energy_lab, crystals) -> int:
