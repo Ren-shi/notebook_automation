@@ -136,8 +136,18 @@ def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
         cfg = {"layer": ch.layer, "target": species.index(ch.nuclide.name), "atoms_per_cm2": ch.atoms_per_cm2,
                "k": k, "u_min": u_min, "u_max": u_max, "probability": max(rate, 1e-300)}
         if ch.excitation is not None:
-            # Excitation probability every 0.25° (from the Coulex at mid-layer, as for the analytic rates).
+            # Excitation probability every 0.25° (from the Coulex at mid-layer, as for the analytic rates); with a
+            # level scheme that decays by cascades, of every level the scheme excites (backlog item 71).
             p = np.asarray(coulex_for(experiment, ch, layers).probability(np.linspace(0.0, 180.0, 721)))
+            from .gamma import cascade_excitation
+
+            cex = cascade_excitation(experiment)
+            if cex is not None:
+                grid, states = cex.table()
+                total = np.array([sum(s.direct.values()) for s in states])
+                fine = np.linspace(0.0, 180.0, 721)
+                p = np.where(fine < grid[0], np.interp(fine, [0.0, grid[0]], [0.0, total[0]]),
+                             np.interp(fine, grid, total))
             # Picked as often as elastic scattering on the same nuclei (the weights carry P), so the rare
             # inelastic events get as many samples as the elastic ones.
             cfg.update(excitation=ch.excitation.energy_mev, excite_recoil=ch.excitation.excite == "target",

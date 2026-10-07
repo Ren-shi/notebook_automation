@@ -43,6 +43,15 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Cascades (backlog 71): with a level scheme for the excited nucleus whose decays follow more than one
+  transition, each excitation starts in a level drawn from the direct excitation probabilities at its scattering
+  angle. It then decays through the scheme's branches, with internal conversion taking its share; each γ ray is
+  emitted with its transition's orientation and followed to the crystals. True γ–γ coincidences appear
+  (`GammaEvents.gamma_gamma`, `coincidences()["gamma_gamma_true"]`), and a gate on one line selects those in
+  coincidence with it (`dataviews.gamma_spectrum(..., gamma_gate=)`). The generator picks excited events by the
+  total excitation probability of the scheme. γ rays carry `cascade`, `initial` and `final`, and runs store them.
+  One excited state keeps item 55's chain unchanged, event for event. Not included: the angular correlation between
+  successive γ rays of one cascade, and the kinematics of each level (the reaction's state sets them).
 - The Physics tab (backlog 70): the physics behind the numbers as a reference, in the order of the physics register.
   It covers nuclear data and level schemes, two-body kinematics, energy loss, the Rutherford orbit and safe
   distance, the detectors and the γ-ray response, rates and events, and Coulomb excitation with the correlation and

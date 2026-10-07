@@ -248,12 +248,14 @@ def particle_spectrum(run, detector: str, gate: Optional[Gate] = None, bins: int
 
 def gamma_spectrum(run, name: str, correction: str = "off", gate: Optional[Gate] = None, mode: str = "coincidence",
                    randoms: str = "shown", addback: bool = True, bins: int = 400, range: Optional[tuple] = None,
-                   scaled: bool = False) -> dict:
+                   scaled: bool = False, gamma_gate: Optional[tuple] = None) -> dict:
     """The γ-ray spectrum of a γ-ray detector (or one crystal, "Clover1 A") in the run's real part: in
     coincidence with the particles that pass ``gate`` (all counted particles without one), Doppler-corrected
     (``correction`` "off", "projectile" or "recoil"), with the random coincidences ``randoms`` ("shown",
     "subtracted" or "none"), with or without add-back and suppression (``addback``). ``mode`` "singles" is every
-    γ ray the crystal records, from the rates (the run follows only the γ rays in coincidence)."""
+    γ ray the crystal records, from the rates (the run follows only the γ rays in coincidence). ``gamma_gate``
+    (MeV, low and high, with the same correction) keeps the γ rays whose cascade has another γ ray in that window:
+    a gate on one line selects the lines in coincidence with it (backlog item 71)."""
     exp = run.experiment
     g = run.gammas(plain=not addback)
     if g is None:
@@ -280,6 +282,15 @@ def gamma_spectrum(run, name: str, correction: str = "off", gate: Optional[Gate]
             passed = gate.mask(g.events, exp)
             m &= passed[g["particle"]]
             dets = gate.detectors or dets
+        if gamma_gate is not None:
+            lo, hi = sorted(gamma_gate)
+            cas = g._cascades()
+            hit = g["counted"] & (g[key] >= lo) & (g[key] <= hi)
+            gated_cascades, counts_in = np.unique(cas[hit], return_counts=True)
+            n_in = dict(zip(gated_cascades.tolist(), counts_in.tolist()))
+            # Another γ ray of the cascade in the gate: a γ ray in the window itself needs a second one there.
+            others = np.array([n_in.get(int(k), 0) - (1 if h else 0) for k, h in zip(cas, hit)])
+            m &= others > 0
         counts, _ = np.histogram(g[key][m], bins=edges, weights=g["weight"][m] * t)
         if randoms != "none":
             rnd = np.zeros(len(edges) - 1)
@@ -290,7 +301,8 @@ def gamma_spectrum(run, name: str, correction: str = "off", gate: Optional[Gate]
             drawn = rng.poisson(rnd).astype(float)
             counts = counts + drawn - (rnd if randoms == "subtracted" else 0.0)
         out = {"counts": counts, "edges": edges, "label": f"{name} · {correction} correction"
-               + (f" · {gate.name}" if gate else "")}
+               + (f" · {gate.name}" if gate else "")
+               + (f" · γ gate {1e3 * min(gamma_gate):.0f}–{1e3 * max(gamma_gate):.0f} keV" if gamma_gate else "")}
     if scaled:
         out["counts"] = run.scaled(np.maximum(out["counts"], 0.0))
     return out

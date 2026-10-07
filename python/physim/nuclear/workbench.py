@@ -120,8 +120,8 @@ def physics_for(key: str) -> str:
 
 #: What the runs do not simulate yet, with the backlog item that adds it: the realism is claimed only where it holds.
 NOT_SIMULATED = (
-    (71, "Cascades", "each excitation emits one γ ray, so there are no true γ–γ coincidences and no lines from "
-                     "higher states"),
+    (71, "Cascades in part", "without a level scheme each excitation emits one γ ray; with one, the cascade is "
+                             "followed, but the angular correlation between its successive γ rays is not"),
     (72, "Summing and pile-up", "two γ rays in one crystal do not sum, and close events do not pile up; dead "
                                 "time is a simple correction"),
     (73, "Lifetimes", "every state decays in flight after leaving the target: no stopped or partly shifted "

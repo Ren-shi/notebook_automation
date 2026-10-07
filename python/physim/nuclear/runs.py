@@ -112,7 +112,7 @@ def _load_particles(a: dict) -> dict:
     return cols
 GAMMA_COLUMNS = {
     "particle": np.int32, "crystal": np.int16, "deposited": np.float32, "measured": np.float32,
-    "theta": np.float32, "phi": np.float32,
+    "theta": np.float32, "phi": np.float32, "cascade": np.int32, "initial": np.int8, "final": np.int8,
 }
 
 
@@ -425,7 +425,8 @@ class RunData:
                 if plain and "g_particle" in a:  # no add-back or shields: the plain chain is the same
                     return self.gammas(False)
                 return None
-            self._gammas[plain] = _gamma_events(self, {k: a[prefix + k] for k in GAMMA_COLUMNS}, plain)
+            self._gammas[plain] = _gamma_events(self, {k: a[prefix + k] for k in GAMMA_COLUMNS if prefix + k in a},
+                                                plain)
         return self._gammas[plain]
 
     def source(self):
@@ -500,8 +501,17 @@ def _gamma_events(run: RunData, a: dict, plain: bool):
     thresholds = np.array([c.threshold for c in crystals])
     corrected = doppler_correct(exp, ev.columns, rows, which, measured)
     e0 = exp.excitation.energy_mev
+    levels = exp.levels.get("target" if exp.excitation.excite == "target" else "beam")
+    initial = a["initial"].astype(np.int64) if "initial" in a else np.ones(len(rows), dtype=np.int64)
+    final = a["final"].astype(np.int64) if "final" in a else np.zeros(len(rows), dtype=np.int64)
+    if levels is not None and len(rows) and initial.max() < len(levels.levels):
+        e0s = np.array([levels.levels[i].energy.value - levels.levels[f].energy.value
+                        for i, f in zip(initial, final)]) * 1e-3
+    else:
+        e0s = np.full(len(rows), exp.excitation.energy_mev)
     cols = {"event": ev.columns["event"][rows], "particle": rows, "crystal": which,
-            "energy0": np.full(len(rows), e0), "deposited": a["deposited"].astype(float), "measured": measured,
+            "cascade": a["cascade"].astype(np.int64) if "cascade" in a else rows, "initial": initial,
+            "final": final, "energy0": e0s, "deposited": a["deposited"].astype(float), "measured": measured,
             "counted": measured >= thresholds[which] if len(rows) else np.zeros(0, dtype=bool),
             "theta": a["theta"].astype(float), "phi": a["phi"].astype(float),
             "corrected_projectile": corrected["ejectile"], "corrected_recoil": corrected["recoil"],
@@ -616,7 +626,8 @@ class RunTaker:
                                     plain=plain, rates=self.rates)
                 rows = g["particle"]
                 part = {"particle": rows + self.n_rows, "crystal": g["crystal"], "deposited": g["deposited"],
-                        "measured": g["measured"], "theta": g["theta"], "phi": g["phi"]}
+                        "measured": g["measured"], "theta": g["theta"], "phi": g["phi"],
+                        "cascade": g["cascade"] + self.n_rows, "initial": g["initial"], "final": g["final"]}
                 for k, t in GAMMA_COLUMNS.items():
                     self.gparts[prefix + k].append(np.asarray(part[k]).astype(t))
                 if not plain:
