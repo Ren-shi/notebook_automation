@@ -13,8 +13,9 @@ from ..analysis import SHIFT_H
 from ..record import record_css
 from ..planner import Planner
 
+from .. import dataviews as dv
 from .figures import (CLOVER_FIELDS, REACTION_FIELDS, REACTION_TYPES, STYLE, THEMES, _shown, _value,
-                      figure_alignment, figure_detector_spectrum, figure_efficiency, figure_energy_loss,
+                      figure_alignment, figure_gamma_crystal, figure_detector_spectrum, figure_efficiency, figure_energy_loss,
                       figure_excitation, figure_gamma_spectra, figure_kinematics, figure_levels, figure_overlay,
                       figure_source_spectrum, figure_spectra, figure_strips, figure_sweep, figure_trajectories,
                       report_zip, themed)
@@ -1028,6 +1029,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             width = ui.number("Fit window (FWHM)", value=4.0, min=1.5, max=10, step=0.5).props(
                 "dense outlined").classes("w-36")
             rings = ui.input("Rings or strips", placeholder="all, or 4-15").props("dense outlined").classes("w-36")
+            named = ui.select({"": "none (the choices here)"} | {g.name: g.name for g in P().gates()}, value="",
+                              label="Gate from the Data tab").props("dense outlined").classes("w-56").tooltip(
+                "A named gate replaces the detectors, rings and particle gate here")
         with ui.row().classes("w-full items-end gap-2"):
             ref_e = ui.input("Reference transition", placeholder="328 keV").props("dense outlined").classes("w-40")
             ref_b = ui.input("Its B(E2↑)", placeholder="1.65 e2b2").props("dense outlined").classes("w-40")
@@ -1066,7 +1070,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             out_box.clear()
             with out_box:
                 ui.spinner(size="md")
-            r = await run.io_bound(P().analyse, settings, max(state["events"], 400_000), 1)
+            r = await run.io_bound(P().analyse, settings, max(state["events"], 400_000), 1, named.value or None)
             out_box.clear()
             with out_box:
                 show(r)
@@ -1089,7 +1093,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                         ("B(E2↑)", f"{r['b_e2b2']:.4g} e²b²", f"{b:.4g} e²fm⁴ · {r['b_wu']:.3g} W.u.", "b_e2"),
                         ("Uncertainty", f"± {100 * r['total_unc']:.1f} %",
                          f"statistical {100 * r['statistical']:.1f} %, systematic {100 * r['systematic']:.1f} %; "
-                         f"the Monte Carlo sample itself adds {100 * r['monte_carlo']:.1f} %", "uncertainty"),
+                         + (f"the Monte Carlo sample itself adds {100 * r['monte_carlo']:.1f} %"
+                            if r.get("whole_run_statistical") is None else
+                            f"statistics from {r['statistics_from']}; the whole run: "
+                            f"{100 * r['whole_run_statistical']:.1f} %"), "uncertainty"),
                         ("Put in", f"{1e-4 * r['truth_e2fm4']:.4g} e²b²", f"pull {r['pull']:+.2f} σ", None),
                         ("Beam time", f"{r['hours_for_precision']:.3g} h",
                          f"for {100 * r['settings']['wanted_precision']:.3g} % statistics; "
@@ -1136,8 +1143,15 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                  "wrong angles: each corrected peak shifts and broadens, ring by ring and crystal by crystal. The "
                  "diagnostic plot below, the corrected centroid against ring, is what one uses on real data to "
                  "find a misplaced target; the fit gives the offset back.").classes("text-xs ps-muted")
+        current = P().run
+        default_offset = float(current.summary.get("assumed_offset_mm", 2.0)) if current is not None and \
+            current.kind == "alignment" else 2.0
+        if current is not None and current.kind == "alignment":
+            ui.label(f"Run {current.number} is an alignment run: the target assumed {default_offset:+g} mm off.").classes(
+                "text-sm ps-accent")
         with ui.row().classes("items-end gap-2"):
-            off = ui.number("Assumed offset along the beam (mm)", value=2.0, min=-20, max=20, step=0.5).props(
+            off = ui.number("Assumed offset along the beam (mm)", value=default_offset, min=-20, max=20,
+                            step=0.5).props(
                 "dense outlined").classes("w-64")
             fit_too = ui.checkbox("Fit the offset back (about 15 s)", value=True)
         box = ui.column().classes("w-full")
@@ -1161,6 +1175,13 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                          f"(FWHM {o['fwhm_true_kev']:.1f} → {o['fwhm_assumed_kev']:.1f} keV).").classes("text-sm")
                 ui.plotly(themed(figure_overlay(r), state["theme"])).classes("w-full")
                 ui.plotly(themed(figure_alignment(P(), r), state["theme"])).classes("w-full")
+                if P().run is not None and P().run.kind != "source" and P().run.gammas() is not None:
+                    exc = P()._data_experiment().excitation
+                    corr_key = "recoil" if exc.excite == "target" else "projectile"
+                    view = dv.gamma_vs_crystal(P().run, corr_key, offset_mm=float(off.value))
+                    ui.label("The run's γ rays, corrected with the assumed geometry, crystal by crystal (as on "
+                             "the Data tab)").classes("ps-section mt-2")
+                    ui.plotly(themed(figure_gamma_crystal(view), state["theme"])).classes("w-full")
                 if "fit" in r:
                     f = r["fit"]
                     ui.label(f"Fitted: the target is {f['offset_mm']:+.2f} ± {f['uncertainty_mm']:.2f} mm from "
@@ -1389,6 +1410,31 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     "machine.")
 
         ui.button("Solve with all orders", icon="calculate", on_click=solve).props("dense flat no-caps")
+        fit_box = ui.column().classes("w-full")
+
+        async def fit_run() -> None:
+            fit_box.clear()
+            with fit_box:
+                ui.spinner(size="md")
+            try:
+                f = await run.io_bound(P().fit_matrix_elements)
+            except (ValueError, KeyError) as err:
+                fit_box.clear()
+                with fit_box:
+                    ui.label(str(err)).classes("text-sm ps-warn")
+                return
+            fit_box.clear()
+            with fit_box:
+                for k, v in f["values"].items():
+                    unc = f["uncertainties"].get(k)
+                    ui.label(f"⟨{k[1]}‖E2‖{k[0]}⟩ fitted to the run's yields: {v:.4g}"
+                             + (f" ± {unc:.2g}" if unc is not None else "") + f" (χ² {f['chi2']:.2g})").classes(
+                        "text-sm")
+
+        if P().run is not None and P().run.kind != "source":
+            ui.button("Fit the matrix element to this run's yields", icon="tune", on_click=fit_run).props(
+                "dense flat no-caps").tooltip("The yields are the run's peaks per particle detector, over the "
+                                              "efficiency and the correlation")
 
     def populations_block() -> None:
         """Every level of the scheme that first-order excitation reaches, and the γ rays that follow."""
@@ -1505,6 +1551,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         reading_box.refresh()
         run_panel.refresh()
         data_view.refresh()
+        analysis_view.refresh()
         for name, p in panels.items():
             if name == "geometry" and scene_current():
                 continue  # the scene is redrawn in place, so the camera stays where it is
@@ -1553,6 +1600,13 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             tab_data.render_view(ctx)
         except Exception as err:  # noqa: BLE001 -- say why instead of an empty tab
             ui.label(f"The data could not be shown: {err}").classes("ps-bad")
+
+    @ui.refreshable
+    def analysis_view() -> None:
+        try:
+            tab_analysis.render_view(ctx)
+        except Exception as err:  # noqa: BLE001 -- say why instead of an empty tab
+            ui.label(f"The analysis could not be shown: {err}").classes("text-sm ps-warn")
 
     # -- the run tab ----------------------------------------------------------------------------------------------
     run_state = {"watching": False}
@@ -1733,7 +1787,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         plan_answers=plan_answers, run_view=run_panel, run_form=run_form, refresh_run_form=run_panel.refresh,
         start_run=start_run, stop_run=stop_run, extend_run=extend_run, load_run=load_run, watch_events=watch_events,
         columns=columns, data_view=data_view, refresh_data=data_view.refresh, data_options=data_options,
-        gate_form=gate_form)
+        gate_form=gate_form, fmt=_fmt, time_text=_time,
+        analysis_view=analysis_view)
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)

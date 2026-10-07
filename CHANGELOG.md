@@ -43,6 +43,15 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The Analysis tab reads the run (backlog 68). It opens with predicted against measured: the Plan's numbers kept in
+  the run's summary beside what the run measured, with whether they agree within three standard deviations. That
+  covers the rates and full-energy-peak coincidences per detector, the beam time for the counts wanted, and each
+  γ-ray detector's efficiency at the transition, measured by the experiment's latest source run
+  (`Planner.compare`). The analysis takes the current run and a gate from the Data tab by name, with no
+  simulation of its own; on a run it says its statistics come from the run's real events, and what the whole
+  scaled run would give (`Result.statistics_from`, `whole_run_statistical`). The alignment check defaults to an
+  alignment run's offset and shows the run's γ rays against crystal in the assumed geometry. The multistep fit
+  reads the run's yields (`Planner.run_yields`, `fit_matrix_elements()` with no arguments).
 - The Data tab (backlog 67, `physim.nuclear.dataviews`): every spectrum of the current run on screen at once, one
   panel per particle and γ-ray detector (per crystal on request), each enlarged with a click and saved as CSV. The
   operations are the user's: the Doppler correction (off, projectile, recoil, with why it is right or wrong for the

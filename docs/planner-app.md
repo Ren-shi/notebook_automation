@@ -227,7 +227,13 @@ The tabs are the stages of an experiment, left to right:
   shows a misplaced target as lines out of step. **Compare runs** overlays the same spectrum from two runs and
   names what differs between their setups. **Export** writes a ROOT file (events, spectra, the gates as cuts) or
   the run's `.npz`.
-- **Analysis:** from the γ-ray peak to B(E2), the alignment check, and the multi-step solution with all orders.
+- **Analysis:** first, **predicted against measured**: what the Plan said before the run (kept with it) beside
+  what the run measured. That covers the rates, the coincidences in the peak, the beam time for your counts, and
+  the γ-ray efficiency (measured if the experiment has a source run). Each row says whether the two agree within
+  the run's statistics. Then the analysis of the current run: from the γ-ray peak to B(E2), with a gate from the
+  Data tab if you pick one. It says the statistical uncertainty comes from the run's own events, and what the
+  whole run would give. The alignment check reads an alignment run's offset. The multi-step solution can fit the
+  matrix element to the run's yields, and writes the GOSIA input file.
 - **Report:** the beam-time report and the run record.
 - **Physics:** kinematics, energy loss, trajectories and the excitation, as a reference.
 

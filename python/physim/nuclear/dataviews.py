@@ -333,18 +333,26 @@ def energy_vs_ring(run, detector: str, bins: int = 150, gate: Optional[Gate] = N
             "detector": detector}
 
 
-def gamma_vs_crystal(run, correction: str = "off", bins: int = 300, range: Optional[tuple] = None) -> dict:
+def gamma_vs_crystal(run, correction: str = "off", bins: int = 300, range: Optional[tuple] = None,
+                     offset_mm: float = 0.0) -> dict:
     """γ-ray energy against crystal, raw or corrected: {"counts" (crystals × bins), "crystals", "edges"}. How one
-    sees a misplaced target: each crystal's corrected line sits elsewhere."""
+    sees a misplaced target: each crystal's corrected line sits elsewhere. ``offset_mm`` corrects with the target
+    assumed that far along the beam from where it is (an alignment check)."""
     g = run.gammas()
     if g is None:
         raise ValueError("this run has no γ rays")
     key = {"off": "measured", "projectile": "corrected_projectile", "recoil": "corrected_recoil"}[correction]
+    values = g[key]
+    if offset_mm and correction != "off":
+        from .alignment import with_offset
+        from .gamma_events import recorrect
+
+        values = recorrect(g, with_offset(run.experiment, offset_mm))[key]
     if range is None:
         range = (0.9 * g.energy_mev, 1.1 * g.energy_mev)
     edges = _edges(range[0], range[1], bins)
     m = g.select()
-    h, _, _ = np.histogram2d(g["crystal"][m], g[key][m], bins=[np.arange(len(g.crystals) + 1) - 0.5, edges])
+    h, _, _ = np.histogram2d(g["crystal"][m], values[m], bins=[np.arange(len(g.crystals) + 1) - 0.5, edges])
     return {"counts": h, "crystals": g.crystal_names, "edges": edges, "correction": correction}
 
 
