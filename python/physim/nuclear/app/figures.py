@@ -91,7 +91,7 @@ def _shown(field: str, value) -> str:
     """A setup value as the text of its input."""
     if value is None:
         return ""
-    if field == "absorbers" and isinstance(value, list):
+    if field in ("absorbers", "contaminants") and isinstance(value, list):
         return ", ".join(f"{m} {t}" for m, t in value)
     return str(value)
 
@@ -117,7 +117,7 @@ def _value(field: str, text):
     text = str(text).strip()
     if text == "":
         return None
-    if field == "absorbers":  # "Pb 1 mm, Cu 0.5 mm"
+    if field in ("absorbers", "contaminants"):  # "Pb 1 mm, Cu 0.5 mm"
         return [part.strip().split(None, 1) if " " in part.strip() else [part.strip(), ""]
                 for part in text.split(",") if part.strip()]
     if field in INT_FIELDS:

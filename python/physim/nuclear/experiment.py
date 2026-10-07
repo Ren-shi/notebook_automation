@@ -266,6 +266,10 @@ class Beam:
     charge_state: Optional[int] = None
     energy_spread: Optional[QuantityLike] = None
     spot_size: Optional[QuantityLike] = None
+    #: A beam halo: this share of the beam (``"2 %"``) arrives spread evenly over a disc of ``halo_radius`` (the
+    #: target frame's aperture) instead of the spot.
+    halo_fraction: Optional[QuantityLike] = None
+    halo_radius: Optional[QuantityLike] = None
 
     SPECS = (
         _Field("nuclide", "nuclide", required=True),
@@ -274,6 +278,9 @@ class Beam:
         _Field("charge_state", "int"),
         _Field("energy_spread", "energy|fraction", check=_non_negative),
         _Field("spot_size", "length", check=_non_negative),
+        _Field("halo_fraction", "fraction", check=lambda q: None if 0 <= q.to("%") <= 100 else
+               "must be between 0 and 100 %"),
+        _Field("halo_radius", "length", check=_non_negative),
     )
 
     @property
@@ -341,6 +348,10 @@ class Target:
     #: ``material`` and ``thickness`` are then its values.
     ladder: Optional[list] = None
     selected: Optional[int] = None
+    #: Thin layers of contaminants on the target's downstream face (behind the backing, if any): pairs of a material
+    #: and a thickness, ``[["C", "10 ug/cm2"], ["O", "3 ug/cm2"]]``. Each is a layer of its own, with its own
+    #: elastic scattering.
+    contaminants: Optional[list] = None
 
     SPECS = (
         _Field("material", "material"),
@@ -350,6 +361,7 @@ class Target:
         _Field("position", "length"),
         _Field("ladder", "absorbers"),
         _Field("selected", "int", check=lambda n: None if n >= 1 else "counts from 1"),
+        _Field("contaminants", "absorbers"),
     )
 
     @property

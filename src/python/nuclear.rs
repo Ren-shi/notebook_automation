@@ -146,6 +146,14 @@ fn generator(cfg: &Bound<'_, PyDict>) -> PyResult<Generator> {
             Some(v) => v.extract::<bool>()?,
             None => false,
         },
+        halo_fraction: match cfg.get_item("halo_fraction")? {
+            Some(v) => v.extract::<f64>()?,
+            None => 0.0,
+        },
+        halo_radius: match cfg.get_item("halo_radius")? {
+            Some(v) => v.extract::<f64>()?,
+            None => 0.0,
+        },
     })
 }
 
@@ -190,6 +198,8 @@ fn nuclear_events<'py>(
     column!("phi", f64, |r| r.phi.to_degrees());
     column!("theta_cm", f64, |r| r.theta_cm.to_degrees());
     column!("weight", f64, |r| r.weight);
+    column!("x", f64, |r| r.x);
+    column!("y", f64, |r| r.y);
     Ok(out)
 }
 

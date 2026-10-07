@@ -117,6 +117,9 @@ def stack(experiment) -> list:
     layers = [(t.material_data(), _q(t.thickness), "target")]
     if t.backing is not None:
         layers.append((t.backing.material_data(), _q(t.backing.thickness), "backing"))
+    # Contaminants (backlog item 74) on the downstream face: thin layers of their own, each scattering elastically.
+    for name, th in t.contaminants or []:
+        layers.append((data.material(name), _q(th), f"{name} contaminant"))
     return [StackLayer(name, mat, mat.areal_density_mg_cm2(th), mat.atoms_per_cm2(th)) for mat, th, name in layers]
 
 
@@ -303,8 +306,12 @@ def cm_acceptance(experiment, layers: list, channel: Channel, array: Optional[Ar
         return None
     lo, hi = min(r[0] for r in ranges), max(r[1] for r in ranges)
     spot = spot_sigma_mm(experiment)
+    halo = experiment.beam
+    # The beam reaches 3σ of its spot from the axis, or the halo's radius if it has one (backlog item 74).
+    reach = max(3 * spot, _q(halo.halo_radius).to("mm") if halo.halo_fraction is not None and halo.halo_radius
+                is not None and _q(halo.halo_fraction).value > 0 else 0.0)
     d_min = min(float(np.linalg.norm(g.centre)) for g in array)
-    widen = math.degrees(3 * spot / d_min) + 0.2
+    widen = math.degrees(reach / d_min) + 0.2
     lo, hi = max(lo - widen, theta_floor), min(hi + widen, 180.0)
     lay = layers[channel.layer]
     e_front, e_back = beam_energy_at(experiment, channel.layer, [0.0, lay.thickness], layers)
