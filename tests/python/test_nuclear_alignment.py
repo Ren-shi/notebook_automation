@@ -78,8 +78,9 @@ def test_a_source_moved_off_centre_changes_each_crystal_rate_with_its_solid_angl
     assert away.coverage[0] == pytest.approx((1 - math.cos(math.atan(35 / 180))) / 2, rel=1e-6)
     sideways = response.Response(exp, gd, source=(60.0, 0.0, 0.0))
     assert sideways.coverage[0] < on.coverage[0]
-    run0 = response.source_run(exp, "60Co", "10 kBq", "10 min")
-    run1 = response.source_run(exp, "60Co", "10 kBq", "10 min", position=(0.0, 60.0, 0.0))
+    # Without summing: 60Co's cascade loses more to summing close up, which is not the solid angle (item 72).
+    run0 = response.source_run(exp, "60Co", "10 kBq", "10 min", summing=False)
+    run1 = response.source_run(exp, "60Co", "10 kBq", "10 min", position=(0.0, 60.0, 0.0), summing=False)
     for name in ("Ge90", "Ge45"):
         g = next(x for x in exp.gamma_detectors if x.name == name)
         r0, r1 = response.Response(exp, g), response.Response(exp, g, source=(0.0, 60.0, 0.0))
