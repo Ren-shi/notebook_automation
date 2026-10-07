@@ -199,8 +199,23 @@ The tabs are the stages of an experiment, left to right:
   shows how it is worked out. Below the answers, the checks open one at a time: kinematics, energy loss, the orbit
   and safe distance, the correlation and Doppler shifts, the γ efficiency curves, the rates per strip and the sweep.
   The next run keeps these numbers, so the Analysis can put them beside what the run measured.
-- **Run:** take a run of a duration, watch the counters, and pick which run is current (see
-  [Experiments and runs](#experiments-and-runs-from-python)).
+- **Run:** **Run** takes the setup for a duration (its beam time by default). Kinds of run:
+  - a beam run;
+  - a source run: beam off, a calibration source at a position;
+  - an alignment check: the target assumed off by an amount you give.
+
+  Before you start, the tab says how much is simulated event by event (10 min by default, up to an hour) and what
+  that costs. While the run goes:
+  - a clock and a bar in beam time;
+  - the counts, rate and busy fraction of each detector, the singles and coincidences of each crystal, and the
+    particle × γ matrix filling in;
+  - a bar per detector for the counts you want;
+  - the last particles counted.
+
+  **Stop** keeps what is accumulated and **Extend** adds beam time to the same run. **Watch events** draws a
+  sample of the run's events as tracks in the scene. The run list sets which run is current for the Data and
+  Analysis tabs. **Not simulated yet** lists what the runs leave out. See also
+  [Experiments and runs](#experiments-and-runs-from-python).
 - **Data:** the spectra of the current run.
 - **Analysis:** from the γ-ray peak to B(E2), the alignment check, and the multi-step solution with all orders.
 - **Report:** the beam-time report and the run record.
