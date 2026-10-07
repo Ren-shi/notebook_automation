@@ -68,6 +68,18 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 60 | ~~[A movable target and sources placed anywhere](60-movable-target-and-sources.md)~~ **Done** | Experiment workbench | P2 | M | 52, 53 |
 | 61 | [The planner in its own desktop window](61-desktop-window.md) | Experiment workbench | P2 | S | 44, 52 |
 | 62 | ~~[Add-back and Compton suppression for clovers](62-add-back-and-compton-suppression.md)~~ **Done** | Experiment workbench | P3 | M | 53, 55 |
+| 63 | [Experiments and runs: the model behind the workbench](63-experiments-and-runs.md) | Experiment workbench (redesign) | P1 | L | 53, 55, 56, 60 |
+| 64 | [One mode: the setup as decisions, the status strip, new experiments](64-one-mode-and-the-setup-as-decisions.md) | Experiment workbench (redesign) | P1 | L | 52, 63 |
+| 65 | [The Plan tab](65-the-plan-tab.md) | Experiment workbench (redesign) | P1 | M | 64 |
+| 66 | [The Run tab: one button, a duration, live counters](66-the-run-tab.md) | Experiment workbench (redesign) | P1 | L | 63, 64 |
+| 67 | [The Data tab: every spectrum visible, gates as objects](67-the-data-tab.md) | Experiment workbench (redesign) | P1 | L | 63, 66 |
+| 68 | [The Analysis tab reads the run; predicted against measured](68-analysis-reads-the-run.md) | Experiment workbench (redesign) | P1 | M | 63, 67 |
+| 69 | [The Report tab: the record of the experiment and its runs](69-report-from-the-experiment.md) | Experiment workbench (redesign) | P2 | M | 63, 68 |
+| 70 | [The Physics tab: the register as a reference](70-physics-register-tab.md) | Experiment workbench (redesign) | P2 | M | 64, 65 |
+| 71 | [Cascades: several γ rays per excitation](71-cascades.md) | Experiment workbench (physics) | P2 | L | 50, 54, 55, 63 |
+| 72 | [Summing and pile-up](72-summing-and-pile-up.md) | Experiment workbench (physics) | P3 | M | 63, 71 |
+| 73 | [Lifetimes: decay in flight](73-lifetimes.md) | Experiment workbench (physics) | P3 | M | 50, 55, 63 |
+| 74 | [Contaminant reactions, beam spot and halo](74-contaminants-and-beam-spot.md) | Experiment workbench (physics) | P3 | M | 63, 67 |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - `NewtonianGravity` is direct O(N²); `TreeGravity` (item 10) is O(N log N) but its per-interaction cost is not yet
@@ -113,5 +125,9 @@ of the nucleus; and every number explains how it was obtained.
 
 The aim, every decision and what is parked are in the [overview](workbench-overview.md). Suggested order: 50 and
 51 → 52 → 53 and 54 → 55 → 56 → 57 → 58 → 59–62.
+
+The redesign of the app around experiments and runs (2026-10-07) is items 63–70, in that order: the run model
+first, since every tab reads from it; the physics the runs still leave out is 71–74. The reasoning is in the
+overview's Redesign section.
 
 To add an item: copy any file, give it the next number, and add a row to the table.
