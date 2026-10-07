@@ -272,6 +272,7 @@ def gamma_spectrum(run, name: str, correction: str = "off", gate: Optional[Gate]
             if g._in(c, name):
                 h, _ = np.histogram(centres, bins=edges, weights=g.singles_spectrum[c.name])
                 expected += h
+        expected = g.pile_up(expected * t, edges, name, singles=True) / t if abs(edges[0]) < 1e-12 else expected
         counts = rng.poisson(expected * t).astype(float)
         out = {"counts": counts, "edges": edges, "label": f"{name} singles (from the rates)", "expected": expected * t}
     else:
@@ -292,6 +293,7 @@ def gamma_spectrum(run, name: str, correction: str = "off", gate: Optional[Gate]
             others = np.array([n_in.get(int(k), 0) - (1 if h else 0) for k, h in zip(cas, hit)])
             m &= others > 0
         counts, _ = np.histogram(g[key][m], bins=edges, weights=g["weight"][m] * t)
+        counts = g.pile_up(counts, edges, name)
         if randoms != "none":
             rnd = np.zeros(len(edges) - 1)
             for d in dets:

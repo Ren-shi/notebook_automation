@@ -555,6 +555,34 @@ def _sources() -> dict:
                       rs[0]["evaluation"]) for n, rs in rows.items()}
 
 
+#: γ rays emitted together in one decay, for true-coincidence summing: (energy a, energy b in keV, probability per
+#: decay that both are emitted). ⁶⁰Co: 1173 keV feeds the 1332 keV level in nearly every decay; ⁸⁸Y: 898 keV feeds
+#: the 1836 keV level. The many cascades of ¹⁵²Eu are not tabulated: its lines are taken as independent.
+CASCADES = {"60Co": ((1173.228, 1332.492, 0.9985),), "88Y": ((898.042, 1836.07, 0.937),)}
+
+
+def pile_up(counts: np.ndarray, rate: float, shaping_time_s: float, partner: Optional[np.ndarray] = None) -> tuple:
+    """A spectrum (counts per bin on uniform bins starting at 0) with pile-up: two signals within 2τ of each
+    other become one at the sum of their energies. The share of signals that pile is p = 1 − exp(−2τR) at the
+    crystal's rate R per second. They leave their bins (the loss) and reappear at their energy plus the partner's
+    (the shoulder above each peak). The partner is drawn from ``partner`` (the crystal's singles spectrum, for a
+    spectrum in coincidence with a particle), or from the spectrum itself, whose signals then pair up (p N / 2
+    sums). Returns (spectrum, p)."""
+    counts = np.asarray(counts, dtype=float)
+    n = counts.sum()
+    if not shaping_time_s or rate <= 0 or n <= 0:
+        return counts, 0.0
+    p = 1.0 - math.exp(-2.0 * shaping_time_s * rate)
+    if partner is None:
+        density = counts / n
+        return (1 - p) * counts + 0.5 * p * n * np.convolve(density, density)[: len(counts)], p
+    partner = np.asarray(partner, dtype=float)
+    total = partner.sum()
+    if total <= 0:
+        return (1 - p) * counts, p
+    return (1 - p) * counts + p * np.convolve(counts, partner / total)[: len(counts)], p
+
+
 def source_names() -> list:
     """The calibration sources with decay data."""
     return sorted(_sources(), key=lambda n: (int("".join(c for c in n if c.isdigit())), n))
@@ -582,6 +610,11 @@ class SourceRun:
     expected: dict
     #: {crystal name: (Response, element index or None)}.
     responses: dict = field(default_factory=dict)
+    #: True-coincidence summing (backlog item 72): {crystal: {line energy (MeV): share of its peak kept}}, the sum
+    #: peaks {crystal: [{"energy_mev", "expected", "lines"}]}, and the share of signals lost to pile-up.
+    summing: dict = field(default_factory=dict)
+    sum_peaks: dict = field(default_factory=dict)
+    pile_up: dict = field(default_factory=dict)
 
     def names(self) -> list:
         return list(self.spectra)
@@ -641,9 +674,19 @@ class SourceRun:
         return any(ln is not this and abs(ln.energy_mev - energy_mev) < 6 * sigma
                    and ln.intensity >= 0.01 * this.intensity for ln in self.source.lines)
 
+    def summing_factor(self, name: str, energy_mev: float) -> float:
+        """The share of a line's full-energy counts in a crystal (or a detector's crystals) that summing left in
+        its peak: 1 without summing."""
+        keys = [n for n in self.summing if n == name or n.rsplit(" ", 1)[0] == name] or [name]
+        vals = [self.summing.get(n, {}).get(energy_mev, 1.0) for n in keys]
+        return float(np.mean(vals)) if vals else 1.0
+
     def efficiency_points(self, name: str, least: float = 0.02) -> list:
         """The full-energy-peak efficiency the run gives at each strong line that stands alone: a list of
-        {"energy_mev", "efficiency", "uncertainty", "true"}, "true" being the efficiency that was put in."""
+        {"energy_mev", "efficiency", "uncertainty", "true"}, "true" being the efficiency that was put in. A line
+        that sums with another of its cascade is corrected for it: "efficiency" is the area over the emitted γ
+        rays divided by the share summing left in the peak, "uncorrected" the plain ratio, and
+        "summing_correction" the factor applied (1 for a line that does not sum)."""
         r, element = self._response(name)
         out = []
         for ln in self.source.strong(least):
@@ -651,8 +694,10 @@ class SourceRun:
                 continue
             area, unc = self.peak_area(name, ln.energy_mev)
             emitted = self.decays * ln.intensity
-            out.append({"energy_mev": ln.energy_mev, "efficiency": area / emitted,
-                        "uncertainty": unc / emitted,
+            keep = self.summing_factor(name, ln.energy_mev)
+            out.append({"energy_mev": ln.energy_mev, "efficiency": area / emitted / keep,
+                        "uncorrected": area / emitted, "summing_correction": 1 / keep,
+                        "uncertainty": unc / emitted / keep,
                         "true": float(r.peak_efficiency(ln.energy_mev, element))})
         return out
 
@@ -675,7 +720,8 @@ class SourceRun:
 
 
 def source_run(experiment, nuclide: str = "152Eu", activity="37 kBq", time="1 h", seed: int = 1,
-               bin_kev: Optional[float] = None, max_mev: Optional[float] = None, position=None) -> SourceRun:
+               bin_kev: Optional[float] = None, max_mev: Optional[float] = None, position=None,
+               summing: bool = True) -> SourceRun:
     """Simulate a run with a calibration source at the target position, or at ``position`` (x, y, z in mm from
     the target), without beam.
 
@@ -684,8 +730,14 @@ def source_run(experiment, nuclide: str = "152Eu", activity="37 kBq", time="1 h"
     from a Poisson distribution, which is exact for independent γ rays. The activity is that at the start of the
     run and decays with the source's half-life.
 
-    Not included: two γ rays of one decay summing in a crystal, the room background, dead time. ``bin_kev``
-    defaults to a third of the narrowest resolution."""
+    **Summing** (``summing``, backlog item 72): for the sources whose lines come in cascade (:data:`CASCADES`),
+    a line loses the share of its decays whose partner also interacts in the same crystal (its total efficiency),
+    and a sum peak appears at the two energies' sum with the product of their peak efficiencies; the factors are
+    kept (:attr:`SourceRun.summing`) and :meth:`SourceRun.efficiency_points` corrects for them. **Pile-up**
+    follows ``[run] shaping_time`` (:func:`pile_up`).
+
+    Not included: the room background, dead time, the partial sums under the continuum, and the angular
+    correlation of the cascade (isotropic). ``bin_kev`` defaults to a third of the narrowest resolution."""
     src = source(nuclide)
     a0 = _q(activity).to("Bq")
     t = _q(time).to("s")
@@ -699,22 +751,57 @@ def source_run(experiment, nuclide: str = "152Eu", activity="37 kBq", time="1 h"
             responses[name] = (r, k if len(r.elements) > 1 else None)
     if not responses:
         raise ValueError("the setup has no γ-ray detectors")
-    top = max_mev or 1.08 * max(ln.energy_mev for ln in src.lines) + 0.05
+    highest = max(ln.energy_mev for ln in src.lines)
+    if summing:  # the sum peaks, too
+        highest = max([highest] + [(a + b) * 1e-3 for a, b, _ in CASCADES.get(src.nuclide, ())])
+    top = max_mev or 1.08 * highest + 0.05
     if bin_kev is None:
         bin_kev = max(0.25, min(1e3 * float(r.fwhm(0.1)) for r, _ in responses.values()) / 3)
     edges = np.arange(0.0, top + bin_kev * 1e-3, bin_kev * 1e-3)
     rng = np.random.default_rng(seed)
-    spectra, expected = {}, {}
+    spectra, expected, factors, sums, piled = {}, {}, {}, {}, {}
+    pairs = CASCADES.get(src.nuclide, ()) if summing else ()
+    shaping = _q(experiment.run.shaping_time).to("s") if experiment.run.shaping_time is not None else 0.0
     for name, (r, k) in responses.items():
         mu = np.zeros(len(edges) - 1)
+        keep = {}
+        sum_lines = []
+        for a_kev, b_kev, both in pairs:
+            ea, eb = a_kev * 1e-3, b_kev * 1e-3
+            la = next((ln for ln in src.lines if abs(ln.energy_mev - ea) < 1e-6), None)
+            lb = next((ln for ln in src.lines if abs(ln.energy_mev - eb) < 1e-6), None)
+            if la is None or lb is None:
+                continue
+            ta, tb = float(r.total_efficiency(ea, k)), float(r.total_efficiency(eb, k))
+            # The share of each line's decays that also put its partner into this crystal.
+            keep[ea] = keep.get(ea, 1.0) * (1 - both / la.intensity * tb)
+            keep[eb] = keep.get(eb, 1.0) * (1 - both / lb.intensity * ta)
+            area = decays * both * float(r.peak_efficiency(ea, k)) * float(r.peak_efficiency(eb, k))
+            sum_lines.append({"energy_mev": ea + eb, "expected": area, "lines": (ea, eb)})
         for ln in src.lines:
             if ln.energy_mev < 5e-3:
                 continue
             interacting = decays * ln.intensity * float(r.total_efficiency(ln.energy_mev, k))
-            mu += interacting * r.shape(ln.energy_mev, edges)
+            mu += keep.get(ln.energy_mev, 1.0) * interacting * r.shape(ln.energy_mev, edges)
+        for s in sum_lines:
+            sigma = float(r.fwhm(s["energy_mev"])) / FWHM_PER_SIGMA
+            cdf = 0.5 * (1 + _erf((edges - s["energy_mev"]) / (sigma * math.sqrt(2))))
+            mu += s["expected"] * np.diff(cdf)
+        mu, p = pile_up(mu, mu.sum() / t, shaping)
         expected[name] = mu
         spectra[name] = rng.poisson(mu).astype(float)
-    return SourceRun(src, decays, t, edges, spectra, expected, responses)
+        factors[name] = keep
+        sums[name] = sum_lines
+        piled[name] = p
+    out = SourceRun(src, decays, t, edges, spectra, expected, responses)
+    out.summing, out.sum_peaks, out.pile_up = factors, sums, piled
+    return out
+
+
+def _erf(x):
+    from math import erf
+
+    return np.vectorize(erf)(x)
 
 
 __all__ = ["ADDBACK_FACTOR", "ADDBACK_SLOPE", "SHIELDS", "SUPPRESSION_FACTOR", "SUPPRESSION_SLOPE", "CRYSTALS", "Absorber", "Crystal", "Line", "NAI_STANDARD", "REFERENCE_MEV", "Response", "Source",

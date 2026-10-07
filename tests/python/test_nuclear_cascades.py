@@ -74,15 +74,18 @@ def test_two_levels_give_the_gamma_gamma_coincidences_the_branches_predict():
     p2 = np.interp(c["theta_cm"][excited], grid, [s.direct.get(2, 0.0) for s in states])
     upper = float(np.sum(c["weight"][excited] * p2 / (p1 + p2)))   # per second
     branch = cex.decay(2, 1).gamma
-    eff = {e: sum(gd.peak_efficiency(e, exp) for gd in exp.gamma_detectors) for e in (lines[(2, 1)], lines[(1, 0)])}
-    expected = upper * branch * eff[lines[(2, 1)]] * eff[lines[(1, 0)]] * 2  # either γ ray in either detector
+    # The two γ rays in two different crystals (single-crystal detectors here): in one crystal they would sum
+    # into one signal (backlog item 72) and count in neither peak.
+    eff = {e: [gd.peak_efficiency(e, exp) for gd in exp.gamma_detectors] for e in (lines[(2, 1)], lines[(1, 0)])}
+    a, b = eff[lines[(2, 1)]], eff[lines[(1, 0)]]
+    pairs = sum(a[i] * b[j] for i in range(len(a)) for j in range(len(b)) if i != j)
+    expected = upper * branch * pairs * 2
 
     def window(e):  # the Doppler-corrected full-energy peak
         return (e - 0.012, e + 0.012)
 
     rate, err = g.gamma_gamma(window(lines[(2, 1)]), window(lines[(1, 0)]), corrected="recoil")
-    # Each cascade counts once; "expected" counts the ordered pairs of crystals, which is twice the unordered.
-    expected /= 2
+    expected /= 2  # each cascade counts once
     assert rate > 0
     assert err < 0.25 * rate, "enough pairs to test"
     assert abs(rate - expected) < 3 * err + 0.05 * expected, (rate, err, expected)
