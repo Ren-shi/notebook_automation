@@ -768,6 +768,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
         async def show() -> None:
             view = scene_state["view"]
+            scene_state["show_tracks"] = show
             if view is None:
                 return
             try:
@@ -805,6 +806,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                       label="Sample", on_change=lambda e: ts.update(weighted=e.value)).props(
                 "dense outlined").classes("w-56")
             ui.button("Show tracks", icon="timeline", on_click=show).props("dense flat no-caps")
+            scene_state["show_tracks"] = show
             play = ui.button("Pause", icon="pause", on_click=toggle_play).props("dense flat no-caps")
             ui.slider(min=0.2, max=4.0, step=0.2, value=ts["speed"], on_change=set_speed).classes("w-32").tooltip(
                 "Speed")
@@ -1538,70 +1540,56 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     # -- the run tab ----------------------------------------------------------------------------------------------
     run_state = {"watching": False}
+    run_form = {"kind": "beam", "duration": None, "budget": "10 min", "source": "152Eu", "activity": "37 kBq",
+                "position": "", "offset_mm": 2.0}
 
     @ui.refreshable
     def run_panel() -> None:
-        p = P()
-        progress = p.run_progress()
-        form = run_state.setdefault("form", {"kind": "beam", "duration": None, "budget": "10 min"})
-        with ui.row().classes("items-end gap-2"):
-            kind = ui.select({"beam": "Beam run", "source": "Source run (beam off, ¹⁵²Eu at the target)",
-                              "alignment": "Alignment check (target assumed 2 mm off)"}, value=form["kind"],
-                             label="Kind of run", on_change=lambda e: form.update(kind=e.value)).props(
-                "dense outlined").classes("w-72")
-            duration = ui.input("Run for", value=form["duration"] or str(p.experiment.run.beam_time),
-                                on_change=lambda e: form.update(duration=e.value)).props(
-                "dense outlined").classes("w-32")
-            budget = ui.select(["1 min", "5 min", "10 min", "30 min", "1 h"], value=form["budget"],
-                               label="Simulated event by event", on_change=lambda e: form.update(budget=e.value)).props(
-                "dense outlined").classes("w-48")
-            if progress is None:
-                ui.button("Run", icon="play_arrow", on_click=lambda: start_run(kind.value, duration.value,
-                                                                              budget.value))
-            else:
-                ui.button("Stop", icon="stop", on_click=stop_run).props("color=negative")
-        ui.label("A beam run simulates the first part of the beam time event by event, one event being one event, "
-                 "and scales the rest to the full duration; it says which part is real. The setup is read-only "
-                 "while a run is taken.").classes("text-xs ps-muted")
-        if progress is not None:
-            f = progress["fraction"]
-            ui.linear_progress(value=f, show_value=False).classes("w-full")
-            ui.label(f"Run {progress['number']}: {_time(progress['real_s'])} of {_time(progress['real_target_s'])} "
-                     f"simulated event by event; {progress['events']:,} particles counted.").classes("text-sm")
-            ui.table(columns=columns((("d", "Detector"), ("c", "Counts"), ("r", "Rate (1/s)"))),
-                     rows=[{"d": d, "c": f"{c:,}", "r": _fmt(progress["rates_per_s"][d])}
-                           for d, c in progress["counts"].items()]).props("dense flat")
-        rows = tab_run.describe_runs(p)
-        ui.label("Runs").classes("ps-section mt-3")
-        if not rows:
-            ui.label("No run yet.").classes("text-sm ps-muted")
-            return
-        ui.table(columns=columns((("n", "#"), ("what", "Run"), ("when", "Finished (UTC)"), ("stale", ""))),
-                 rows=rows).props("dense flat")
-        current = p.run.number if p.run is not None else None
-        ui.select({r["n"]: f"{r['n']}: {r['what']}" for r in rows}, value=current, label="Current run",
-                  on_change=lambda e: load_run(e.value)).props("dense outlined").classes("w-full")
+        tab_run.render_view(ctx)
 
     def load_run(n) -> None:
         if n is None or (P().run is not None and P().run.number == n):
             return
         P().load_run(n)
         status_strip.refresh()
+        setup_panel.refresh()
         refresh_results()
 
-    def start_run(kind: str, duration: str, budget: str) -> None:
-        options = {"source": "152Eu"} if kind == "source" else ({"offset_mm": 2.0} if kind == "alignment" else {})
+    def start_run(f: dict) -> None:
+        kind = f["kind"]
+        options = {}
+        if kind == "source":
+            options = {"source": f["source"], "activity": f["activity"]}
+            if str(f.get("position") or "").strip():
+                try:
+                    options["position"] = [float(x) for x in str(f["position"]).replace(";", ",").split(",")]
+                except ValueError:
+                    ui.notify("The position is three numbers in mm: x, y, z.", type="warning")
+                    return
+        elif kind == "alignment":
+            options = {"offset_mm": float(f["offset_mm"] or 0.0)}
         try:
-            out = P().start_run(kind, duration, budget, background=kind != "source", **options)
+            out = P().start_run(kind, f["duration"] or None, f["budget"], background=kind != "source", **options)
         except (SetupError, ValueError, _runs.RunInProgress) as err:
             ui.notify(str(err), type="negative", multi_line=True)
             return
+        after_start(out)
+
+    def after_start(out) -> None:
         setup_panel.refresh()
         run_panel.refresh()
         if isinstance(out, _runs.RunData):
             finished()
             return
         run_state["watching"] = True  # the page's timer follows the run (see tick)
+
+    def extend_run(more: str) -> None:
+        try:
+            out = P().extend_run(more, background=True)
+        except (ValueError, _runs.RunInProgress) as err:
+            ui.notify(str(err), type="negative", multi_line=True)
+            return
+        after_start(out)
 
     def tick() -> None:
         """Every half second: the live counters while a run is taken, and the views once it ends."""
@@ -1627,6 +1615,15 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         bg = P()._background
         if bg is not None:
             bg.stop()
+            run_panel.refresh()
+
+    async def watch_events() -> None:
+        """A sample of the current run's events as tracks in the scene, on the Setup tab."""
+        if state.get("tabs") is not None:
+            state["tabs"].set_value("setup")
+        show = scene_state.get("show_tracks")
+        if show is not None:
+            await show()
 
     # -- experiments ----------------------------------------------------------------------------------------------
     @ui.refreshable
@@ -1682,6 +1679,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 "dense no-caps align=left") as tabs:
             for key, label in wb.STAGES:
                 ui.tab(key, label=label)
+        state["tabs"] = tabs
         with ui.tab_panels(tabs, value=state["stage"]).classes("w-full"):
             for key, _ in wb.STAGES:
                 with ui.tab_panel(key):
@@ -1714,10 +1712,11 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         reaction_section=reaction_section, clover_switches=clover_switches, add_detector=add_detector,
         duplicate_detector=duplicate_detector, remove_detector=remove_detector,
         add_gamma_detector=add_gamma_detector, duplicate_gamma_detector=duplicate_gamma_detector,
-        remove_gamma_detector=remove_gamma_detector, open_card=open_card, block=block, readouts=readouts,
-        run_panel=run_panel, analysis_block=analysis_block, alignment_block=alignment_block,
+        remove_gamma_detector=remove_gamma_detector, open_card=open_card, block=block, readouts=readouts, analysis_block=analysis_block, alignment_block=alignment_block,
         multistep_block=multistep_block, open_explanation=open_explanation, efficiency_panel=efficiency_panel,
-        plan_answers=plan_answers)
+        plan_answers=plan_answers, run_view=run_panel, run_form=run_form, refresh_run_form=run_panel.refresh,
+        start_run=start_run, stop_run=stop_run, extend_run=extend_run, load_run=load_run, watch_events=watch_events,
+        columns=columns)
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)

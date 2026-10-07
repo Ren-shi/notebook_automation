@@ -364,6 +364,15 @@ class Planner:
         self._set_run(self.folder.load_run(number))
         return self.run
 
+    def estimate_run(self, duration=None, budget=_runs.DEFAULT_BUDGET_S) -> dict:
+        """What a beam run of ``duration`` with a real part of ``budget`` will take: its real and scaled parts,
+        about how many particles, the CPU time and the disk space (:func:`physim.nuclear.runs.estimate`)."""
+        return _runs.estimate(self.experiment, duration, budget, self._rates())
+
+    def run_sample(self, n: int = 12) -> list:
+        """The last particles the run being taken counted (empty when none is being taken)."""
+        return self._taking.sample(n) if self._taking is not None else []
+
     def run_progress(self) -> Optional[dict]:
         """The live counters of the run being taken (None when none is)."""
         return self._taking.progress() if self._taking is not None else None

@@ -43,6 +43,14 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The Run tab (backlog 66): one Run button for a duration (the beam time by default), as a beam run, a source
+  run (which source, activity, position) or an alignment check (the assumed offset). Before the run it shows the
+  real part and its cost (`Planner.estimate_run`). While the run is taken: a clock and bar in beam time, a note of
+  the part to be scaled, and live counters per detector (counts, rate, busy, live fraction). Per crystal it shows
+  the singles and the coincidences; the particle × γ matrix fills in (full-energy peak / any energy), with bars
+  for the counts wanted, and the last particles counted. Stop, Extend, Watch events (the run's events as tracks
+  in the scene), the run list with the current run, and the list of what is not simulated yet (items 71–74,
+  `workbench.NOT_SIMULATED`).
 - The Plan tab (backlog 65): one page, answers first. It shows the beam time the counts wanted need against the beam time
   planned; per particle detector its rate, busy fraction (from `[run] dead_time`), share of the excitations and safe
   rings; per γ-ray detector its efficiency at the transition and its coincidence rate; and the particle × γ matrix.

@@ -409,6 +409,7 @@ class RunData:
             cols["weight"] = np.full(len(cols["event"]), 1.0 / self.real_s if self.real_s > 0 else 0.0)
             theta, phi = _segment_directions(self.experiment, cols)
             cols["theta"], cols["phi"] = theta, phi
+            cols["beam_energy"] = _beam_energies(self.experiment, cols["depth"])
             self._events = Events(cols, int(self.summary.get("generated", 0)), int(self.summary["seed"]),
                                   list(self.summary["detectors"]), list(self.summary["channels"]), self.real_s, 0.0)
         return self._events
@@ -468,6 +469,22 @@ def _segment_directions(experiment: Experiment, cols: dict) -> tuple:
     return th_u[inverse], ph_u[inverse]
 
 
+def _beam_energies(experiment: Experiment, depth: np.ndarray) -> np.ndarray:
+    """The mean beam energy (MeV) at each reaction's depth (mg/cm² from the front of the stack), which the stored
+    events do not keep: the straggling of each event is left out."""
+    from .rates import beam_energy_at, stack
+
+    layers = stack(experiment)
+    out = np.full(len(depth), experiment.beam.energy_mev)
+    start = 0.0
+    for i, lay in enumerate(layers):
+        m = (depth >= start) & ((depth < start + lay.thickness) | (i == len(layers) - 1))
+        if m.any():
+            out[m] = beam_energy_at(experiment, i, np.clip(depth[m] - start, 0.0, lay.thickness), layers)
+        start += lay.thickness
+    return out
+
+
 def _gamma_events(run: RunData, a: dict, plain: bool):
     from .gamma_events import GammaEvents, backgrounds, crystals_of, doppler_correct
 
@@ -518,6 +535,18 @@ class RunTaker:
         self.rates = Rates(experiment)
         self.gamma = experiment.excitation is not None and bool(experiment.gamma_detectors)
         self.plain_too = self.gamma and any(gd.addback or gd.shield for gd in experiment.gamma_detectors)
+        run = experiment.run
+        #: Dead time per count (s), the counts wanted, and what they count ("all", "excitations", "coincidences").
+        self.dead_s = _seconds(run.dead_time) if run.dead_time is not None else 0.0
+        self.counts_wanted = run.counts_wanted
+        self.measured = self.rates.measured
+        #: γ-ray singles per crystal (1/s, the reaction's γ rays and the room): from the rates, not the events.
+        self.singles: dict = {}
+        if self.gamma:
+            from .gamma_events import backgrounds, crystals_of
+
+            bg = backgrounds(experiment, crystals_of(experiment)[0], self.rates)
+            self.singles = {c: sum(v.values()) for c, v in bg["singles_rate"].items()}
         self.parts: dict = {k: [] for k in PARTICLE_COLUMNS}
         self.gparts: dict = {p + k: [] for p in (("g_", "gp_") if self.plain_too else ("g_",)) for k in GAMMA_COLUMNS}
         self.n_rows = 0
@@ -543,7 +572,7 @@ class RunTaker:
         self.real_target = min(self.duration_s, self.budget_s)
 
     def _empty_counters(self) -> dict:
-        return {"counts": {d: 0 for d in self.runner.detectors}, "gamma": {}, "coincidences": {}}
+        return {"counts": {d: 0 for d in self.runner.detectors}, "gamma": {}, "coincidences": {}, "peak": {}}
 
     @property
     def real_s(self) -> float:
@@ -597,22 +626,58 @@ class RunTaker:
                     parent = [c.rsplit(" ", 1)[0] if g.crystals[k].element is not None else c
                               for c, k in zip(gdet, g["crystal"])]
                     pdet = cols["detector"][rows]
-                    for gd, pd, ok in zip(parent, pdet, counted):
+                    full = np.abs(np.asarray(g["deposited"]) - np.asarray(g["energy_lab"])) < 1e-6
+                    peak = self.counters.setdefault("peak", {})
+                    for gd, pd, ok, f in zip(parent, pdet, counted, full):
                         if ok:
                             key = f"{names[int(pd)]}|{gd}"
                             self.counters["coincidences"][key] = self.counters["coincidences"].get(key, 0) + 1
+                            if f:
+                                peak[key] = peak.get(key, 0) + 1
         self.n_rows += n
 
     def progress(self) -> dict:
-        """The live counters: experiment time, real part done, counts and rates per detector, γ singles per
-        crystal, coincidences."""
+        """The live counters, in experiment time: the beam time simulated so far and what is left to scale; per
+        particle detector its counts, rate, busy fraction and live fraction; per crystal the γ rays in coincidence
+        and the singles (from the rates); the particle × γ coincidences; and, per detector, the counts wanted
+        against the counts the whole run will have at this pace."""
         real = self.real_s
-        return {"number": self.number, "kind": self.kind, "duration_s": self.duration_s, "real_target_s": self.real_target,
+        counts = dict(self.counters["counts"])
+        rates = {d: c / real if real else 0.0 for d, c in counts.items()}
+        busy = {d: r * self.dead_s / (1 + r * self.dead_s) for d, r in rates.items()}
+        total = sum(rates.values()) + sum(self.singles.values())
+        coinc = dict(self.counters["coincidences"])
+        peak = dict(self.counters.get("peak", {}))
+        if self.measured == "coincidences":  # as the plan counts them: γ rays in the full-energy peak
+            measured = {d: sum(v for k, v in peak.items() if k.split("|")[0] == d) for d in counts}
+        else:
+            measured = counts
+        scale = self.duration_s / real if real else 0.0
+        return {"number": self.number, "kind": self.kind, "duration_s": self.duration_s,
+                "real_target_s": self.real_target, "scaled_s": max(self.duration_s - self.real_target, 0.0),
                 "real_s": real, "fraction": real / self.real_target if self.real_target else 1.0,
-                "counts": dict(self.counters["counts"]),
-                "rates_per_s": {d: c / real if real else 0.0 for d, c in self.counters["counts"].items()},
-                "gamma": dict(self.counters["gamma"]), "coincidences": dict(self.counters["coincidences"]),
+                "real_done": self.done, "counts": counts, "rates_per_s": rates, "busy": busy,
+                "live_fraction": 1 / (1 + self.dead_s * total),
+                "gamma": dict(self.counters["gamma"]),
+                "gamma_singles": {c: r * real for c, r in self.singles.items()},
+                "coincidences": coinc, "peak_coincidences": peak, "measured": self.measured, "counts_wanted": self.counts_wanted,
+                "measured_counts": measured, "projected": {d: m * scale for d, m in measured.items()},
                 "elapsed_s": time.time() - self.started, "events": self.n_rows, "stopping": self.stop}
+
+    def sample(self, n: int = 12) -> list:
+        """The last ``n`` particles counted, newest first: {event, detector, ring/strip, sector/strip, energy (MeV),
+        channel}, for "watch events"."""
+        if not self.parts["p_event_step"]:
+            return []
+        last = {k: v[-1] for k, v in self.parts.items()}
+        m = len(last["p_detector"])
+        idx = range(m - 1, max(m - 1 - n, -1), -1)
+        events = np.cumsum(last["p_event_step"].astype(np.int64))  # within the chunk: relative numbers
+        names, chans = self.runner.detectors, self.runner.channels
+        return [{"event": int(events[i]), "detector": names[int(last["p_detector"][i])],
+                 "segment": (int(last["p_segment_i"][i]) + 1, int(last["p_segment_j"][i]) + 1),
+                 "energy_mev": float(last["p_measured_kev"][i]) * 1e-3,
+                 "channel": chans[int(last["p_channel"][i])]} for i in idx]
 
     def write(self) -> RunData:
         """Store the run (setup snapshot, compact events, summary) and return it."""
@@ -644,6 +709,7 @@ class RunTaker:
             "counts_in_run": {d: c * duration / real if real else 0.0 for d, c in counts.items()},
             "segments": _segment_counts(arrays, self.runner.detectors),
             "gamma_counts": self.counters["gamma"], "coincidences": self.counters["coincidences"],
+            "peak_coincidences": self.counters.get("peak", {}),
             "live_fraction": live, "cpu_s": time.time() - self.started,
             "counters_raw": self.counters,
             "plan": self.plan,
@@ -795,6 +861,19 @@ def start(folder: ExperimentFolder, kind: str = "beam", duration=None, budget=DE
     return RunTaker(path, number, kind, exp, duration_s, budget_s, seed, extra, plan)
 
 
+def estimate(experiment: Experiment, duration=None, budget=DEFAULT_BUDGET_S, rates: Optional[Rates] = None) -> dict:
+    """What a beam run will take, before it is taken: the real part and the scaled part (s), about how many
+    particles the real part counts, and the CPU time (s) and disk space (MB) it needs, from the rates. The CPU time
+    is that of this machine's generator at about 120 000 counted particles per second."""
+    duration_s = _seconds(duration) if duration is not None else _seconds(experiment.run.beam_time)
+    real = min(duration_s, min(_seconds(budget), MAX_BUDGET_S))
+    rates = rates or Rates(experiment)
+    per_s = sum(rates.rate(g.name) for g in rates.array)
+    particles = per_s * real
+    return {"duration_s": duration_s, "real_s": real, "scaled_s": max(duration_s - real, 0.0),
+            "particles": particles, "cpu_s": 2.0 + particles / 120_000.0, "size_mb": particles * 7.5e-6}
+
+
 def extend(run: RunData, more) -> RunTaker:
     """Continue ``run`` for ``more`` beam time (text with a unit, or seconds) with its own setup and seed stream;
     the real part grows up to the run's budget, the rest is scaled. Step the result and :meth:`RunTaker.write`
@@ -870,5 +949,5 @@ class Background:
 
 
 __all__ = ["DEFAULT_BUDGET_S", "KINDS", "MAX_BUDGET_S", "Background", "BeamRunner", "ExperimentFolder", "RunData",
-           "RunInProgress", "RunTaker", "default_name", "duration_label", "extend", "home", "list_experiments",
+           "RunInProgress", "RunTaker", "default_name", "duration_label", "estimate", "extend", "home", "list_experiments",
            "physics_changes", "slug", "start"]

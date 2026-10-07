@@ -97,6 +97,8 @@ def test_the_app_serves_every_example(tmp_path):
             assert "New experiment" in body and "Run conditions" in body
             # The Plan tab answers without a button pressed, and its checks are there (backlog 65).
             assert "Beam time needed" in body and "Kinematics: where the particles go" in body, query
+            # The Run tab: the button, the real part, and what is not simulated (backlog 66).
+            assert "Event by event" in body and "Not simulated yet" in body, query
     finally:
         proc.terminate()
         proc.wait(timeout=30)
