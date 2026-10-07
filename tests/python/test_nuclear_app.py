@@ -193,3 +193,17 @@ def test_installer_bundle_helpers(tmp_path):
 
     assert build.make_icon(tmp_path / "planner.ico")
     assert (256, 256) in Image.open(tmp_path / "planner.ico").info["sizes"]
+
+
+def test_the_window_is_chosen_from_the_flags():
+    """The installed shortcut (--desktop) opens the planner in its own window when pywebview is there; --browser
+    or --no-browser keep the browser; without pywebview the caller is told to use the browser (None)."""
+    from physim.nuclear import app
+
+    assert app.wants_window(True, False, False, False, available=True) is True
+    assert app.wants_window(False, True, False, False, available=True) is True
+    assert app.wants_window(False, True, True, False, available=True) is False
+    assert app.wants_window(False, True, False, True, available=True) is False
+    assert app.wants_window(False, False, False, False, available=True) is False
+    assert app.wants_window(True, False, False, False, available=False) is None
+    assert isinstance(app.window_available(), bool)
