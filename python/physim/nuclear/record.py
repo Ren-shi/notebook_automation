@@ -444,6 +444,14 @@ def record_html(planner, result=None, title: Optional[str] = None, scene_png: Op
     parts.append("<h2>4. Every number, explained</h2>")
     for x in explanations(planner):
         parts.append(_explanation_html(x))
+    from .logbook import run_explanations
+
+    taken = run_explanations(planner) if getattr(planner, "run", None) is not None else []
+    if taken:
+        parts.append(f"<h3>Run {planner.run.number}: its counters, its gates, and the Plan against what it "
+                     "measured</h3>")
+        for x in taken:
+            parts.append(_explanation_html(x))
     if result is not None:
         parts.append("<h2>5. From the peak area to B(E2) and the shape</h2>")
         for x in analysis_explanations(planner, result):
@@ -453,9 +461,12 @@ def record_html(planner, result=None, title: Optional[str] = None, scene_png: Op
                      f"<tr><td>statistical</td><td>{100 * result.statistical:.2f}</td></tr>"
                      + "".join(f"<tr><td>{e(k)}</td><td>{100 * v:.2f}</td></tr>" for k, v in result.budget.items())
                      + f"<tr><td><b>total</b></td><td><b>{100 * result.total_unc:.2f}</b></td></tr></tbody></table>"
-                     f"<p>The Monte Carlo sample itself adds {100 * result.monte_carlo:.1f}%, which more simulated "
-                     "events reduce. Against the value put in, the result pulls by "
-                     f"{result.pull:+.2f} standard deviations.</p>")
+                     + (f"<p>The Monte Carlo sample itself adds {100 * result.monte_carlo:.1f}%, which more "
+                        "simulated events reduce. "
+                        if getattr(result, "whole_run_statistical", None) is None else
+                        f"<p>The statistics come from {html.escape(result.statistics_from)}; the whole run would give "
+                        f"{100 * result.whole_run_statistical:.1f}%. ")
+                     + f"Against the value put in, the result pulls by {result.pull:+.2f} standard deviations.</p>")
         parts.append("<h2>7. What the simulation leaves out</h2>")
     else:
         parts.append("<h2>5. What the simulation leaves out</h2>")

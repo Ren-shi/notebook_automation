@@ -43,6 +43,14 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The Report tab records the experiment (backlog 69, `physim.nuclear.logbook`). It covers the setup and how it
+  changed between runs, the Plan, every run with its summary and whether it was taken with the current setup,
+  predicted against measured, the gates, the analysis of the current run, and links to the physics register. It
+  can be shown in the app, downloaded as a zip (the report, the run record, the setup, the beam-time report of the
+  current setup, and every run's folder), or downloaded as the experiment folder. The run record now also explains
+  the run's numbers: the measured rate, the counts over the whole run, busy and live fractions, the coincidences,
+  each gate's share and the pull of measured against predicted (`logbook.run_explanations`). Each recomputes from
+  the numbers it shows.
 - The Analysis tab reads the run (backlog 68). It opens with predicted against measured: the Plan's numbers kept in
   the run's summary beside what the run measured, with whether they agree within three standard deviations. That
   covers the rates and full-energy-peak coincidences per detector, the beam time for the counts wanted, and each
