@@ -464,3 +464,53 @@ def report_zip(planner: Planner, seed: int = 1, events: int = 200_000, journal: 
                 if p.is_file():
                     z.write(p, p.relative_to(tmp).as_posix())
         return buf.getvalue()
+
+
+# -- the Data tab's figures (backlog item 67) -------------------------------------------------------------------
+
+def figure_histogram(spectra: list, height: int = 200, log: bool = False, title: Optional[str] = None):
+    """One or more spectra (dicts with "counts", "edges", "label", and optionally "scale" for the edges and
+    "xlabel") as step lines; small for the grid."""
+    go = _go()
+    fig = go.Figure()
+    for i, s in enumerate(spectra):
+        e = np.asarray(s["edges"], dtype=float) * s.get("scale", 1.0)
+        fig.add_trace(go.Scatter(x=np.repeat(e, 2)[1:-1], y=np.repeat(np.asarray(s["counts"]), 2),
+                                 mode="lines", name=s.get("label", ""), line=dict(color=COLORS[i % len(COLORS)],
+                                                                                   width=1.2)))
+    fig.update_layout(height=height, margin=dict(l=45, r=8, t=24 if title else 6, b=30),
+                      showlegend=len(spectra) > 1, legend=dict(orientation="h", y=-0.3, x=0),
+                      title=dict(text=title, font=dict(size=12)) if title else None,
+                      xaxis=dict(title=spectra[0].get("xlabel", "energy (MeV)") if spectra else ""),
+                      yaxis=dict(title="counts", type="log" if log else "linear"))
+    return fig
+
+
+def figure_energy_ring(view: dict, height: int = 380):
+    """Measured energy against ring, with the kinematic line of each group."""
+    go = _go()
+    e = view["edges"]
+    centres = (e[:-1] + e[1:]) / 2
+    fig = go.Figure(go.Heatmap(x=view["rings"] + 1, y=centres, z=np.log10(np.maximum(view["counts"].T, 0.5)),
+                               colorscale="Viridis", colorbar=dict(title="log₁₀ counts"), hoverinfo="skip"))
+    for i, line in enumerate(view["lines"]):
+        fig.add_trace(go.Scatter(x=np.asarray(line["rings"]) + 1, y=line["energy"], mode="lines+markers",
+                                 name=line["label"], line=dict(color=COLORS[(i + 1) % len(COLORS)], width=1.5,
+                                                               dash="dot" if line["group"] == "elastic" else "solid"),
+                                 marker=dict(size=4)))
+    fig.update_layout(height=height, margin=dict(l=55, r=10, t=10, b=40), dragmode="select",
+                      xaxis=dict(title=f"{view['detector']}: ring or strip"), yaxis=dict(title="energy (MeV)"),
+                      legend=dict(orientation="h", y=-0.22, x=0))
+    return fig
+
+
+def figure_gamma_crystal(view: dict, height: int = 360):
+    """γ-ray energy against crystal, raw or corrected."""
+    go = _go()
+    e = view["edges"]
+    centres = 1e3 * (e[:-1] + e[1:]) / 2
+    fig = go.Figure(go.Heatmap(x=view["crystals"], y=centres, z=view["counts"].T, colorscale="Viridis",
+                               colorbar=dict(title="counts")))
+    fig.update_layout(height=height, margin=dict(l=60, r=10, t=10, b=60),
+                      xaxis=dict(title="crystal"), yaxis=dict(title=f"γ-ray energy, {view['correction']} (keV)"))
+    return fig

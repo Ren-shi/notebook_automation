@@ -177,6 +177,7 @@ class Planner:
         #: A run being taken on a thread.
         self._background: Optional[_runs.Background] = None
         self._taking: Optional[_runs.RunTaker] = None
+        self._gates = None
 
     # -- loading and saving -----------------------------------------------------------------------------------------
 
@@ -266,6 +267,38 @@ class Planner:
         if self.folder is None:
             raise ValueError("there is no experiment folder yet (create_experiment)")
         self.folder.rename(name)
+
+    # -- gates ------------------------------------------------------------------------------------------------------
+
+    @property
+    def gatebook(self):
+        """The experiment's named gates (:class:`physim.nuclear.dataviews.GateBook`), saved in its folder."""
+        from .dataviews import GateBook
+
+        folder = self.folder.path if self.folder is not None else None
+        if self._gates is None or self._gates.folder != folder:
+            old = self._gates
+            self._gates = GateBook.load(folder)
+            if old is not None and old.folder is None and folder is not None:  # gates made before the folder
+                for g in old.gates.values():
+                    self._gates.put(g)
+        return self._gates
+
+    def gates(self) -> list:
+        """The experiment's gates, in the order they were made."""
+        return list(self.gatebook.gates.values())
+
+    def put_gate(self, gate) -> None:
+        """Add or replace a gate (a :class:`~physim.nuclear.dataviews.Gate`, or a dict of its fields)."""
+        from .dataviews import Gate
+
+        self.gatebook.put(gate if isinstance(gate, Gate) else Gate.from_dict(gate))
+
+    def remove_gate(self, name: str) -> None:
+        self.gatebook.remove(name)
+
+    def gate(self, name: str):
+        return self.gatebook[name]
 
     def runs(self) -> list:
         """The summaries of the experiment's runs, in order, each with a one-line description and whether the
@@ -1024,7 +1057,7 @@ class Planner:
             self._cache[key] = Analysis(self._data_experiment(), self.gamma_events(events, seed))
         return self._cache[key]
 
-    def analyse(self, settings=None, events: int = 400_000, seed: int = 1) -> dict:
+    def analyse(self, settings=None, events: int = 400_000, seed: int = 1, gate: Optional[str] = None) -> dict:
         """Run the automatic analysis with ``settings`` (a :class:`~physim.nuclear.analysis.Settings`, or a dict
         of its fields) and return the result as a dict for display. ``{"available": False}`` without Coulomb
         excitation and γ-ray detectors."""
@@ -1035,7 +1068,12 @@ class Planner:
         exp = self._data_experiment()
         if exp.excitation is None or not exp.gamma_detectors:
             return {"available": False, "reason": "Coulomb excitation with γ-ray detectors is needed."}
-        if isinstance(settings, dict):
+        if gate is not None:  # a named gate of the Data tab, with any other settings on top
+            extra = settings.as_dict() if isinstance(settings, Settings) else dict(settings or {})
+            for k in ("detectors", "rings", "particle_gate", "particle_energy"):
+                extra.pop(k, None)
+            settings = self.gate(gate).settings(**extra)
+        elif isinstance(settings, dict):
             settings = Settings(**settings)
         try:
             r = self.analysis(events, seed).run(settings)

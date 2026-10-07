@@ -458,9 +458,11 @@ def _segment_directions(experiment: Experiment, cols: dict) -> tuple:
     phi = np.zeros(len(cols["detector"]))
     if not len(theta):
         return theta, phi
-    keys = np.stack([cols["detector"], cols["segment_i"], cols["segment_j"]], axis=1)
-    unique, inverse = np.unique(keys, axis=0, return_inverse=True)
+    key = (cols["detector"].astype(np.int64) * 1_000_000 + cols["segment_i"].astype(np.int64) * 1000
+           + cols["segment_j"].astype(np.int64))
+    flat, inverse = np.unique(key, return_inverse=True)
     inverse = np.asarray(inverse).reshape(-1)
+    unique = np.stack([flat // 1_000_000, (flat // 1000) % 1000, flat % 1000], axis=1)
     th_u, ph_u = np.zeros(len(unique)), np.zeros(len(unique))
     for n, (d, i, j) in enumerate(unique):
         c = array.geometries[int(d)].segment_centre((int(i), int(j)), weighted=True)

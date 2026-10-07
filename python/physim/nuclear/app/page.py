@@ -1504,6 +1504,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         readouts.refresh()
         reading_box.refresh()
         run_panel.refresh()
+        data_view.refresh()
         for name, p in panels.items():
             if name == "geometry" and scene_current():
                 continue  # the scene is redrawn in place, so the camera stays where it is
@@ -1537,6 +1538,21 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         reading_box(tab)
         panels[tab]()
         explain(tab)
+
+    # -- the data tab ---------------------------------------------------------------------------------------------
+    data_options = {"correction": "recoil" if P().experiment.excitation is not None
+                    and P().experiment.excitation.excite == "target" else "projectile",
+                    "mode": "coincidence", "randoms": "shown", "addback": True, "crystals": False, "gate": None,
+                    "bins": 200, "lo_kev": None, "hi_kev": None, "scaled": False, "view_detector": None,
+                    "view_correction": "off", "other": None, "compare_spectrum": None}
+    gate_form = {"name": "", "detector": None, "rings": "", "group": "excited", "energy": ""}
+
+    @ui.refreshable
+    def data_view() -> None:
+        try:
+            tab_data.render_view(ctx)
+        except Exception as err:  # noqa: BLE001 -- say why instead of an empty tab
+            ui.label(f"The data could not be shown: {err}").classes("ps-bad")
 
     # -- the run tab ----------------------------------------------------------------------------------------------
     run_state = {"watching": False}
@@ -1716,7 +1732,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         multistep_block=multistep_block, open_explanation=open_explanation, efficiency_panel=efficiency_panel,
         plan_answers=plan_answers, run_view=run_panel, run_form=run_form, refresh_run_form=run_panel.refresh,
         start_run=start_run, stop_run=stop_run, extend_run=extend_run, load_run=load_run, watch_events=watch_events,
-        columns=columns)
+        columns=columns, data_view=data_view, refresh_data=data_view.refresh, data_options=data_options,
+        gate_form=gate_form)
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)

@@ -43,6 +43,16 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The Data tab (backlog 67, `physim.nuclear.dataviews`): every spectrum of the current run on screen at once, one
+  panel per particle and γ-ray detector (per crystal on request), each enlarged with a click and saved as CSV. The
+  operations are the user's: the Doppler correction (off, projectile, recoil, with why it is right or wrong for the
+  setup), a particle gate, singles or coincidences with the randoms shown, subtracted or left out, add-back and
+  suppression on or off, binning and range, and the whole run (scaled) or its real part. Gates are named objects
+  (`Gate`: detectors, rings, the elastic or excited group by energy, an energy window). They are saved with the
+  experiment (`gates.json`), and the analysis uses them by name (`Planner.analyse(gate=...)`, and
+  `Settings.particle_energy`). The 2D views: energy against ring with each group's kinematic line (drag a box to
+  fill in a gate), and γ-ray energy against crystal, raw or corrected. Two runs can be overlaid with their setups'
+  differences named. Exports: a ROOT file with the gates as cuts, and the run's `.npz`.
 - The Run tab (backlog 66): one Run button for a duration (the beam time by default), as a beam run, a source
   run (which source, activity, position) or an alignment check (the assumed offset). Before the run it shows the
   real part and its cost (`Planner.estimate_run`). While the run is taken: a clock and bar in beam time, a note of

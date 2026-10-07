@@ -65,6 +65,8 @@ class Settings:
     rings: Optional[list] = None
     #: "inelastic" keeps particles in the inelastic group, "all" takes every detected particle.
     particle_gate: str = "inelastic"
+    #: A window on the particle's measured energy (MeV), as drawn on the Data tab's energy-against-ring view.
+    particle_energy: Optional[tuple] = None
     #: Half-width of the inelastic gate, in resolutions (FWHM) of the particle detector.
     gate_width: float = 3.0
     #: Doppler correction: "emitter" (the nucleus that was excited), "projectile" or "recoil".
@@ -277,6 +279,9 @@ class Analysis:
         if s.rings is not None:
             keep &= np.isin(c["segment_i"][rows], list(s.rings))
             elastic &= np.isin(c["segment_i"], list(s.rings))
+        if s.particle_energy is not None:
+            lo, hi = sorted(float(x) for x in s.particle_energy)
+            keep &= (c["measured"][rows] >= lo) & (c["measured"][rows] <= hi)
         exc = self.experiment.excitation
         excited = [i for i, lab in enumerate(ev.channels) if "excited" in lab]
         elastic &= ~np.isin(c["channel"], excited)
