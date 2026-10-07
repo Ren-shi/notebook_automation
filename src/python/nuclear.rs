@@ -142,6 +142,10 @@ fn generator(cfg: &Bound<'_, PyDict>) -> PyResult<Generator> {
             .map(face)
             .collect::<PyResult<Vec<_>>>()?,
         max_path_factor: f64_of(cfg, "max_path_factor")?,
+        skip_misses: match cfg.get_item("skip_misses")? {
+            Some(v) => v.extract::<bool>()?,
+            None => false,
+        },
     })
 }
 

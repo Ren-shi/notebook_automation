@@ -34,6 +34,20 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- Experiments and runs (backlog 63, `physim.nuclear.runs`): an experiment is a folder (under
+  `~/.physim/experiments`) with the current setup and its runs; each run keeps its exact setup (`setup.toml`), its
+  counters and the Plan's predictions (`summary.json`) and its data as compact columns (`events.npz`, about 7 bytes
+  per particle). A beam run generates unweighted events, one event being one event, for the first part of the beam
+  time (10 min by default, up to an hour) and scales the rest; source and alignment runs too. Stop keeps what is
+  accumulated; Extend continues the same seed stream. The setup is locked while a run is taken, and a run is
+  marked stale when the physics of the setup changes (not a name). `Planner.create_experiment`, `open_experiment`,
+  `start_run`, `stop_run`, `extend_run`, `load_run`, `runs`, `run_status`; the spectra, γ rays, analysis,
+  alignment and tracks read the current run instead of simulating their own. A 10-minute run of the ⁵⁸Ni example
+  takes about 50 s and 45 MB.
+  - The event generator takes `skip_misses` (on for runs): a track that meets no detector is not carried out of
+    the target, which saves time; the same seed then gives other events than without it.
+  - `simulate_gammas(..., rates=)` reuses rates already computed; `gamma_events.crystals_of` and `backgrounds`
+    build the crystals and the singles and randoms without simulating.
 - Add-back and Compton suppression for clovers (backlog 62): `addback = true` sums the crystals' energies, so a
   Compton deposit returns to the full-energy peak with the share the `addback_factor` asks for (1.5 at 1332 keV,
   growing with energy) and the γ ray goes to the crystal with the larger deposit; `shield = "BGO"` rejects every

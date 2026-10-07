@@ -105,6 +105,10 @@ pub struct Generator {
     /// Longest path through a layer, as a multiple of the whole stack's thickness (for tracks
     /// almost in the target plane).
     pub max_path_factor: f64,
+    /// Skip a particle's way out of the target when its direction meets no face. The records are
+    /// the same physics, but the random numbers are drawn in another order than without it, so a
+    /// seed gives other events; used by the real-statistics runs, where most tracks miss.
+    pub skip_misses: bool,
 }
 
 /// One particle that reached a detector face.
@@ -314,6 +318,25 @@ impl Generator {
             let lab = tb.at_cm(th_star, recoil);
             let (s, c) = lab.theta.sin_cos();
             let dir = Vec3::new(s * ph.cos(), s * ph.sin(), c);
+            let nearest = |source: Vec3, dir: Vec3| {
+                let mut best: Option<(usize, Hit)> = None;
+                for (f, face) in self.faces.iter().enumerate() {
+                    if let Some(h) = face.hit(source, dir) {
+                        if best.is_none_or(|(_, b)| h.distance < b.distance) {
+                            best = Some((f, h));
+                        }
+                    }
+                }
+                best
+            };
+            let early = if self.skip_misses {
+                match nearest(source, dir) {
+                    None => continue,
+                    found => found,
+                }
+            } else {
+                None
+            };
             // Out through the rest of the stack: forward tracks leave by the back face,
             // backward ones by the front face. Paths grow as 1/cos, up to the cap.
             let cos_n = dir.dot(normal);
@@ -341,14 +364,11 @@ impl Generator {
                     ep = self.cross(&mut d, species, layer.material, ep, path(dz));
                 }
             }
-            let mut best: Option<(usize, Hit)> = None;
-            for (f, face) in self.faces.iter().enumerate() {
-                if let Some(h) = face.hit(source, dir) {
-                    if best.is_none_or(|(_, b)| h.distance < b.distance) {
-                        best = Some((f, h));
-                    }
-                }
-            }
+            let best = if self.skip_misses {
+                early
+            } else {
+                nearest(source, dir)
+            };
             let Some((f, hit)) = best else { continue };
             let face = &self.faces[f];
             let (mut deposited, mut measured) = (0.0, 0.0);
@@ -476,6 +496,7 @@ impl Generator {
             tables,
             faces: vec![disc(30.0, 1), disc(60.0, 1), disc(135.0, 1), cd],
             max_path_factor: 1e3,
+            skip_misses: false,
         }
     }
 }

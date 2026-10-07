@@ -300,7 +300,8 @@ def _room_spectrum(experiment, crystal: Crystal, edges: np.ndarray, rate: float,
 
 
 def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_events: Optional[Events] = None,
-                    bin_kev: float = 1.0, gammas_per_event: int = 10, plain: bool = False) -> GammaEvents:
+                    bin_kev: float = 1.0, gammas_per_event: int = 10, plain: bool = False,
+                    rates: Optional[Rates] = None) -> GammaEvents:
     """Generate the particle events (or take ``particle_events``) and follow the γ ray of every excited event to
     the crystals. The same setup and seed give the same γ rays.
 
@@ -308,7 +309,8 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     share of the event's weight: the rates are unchanged and the spectra are smoother.
 
     ``plain`` switches off the add-back and the shields of every γ-ray detector (the geometry stays): the same
-    γ rays as the setup's own run up to the add-back and the rejections, for a comparison."""
+    γ rays as the setup's own run up to the add-back and the rejections, for a comparison. ``rates`` is the
+    setup's :class:`~physim.nuclear.rates.Rates`, if already computed (it sets the singles and the randoms)."""
     exc = experiment.excitation
     if exc is None:
         raise ValueError("the setup has no excited state ([reaction] type = \"coulex\")")
@@ -330,16 +332,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
 
     # -- the crystals and their responses ----------------------------------------------------------------------
     # The chain starts from the bare crystals; add-back and suppression are applied to the deposits afterwards.
-    crystals, bare = [], []
-    for i, gd in enumerate(experiment.gamma_detectors):
-        r = Response(experiment, gd, bare=plain)
-        rb = Response(experiment, gd, bare=True)
-        thr = _q(gd.threshold).to("MeV") if gd.threshold is not None else 0.0
-        for k, (label, centre, radius) in enumerate(r.elements):
-            name = (gd.name or f"G{i + 1}") + (f" {label}" if label else "")
-            crystals.append(Crystal(name, i, k if len(r.elements) > 1 else None, np.array(centre, dtype=float),
-                                    radius, r, thr))
-            bare.append(rb)
+    crystals, bare = crystals_of(experiment, plain)
     centres = np.array([c.centre for c in crystals])
     normals = _unit(centres)
     radii = np.array([c.radius for c in crystals])
@@ -464,33 +457,8 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     corrected = doppler_correct(experiment, c, rows, which, measured)
 
     # -- singles, randoms, dead time ---------------------------------------------------------------------------
-    run = experiment.run
-    window = _q(run.coincidence_window).to("s") if run.coincidence_window is not None else 100e-9
-    dead = _q(run.dead_time).to("s") if run.dead_time is not None else 0.0
-    room = _q(run.room_background).to("/s") if run.room_background is not None else 0.0
-    extra = run.extra_lines or []
-    rates = Rates(experiment)
-    particle_rate = {g.name: rates.rate(g.name) for g in array.geometries}
-    excitation_rate = sum(rates.rate(g.name, what="excitations") for g in array.geometries)
-    # All excitations, whether or not a particle was detected: the γ-ray singles.
-    cx = ex.paths[1][0][2]
-    pps = experiment.beam.particles_per_second
-    atoms = sum(ch.atoms_per_cm2 for ch in chans if ch.excitation is not None)
-    all_excitations = pps * atoms * cx.total() * 1e-27
-    top = max(1.3 * e0, max(x[0] for x in ROOM_LINES) * 1e-3 * 1.05 if room > 0 else 0.0,
-              max((_q(e).to("MeV") for e, _ in extra), default=0.0) * 1.1) + 0.05
-    edges = np.arange(0.0, top, bin_kev * 1e-3)
-    singles_rate, singles_spectrum = {}, {}
-    for cr in crystals:
-        r = cr.response
-        element = cr.element
-        gamma_rate = all_excitations * float(r.total_efficiency(e0, element))
-        s = gamma_rate * r.shape(e0, edges)
-        bg, bg_rate = _room_spectrum(experiment, cr, edges, room, extra)
-        singles_rate[cr.name] = {"reaction": gamma_rate, "background": bg_rate}
-        singles_spectrum[cr.name] = s + bg
-    total_rate = sum(particle_rate.values()) + sum(sum(v.values()) for v in singles_rate.values())
-    live = 1 / (1 + dead * total_rate)
+    bg = backgrounds(experiment, crystals, rates, bin_kev)
+    excitation_rate, all_excitations = bg["excitation_rate"], bg["all_excitations"]
     notes = [f"{len(rows)} γ rays from {n // k_rep} excited events with a detected particle ({k_rep} emissions "
              f"each); {ev.n_events} reactions "
              f"generated. The particle events stand for {excitation_rate:.3g} excitations/s with a detected "
@@ -504,8 +472,64 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
             "phi": np.degrees(np.arctan2(lab[:, 1], lab[:, 0])), "beta": beta,
             "corrected_projectile": corrected["ejectile"], "corrected_recoil": corrected["recoil"],
             "weight": weight}
-    return GammaEvents(cols, ev, crystals, int(seed), e0, emitter, window, dead, live, singles_rate,
-                       singles_spectrum, edges, particle_rate, notes)
+    return GammaEvents(cols, ev, crystals, int(seed), e0, emitter, bg["window_s"], bg["dead_time_s"],
+                       bg["live_fraction"], bg["singles_rate"], bg["singles_spectrum"], bg["singles_edges"],
+                       bg["particle_rate"], notes)
+
+
+def crystals_of(experiment, plain: bool = False) -> tuple:
+    """The crystals of the setup's γ-ray detectors with their responses (``plain``: without add-back and
+    shields), and the bare response of each crystal: ([Crystal], [Response])."""
+    crystals, bare = [], []
+    for i, gd in enumerate(experiment.gamma_detectors):
+        r = Response(experiment, gd, bare=plain)
+        rb = Response(experiment, gd, bare=True)
+        thr = _q(gd.threshold).to("MeV") if gd.threshold is not None else 0.0
+        for k, (label, centre, radius) in enumerate(r.elements):
+            name = (gd.name or f"G{i + 1}") + (f" {label}" if label else "")
+            crystals.append(Crystal(name, i, k if len(r.elements) > 1 else None, np.array(centre, dtype=float),
+                                    radius, r, thr))
+            bare.append(rb)
+    return crystals, bare
+
+
+def backgrounds(experiment, crystals: list, rates: Optional[Rates] = None, bin_kev: float = 1.0) -> dict:
+    """What sets the random coincidences and the dead time, from the rates rather than the events: the
+    coincidence window and dead time (s), the particle singles rate per detector, the γ-ray singles rate and
+    spectrum per crystal (the reaction's γ rays, the room background and the extra lines), the live fraction,
+    and the excitation rates (with a detected particle, and in all)."""
+    e0 = experiment.excitation.energy_mev
+    ex = excitation_of(experiment)
+    chans = channels(stack(experiment), experiment)
+    array = Array.from_experiment(experiment)
+    run = experiment.run
+    window = _q(run.coincidence_window).to("s") if run.coincidence_window is not None else 100e-9
+    dead = _q(run.dead_time).to("s") if run.dead_time is not None else 0.0
+    room = _q(run.room_background).to("/s") if run.room_background is not None else 0.0
+    extra = run.extra_lines or []
+    rates = rates if rates is not None else Rates(experiment)
+    particle_rate = {g.name: rates.rate(g.name) for g in array.geometries}
+    excitation_rate = sum(rates.rate(g.name, what="excitations") for g in array.geometries)
+    # All excitations, whether or not a particle was detected: the γ-ray singles.
+    cx = ex.paths[1][0][2]
+    pps = experiment.beam.particles_per_second
+    atoms = sum(ch.atoms_per_cm2 for ch in chans if ch.excitation is not None)
+    all_excitations = pps * atoms * cx.total() * 1e-27
+    top = max(1.3 * e0, max(x[0] for x in ROOM_LINES) * 1e-3 * 1.05 if room > 0 else 0.0,
+              max((_q(e).to("MeV") for e, _ in extra), default=0.0) * 1.1) + 0.05
+    edges = np.arange(0.0, top, bin_kev * 1e-3)
+    singles_rate, singles_spectrum = {}, {}
+    for cr in crystals:
+        r = cr.response
+        gamma_rate = all_excitations * float(r.total_efficiency(e0, cr.element))
+        s = gamma_rate * r.shape(e0, edges)
+        bg, bg_rate = _room_spectrum(experiment, cr, edges, room, extra)
+        singles_rate[cr.name] = {"reaction": gamma_rate, "background": bg_rate}
+        singles_spectrum[cr.name] = s + bg
+    total_rate = sum(particle_rate.values()) + sum(sum(v.values()) for v in singles_rate.values())
+    return {"window_s": window, "dead_time_s": dead, "live_fraction": 1 / (1 + dead * total_rate),
+            "particle_rate": particle_rate, "singles_rate": singles_rate, "singles_spectrum": singles_spectrum,
+            "singles_edges": edges, "excitation_rate": excitation_rate, "all_excitations": all_excitations}
 
 
 def doppler_correct(experiment, columns: dict, rows: np.ndarray, crystal: np.ndarray, measured: np.ndarray) -> dict:
@@ -640,5 +664,5 @@ def _deposit(r: Response, energy: np.ndarray, rng) -> tuple:
     return out, kind
 
 
-__all__ = ["Crystal", "GAMMA_COLUMNS", "GammaEvents", "ROOM_LINES", "doppler_correct", "recorrect",
-           "simulate_gammas"]
+__all__ = ["Crystal", "GAMMA_COLUMNS", "GammaEvents", "ROOM_LINES", "backgrounds", "crystals_of", "doppler_correct",
+           "recorrect", "simulate_gammas"]
