@@ -216,7 +216,22 @@ The tabs are the stages of an experiment, left to right:
   sample of the run's events as tracks in the scene. The run list sets which run is current for the Data and
   Analysis tabs. **Not simulated yet** lists what the runs leave out. See also
   [Experiments and runs](#experiments-and-runs-from-python).
-- **Data:** the spectra of the current run.
+- **Data:** every spectrum of the current run at once, one panel per detector (per crystal on request). Click a
+  panel's corner to enlarge it and download it as CSV. Above the panels you choose what is done to them:
+  - the Doppler correction (off, for the projectile, for the recoil), with a line on why it is right or wrong for
+    this setup;
+  - a particle gate;
+  - singles or coincidences, with the random coincidences shown, subtracted, or left out;
+  - add-back and suppression on or off;
+  - the binning and the range;
+  - the real part of the run, or the whole run scaled.
+
+  **Gates** are named and kept with the experiment, and the analysis uses them by name. Make one from a detector,
+  a ring range, the elastic or excited group and an energy window, or drag a box on the **energy against ring**
+  view, where each group's kinematic line is drawn. The **γ-ray energy against crystal** view, raw or corrected,
+  shows a misplaced target as lines out of step. **Compare runs** overlays the same spectrum from two runs and
+  names what differs between their setups. **Export** writes a ROOT file (events, spectra, the gates as cuts) or
+  the run's `.npz`.
 - **Analysis:** from the γ-ray peak to B(E2), the alignment check, and the multi-step solution with all orders.
 - **Report:** the beam-time report and the run record.
 - **Physics:** kinematics, energy loss, trajectories and the excitation, as a reference.
