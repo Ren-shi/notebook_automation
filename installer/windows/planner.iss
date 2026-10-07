@@ -5,8 +5,9 @@
 ;
 ; It installs for the current user only (no administrator rights, no UAC prompt) into
 ; %LOCALAPPDATA%\Programs\physim planner, adds a Start-menu shortcut (and optionally one on the desktop) that runs
-; "pythonw.exe -m physim app --desktop" from the bundled Python, and registers an uninstaller. Installing a newer
-; version over an older one replaces it.
+; "pythonw.exe -m physim app --desktop" from the bundled Python (the planner in its own window, on Edge WebView2,
+; which Windows 10 and 11 bring; the browser if pywebview is missing), and registers an uninstaller. Installing a
+; newer version over an older one replaces it.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -59,7 +60,7 @@ Type: filesandordirs; Name: "{app}\python"
 [Icons]
 Name: "{group}\physim planner"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m physim app --desktop"; \
   WorkingDir: "{userdocs}"; IconFilename: "{app}\planner.ico"; \
-  Comment: "Plan a nuclear-physics experiment in your web browser"
+  Comment: "Plan a nuclear-physics experiment"
 Name: "{autodesktop}\physim planner"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m physim app --desktop"; \
   WorkingDir: "{userdocs}"; IconFilename: "{app}\planner.ico"; Tasks: desktopicon
 
