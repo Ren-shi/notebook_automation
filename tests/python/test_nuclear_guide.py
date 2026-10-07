@@ -87,7 +87,8 @@ def test_guided_steps():
     p.set("run", "beam_time", "12")
     assert list(problems(p)) == ["rates"]
     p.set("run", "beam_time", "12 h")
-    p.set("reaction", "type", "coulex")  # the state is not given yet
+    p.set("reaction", "type", "coulex")  # filled in from ENSDF when there is a local copy
+    p.set("reaction", "energy", None)  # the state's energy not given
     assert list(problems(p)) == ["goal"]
     c = Planner.example("coulex_ni58")
     c.set("gamma detector 1", "radius", "x")

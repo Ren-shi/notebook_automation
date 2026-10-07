@@ -418,6 +418,8 @@ class RunData:
         """The γ rays of the real part, in coincidence with the counted particles
         (:class:`~physim.nuclear.gamma_events.GammaEvents`), with add-back and shields as the setup has them, or
         without (``plain``). None without γ rays (an elastic setup, a source run)."""
+        if self.experiment.excitation is None:  # γ-ray detectors on an elastic setup: nothing emits
+            return None
         if plain not in self._gammas:
             prefix = "gp_" if plain else "g_"
             a = self._arrays()

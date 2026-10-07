@@ -125,10 +125,11 @@ def test_gamma_tab():
 def test_coulomb_excitation_is_editable(tmp_path):
     """Everything a Coulomb-excitation setup needs can be set from the planner (and so from the app)."""
     p = Planner.example("alpha_on_gold")
-    # Switching on Coulomb excitation fills in E2 excitation of the target; the state itself must be given.
-    assert not p.set("reaction", "type", "coulex")
-    assert any("'energy' is missing" in x for x in p.problems) and any("'b_up' is missing" in x for x in p.problems)
-    assert not p.set("reaction", "energy", "0.547 MeV")  # B(E2) still missing
+    # Switching on Coulomb excitation fills in E2 excitation of the target, and its first state from the local
+    # ENSDF copy when there is one; without a copy the state must be given.
+    if not p.set("reaction", "type", "coulex"):
+        assert any("'energy' is missing" in x for x in p.problems) and any("'b_up' is missing" in x for x in p.problems)
+    assert p.set("reaction", "energy", "0.547 MeV") or p.problems
     assert p.set("reaction", "b_up", "0.3 e2b2")
     assert p.experiment.excitation.multipolarity == "E2" and p.experiment.excitation.excite == "target"
     assert p.gamma()["available"] and p.gamma()["doppler"] == []

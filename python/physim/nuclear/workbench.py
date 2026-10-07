@@ -406,8 +406,8 @@ def new_setup(beam: str, energy: str, target: str, thickness: str = "0.5 mg/cm2"
     :func:`new_setup_notes` says what to enter."""
     from . import data
     from .experiment import SCHEMA, Experiment
-    from .levels import LevelScheme
     from .names import parse_nuclide
+    from .planner import first_state
 
     z1, a1 = parse_nuclide(beam)
     beam_name = data.nuclide((z1, a1)).name
@@ -435,12 +435,7 @@ def new_setup(beam: str, energy: str, target: str, thickness: str = "0.5 mg/cm2"
         role = "target" if measure == "coulex-target" else "beam"
         nuclide = (heavy.name if heavy else target) if role == "target" else beam_name
         try:
-            scheme = LevelScheme.from_ensdf(nuclide, max_energy_kev=3000.0)
-            twos = [n for n, lev in enumerate(scheme.levels) if n and lev.spin == 2 and scheme.b(0, n, "E2")]
-            if not twos:
-                raise ValueError(f"no 2+ state with a known B(E2) in {nuclide}")
-            n = twos[0]
-            b = scheme.b(0, n, "E2")
+            scheme, n, b = first_state(nuclide, "E2")
             d["levels"] = {role: scheme.to_dict()}
             d["reaction"] = {"type": "coulex", "excite": "target" if role == "target" else "projectile",
                              "energy": f"{scheme.levels[n].energy.value:.10g} keV", "multipolarity": "E2",
@@ -459,5 +454,101 @@ def new_setup_notes(experiment) -> list:
     return list(getattr(experiment, "_new_setup_notes", []))
 
 
-__all__ = ["GROUPS", "MEASUREMENTS", "NOT_SIMULATED", "PHYSICS", "PHYSICS_FOR", "physics_for", "STAGES", "TEMPLATES", "Decision", "checks", "decisions", "new_setup",
-           "new_setup_notes", "status_strip", "template"]
+# -- picking nuclides and states ------------------------------------------------------------------------------------
+
+#: The choice of a target made of something other than one element (a compound, or a named material).
+COMPOUND = "compound"
+#: The mass-number choice of a target of the element in its natural isotopic mix.
+NATURAL = "natural"
+
+
+def elements() -> dict:
+    """The elements the beam and target pickers offer, by Z: {symbol: "Ni · nickel (28)"}, those with at least one
+    measured mass."""
+    from . import data
+    from .names import SYMBOLS
+
+    measured = {n.Z for n in data.nuclides() if not n.estimated}
+    out = {}
+    for z, symbol in enumerate(SYMBOLS):
+        if z and z in measured:
+            try:
+                name = (data.element(symbol).name or "").lower()
+            except (KeyError, ValueError):
+                name = ""
+            out[symbol] = f"{symbol} · {name} ({z})" if name else f"{symbol} ({z})"
+    return out
+
+
+def mass_numbers(symbol: str) -> dict:
+    """An element's nuclides with a measured mass, {A: label}: the stable ones with their natural abundance
+    ("62 · 3.63 %"), the others as their mass number."""
+    from . import data
+    from .names import Z_OF
+
+    z = Z_OF[symbol]
+    try:
+        abundance = dict(data.element(symbol).isotopes)
+    except (KeyError, ValueError):
+        abundance = {}
+    out = {}
+    for n in sorted((n for n in data.nuclides() if n.Z == z and not n.estimated), key=lambda n: n.A):
+        share = abundance.get(n.A)
+        out[n.A] = f"{n.A} · {100 * share:.3g} %" if share else str(n.A)
+    return out
+
+
+def most_abundant(symbol: str) -> Optional[int]:
+    """The mass number of an element's most abundant isotope, or None for an element with no stable one."""
+    from . import data
+
+    try:
+        iso = data.element(symbol).isotopes
+    except (KeyError, ValueError):
+        return None
+    return max(iso, key=lambda x: x[1])[0] if iso else None
+
+
+def split_nuclide(text: Optional[str]) -> Optional[tuple]:
+    """A beam nuclide or target material as (symbol, A), with A None for a natural element ("Pt"); None when it is
+    neither (a compound such as "CD2", or nothing)."""
+    from .names import Z_OF, parse_nuclide
+
+    text = (text or "").strip()
+    if not text:
+        return None
+    if text in Z_OF:
+        return (text, None)
+    try:
+        z, a = parse_nuclide(text)
+    except (KeyError, ValueError):
+        return None
+    from .names import SYMBOLS
+
+    return (SYMBOLS[z], a)
+
+
+def states(scheme, multipolarity: str = "E2", limit: int = 30) -> dict:
+    """The states of a level scheme that ``multipolarity`` reaches from the ground state with a known B(Eλ↑), for
+    the state picker: {level index: "2+ · 1172.9 keV · B(E2↑) 884 e²fm⁴"}, lowest first."""
+    if scheme is None:
+        return {}
+    lam = int(multipolarity[1])
+    out = {}
+    for n, lev in enumerate(scheme.levels):
+        b = scheme.b(0, n, multipolarity) if n else None
+        if not b:
+            continue
+        value = f"{b:,.0f}" if b >= 100 else f"{b:.3g}"
+        out[n] = f"{lev.label} · {lev.energy.value:.1f} keV · B({multipolarity}↑) {value} e²fm{_SUPERSCRIPT[2 * lam]}"
+        if len(out) >= limit:
+            break
+    return out
+
+
+_SUPERSCRIPT = {2: "²", 4: "⁴", 6: "⁶", 8: "⁸"}
+
+
+__all__ = ["COMPOUND", "GROUPS", "MEASUREMENTS", "NATURAL", "NOT_SIMULATED", "PHYSICS", "PHYSICS_FOR", "physics_for",
+           "STAGES", "TEMPLATES", "Decision", "checks", "decisions", "elements", "mass_numbers", "most_abundant",
+           "new_setup", "new_setup_notes", "split_nuclide", "states", "status_strip", "template"]
