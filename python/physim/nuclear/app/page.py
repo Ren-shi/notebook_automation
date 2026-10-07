@@ -1552,6 +1552,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         run_panel.refresh()
         data_view.refresh()
         analysis_view.refresh()
+        report_view.refresh()
         for name, p in panels.items():
             if name == "geometry" and scene_current():
                 continue  # the scene is redrawn in place, so the camera stays where it is
@@ -1600,6 +1601,13 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             tab_data.render_view(ctx)
         except Exception as err:  # noqa: BLE001 -- say why instead of an empty tab
             ui.label(f"The data could not be shown: {err}").classes("ps-bad")
+
+    @ui.refreshable
+    def report_view() -> None:
+        try:
+            tab_report.render_view(ctx)
+        except Exception as err:  # noqa: BLE001 -- say why instead of an empty tab
+            ui.label(f"The report could not be shown: {err}").classes("text-sm ps-warn")
 
     @ui.refreshable
     def analysis_view() -> None:
@@ -1788,10 +1796,11 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         start_run=start_run, stop_run=stop_run, extend_run=extend_run, load_run=load_run, watch_events=watch_events,
         columns=columns, data_view=data_view, refresh_data=data_view.refresh, data_options=data_options,
         gate_form=gate_form, fmt=_fmt, time_text=_time,
-        analysis_view=analysis_view)
+        analysis_view=analysis_view, report_view=report_view)
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)
+    ui.add_css(record_css(".ps-record"))
     dark = ui.dark_mode(state["theme"] == "dark")
     with ui.header(elevated=False).classes("items-center ps-header py-1"):
         ui.label("physim").classes("text-lg font-semibold")
