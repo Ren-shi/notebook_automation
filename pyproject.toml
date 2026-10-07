@@ -42,7 +42,7 @@ root = ["uproot"]
 # The experiment planner app (physim app).
 app = ["nicegui", "matplotlib", "plotly"]
 # The planner in its own window (physim app --window): pywebview on the system's web view.
-window = ["pywebview"]
+window = ["pywebview>=5"]  # NiceGUI's native mode needs webview.window.FixPoint
 test = ["pytest"]
 
 [tool.maturin]
