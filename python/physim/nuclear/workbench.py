@@ -395,12 +395,15 @@ def template(key: str):
 
 
 def new_setup(beam: str, energy: str, target: str, thickness: str = "0.5 mg/cm2", measure: str = "elastic",
-              current: str = "1 pnA", beam_time: str = "24 h", title: Optional[str] = None):
+              current: str = "1 pnA", beam_time: str = "24 h", title: Optional[str] = None,
+              detectors_from: Optional[str] = None):
     """A new experiment's setup from what the "New experiment" dialog asks: the beam and its energy, the target,
     and what to measure (:data:`MEASUREMENTS`). It gets one particle detector where the kinematics send the
     particles (behind the target for a light beam on a heavy target, forward otherwise); more come from the Add
-    menus. For Coulomb excitation the first 2⁺ state is taken from the local ENSDF copy when there is one; without
-    it the setup stays elastic and :func:`new_setup_notes` says what to enter."""
+    menus. ``detectors_from`` (a key of :data:`TEMPLATES`) takes a template's particle and γ-ray detectors
+    instead; the beam, target and reaction stay the ones given here. For Coulomb excitation the first 2⁺ state is
+    taken from the local ENSDF copy when there is one; without it the setup stays elastic and
+    :func:`new_setup_notes` says what to enter."""
     from . import data
     from .experiment import SCHEMA, Experiment
     from .levels import LevelScheme
@@ -421,6 +424,11 @@ def new_setup(beam: str, energy: str, target: str, thickness: str = "0.5 mg/cm2"
          "run": {"beam_time": beam_time, "counts_wanted": 1000},
          "reaction": {"type": "elastic"},
          "detectors": [place]}
+    if detectors_from and detectors_from != "blank":
+        source = template(detectors_from).to_dict()
+        d["detectors"] = source["detectors"]
+        if source.get("gamma_detectors"):
+            d["gamma_detectors"] = source["gamma_detectors"]
     exp = Experiment.from_dict(copy.deepcopy(d))
     notes = []
     if measure in ("coulex-target", "coulex-beam"):
