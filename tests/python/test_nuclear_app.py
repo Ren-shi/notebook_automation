@@ -99,6 +99,14 @@ def test_the_app_serves_every_example(tmp_path):
             assert "Beam time needed" in body and "Kinematics: where the particles go" in body, query
             # The Run tab: the button, the real part, and what is not simulated (backlog 66).
             assert "Event by event" in body and "Not simulated yet" in body, query
+            # The Physics tab: every section of the register, with the panels of the old tabs (backlog 70).
+            for _, title, _, _ in workbench.PHYSICS:
+                if title.startswith("Coulomb excitation") and "coulex" not in query and "ni58" not in query:
+                    continue
+                assert title in body, (query, title)
+            for panel in ("Explain: Two-body kinematics", "Explain: Energy loss and straggling",
+                          "Explain: Coulomb trajectories"):
+                assert panel in body, (query, panel)
     finally:
         proc.terminate()
         proc.wait(timeout=30)

@@ -43,6 +43,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The Physics tab (backlog 70): the physics behind the numbers as a reference, in the order of the physics register.
+  It covers nuclear data and level schemes, two-body kinematics, energy loss, the Rutherford orbit and safe
+  distance, the detectors and the γ-ray response, rates and events, and Coulomb excitation with the correlation and
+  Doppler shifts. Each section links to its register page and names the tests that validate it. The ? of a
+  number ("See the physics") and the consequence line of a setup card open the section that shows its physics
+  (`workbench.PHYSICS`, `physics_for`). Nothing on the tab needs a run.
 - The Report tab records the experiment (backlog 69, `physim.nuclear.logbook`). It covers the setup and how it
   changed between runs, the Plan, every run with its summary and whether it was taken with the current setup,
   predicted against measured, the gates, the analysis of the current run, and links to the physics register. It

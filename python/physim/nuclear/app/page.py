@@ -557,7 +557,12 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             ui.label("Assumptions").classes("ps-section mt-2")
             ui.label(x["assumptions"]).classes("text-sm ps-muted")
             ui.link("The theory page", x["reference"], new_tab=True).classes("text-sm")
-            ui.button("Close", on_click=dialog.close).props("flat no-caps")
+            with ui.row().classes("gap-2"):
+                section = wb.physics_for(x["key"])
+                ui.button("See the physics", icon="science",
+                          on_click=lambda s=section: (dialog.close(), show_physics(s))).props("flat no-caps").tooltip(
+                    "The panel of the Physics tab that shows it: " + dict((k, t) for k, t, _, _ in wb.PHYSICS)[section])
+                ui.button("Close", on_click=dialog.close).props("flat no-caps")
         dialog.open()
 
     def track_panel(t) -> None:
@@ -1296,8 +1301,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         ui.separator()
 
     @ui.refreshable
-    def gamma_panel():
-        levels_block()
+    def gamma_panel(with_levels: bool = True):
+        if with_levels:
+            levels_block()
         g = P().gamma()
         if not g["available"]:
             ui.markdown("This setup has no excited state. To plan Coulomb excitation, set **Reaction** to "
@@ -1579,6 +1585,13 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                         f"**Where it stops being valid.** {e['limits']}\n\n"
                         f"**Validation:** see the physics register page `{e['register']}` in physim's docs.")
 
+    def show_physics(section: str) -> None:
+        """Open the Physics tab at a section (:data:`physim.nuclear.workbench.PHYSICS`)."""
+        if state.get("tabs") is not None:
+            state["tabs"].set_value("physics")
+        ui.run_javascript(f"setTimeout(() => document.querySelector('.physics-{section}')"
+                          "?.scrollIntoView({behavior: 'smooth', block: 'start'}), 400)")
+
     def block(tab: str, title: Optional[str] = None) -> None:
         """One of the planner's results: its heading, how to read it, the panel, and its explanation."""
         if title:
@@ -1796,7 +1809,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         start_run=start_run, stop_run=stop_run, extend_run=extend_run, load_run=load_run, watch_events=watch_events,
         columns=columns, data_view=data_view, refresh_data=data_view.refresh, data_options=data_options,
         gate_form=gate_form, fmt=_fmt, time_text=_time,
-        analysis_view=analysis_view, report_view=report_view)
+        analysis_view=analysis_view, report_view=report_view, show_physics=show_physics, levels_block=levels_block,
+        geometry_tables=geometry_tables, explain=explain, reading_box=reading_box, gamma_panel=gamma_panel)
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)

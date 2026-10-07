@@ -116,6 +116,11 @@ def render(ctx) -> None:
                 with ui.column().classes("gap-0 w-full"):
                     ui.label(d.title).classes("text-sm font-semibold")
                     ui.label(d.state).classes("text-sm")
-                    ui.label(d.consequence).classes("text-xs ps-accent ps-consequence")
+                    with ui.row().classes("items-start no-wrap gap-1 w-full"):
+                        ui.label(d.consequence).classes("text-xs ps-accent ps-consequence")
+                        ui.space()
+                        ui.button(icon="science", on_click=lambda k=d.key: ctx.show_physics(wb.physics_for(k))).props(
+                            "dense flat round size=xs").classes("ps-muted").on("click.stop", lambda: None).tooltip(
+                            "The physics behind this line")
             with exp:
                 _card_body(ctx, d)
