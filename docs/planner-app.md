@@ -46,7 +46,7 @@ server that others reach from their own machines.
    press Ctrl+C in it) to stop.
 
 **If you already use Python:** `pip install "physim-engine[app,root]"`, then `physim app` (or `python -m physim app`).
-`physim app --example oxygen_on_lead_array` starts from another example; `--port` picks another port.
+`physim app --example oxygen_on_lead_array` opens an example; `--port` picks another port.
 
 `physim app --window` opens the planner in its own window instead of a browser tab (`pip install
 "physim-engine[app,window]"` adds pywebview, 5 MB; without it the browser opens and the command says so).
@@ -60,8 +60,8 @@ example to show the planner on a lab PC; anyone on that network can then open it
 system's setting; after that it remembers your choice in this browser. `?theme=dark` (or `light`) in the address
 sets it for one visit.
 
-The strip above the results always shows four numbers: the highest rate, the longest beam time for the counts you
-asked for, the head-on closest approach, and how many warnings the setup has.
+The Plan tab opens with four numbers: the highest rate, the longest beam time for the counts you asked for, the
+head-on closest approach, and how many warnings the setup has.
 
 ## The scene
 
@@ -150,78 +150,60 @@ p = Planner.example("alpha_on_gold")
 paper.figure(p, "kinematics", journal="nature", width="double").savefig("kinematics.pdf")
 ```
 
-## The guided mode
+## Experiments
 
-The planner opens in **Guided** mode: the left panel is a list of steps, in the order you would plan an experiment.
+The planner works on **experiments**. An experiment has a name, its current setup and the runs taken with it, and
+lives in a folder under `~/.physim/experiments`, where every change is saved as you make it.
 
-1. **What do you want to measure?** Rutherford (elastic) scattering, or Coulomb excitation. **Start here** loads a
-   complete example of that kind, so every result is filled in from the start. You then change it one step at a
-   time.
-2. **Beam**, with the kinematics beside it.
-3. **Target**, with the energy loss.
-4. **Particle detectors**, with the geometry and kinematics.
-5. **γ-ray detectors** (Coulomb excitation only), with the excitation and Doppler results.
-6. **Rates and beam time**.
-7. **Spectra**.
-8. **Report**.
+- The first time, the planner offers **New experiment**. It asks for the beam and its energy, the target, and what
+  to measure: elastic scattering, or Coulomb excitation of the target or the beam. It names the experiment from
+  them (for example *16O on 208Pb*) and puts one particle detector where the kinematics send the particles. For
+  Coulomb excitation it takes the first 2⁺ state from your local ENSDF copy; without one it says what to enter.
+- **Detectors from** starts from a template instead: *Coulomb excitation of a target nucleus with a CD and
+  clovers*, *Elastic scattering with silicon pads*, *Elastic scattering with an array of strip detectors*, or
+  *Blank*. A template brings its own beam and target.
+- **Experiments** (top) lists your experiments, newest first; **Open** one to carry on where you left it.
+- **Import a setup file** replaces the current setup with a `.toml` file; **Export the setup** downloads it (see
+  {doc}`nuclear-setup`).
 
-In every step:
-- **The ? in each field** explains what the value is, a typical value, and what raising it does to the results.
-  Hover over it, or tap it on a touch screen.
-- **How to read this** opens every result. It says what to look for, using your setup's numbers: which detector
-  counts fastest, whether two peaks separate, how much beam time you need.
-- **Problems show in red inside the step.** **Next** stays greyed out until they are fixed. You can go back to any
-  step you have already reached by clicking its title.
+`physim app --example coulex_ni58` opens an example as an unsaved setup instead.
 
-**Expert view** (top right) shows every input on the left and every result as tabs on the right, as in the
-walkthrough below. The browser remembers which mode you used last.
+## The setup as a list of decisions
 
-## A four-detector setup in the expert view
+The left panel is the setup, as the decisions you make in order: **Beam**, **Target and reaction**, **Particle
+detectors**, **γ-ray detectors**, **Run conditions**. Each is a card with two lines:
 
-1. **Start from an example.** At the top right, pick *alpha_on_gold* in **Start from example**. The setup appears on
-   the left and the results on the right.
-2. **Set the beam.** Under *Beam*, type an **Energy** such as `6 MeV`, or `1.5 MeV/u`, and press Enter. Every
-   value needs its unit; the field shows an example when it is empty. The results update at once.
-3. **Set the target.** Under *Target*, type the **Material** (`Au`, `208Pb`, `CD2`, `Mylar`) and **Thickness**
-   (`0.5 mg/cm2` or `250 nm`). For a carbon backing, fill in *Backing material* and *Backing thickness*.
-4. **Arrange the detectors.**
-   - Open a detector in the *Detectors* list to change its angle (θ), distance, size, thickness, resolution or
-     threshold.
-   - **Duplicate** copies a detector, and **Remove** deletes it.
-   - **Add** offers a ready-made detector for each region, which you then edit:
-     - a forward strip detector (45°);
-     - a side pad (90°);
-     - a backward pad (150°);
-     - a backward ring around the beam (a CD at 180°, covering about 125–165°).
+- what you chose, for example *CD: annular at 30 mm, behind the target (θ 180 deg)*;
+- what it leads to, for example *126°–163°, 2.31 sr, 662/s*. This line changes as soon as you change a field.
 
-     θ below 90° is forward and above 90° is backward. Backward detectors count slowly but see the closest
-     collisions. Make four, for example at 30°, 60°, 90° and 150°.
-5. **Read the warnings.** The yellow box above the results lists everything to check: detectors counting too fast,
-   too few counts in the planned beam time, angles where Rutherford's formula fails, detectors in the beam.
-   - A red line means the setup has a problem, and the message names the field.
-   - While a red line is showing, the results stay on the last valid setup.
-6. **Look at each tab.**
-   - **Geometry:** the experiment to scale; click a detector for its numbers and drag it to move it (see
-     [The scene](#the-scene)).
-   - **Kinematics:** energy against angle, with each detector's range shaded.
-   - **Rates and beam time:** the rate per detector and per strip, the counts in the run, and the beam time for the
-     counts you want.
-   - **Energy loss:** what the target, backing and dead layers take from the beam.
-   - **Spectra:** press *Simulate* for more events or another seed.
-   - **Trajectories:** Coulomb orbits.
-   - **Excitation and γ rays:** for a Coulomb-excitation setup (see the example *coulex_ni58*), the excitation
-     probability against angle, excitation events per detector, and the Doppler-shifted γ-ray energy and width
-     for every pair of particle and γ detector.
+Open a card to change its fields. The rarely touched ones (dead layers, crystal pitch, housing, absorbers, the
+backing, the coincidence window and dead time) are behind **More**. The **?** in each field explains what the
+value is, a typical value, and what raising it does. **Add** above the detectors offers ready-made ones.
 
-   Each tab opens with **How to read this** and ends with an **Explain** panel giving the formula, the assumptions
-   and where they stop being valid.
-7. **Try a sweep.** In *Rates and beam time*, under **Sweep one parameter**, choose *beam energy*, enter
-   `4 MeV, 5 MeV, 6 MeV, 7 MeV`, and press *Run sweep* to see how the rate changes.
-8. **Save your setup.** **Save setup** downloads `setup.toml`, and **Load setup** opens it again later. The file is
-   plain text (see {doc}`nuclear-setup`).
-9. **Export the report.** In **Report**, press *Build and download the report*. You get a zip archive with
-   `report.html` (open it in the browser, and print it to PDF if you need one), CSV tables, figures, the setup file
-   and, if `root` was included in the install, `events.root` for ROOT.
+**The checks are always at the top of the panel:** problems with the setup in red, then warnings (detectors
+counting too fast, too few counts, angles where Rutherford's formula fails, detectors in the beam or behind
+another), and *The setup changed since run 3* once you change the physics after a run.
+
+**The status strip** across the top of the results shows the experiment, beam, target, detectors, the last run and
+the number of warnings, on every tab. Click a part to open its card.
+
+## The stages
+
+The tabs are the stages of an experiment, left to right:
+
+- **Setup:** the experiment to scale; click a detector for its numbers and drag it to move it (see
+  [The scene](#the-scene)).
+- **Plan:** what you check before asking for beam: the key numbers, the rates and beam time per detector and
+  strip (with the sweep), the excitation and its γ rays, the energy loss.
+- **Run:** take a run of a duration, watch the counters, and pick which run is current (see
+  [Experiments and runs](#experiments-and-runs-from-python)).
+- **Data:** the spectra of the current run.
+- **Analysis:** from the γ-ray peak to B(E2), the alignment check, and the multi-step solution with all orders.
+- **Report:** the beam-time report and the run record.
+- **Physics:** kinematics, energy loss, trajectories and the excitation, as a reference.
+
+Each result opens with **How to read this**, using your numbers, and ends with an **Explain** panel giving the
+formula, the assumptions and where they stop being valid.
 
 ## A Coulomb-excitation plan
 

@@ -1,0 +1,91 @@
+"""The workbench's structure (backlog item 64): one mode, the setup as decisions with their consequences, the status
+strip, new experiments and templates, the seven stages."""
+
+import pytest
+
+from physim.nuclear import guide
+from physim.nuclear import workbench as wb
+from physim.nuclear.planner import Planner
+
+
+def _card(p, key):
+    return next(d for d in wb.decisions(p) if d.key == key)
+
+
+def test_new_experiment_without_a_form_of_every_field(tmp_path):
+    exp = wb.new_setup("16O", "64 MeV", "208Pb", measure="elastic")
+    p = Planner(exp)
+    p.create_experiment(root=tmp_path)
+    # The detectors come after, from the Add menus.
+    names = [d.get("name") for d in p.draft["detectors"]]
+    assert p.add_detector(**guide.placement("forward", names))
+    assert p.add_gamma_detector(**guide.gamma_placement("clover"))
+    strip = {x["label"]: x["text"] for x in wb.status_strip(p)}
+    assert strip["Experiment"] == "16O on 208Pb"
+    assert strip["Beam"] == "16O at 64 MeV" and strip["Target"].startswith("208Pb")
+    assert strip["Detectors"] == "2 particle + 1 γ"
+    assert strip["Last run"] == "no run yet"
+    # A light beam on a heavy target gets its first detector behind the target.
+    assert exp.detectors[0].theta.to("deg") == 180
+    assert wb.new_setup("208Pb", "1 GeV", "12C").detectors[0].theta.to("deg") == 45
+
+
+def test_every_card_has_a_consequence_that_follows_its_fields():
+    p = Planner.example("coulex_ni58")
+    cards = wb.decisions(p)
+    assert [c.group for c in cards][:2] == ["Beam", "Target and reaction"]
+    groups = list(dict.fromkeys(c.group for c in cards))
+    assert groups == list(wb.GROUPS)
+    for c in cards:
+        assert c.state and c.consequence and c.consequence != "—", c.key
+    before = _card(p, "target").consequence
+    p.set("target", "thickness", "1.0 mg/cm2")
+    after = _card(p, "target").consequence
+    assert before != after and "loses" in after
+    cd = _card(p, "detector:0").consequence
+    p.set("detector 1", "distance", "60 mm")
+    assert _card(p, "detector:0").consequence != cd
+    assert _card(p, "detector:0").state.startswith("CD: annular at 60 mm")
+
+
+def test_every_field_of_every_card_has_help():
+    for name in Planner.examples():
+        p = Planner.example(name)
+        for c in wb.decisions(p):
+            sec = "detector" if c.section.startswith("detector") else (
+                "gamma" if c.section.startswith("gamma") else c.section)
+            missing = [f for f, _, _ in c.fields + c.more if guide.help_for(sec, f) is None]
+            assert not missing, (name, c.key, missing)
+    for f, _, _ in wb.BACKING_FIELDS:
+        assert guide.help_for("backing", f) is not None
+
+
+def test_checks_say_when_the_setup_changed_since_the_run(tmp_path):
+    p = Planner.example("alpha_on_gold")
+    p.create_experiment(root=tmp_path)
+    p.start_run("beam", duration="5 s")
+    assert not any("changed since run" in c["text"] for c in wb.checks(p))
+    p.set("beam", "energy", "6 MeV")
+    assert "changed since run 1" in wb.checks(p)[0]["text"]
+    strip = {x["label"]: x["text"] for x in wb.status_strip(p)}
+    assert strip["Last run"].startswith("Beam run, 5s") and "changed since" in strip["Last run"]
+
+
+def test_stages_and_templates():
+    assert [label for _, label in wb.STAGES] == ["Setup", "Plan", "Run", "Data", "Analysis", "Report", "Physics"]
+    for key, label, example in wb.TEMPLATES:
+        exp = wb.template(key)
+        exp.validate()
+        if example:
+            assert exp.to_dict() == Planner.example(example).experiment.to_dict()
+    with pytest.raises(KeyError):
+        wb.template("nope")
+
+
+def test_coulex_needs_a_state_or_says_so():
+    exp = wb.new_setup("16O", "64 MeV", "Xe", measure="coulex-beam")
+    if exp.excitation is None:
+        notes = wb.new_setup_notes(exp)
+        assert notes and "B(E2)" in notes[0]
+    else:
+        assert exp.excitation.excite == "projectile"

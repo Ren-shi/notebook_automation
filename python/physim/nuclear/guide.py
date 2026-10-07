@@ -78,6 +78,14 @@ HELP = {
     ("run", "counts_wanted"): _h("Counts you need in each detector for your result, used to work out the beam "
                                  "time.", "1000–10 000 (3% – 1% statistical error)", "a longer beam time "
                                  "needed."),
+    ("run", "coincidence_window"): _h("Full width of the time window in which a particle and a γ ray count as "
+                                      "one event (100 ns if left out).", "50–200 ns", "more random coincidences "
+                                      "under the peak."),
+    ("run", "dead_time"): _h("Time the acquisition is busy after each count (non-paralysable); empty for none.",
+                             "2–10 µs", "a smaller live fraction at high rates: every count is scaled down."),
+    ("run", "room_background"): _h("Counts per second in each γ-ray crystal from the room (⁴⁰K, thorium and uranium "
+                                   "series), empty for none.", "0.5–5 /s unshielded", "more random coincidences "
+                                   "and room lines in the spectra."),
     # -- reaction
     ("reaction", "type"): _h("What happens in the target: elastic (Rutherford) scattering, or Coulomb excitation of "
                              "one state.", "elastic for target analysis and cross sections; Coulomb excitation to "

@@ -1,500 +1,23 @@
-"""The experiment planner web app: build a setup by pointing and clicking, see every result, export the report.
-
-Start it with ``physim app`` (or ``python -m physim app``); it opens in the browser at http://localhost:8080. It runs
-on your computer only: no accounts, nothing uploaded. Needs the ``app`` extra: ``pip install physim-engine[app]``.
-
-The app is a thin layer over :class:`physim.nuclear.planner.Planner`: every number it shows can be had from Python
-too. The figure functions here (``figure_geometry``, ``figure_kinematics``, ...) return Plotly figures and work in
-a notebook as well.
-"""
+"""The planner page: the setup panel, the status strip and the stage tabs, assembled for one browser client."""
 
 from __future__ import annotations
 
 import base64
-import io
 import math
-import os
 import time
-import zipfile
 from typing import Optional
 
-import numpy as np
 
-from . import guide
-from .analysis import SHIFT_H
-from .record import record_css
-from .planner import TABS, Planner
+from .. import guide
+from ..analysis import SHIFT_H
+from ..record import record_css
+from ..planner import Planner
 
-#: Fields of each setup section shown in the setup panel, in order: (field, label, placeholder).
-BEAM_FIELDS = [("nuclide", "Nuclide", "4He"), ("energy", "Energy", "5.5 MeV or 4 MeV/u"),
-               ("current", "Current", "1 pnA or 10 enA"), ("charge_state", "Charge state", "6"),
-               ("energy_spread", "Energy spread (FWHM)", "0.1 %"), ("spot_size", "Spot size (FWHM)", "2 mm")]
-TARGET_FIELDS = [("material", "Material", "Au, 208Pb, CD2"), ("thickness", "Thickness", "0.5 mg/cm2 or 1 um"),
-                 ("position", "Position along the beam", "0 mm"),
-                 ("tilt", "Tilt", "0 deg"), ("density", "Density", "19.3 g/cm3")]
-BACKING_FIELDS = [("material", "Backing material", "C"), ("thickness", "Backing thickness", "20 ug/cm2")]
-RUN_FIELDS = [("beam_time", "Beam time", "12 h"), ("counts_wanted", "Counts wanted", "5000")]
-DETECTOR_FIELDS = [("name", "Name", "D1"), ("theta", "θ", "45 deg"), ("phi", "φ", "0 deg"),
-                   ("distance", "Distance", "100 mm"), ("width", "Width", "50 mm"), ("height", "Height", "50 mm"),
-                   ("strips_x", "Strips x", "16"), ("strips_y", "Strips y", "16"), ("radius", "Radius", "5 mm"),
-                   ("inner_radius", "Inner radius", "9 mm"), ("outer_radius", "Outer radius", "41 mm"),
-                   ("rings", "Rings", "16"), ("sectors", "Sectors", "24"), ("thickness", "Thickness", "300 um"),
-                   ("dead_layer", "Dead layer", "0.5 um"), ("resolution", "Resolution (FWHM)", "20 keV"),
-                   ("threshold", "Threshold", "200 keV"), ("material", "Material", "Si")]
-#: The excited state of a Coulomb-excitation setup ([reaction] in a setup file); type, excite and multipolarity are
-#: drop-downs.
-REACTION_FIELDS = [("energy", "State energy", "1.454 MeV"), ("b_up", "B(Eλ↑)", "0.0695 e2b2 or 695 e2fm4")]
-REACTION_TYPES = {"elastic": "Elastic (Rutherford) scattering", "coulex": "Coulomb excitation"}
-GAMMA_FIELDS = [("name", "Name", "Ge1"), ("theta", "θ", "90 deg"), ("phi", "φ", "90 deg"),
-                ("distance", "Distance", "120 mm"), ("radius", "Crystal radius", "35 mm"),
-                ("resolution", "Resolution (FWHM)", "2.5 keV"), ("efficiency", "Efficiency (full peak)", "2 %"),
-                ("material", "Crystal material", "Ge"), ("absorbers", "Absorbers", "Pb 1 mm, Cu 0.5 mm")]
-#: Shown in place of the radius for a γ-ray detector with real crystals (a model of the catalogue).
-CRYSTAL_FIELDS = [("crystals", "Crystals", "4"), ("crystal_diameter", "Crystal diameter", "50 mm"),
-                  ("crystal_length", "Crystal length", "70 mm"), ("crystal_pitch", "Crystal pitch", "45 mm"),
-                  ("housing_side", "Housing side", "101 mm"), ("window_gap", "Window to crystal", "5 mm")]
-#: Shown for a clover: the numbers behind its add-back and Compton-suppression switches.
-CLOVER_FIELDS = [("addback_factor", "Add-back factor at 1332 keV", "1.5"),
-                 ("shield_thickness", "Shield thickness", "25 mm"),
-                 ("suppression_factor", "Suppression factor at 1332 keV", "3")]
-#: Which size fields each shape uses.
-SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circle": {"radius"},
-                "annular": {"inner_radius", "outer_radius", "rings", "sectors"}}
-INT_FIELDS = {"charge_state", "counts_wanted", "strips_x", "strips_y", "rings", "sectors", "crystals"}
-
-#: Detector and curve colours (Okabe–Ito first): distinguishable for colour-blind readers, legible on the light and
-#: the dark page.
-COLORS = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#7F7F7F", "#882255", "#44AA99",
-          "#DDCC77"]
-
-#: Figure colours of each page theme.
-THEMES = {"light": {"paper": "#FFFFFF", "ink": "#16191C", "grid": "#E4E7E4"},
-          "dark": {"paper": "#171B1E", "ink": "#E9EBE9", "grid": "#2A3035"}}
-
-FONT = '"IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif'
-MONO = '"IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace'
-
-#: The page's style sheet. Colours are variables, set once for the light page and once for the dark one
-#: (``body--dark`` is Quasar's dark-mode class). No fonts or scripts are fetched: the app works offline.
-STYLE = """
-body { --ps-ground: #F1F2F0; --ps-surface: #FFFFFF; --ps-sunk: #F7F8F6; --ps-ink: #16191C; --ps-muted: #555C63;
-  --ps-line: #D5D9D6; --ps-accent: #0B5FA5; --ps-ok: #1E6B45; --ps-warn: #8A4B00; --ps-bad: #B3261E;
-  --ps-warnbox: #FBF3E4; --ps-note: #EAF2FA; --q-primary: #0B5FA5 !important;
-  background: var(--ps-ground) !important; color: var(--ps-ink); font-family: %(font)s; }
-body.body--dark { --ps-ground: #0F1214; --ps-surface: #171B1E; --ps-sunk: #1D2226; --ps-ink: #E9EBE9;
-  --ps-muted: #A0A8AE; --ps-line: #2C3338; --ps-accent: #7CBDF2; --ps-ok: #7FD0A4; --ps-warn: #F0B45A;
-  --ps-bad: #FF8A80; --ps-warnbox: #2A2316; --ps-note: #16222E; --q-primary: #3A8AD0 !important; }
-.ps-header { background: var(--ps-surface) !important; color: var(--ps-ink) !important;
-  border-bottom: 1px solid var(--ps-line); }
-.ps-rail { background: var(--ps-sunk) !important; }
-.ps-card, .ps-plate, .q-table__card { background: var(--ps-surface) !important; border: 1px solid var(--ps-line);
-  box-shadow: none !important; }
-.ps-card { border-radius: 8px; }
-.ps-plate { border-radius: 10px; padding: 6px 12px 10px; }
-.ps-sunk { background: var(--ps-sunk); }
-.ps-muted { color: var(--ps-muted); } .ps-accent { color: var(--ps-accent); } .ps-ok { color: var(--ps-ok); }
-.ps-warn { color: var(--ps-warn); } .ps-bad { color: var(--ps-bad); }
-.ps-warnbox { background: var(--ps-warnbox) !important; border: 1px solid var(--ps-line);
-  box-shadow: none !important; }
-.ps-note { background: var(--ps-note); }
-.ps-section { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--ps-muted); }
-.q-table th { color: var(--ps-muted); font-weight: 500; }
-.q-table td, .ps-num { font-family: %(mono)s; font-variant-numeric: tabular-nums; }
-.ps-readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; width: 100%%;
-  background: var(--ps-line); border: 1px solid var(--ps-line); border-radius: 10px; overflow: hidden; }
-.ps-readout { background: var(--ps-surface); padding: 12px 16px; }
-.ps-readout-value { font-family: %(mono)s; font-size: 22px; font-weight: 500; line-height: 1.3; }
-.ps-paper { background: #FFFFFF; padding: 12px; max-width: 100%%;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), 0 8px 28px rgba(0, 0, 0, 0.18); }
-.ps-paper img { display: block; max-width: 100%%; }
-""" % {"font": FONT, "mono": MONO}
-
-
-def _go():
-    import plotly.graph_objects as go
-
-    return go
-
-
-def _shown(field: str, value) -> str:
-    """A setup value as the text of its input."""
-    if value is None:
-        return ""
-    if field == "absorbers" and isinstance(value, list):
-        return ", ".join(f"{m} {t}" for m, t in value)
-    return str(value)
-
-
-def _crystals_of(gd: dict) -> Optional[int]:
-    """How many crystals a γ-ray detector of the draft has, from its fields or its model."""
-    if gd.get("crystals") is not None:
-        return gd["crystals"] if isinstance(gd["crystals"], int) else None
-    if gd.get("model"):
-        from . import catalogue
-
-        try:
-            return catalogue.model(gd["model"], "gamma").fields.get("crystals")
-        except ValueError:
-            return None
-    return None
-
-
-def _value(field: str, text):
-    """A typed field value from the text the user entered ("" removes an optional field)."""
-    if text is None:
-        return None
-    text = str(text).strip()
-    if text == "":
-        return None
-    if field == "absorbers":  # "Pb 1 mm, Cu 0.5 mm"
-        return [part.strip().split(None, 1) if " " in part.strip() else [part.strip(), ""]
-                for part in text.split(",") if part.strip()]
-    if field in INT_FIELDS:
-        try:
-            return int(text)
-        except ValueError:
-            return text  # the setup checks report it
-    if field == "addback":
-        return text.lower() in ("true", "yes", "on", "1")
-    if field in ("addback_factor", "suppression_factor"):
-        try:
-            return float(text)
-        except ValueError:
-            return text
-    return text
-
-
-# ---------------------------------------------------------------------------------------------------------------
-# Figures (Plotly), one per tab
-
-
-def themed(fig, theme: str = "light"):
-    """Give a figure the page's look in the "light" or "dark" theme: the page's background and ink, boxed axes
-    with inward ticks, a quiet grid. Returns the figure."""
-    t = THEMES[theme]
-    fig.update_layout(template="plotly_dark" if theme == "dark" else "plotly_white", paper_bgcolor=t["paper"],
-                      plot_bgcolor=t["paper"], font=dict(family=FONT, color=t["ink"], size=13), colorway=COLORS,
-                      legend=dict(bgcolor="rgba(0,0,0,0)"))
-    axis = dict(showline=True, linewidth=1, linecolor=t["ink"], mirror="ticks", ticks="inside", tickcolor=t["ink"],
-                gridcolor=t["grid"], zeroline=False)
-    fig.update_xaxes(**axis)
-    fig.update_yaxes(**axis)
-    wall = dict(backgroundcolor=t["paper"], gridcolor=t["grid"], color=t["ink"], showbackground=True)
-    fig.update_scenes(xaxis=wall, yaxis=wall, zaxis=wall)
-    return fig
-
-
-def figure_geometry(planner: Planner):
-    """Beam, target and detectors in 3D (mm)."""
-    go = _go()
-    g = planner.geometry()
-    fig = go.Figure()
-    b = g["beam"]
-    fig.add_trace(go.Scatter3d(x=b[:, 0], y=b[:, 1], z=b[:, 2], mode="lines", name="beam",
-                               line=dict(color="#888", dash="dash")))
-    t = g["target_size_mm"]
-    fig.add_trace(go.Scatter3d(x=[-t, t, t, -t, -t], y=[-t, -t, t, t, -t], z=[0] * 5, mode="lines", name="target",
-                               line=dict(color="#c9a227", width=6)))
-    for i, d in enumerate(g["detectors"]):
-        o = d["outline"]
-        fig.add_trace(go.Scatter3d(x=o[:, 0], y=o[:, 1], z=o[:, 2], mode="lines", name=d["name"],
-                                   line=dict(color=COLORS[i % len(COLORS)], width=5)))
-    for d in g.get("blocking", []):
-        o = d["outline"]
-        fig.add_trace(go.Scatter3d(x=o[:, 0], y=o[:, 1], z=o[:, 2], mode="lines", name=d["name"],
-                                   line=dict(color="#888", width=2), showlegend=False))
-    for d in g.get("gamma_detectors", []):
-        o = d["outline"]
-        fig.add_trace(go.Scatter3d(x=o[:, 0], y=o[:, 1], z=o[:, 2], mode="lines", name=f"{d['name']} (γ)",
-                                   line=dict(color="#7c3aed", width=4, dash="dash")))
-    e = g["extent"]
-    axis = dict(range=[-e, e])
-    fig.update_layout(scene=dict(xaxis=dict(title="x (mm)", **axis), yaxis=dict(title="y (mm)", **axis),
-                                 zaxis=dict(title="z, beam (mm)", **axis), aspectmode="cube"),
-                      margin=dict(l=0, r=0, t=10, b=0), height=520, legend=dict(itemsizing="constant"))
-    return fig
-
-
-def figure_kinematics(planner: Planner):
-    """Lab energy against lab angle for ejectiles and recoils, with each detector's coverage shaded."""
-    go = _go()
-    k = planner.kinematics()
-    fig = go.Figure()
-    for i, d in enumerate(k["detectors"]):
-        lo, hi = d["theta_range"]
-        fig.add_vrect(x0=lo, x1=hi, fillcolor=COLORS[i % len(COLORS)], opacity=0.12, line_width=0,
-                      annotation_text=d["name"], annotation_position="top")
-    for c in k["curves"]:
-        th, en = np.asarray(c["theta"]), np.asarray(c["energy"])
-        ok = th <= c["max_angle"] + 1e-9
-        fig.add_trace(go.Scatter(x=th[ok], y=en[ok], mode="lines", name=c["label"],
-                                 line=dict(dash=("dot" if c.get("inelastic") else "solid")
-                                           if c["particle"] == "ejectile" else "dash")))
-    fig.update_layout(xaxis=dict(title="lab angle θ (deg)", range=[0, 180]), yaxis=dict(title="energy (MeV)"),
-                      margin=dict(l=50, r=10, t=30, b=40), height=440)
-    return fig
-
-
-def figure_strips(planner: Planner, detector: str):
-    """Counts per second in each strip pair or ring–sector of one detector."""
-    go = _go()
-    strips = planner.rates()["strips"][detector]
-    ni = max(s[0] for s in strips) + 1
-    nj = max(s[1] for s in strips) + 1
-    z = np.zeros((nj, ni))
-    for (i, j), r in strips.items():
-        z[j, i] = r
-    fig = go.Figure(go.Heatmap(z=z, colorscale="Viridis", colorbar=dict(title="1/s")))
-    fig.update_layout(xaxis=dict(title="strip / ring"), yaxis=dict(title="strip / sector"),
-                      margin=dict(l=50, r=10, t=10, b=40), height=360)
-    return fig
-
-
-def figure_energy_loss(planner: Planner):
-    """Beam energy through the target and backing."""
-    go = _go()
-    el = planner.energy_loss()
-    fig = go.Figure(go.Scatter(x=el["depth_mg_cm2"], y=el["beam_energy_mev"], mode="lines", name="beam"))
-    fig.update_layout(xaxis=dict(title="depth (mg/cm²)"), yaxis=dict(title="beam energy (MeV)"),
-                      margin=dict(l=50, r=10, t=10, b=40), height=320)
-    return fig
-
-
-def figure_efficiency(planner: Planner, key: str, points: Optional[list] = None):
-    """A γ-ray detector's efficiency against energy (log–log): the full-energy-peak and total efficiency, the
-    energy of the excited state's γ ray, and the ``points`` a simulated source run gave
-    (:meth:`physim.nuclear.response.SourceRun.efficiency_points`)."""
-    go = _go()
-    c = planner.efficiency(key)
-    e = 1e3 * c["energy_mev"]
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=e, y=100 * c["peak"], mode="lines", name="full-energy peak",
-                             line=dict(color=COLORS[0], width=2)))
-    fig.add_trace(go.Scatter(x=e, y=100 * c["total"], mode="lines", name="any energy",
-                             line=dict(color=COLORS[1], width=1.2, dash="dash")))
-    if points:
-        fig.add_trace(go.Scatter(
-            x=[1e3 * p["energy_mev"] for p in points], y=[100 * p["efficiency"] for p in points],
-            error_y=dict(type="data", array=[100 * p["uncertainty"] for p in points], width=0, thickness=1),
-            mode="markers", name="source run", marker=dict(color=COLORS[3], size=6)))
-    if planner.experiment.excitation is not None:
-        fig.add_vline(x=1e3 * planner.gamma_energy_mev(), line=dict(color="#888", width=1, dash="dot"))
-    fig.update_layout(xaxis=dict(title="γ-ray energy (keV)", type="log"),
-                      yaxis=dict(title="efficiency (%)", type="log"), height=330,
-                      margin=dict(l=55, r=10, t=10, b=40), legend=dict(orientation="h", y=-0.32, x=0))
-    return fig
-
-
-def figure_source_spectrum(run, name: str):
-    """A γ-ray detector's spectrum from a simulated calibration-source run (counts per bin, log scale)."""
-    go = _go()
-    h = run.detector(name)
-    x = 1e3 * np.repeat(run.edges, 2)[1:-1]
-    y = np.repeat(h, 2)
-    fig = go.Figure(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines",
-                               line=dict(color=COLORS[0], width=1)))
-    width = 1e3 * (run.edges[1] - run.edges[0])
-    fig.update_layout(xaxis=dict(title="energy (keV)"), yaxis=dict(title=f"counts / {width:.2g} keV", type="log"),
-                      height=260, margin=dict(l=55, r=10, t=10, b=40), showlegend=False)
-    return fig
-
-
-def figure_detector_spectrum(planner: Planner, detector: str, events: int = 100_000, seed: int = 1):
-    """One detector's simulated measured-energy spectrum, for the scene's side panel."""
-    go = _go()
-    h = planner.spectra(events=events, seed=seed)["spectra"].get(detector)
-    fig = go.Figure()
-    if h is None:
-        fig.add_annotation(text="no events in this detector", showarrow=False, x=0.5, y=0.5, xref="paper",
-                           yref="paper")
-    else:
-        y = np.repeat(h["counts"], 2)
-        fig.add_trace(go.Scatter(x=np.repeat(h["edges"], 2)[1:-1], y=np.where(y > 0, y, np.nan), mode="lines",
-                                 name=detector, line=dict(color=COLORS[0], width=1.2)))
-    fig.update_layout(xaxis=dict(title="measured energy (MeV)"), yaxis=dict(title="counts / bin", type="log"),
-                      margin=dict(l=50, r=10, t=10, b=40), height=260, showlegend=False)
-    return fig
-
-
-def figure_gamma_spectra(planner: Planner, detector: str, events: int = 400_000, seed: int = 1):
-    """A γ-ray detector's coincidence spectrum: as measured, and Doppler-corrected for the emitting nucleus."""
-    go = _go()
-    g = planner.gamma_spectra(events, seed)
-    fig = go.Figure()
-    if not g["available"]:
-        fig.add_annotation(text=g["reason"], showarrow=False, x=0.5, y=0.5, xref="paper", yref="paper")
-        return fig
-    s = g["spectra"][detector]
-    x = 1e3 * np.repeat(s["edges"], 2)[1:-1]
-    for i, (key, label) in enumerate((("measured", "measured"), (g["emitter"], f"corrected for the {g['emitter']}"),
-                                      ("projectile" if g["emitter"] == "recoil" else "recoil",
-                                       "corrected for the wrong nucleus"))):
-        y = np.repeat(s[key], 2)
-        fig.add_trace(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines", name=label,
-                                 line=dict(color=COLORS[i % len(COLORS)], width=1.2 if i < 2 else 0.8),
-                                 visible=True if i < 2 else "legendonly"))
-    if "plain" in s:
-        # The same γ rays without add-back or suppression, for the comparison.
-        m = g["modes"][detector]
-        what = " and ".join(w for w, on in (("add-back", m["addback"]), ("suppression", m["shield"])) if on)
-        for i, (key, label) in enumerate(((g["emitter"], f"corrected, without {what}"),
-                                          ("measured", f"measured, without {what}"))):
-            y = np.repeat(s["plain"][key], 2)
-            fig.add_trace(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines", name=label,
-                                     line=dict(color=COLORS[(3 + i) % len(COLORS)], width=1, dash="dash"),
-                                     visible=True if i == 0 else "legendonly"))
-    fig.add_vline(x=g["energy_kev"], line=dict(color="#888", width=1, dash="dot"))
-    fig.update_layout(xaxis=dict(title="γ-ray energy (keV)"), yaxis=dict(title="counts / bin in the run"),
-                      margin=dict(l=50, r=10, t=10, b=40), height=320, legend=dict(orientation="h", y=-0.3, x=0))
-    return fig
-
-
-def figure_alignment(planner: Planner, result: dict):
-    """The diagnostic plot of a misplaced target: the corrected peak's centroid against ring, one line per
-    crystal, with the transition energy as a dashed line. Flat when the geometry assumed is right."""
-    go = _go()
-    fig = go.Figure()
-    rows = result["diagnostic"]
-    crystals = list(dict.fromkeys(r["crystal"] for r in rows))
-    dets = list(dict.fromkeys(r["detector"] for r in rows))
-    for i, cr in enumerate(crystals):
-        for j, d in enumerate(dets):
-            mine = [r for r in rows if r["crystal"] == cr and r["detector"] == d]
-            if not mine:
-                continue
-            fig.add_trace(go.Scatter(x=[r["ring"] + 1 for r in mine], y=[r["centroid_kev"] for r in mine],
-                                     error_y=dict(type="data", array=[r["error_kev"] for r in mine], width=0,
-                                                  thickness=1),
-                                     mode="lines+markers", name=f"{cr} with {d}",
-                                     line=dict(color=COLORS[i % len(COLORS)], width=1, dash=("solid", "dash", "dot")[j % 3]),
-                                     marker=dict(size=5)))
-    fig.add_hline(y=result["energy_kev"], line=dict(color="#888", width=1, dash="dot"))
-    fig.update_layout(xaxis=dict(title="ring or strip"), yaxis=dict(title="corrected centroid (keV)"), height=360,
-                      margin=dict(l=55, r=10, t=10, b=40), legend=dict(font=dict(size=10)))
-    return fig
-
-
-def figure_overlay(result: dict):
-    """The corrected peak with the true geometry and with the assumed one."""
-    go = _go()
-    o = result["overlay"]
-    x = 1e3 * np.repeat(o["edges"], 2)[1:-1]
-    fig = go.Figure()
-    for i, (key, label) in enumerate((("true", "true geometry"), ("assumed", f"target assumed {result['offset_mm']:+g} mm off"))):
-        y = np.repeat(o[key], 2)
-        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=label, line=dict(color=COLORS[i], width=1.2)))
-    fig.update_layout(xaxis=dict(title="corrected γ-ray energy (keV)"), yaxis=dict(title="counts / bin in the run"),
-                      height=300, margin=dict(l=55, r=10, t=10, b=40), legend=dict(orientation="h", y=-0.3, x=0))
-    return fig
-
-
-def figure_spectra(planner: Planner, events: int = 100_000, seed: int = 1):
-    """Simulated measured-energy spectra, counts per bin in the planned beam time (log scale)."""
-    go = _go()
-    s = planner.spectra(events=events, seed=seed)["spectra"]
-    fig = go.Figure()
-    for i, (name, h) in enumerate(s.items()):
-        e = h["edges"]
-        x = np.repeat(e, 2)[1:-1]
-        y = np.repeat(h["counts"], 2)
-        fig.add_trace(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines", name=name,
-                                 line=dict(color=COLORS[i % len(COLORS)], width=1.2)))
-    fig.update_layout(xaxis=dict(title="measured energy (MeV)"), yaxis=dict(title="counts / bin", type="log"),
-                      margin=dict(l=50, r=10, t=10, b=40), height=420)
-    return fig
-
-
-def figure_trajectories(planner: Planner):
-    """Coulomb orbits in the CM frame, with the interaction radius drawn as a circle."""
-    go = _go()
-    t = planner.trajectories()
-    fig = go.Figure()
-    for o in t["orbits"]:
-        xy = o["xy"]
-        fig.add_trace(go.Scatter(x=xy[:, 0], y=xy[:, 1], mode="lines",
-                                 name=f"b = {o['b_fm']:.1f} fm → {o['deflection_deg']:.0f}°"))
-    a = np.linspace(0, 2 * math.pi, 200)
-    r = t["interaction_radius_fm"]
-    fig.add_trace(go.Scatter(x=r * np.cos(a), y=r * np.sin(a), mode="lines", name="nuclear range",
-                             line=dict(color="#888", dash="dot")))
-    lim = 12 * t["d0_fm"]
-    fig.update_layout(xaxis=dict(title="x (fm)", range=[-lim, lim]),
-                      yaxis=dict(title="y (fm)", range=[-lim, lim], scaleanchor="x"),
-                      margin=dict(l=50, r=10, t=10, b=40), height=480)
-    return fig
-
-
-def figure_sweep(sweep: dict):
-    go = _go()
-    fig = go.Figure(go.Scatter(x=sweep["x"], y=sweep["y"], mode="lines+markers", name=sweep["quantity"]))
-    fig.update_layout(xaxis=dict(title=sweep["parameter"]), yaxis=dict(title=f"{sweep['quantity']} "
-                                                                             f"({sweep['detector']})"),
-                      margin=dict(l=60, r=10, t=10, b=40), height=320)
-    return fig
-
-
-def figure_excitation(planner: Planner):
-    """Coulomb-excitation probability against CM angle (when the setup has an excited state)."""
-    go = _go()
-    g = planner.gamma()
-    fig = go.Figure()
-    if g["available"]:
-        fig.add_trace(go.Scatter(x=g["theta_cm"], y=g["probability"], mode="lines", name="P(θ)"))
-        if g["max_safe_angle"] < 180:
-            fig.add_vrect(x0=g["max_safe_angle"], x1=180, fillcolor="#d62728", opacity=0.1, line_width=0,
-                          annotation_text="not safe", annotation_position="top")
-    fig.update_layout(xaxis=dict(title="CM angle θ (deg)", range=[0, 180]),
-                      yaxis=dict(title="excitation probability", type="log"), margin=dict(l=60, r=10, t=10, b=40),
-                      height=320)
-    return fig
-
-
-def figure_levels(table: dict):
-    """A level scheme: a line per level with its spin, parity and energy, and an arrow per γ-ray transition."""
-    go = _go()
-    fig = go.Figure()
-    levels, transitions = table["levels"], table["transitions"]
-    n = max(len(transitions), 1)
-    for lv in levels:
-        e = lv["energy_kev"]
-        fig.add_trace(go.Scatter(x=[0, n + 1], y=[e, e], mode="lines", line=dict(color=COLORS[0], width=2),
-                                 hovertemplate=f"{lv['jpi']}  {e:g} keV<extra></extra>", showlegend=False))
-        fig.add_annotation(x=0, y=e, text=lv["jpi"], xanchor="right", showarrow=False, xshift=-4)
-        fig.add_annotation(x=n + 1, y=e, text=f"{e:g}", xanchor="left", showarrow=False, xshift=4)
-    for k, t in enumerate(transitions, start=1):
-        top, bottom = levels[t["from"]]["energy_kev"], levels[t["to"]]["energy_kev"]
-        share = "" if t["branching"] is None else f", {100 * t['branching']:.3g}% of the γ rays"
-        fig.add_annotation(x=k, y=bottom, ax=k, ay=top, xref="x", yref="y", axref="x", ayref="y", showarrow=True,
-                           arrowhead=2, arrowwidth=1.5, arrowcolor=COLORS[1],
-                           hovertext=f"{t['energy_kev']:g} keV {t['multipolarity']}{share}")
-    fig.update_layout(xaxis=dict(visible=False, range=[-1, n + 2]), yaxis=dict(title="level energy (keV)"),
-                      margin=dict(l=60, r=10, t=10, b=10), height=360)
-    return fig
-
-
-FIGURES = {"geometry": figure_geometry, "kinematics": figure_kinematics, "energy_loss": figure_energy_loss,
-           "spectra": figure_spectra, "trajectories": figure_trajectories, "gamma": figure_excitation}
-
-
-def report_zip(planner: Planner, seed: int = 1, events: int = 200_000, journal: str = "physical_review",
-               width: str = "single") -> bytes:
-    """The report folder (HTML, CSV, figures in a journal's style, setup, ROOT file if uproot is installed) as a
-    zip archive."""
-    import tempfile
-    from pathlib import Path
-
-    from .report import build
-
-    with tempfile.TemporaryDirectory() as tmp:
-        build(planner.experiment, seed=seed, events=events, journal=journal, width=width).write(tmp)
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            for p in sorted(Path(tmp).rglob("*")):
-                if p.is_file():
-                    z.write(p, p.relative_to(tmp).as_posix())
-        return buf.getvalue()
-
+from .figures import (CLOVER_FIELDS, REACTION_FIELDS, REACTION_TYPES, STYLE, THEMES, _shown, _value,
+                      figure_alignment, figure_detector_spectrum, figure_efficiency, figure_energy_loss,
+                      figure_excitation, figure_gamma_spectra, figure_kinematics, figure_levels, figure_overlay,
+                      figure_source_spectrum, figure_spectra, figure_strips, figure_sweep, figure_trajectories,
+                      report_zip, themed)
 
 # ---------------------------------------------------------------------------------------------------------------
 # The page
@@ -525,20 +48,49 @@ def _prepared(example: str) -> Planner:
     return p
 
 
-def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Optional[str] = None,
-               theme: Optional[str] = None) -> None:
+def _starting_planner(example: Optional[str], template: Optional[str], experiment: Optional[str]) -> tuple:
+    """The planner a page opens with, and whether to offer the experiment list first: the experiment asked for,
+    else a template or example asked for, else the most recent experiment, else the first template."""
+    from .. import runs as _runs
+    from .. import workbench as wb
+
+    if experiment:
+        return Planner.open_experiment(experiment), False
+    if template:
+        return Planner(wb.template(template)), False
+    if example:
+        return Planner.example(example), False
+    found = _runs.list_experiments()
+    if found:
+        try:
+            return Planner.open_experiment(found[0]["path"]), False
+        except Exception:  # noqa: BLE001 - a broken folder: start from a template instead
+            pass
+    return Planner(wb.template(wb.TEMPLATES[0][0])), True
+
+
+def build_page(example: Optional[str] = None, events: int = 100_000, theme: Optional[str] = None,
+               template: Optional[str] = None, experiment: Optional[str] = None) -> None:
     """Build the planner page for the current client (call inside a NiceGUI page function).
 
-    ``mode`` is "guided" (a step-by-step workflow) or "expert" (every input and result at once); ``None`` takes the
-    one this browser used last, guided the first time. ``theme`` is "light" or "dark"; ``None`` takes the one this
-    browser used last, the system's setting the first time."""
+    It opens ``experiment`` (a folder), or a new setup from ``template`` (:data:`physim.nuclear.workbench.TEMPLATES`)
+    or ``example``, or else the most recent experiment; with no experiment yet it offers the experiment list and
+    "New experiment" first. ``theme`` is "light" or "dark"; ``None`` takes the one this browser used last, the
+    system's setting the first time."""
+    from types import SimpleNamespace
+
     from nicegui import run, ui
 
-    from . import paper
-    from .experiment import Experiment, SetupError
+    from .. import paper
+    from .. import runs as _runs
+    from .. import workbench as wb
+    from ..experiment import Experiment, SetupError
+    from . import panel as _panel
+    from . import strip as _strip
+    from . import tab_analysis, tab_data, tab_physics, tab_plan, tab_report, tab_run, tab_setup
 
-    state = {"planner": Planner.example(example), "events": events, "mode": mode or "guided",
-             "step": guide.STEPS[0].key, "example": example, "theme": theme or "light",
+    first, offer_list = _starting_planner(example, template, experiment)
+    state = {"planner": first, "events": events, "theme": theme or "light", "open": None, "stage": "setup",
              "export": None, "journal": "physical_review", "width": "single", "format": "pdf"}
 
     def P() -> Planner:  # noqa: N802
@@ -546,12 +98,28 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
     # -- actions ----------------------------------------------------------------------------------------------
     def changed(ok: bool) -> None:
-        step_status.refresh()
         if ok:
             refresh_results()
         else:
             ui.notify("; ".join(P().problems), type="negative", multi_line=True)
-            warnings_banner.refresh()
+        setup_panel.refresh()
+        status_strip.refresh()
+
+    def card_of(section: str) -> Optional[str]:
+        if section in ("beam", "run"):
+            return section
+        if section in ("target", "backing", "reaction"):
+            return "target"
+        if section.startswith("gamma detector"):
+            return f"gamma:{int(section.split()[2]) - 1}"
+        if section.startswith("detector"):
+            return f"detector:{int(section.split()[1]) - 1}"
+        return None
+
+    def open_card(key: Optional[str]) -> None:
+        state["open"] = key if key != "checks" else None
+        drawer.show()
+        setup_panel.refresh()
 
     def edit(section: str, field: str, text) -> None:
         value = _value(field, text)
@@ -568,10 +136,11 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             old = d.get(section, {}).get(field)
         if (None if old is None else str(old)) == (None if value is None else str(value)):
             return
+        if P().running:
+            ui.notify("A run is being taken: the setup is read-only until it ends.", type="warning")
+            return
+        state["open"] = card_of(section) or state["open"]
         changed(P().set(section, field, value))
-        if (section.startswith(("detector", "gamma detector")) and field in ("name", "shape")) or (
-                section == "reaction" and field == "type"):
-            setup_panel.refresh()
 
     def add_detector(key: str = "side"):
         def run_() -> None:
@@ -614,32 +183,72 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             setup_panel.refresh()
         return run
 
-    async def load_example(name: str, then: Optional[str] = None) -> None:
-        note = ui.notification(f"Loading {name}…", spinner=True, timeout=None)
-        try:
-            planner = await run.io_bound(_prepared, name)
-        finally:
-            note.dismiss()
+    def use(planner: Planner) -> None:
         state["planner"] = planner
-        state["example"] = name
-        example_select.value = name  # its handler sees the name is already loaded
-        if then:
-            state["step"] = then
+        state["open"] = None
         setup_panel.refresh()
+        status_strip.refresh()
         refresh_results()
         main_area.refresh()
 
-    async def load_file(e) -> None:
-        upload_dialog.close()
+    async def open_experiment(path: str) -> None:
+        experiments_dialog.close()
+        note = ui.notification("Opening the experiment…", spinner=True, timeout=None)
         try:
-            state["planner"] = Planner(Experiment.from_toml(await e.file.text()))
+            planner = await run.io_bound(Planner.open_experiment, path)
+        except Exception as err:  # noqa: BLE001 - say why instead of failing
+            ui.notify(f"Could not open {path}: {err}", type="negative", multi_line=True)
+            return
+        finally:
+            note.dismiss()
+        use(planner)
+
+    async def create_experiment(beam: str, energy: str, target: str, thickness: str, measure: str,
+                                template_key: str, name: str) -> None:
+        def make() -> tuple:
+            if template_key and template_key != "blank":
+                exp = wb.template(template_key)
+                notes = []
+            else:
+                exp = wb.new_setup(beam, energy, target, thickness or "0.5 mg/cm2", measure)
+                notes = wb.new_setup_notes(exp)
+            planner = Planner(exp)
+            planner.create_experiment(name or None)
+            planner.rates()
+            return planner, notes
+
+        note = ui.notification("Making the experiment…", spinner=True, timeout=None)
+        try:
+            planner, notes = await run.io_bound(make)
+        except (SetupError, ValueError, KeyError) as err:
+            ui.notify(f"Could not make the experiment: {err}", type="negative", multi_line=True)
+            return
+        finally:
+            note.dismiss()
+        new_dialog.close()
+        experiments_dialog.close()
+        use(planner)
+        for n in notes:
+            ui.notify(n, type="warning", multi_line=True, close_button=True)
+
+    async def import_file(e) -> None:
+        upload_dialog.close()
+        if P().running:
+            ui.notify("A run is being taken: the setup is read-only until it ends.", type="warning")
+            return
+        try:
+            exp = Experiment.from_toml(await e.file.text())
         except (SetupError, ValueError) as err:
             ui.notify(f"Could not read the setup: {err}", type="negative", multi_line=True)
             return
-        setup_panel.refresh()
-        refresh_results()
+        folder, current = P().folder, P().run
+        planner = Planner(exp)
+        if folder is not None:  # the imported setup becomes the experiment's current setup
+            planner.folder, planner.run = folder, current
+            folder.save_setup(exp)
+        use(planner)
 
-    def save_setup() -> None:
+    def export_setup() -> None:
         if P().problems:
             ui.notify("Fix the setup problems first.", type="warning")
             return
@@ -674,7 +283,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         if title:
             ui.label(title).classes("ps-section mt-3")
         # The guided steps have few fields each: one per line leaves room for the labels.
-        with ui.grid(columns=1 if state["mode"] == "guided" else 2).classes("w-full gap-1"):
+        with ui.grid(columns=2).classes("w-full gap-1"):
             for field, label, placeholder in fields:
                 v = values.get(field)
                 inp = ui.input(label, value=_shown(field, v), placeholder=placeholder).props(
@@ -684,84 +293,11 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
     @ui.refreshable
     def setup_panel():
-        if state["mode"] == "guided":
-            stepper()
-            return
-        d = P().draft
-        title = ui.input("Title", value=d.get("title", "")).props("dense outlined").classes("w-full")
-        bind(title, "title", "")
-        help_icon(title, "title", "")
-        section("Beam", BEAM_FIELDS, "beam", d["beam"])
-        target_inputs(d)
-        section("Run", RUN_FIELDS, "run", d["run"])
-        reaction_section(d.get("reaction", {"type": "elastic"}))
-        particle_detectors(d)
-        if d.get("reaction", {}).get("type") == "coulex":
-            gamma_detectors(d)
+        _panel.render(ctx)
 
-    def target_inputs(d: dict) -> None:
-        section("Target", TARGET_FIELDS, "target", d["target"])
-        section("Backing (optional)", BACKING_FIELDS, "backing", d["target"].get("backing", {}))
-
-    def particle_detectors(d: dict) -> None:
-        with ui.row().classes("items-center mt-3 w-full"):
-            ui.label("Particle detectors").classes("ps-section")
-            ui.space()
-            with ui.button("Add", icon="add").props("dense flat"):
-                with ui.menu():
-                    for pl in guide.PLACEMENTS:
-                        with ui.menu_item(on_click=add_detector(pl.key)).classes("max-w-sm"):
-                            with ui.column().classes("gap-0"):
-                                ui.label(pl.label).classes("text-sm font-medium")
-                                ui.label(pl.why).classes("text-xs ps-muted")
-        ui.label("Silicon detectors: they measure the energy of the scattered beam particles and recoils. Set θ "
-                 "below 90° for forward angles, above 90° for backward ones, or use Add for a ready-made detector "
-                 "in each region.").classes("text-xs ps-muted")
-        size_fields = set().union(*SHAPE_FIELDS.values())
-        for i, det in enumerate(d["detectors"]):
-            shape = det.get("shape", "circle")
-            with ui.expansion(f"{det.get('name') or f'D{i + 1}'} · {shape} silicon").classes("w-full ps-card"):
-                sel = ui.select(list(SHAPE_FIELDS), value=shape, label="Shape",
-                                on_change=lambda e, k=i: edit(f"detector {k + 1}", "shape", e.value)).props(
-                    "dense outlined").classes("w-full")
-                help_icon(sel, "detector", "shape")
-                wanted = [f for f in DETECTOR_FIELDS if f[0] not in size_fields or f[0] in SHAPE_FIELDS[shape]]
-                section("", wanted, f"detector {i + 1}", det)
-                with ui.row():
-                    ui.button("Duplicate", icon="content_copy", on_click=duplicate_detector(i)).props("dense flat")
-                    ui.button("Remove", icon="delete", on_click=remove_detector(i)).props(
-                        "dense flat color=negative")
-
-    def gamma_detectors(d: dict) -> None:
-        with ui.row().classes("items-center mt-3 w-full"):
-            ui.label("γ-ray detectors").classes("ps-section")
-            ui.space()
-            with ui.button("Add", icon="add").props("dense flat"):
-                with ui.menu():
-                    for key, label, why, _, _ in guide.GAMMA_PLACEMENTS:
-                        with ui.menu_item(on_click=add_gamma_detector(key)).classes("max-w-sm"):
-                            with ui.column().classes("gap-0"):
-                                ui.label(label).classes("text-sm font-medium")
-                                ui.label(why).classes("text-xs ps-muted")
-        ui.label("They see the γ ray emitted when the excited state decays. Add offers a single crystal, a "
-                 "germanium clover and a LaBr₃ scintillator with their real dimensions.").classes(
-            "text-xs ps-muted")
-        for i, gd in enumerate(d.get("gamma_detectors", [])):
-            real = "crystal_diameter" in gd or "model" in gd
-            kind = gd.get("model") or ("crystals" if real else "disc")
-            with ui.expansion(f"{gd.get('name') or f'γ{i + 1}'} · {kind}").classes("w-full ps-card"):
-                fields = [f for f in GAMMA_FIELDS if not (real and f[0] == "radius")]
-                section("", fields + (CRYSTAL_FIELDS if real else []), f"gamma detector {i + 1}", gd)
-                if _crystals_of(gd) == 4:
-                    clover_switches(i, gd)
-                with ui.row():
-                    ui.button("Duplicate", icon="content_copy",
-                              on_click=duplicate_gamma_detector(i)).props("dense flat")
-                    ui.button("Remove", icon="delete", on_click=remove_gamma_detector(i)).props(
-                        "dense flat color=negative")
-
-    def clover_switches(i: int, gd: dict) -> None:
-        """Add-back and Compton suppression for a clover: two switches, and the numbers behind them."""
+    def clover_switches(i: int, gd: dict, numbers: bool = True) -> None:
+        """Add-back and Compton suppression for a clover: two switches, and (``numbers``) the numbers behind
+        them."""
         sec = f"gamma detector {i + 1}"
         with ui.row().classes("items-center gap-4"):
             ui.switch("Add-back", value=bool(gd.get("addback")),
@@ -770,7 +306,8 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
             ui.switch("Compton suppression (BGO shield)", value=gd.get("shield") is not None,
                       on_change=lambda e: edit(sec, "shield", "BGO" if e.value else None)).props("dense").tooltip(
                 guide.help_for("gamma", "shield").text())
-        section("", CLOVER_FIELDS, sec, gd)
+        if numbers:
+            section("", CLOVER_FIELDS, sec, gd)
 
     def reaction_section(reaction: dict, title: str = "Reaction") -> None:
         if title:
@@ -791,91 +328,6 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                             on_change=lambda e: edit("reaction", "multipolarity", e.value)).props("dense outlined")
             help_icon(mul, "reaction", "multipolarity")
         section("", REACTION_FIELDS, "reaction", reaction)
-
-    # -- guided workflow --------------------------------------------------------------------------------------
-    def go_to(key: str):
-        def run_() -> None:
-            state["step"] = key
-            setup_panel.refresh()
-            main_area.refresh()
-        return run_
-
-    def step_inputs(key: str) -> None:
-        d = P().draft
-        if key == "goal":
-            for goal, (name, text, ex) in guide.GOALS.items():
-                with ui.card().classes("w-full p-3 gap-1 ps-card"):
-                    ui.label(name).classes("font-semibold")
-                    ui.label(text).classes("text-sm ps-muted")
-                    ui.button("Start here", icon="arrow_forward",
-                              on_click=lambda ex=ex: load_example(ex, then="beam")).props(
-                        "dense flat no-caps").classes("self-start")
-                    ui.label(f"Starts from the example {ex}.").classes("text-xs ps-muted")
-            ui.label("Or keep the current setup and set the reaction here:").classes("text-sm mt-2")
-            reaction_section(d.get("reaction", {"type": "elastic"}), title="")
-        elif key == "beam":
-            section("", BEAM_FIELDS, "beam", d["beam"])
-        elif key == "target":
-            target_inputs(d)
-        elif key == "detectors":
-            particle_detectors(d)
-        elif key == "gamma":
-            gamma_detectors(d)
-        elif key == "rates":
-            section("", RUN_FIELDS, "run", d["run"])
-
-    def stepper() -> None:
-        steps = guide.steps_for(P())
-        keys = [s["step"].key for s in steps]
-        if state["step"] not in keys:
-            state["step"] = keys[0]
-
-        def picked(e) -> None:
-            if e.value != state["step"]:
-                state["step"] = e.value
-                main_area.refresh()
-                step_status.refresh()
-
-        with ui.stepper(value=state["step"], on_value_change=picked).props(
-                "vertical flat header-nav animated=false").classes("w-full bg-transparent"):
-            for i, s in enumerate(steps):
-                step = s["step"]
-                with ui.step(step.key, title=f"{i + 1}. {step.title}"):
-                    ui.label(step.intro).classes("text-sm ps-muted")
-                    step_inputs(step.key)
-                    step_status(step.key, keys[i - 1] if i else None, keys[i + 1] if i + 1 < len(keys) else None)
-
-    @ui.refreshable
-    def step_status(key: str = "", back: Optional[str] = None, nxt: Optional[str] = None) -> None:
-        if not key:
-            return
-        problems = next((s["problems"] for s in guide.steps_for(P()) if s["step"].key == key), [])
-        for p in problems:
-            with ui.row().classes("items-start no-wrap gap-1 mt-1"):
-                ui.icon("error").classes("ps-bad")
-                ui.label(p).classes("text-sm ps-bad")
-        with ui.row().classes("mt-2 gap-2"):
-            if nxt:
-                btn = ui.button("Next", icon="arrow_downward", on_click=go_to(nxt))
-                if problems:
-                    btn.disable()
-                    btn.tooltip("Fix the problem above first")
-            if back:
-                ui.button("Back", on_click=go_to(back)).props("flat")
-
-    # -- warnings banner --------------------------------------------------------------------------------------
-    @ui.refreshable
-    def warnings_banner():
-        ws = P().warnings()
-        if not ws:  # the key results above say so
-            return
-        style = {"error": "ps-bad font-semibold", "warning": "ps-warn", "note": "ps-muted"}
-        icon = {"error": "error", "warning": "warning", "note": "info"}
-        with ui.card().classes("w-full ps-warnbox p-2 gap-1"):
-            for w in ws:
-                with ui.row().classes("items-start no-wrap gap-2"):
-                    ui.icon(icon[w.level]).classes(style[w.level])
-                    ui.label(w.text).classes(style[w.level] + " text-sm")
 
     # -- figures and their export ---------------------------------------------------------------------------------
     def plot(fig, name: str, **options) -> None:
@@ -1260,7 +712,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
     def gamma_response(key: str, s: dict) -> None:
         """The efficiency curve of the selected γ-ray detector, what it is built from, and a calibration-source
         run that measures it."""
-        from . import response as _response
+        from .. import response as _response
 
         src = scene_state["source"]
         resp = s["response"]
@@ -1361,7 +813,7 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
     @ui.refreshable
     def geometry_panel():
-        from .scene_view import SceneView
+        from ..scene_view import SceneView
 
         with ui.row().classes("w-full items-start gap-3").style("flex-wrap: wrap"):
             with ui.column().classes("ps-plate gap-1").style("flex: 1 1 520px; min-width: 0"):
@@ -1553,7 +1005,6 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                 draw()
 
         ui.button("Simulate the γ rays", icon="play_arrow", on_click=build).props("dense flat no-caps")
-        analysis_block()
 
     def analysis_block() -> None:
         """From the γ-ray peak to B(E2): the steps, each adjustable, and what the beam time determines."""
@@ -1675,7 +1126,6 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                 ui.label(note).classes("text-xs ps-muted")
 
         ui.button("Analyse", icon="functions", on_click=analyse).props("dense flat no-caps")
-        alignment_block()
 
     def alignment_block() -> None:
         """A misplaced target: what the analysis sees, and how it finds the offset."""
@@ -1853,7 +1303,6 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                             "ex": f"{r['excited_mev']:.2f}", "diff": f"{r['difference_mev']:.3f}",
                             "beta": f"{r['beta_excited']:.4f}"} for r in g["particles"]]).props("dense flat")
         populations_block()
-        multistep_block()
         if g["correlation"]:
             ui.label("γ rays in coincidence: the angular correlation").classes("font-semibold mt-2")
             ui.label("How many γ rays each crystal sees when the particle is in each particle detector, relative "
@@ -2033,8 +1482,8 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
 
     def refresh_results() -> None:
         readouts.refresh()
-        warnings_banner.refresh()
         reading_box.refresh()
+        run_panel.refresh()
         for name, p in panels.items():
             if name == "geometry" and scene_current():
                 continue  # the scene is redrawn in place, so the camera stays where it is
@@ -2061,55 +1510,164 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
                         f"**Where it stops being valid.** {e['limits']}\n\n"
                         f"**Validation:** see the physics register page `{e['register']}` in physim's docs.")
 
-    labels = {"geometry": "Geometry", "kinematics": "Kinematics", "rates": "Rates and beam time",
-              "energy_loss": "Energy loss", "spectra": "Spectra", "trajectories": "Trajectories",
-              "gamma": "Excitation and γ rays", "report": "Report"}
+    def block(tab: str, title: Optional[str] = None) -> None:
+        """One of the planner's results: its heading, how to read it, the panel, and its explanation."""
+        if title:
+            ui.label(title).classes("text-lg font-semibold mt-2")
+        reading_box(tab)
+        panels[tab]()
+        explain(tab)
+
+    # -- the run tab ----------------------------------------------------------------------------------------------
+    run_state = {"watching": False}
+
+    @ui.refreshable
+    def run_panel() -> None:
+        p = P()
+        progress = p.run_progress()
+        form = run_state.setdefault("form", {"kind": "beam", "duration": None, "budget": "10 min"})
+        with ui.row().classes("items-end gap-2"):
+            kind = ui.select({"beam": "Beam run", "source": "Source run (beam off, ¹⁵²Eu at the target)",
+                              "alignment": "Alignment check (target assumed 2 mm off)"}, value=form["kind"],
+                             label="Kind of run", on_change=lambda e: form.update(kind=e.value)).props(
+                "dense outlined").classes("w-72")
+            duration = ui.input("Run for", value=form["duration"] or str(p.experiment.run.beam_time),
+                                on_change=lambda e: form.update(duration=e.value)).props(
+                "dense outlined").classes("w-32")
+            budget = ui.select(["1 min", "5 min", "10 min", "30 min", "1 h"], value=form["budget"],
+                               label="Simulated event by event", on_change=lambda e: form.update(budget=e.value)).props(
+                "dense outlined").classes("w-48")
+            if progress is None:
+                ui.button("Run", icon="play_arrow", on_click=lambda: start_run(kind.value, duration.value,
+                                                                              budget.value))
+            else:
+                ui.button("Stop", icon="stop", on_click=stop_run).props("color=negative")
+        ui.label("A beam run simulates the first part of the beam time event by event, one event being one event, "
+                 "and scales the rest to the full duration; it says which part is real. The setup is read-only "
+                 "while a run is taken.").classes("text-xs ps-muted")
+        if progress is not None:
+            f = progress["fraction"]
+            ui.linear_progress(value=f, show_value=False).classes("w-full")
+            ui.label(f"Run {progress['number']}: {_time(progress['real_s'])} of {_time(progress['real_target_s'])} "
+                     f"simulated event by event; {progress['events']:,} particles counted.").classes("text-sm")
+            ui.table(columns=columns((("d", "Detector"), ("c", "Counts"), ("r", "Rate (1/s)"))),
+                     rows=[{"d": d, "c": f"{c:,}", "r": _fmt(progress["rates_per_s"][d])}
+                           for d, c in progress["counts"].items()]).props("dense flat")
+        rows = tab_run.describe_runs(p)
+        ui.label("Runs").classes("ps-section mt-3")
+        if not rows:
+            ui.label("No run yet.").classes("text-sm ps-muted")
+            return
+        ui.table(columns=columns((("n", "#"), ("what", "Run"), ("when", "Finished (UTC)"), ("stale", ""))),
+                 rows=rows).props("dense flat")
+        current = p.run.number if p.run is not None else None
+        ui.select({r["n"]: f"{r['n']}: {r['what']}" for r in rows}, value=current, label="Current run",
+                  on_change=lambda e: load_run(e.value)).props("dense outlined").classes("w-full")
+
+    def load_run(n) -> None:
+        if n is None or (P().run is not None and P().run.number == n):
+            return
+        P().load_run(n)
+        status_strip.refresh()
+        refresh_results()
+
+    def start_run(kind: str, duration: str, budget: str) -> None:
+        options = {"source": "152Eu"} if kind == "source" else ({"offset_mm": 2.0} if kind == "alignment" else {})
+        try:
+            out = P().start_run(kind, duration, budget, background=kind != "source", **options)
+        except (SetupError, ValueError, _runs.RunInProgress) as err:
+            ui.notify(str(err), type="negative", multi_line=True)
+            return
+        setup_panel.refresh()
+        run_panel.refresh()
+        if isinstance(out, _runs.RunData):
+            finished()
+            return
+        run_state["watching"] = True  # the page's timer follows the run (see tick)
+
+    def tick() -> None:
+        """Every half second: the live counters while a run is taken, and the views once it ends."""
+        if not run_state["watching"]:
+            return
+        if P().running:
+            run_panel.refresh()
+            return
+        run_state["watching"] = False
+        bg = P()._background
+        if bg is not None and bg.error is not None:
+            ui.notify(f"The run failed: {bg.error}", type="negative", multi_line=True)
+        finished()
+
+    def finished() -> None:
+        setup_panel.refresh()
+        status_strip.refresh()
+        refresh_results()
+        if P().run is not None:
+            ui.notify(f"Run {P().run.number} stored: {P().run.describe()}", type="positive", multi_line=True)
+
+    def stop_run() -> None:
+        bg = P()._background
+        if bg is not None:
+            bg.stop()
+
+    # -- experiments ----------------------------------------------------------------------------------------------
+    @ui.refreshable
+    def experiments_list() -> None:
+        found = _runs.list_experiments()
+        ui.label("Experiments").classes("text-lg font-semibold")
+        ui.label(f"In {_runs.home()}").classes("text-xs ps-muted")
+        if not found:
+            ui.label("No experiment yet: make one with New experiment.").classes("text-sm")
+        for x in found[:30]:
+            with ui.row().classes("w-full items-center no-wrap gap-2"):
+                with ui.column().classes("gap-0"):
+                    ui.label(x["name"]).classes("text-sm font-medium")
+                    ui.label(f"{x['runs']} run{'s' * (x['runs'] != 1)} · "
+                             f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(x['modified']))}").classes(
+                        "text-xs ps-muted")
+                ui.space()
+                ui.button("Open", on_click=lambda path=x["path"]: open_experiment(path)).props("dense flat no-caps")
+        ui.button("New experiment", icon="add", on_click=lambda: (experiments_dialog.close(), new_dialog.open())).props(
+            "unelevated no-caps")
+
+    def new_experiment_form() -> None:
+        ui.label("New experiment").classes("text-lg font-semibold")
+        ui.label("The beam, the target and what to measure; the detectors come after, from the Add menus, or "
+                 "start from a template.").classes("text-xs ps-muted")
+        with ui.grid(columns=2).classes("w-full gap-1"):
+            beam = ui.input("Beam", value="16O", placeholder="16O").props("dense outlined")
+            energy = ui.input("Energy", value="64 MeV", placeholder="64 MeV or 4 MeV/u").props("dense outlined")
+            target = ui.input("Target", value="208Pb", placeholder="208Pb, Au, CD2").props("dense outlined")
+            thickness = ui.input("Thickness", value="0.5 mg/cm2").props("dense outlined")
+        measure = ui.select(dict(wb.MEASUREMENTS), value="coulex-target", label="What to measure").props(
+            "dense outlined").classes("w-full")
+        tmpl = ui.select({k: label for k, label, _ in wb.TEMPLATES}, value="blank", label="Detectors from").props(
+            "dense outlined").classes("w-full")
+        name = ui.input("Name (made from the beam and target if empty)").props("dense outlined").classes("w-full")
+        ui.label("A template brings its own beam and target as well as its detectors.").classes("text-xs ps-muted")
+        ui.button("Make the experiment", icon="science",
+                  on_click=lambda: create_experiment(beam.value, energy.value, target.value, thickness.value,
+                                                     measure.value, tmpl.value, name.value)).props(
+            "unelevated no-caps")
+
+    # -- the main area --------------------------------------------------------------------------------------------
+    stage_modules = {"setup": tab_setup, "plan": tab_plan, "run": tab_run, "data": tab_data,
+                     "analysis": tab_analysis, "report": tab_report, "physics": tab_physics}
+
+    @ui.refreshable
+    def status_strip() -> None:
+        _strip.render(ctx)
 
     @ui.refreshable
     def main_area() -> None:
-        warnings_banner()
-        if state["mode"] == "guided":
-            step = next(s for s in guide.STEPS if s.key == state["step"])
-            if not step.tabs:
-                welcome()
-            for t in step.tabs:
-                ui.label(labels[t]).classes("text-lg font-semibold mt-2")
-                reading_box(t)
-                panels[t]()
-                explain(t)
-            return
-        with ui.tabs().classes("w-full").props("dense no-caps align=left") as tabs:
-            tab = {t: ui.tab(labels[t]) for t in TABS}
-        with ui.tab_panels(tabs, value=tab["geometry"]).classes("w-full"):
-            for t in TABS:
-                with ui.tab_panel(tab[t]):
-                    reading_box(t)
-                    panels[t]()
-                    explain(t)
-
-    def welcome() -> None:
-        with ui.column().classes("max-w-3xl gap-2 mt-2"):
-            ui.label("Plan an experiment, step by step").classes("text-xl font-semibold")
-            ui.markdown(
-                "The steps on the left take you through a plan in the order you would decide it: **what to "
-                "measure**, the **beam**, the **target**, the **detectors**, then the **rates and beam time**, the "
-                "**spectra** you will see, and the **report**.\n\n"
-                "- Every step starts filled in with values that work, so the results on this side are always "
-                "complete. Change one value at a time and watch what it does.\n"
-                "- Hover over (or tap) the **?** in any field for what it means, a typical value, and what raising "
-                "it does.\n"
-                "- Each result opens with **How to read this**: what to look for, with your numbers. The "
-                "**Explain** panel underneath has the formula and its limits.\n"
-                "- Problems show in red inside the step; **Next** waits until they are fixed.\n\n"
-                "**Expert view** (top right) shows every input and result at once.")
-
-    def set_mode(mode: str) -> None:
-        if mode == state["mode"]:
-            return
-        state["mode"] = mode
-        ui.run_javascript(f"try {{ localStorage.setItem('physim-planner-mode', '{mode}') }} catch (e) {{}}")
-        setup_panel.refresh()
-        main_area.refresh()
+        with ui.tabs(value=state["stage"], on_change=lambda e: state.update(stage=e.value)).classes("w-full").props(
+                "dense no-caps align=left") as tabs:
+            for key, label in wb.STAGES:
+                ui.tab(key, label=label)
+        with ui.tab_panels(tabs, value=state["stage"]).classes("w-full"):
+            for key, _ in wb.STAGES:
+                with ui.tab_panel(key):
+                    stage_modules[key].render(ctx)
 
     def set_theme(name: str) -> None:
         if name == state["theme"]:
@@ -2120,233 +1678,62 @@ def build_page(example: str = "alpha_on_gold", events: int = 100_000, mode: Opti
         refresh_results()  # the figures are drawn in the theme's colours
 
     async def restore_choices() -> None:
-        """The mode and theme this browser used last (the system's light or dark setting the first time), unless
-        the address gives them (?mode=...&theme=...)."""
+        """The theme this browser used last (the system's light or dark setting the first time), unless the
+        address gives it (?theme=...)."""
         try:
-            saved_mode, saved_theme, system_dark = await ui.run_javascript(
-                "(() => { let m = null, t = null; try { m = localStorage.getItem('physim-planner-mode'); "
-                "t = localStorage.getItem('physim-planner-theme') } catch (e) {} "
-                "return [m, t, window.matchMedia('(prefers-color-scheme: dark)').matches] })()", timeout=3)
+            saved_theme, system_dark = await ui.run_javascript(
+                "(() => { let t = null; try { t = localStorage.getItem('physim-planner-theme') } catch (e) {} "
+                "return [t, window.matchMedia('(prefers-color-scheme: dark)').matches] })()", timeout=3)
         except Exception:  # noqa: BLE001 -- no answer from the browser: keep the defaults
             return
         if theme is None:
             wanted = saved_theme if saved_theme in THEMES else ("dark" if system_dark else "light")
             if wanted != state["theme"]:
                 theme_toggle.value = wanted
-        if mode is None and saved_mode in ("guided", "expert") and saved_mode != state["mode"]:
-            mode_toggle.value = saved_mode
+
+    ctx = SimpleNamespace(
+        ui=ui, P=P, state=state, edit=edit, section=section, help_icon=help_icon, bind=bind,
+        reaction_section=reaction_section, clover_switches=clover_switches, add_detector=add_detector,
+        duplicate_detector=duplicate_detector, remove_detector=remove_detector,
+        add_gamma_detector=add_gamma_detector, duplicate_gamma_detector=duplicate_gamma_detector,
+        remove_gamma_detector=remove_gamma_detector, open_card=open_card, block=block, readouts=readouts,
+        run_panel=run_panel, analysis_block=analysis_block, alignment_block=alignment_block,
+        multistep_block=multistep_block)
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)
     dark = ui.dark_mode(state["theme"] == "dark")
     with ui.header(elevated=False).classes("items-center ps-header py-1"):
         ui.label("physim").classes("text-lg font-semibold")
-        ui.label("experiment planner").classes("ps-muted")
+        ui.label("experiment workbench").classes("ps-muted")
         ui.space()
-        mode_toggle = ui.toggle({"guided": "Guided", "expert": "Expert view"}, value=state["mode"],
-                                on_change=lambda e: set_mode(e.value)).props("dense no-caps unelevated")
+        ui.button("Experiments", icon="folder_open",
+                  on_click=lambda: (experiments_list.refresh(), experiments_dialog.open())).props(
+            "flat no-caps")
+        ui.button("New experiment", icon="add", on_click=lambda: new_dialog.open()).props("flat no-caps")
+        ui.button("Import a setup file", icon="upload", on_click=lambda: upload_dialog.open()).props("flat no-caps")
+        ui.button("Export the setup", icon="download", on_click=export_setup).props("flat no-caps")
         theme_toggle = ui.toggle({"light": "Light", "dark": "Dark"}, value=state["theme"],
                                  on_change=lambda e: set_theme(e.value)).props("dense no-caps unelevated")
-        example_select = ui.select(
-            Planner.examples(), value=example, label="Start from example",
-            on_change=lambda e: None if e.value == state["example"] else load_example(e.value)).props(
-            "dense outlined").classes("w-60")
-        ui.button("Load setup", icon="upload", on_click=lambda: upload_dialog.open()).props("flat no-caps")
-        ui.button("Save setup", icon="download", on_click=save_setup).props("flat no-caps")
     with ui.dialog() as upload_dialog, ui.card():
-        ui.label("Load a setup file (.toml)")
-        ui.upload(auto_upload=True, on_upload=load_file).props("accept=.toml max-files=1")
+        ui.label("Import a setup file (.toml) as this experiment's setup")
+        ui.upload(auto_upload=True, on_upload=import_file).props("accept=.toml max-files=1")
+    with ui.dialog() as experiments_dialog, ui.card().classes("ps-card").style("min-width: min(560px, 95vw)"):
+        experiments_list()
+    with ui.dialog() as new_dialog, ui.card().classes("ps-card").style("min-width: min(560px, 95vw)"):
+        new_experiment_form()
     with ui.dialog() as export_dialog, ui.card().classes("ps-card").style("max-width: min(1100px, 95vw)"):
         with ui.row().classes("items-start gap-6"):
             with ui.column().classes("gap-2").style("width: 320px; max-width: 100%"):
                 export_controls()
             preview_box = ui.column().classes("items-center gap-2")
     export_dialog.on("show", render_preview)
-    with ui.left_drawer(value=True).classes("ps-rail").props("width=420 bordered behavior=desktop"):
+    with ui.left_drawer(value=True).classes("ps-rail").props("width=440 bordered behavior=desktop") as drawer:
         setup_panel()
     with ui.column().classes("w-full gap-2"):
-        readouts()
+        status_strip()
         main_area()
+    if offer_list:
+        experiments_dialog.open()
     ui.timer(0.2, restore_choices, once=True)
-
-
-# -- starting the server --------------------------------------------------------------------------------------------
-
-#: What ``/physim-planner`` answers, so a second launch can recognise a planner already running on the port.
-MARKER = "physim experiment planner"
-
-
-def log_path():
-    """Where ``physim app --desktop`` writes its log (there is no console to write to)."""
-    from pathlib import Path
-
-    base = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), ".local", "state")
-    return Path(base) / "physim" / "planner.log"
-
-
-def planner_at(port: int, host: str = "127.0.0.1") -> bool:
-    """Whether a physim planner is already serving at ``host:port``."""
-    import json
-    import urllib.request
-
-    try:
-        with urllib.request.urlopen(f"http://{host}:{port}/physim-planner", timeout=2) as r:
-            return json.loads(r.read().decode()).get("app") == MARKER
-    except (OSError, ValueError):
-        return False
-
-
-def port_free(port: int, host: str = "127.0.0.1") -> bool:
-    import socket
-
-    with socket.socket() as s:
-        try:
-            s.bind((host, port))
-        except OSError:
-            return False
-    return True
-
-
-def pick_port(port: int, host: str = "127.0.0.1") -> int:
-    """``port`` if it is free, otherwise a free port chosen by the system."""
-    import socket
-
-    if port_free(port, host):
-        return port
-    with socket.socket() as s:
-        s.bind((host, 0))
-        return s.getsockname()[1]
-
-
-def main(argv: Optional[list] = None) -> None:
-    """``physim app``: start the planner in the browser."""
-    import argparse
-
-    ap = argparse.ArgumentParser(prog="physim app", description="Start the experiment planner in the browser.")
-    ap.add_argument("--example", default="alpha_on_gold", help="example setup to start from")
-    ap.add_argument("--port", type=int, default=8080)
-    ap.add_argument("--host", default="127.0.0.1",
-                    help="address to listen on (default: this computer only; 0.0.0.0 serves the local network)")
-    ap.add_argument("--no-browser", action="store_true", help="do not open a browser window")
-    ap.add_argument("--window", action="store_true",
-                    help="open the planner in its own window (needs pywebview; falls back to the browser)")
-    ap.add_argument("--browser", action="store_true", help="with --desktop: use the browser, not the window")
-    ap.add_argument("--desktop", action="store_true",
-                    help="started from a shortcut: open in its own window (or the browser with --browser), log "
-                         "to a file, reuse a planner that is already running, use another port if this one is "
-                         "taken, and stop when the window or the last browser tab has been closed")
-    ap.add_argument("--idle-exit", type=float, default=None, metavar="SECONDS",
-                    help="stop when no browser tab has been open for this long (default with --desktop: 60)")
-    args = ap.parse_args(argv)
-    idle_exit = args.idle_exit if args.idle_exit is not None else (60.0 if args.desktop else None)
-    window = wants_window(args.window, args.desktop, args.browser, args.no_browser)
-    if window is None:
-        print("pywebview is not installed: opening the planner in the browser instead (pip install pywebview)")
-        window = False
-    local = "127.0.0.1" if args.host in ("0.0.0.0", "::") else args.host
-
-    if args.desktop:
-        import sys
-
-        path = log_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Started with pythonw.exe there is no console: sys.stdout is None, and printing would fail.
-        log = open(path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115 -- open for the life of the server
-        sys.stdout = sys.stderr = log
-        print(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} physim app {' '.join(argv or [])}")
-        if planner_at(args.port, local):
-            print(f"a planner is already running on port {args.port}; opening it")
-            if not args.no_browser:
-                import webbrowser
-
-                webbrowser.open(f"http://{local}:{args.port}/")
-            return
-        args.port = pick_port(args.port, args.host)
-
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")  # the report draws its figures in a worker thread, without a screen
-    except ImportError:
-        pass
-    try:
-        from nicegui import app, ui
-    except ImportError:
-        raise SystemExit("The planner app needs NiceGUI: pip install physim-engine[app]") from None
-
-    @ui.page("/")
-    def index(example: str = args.example, mode: Optional[str] = None, theme: Optional[str] = None):
-        build_page(example, mode=mode if mode in ("guided", "expert") else None,
-                   theme=theme if theme in THEMES else None)
-
-    @app.get("/physim-planner")
-    def marker():
-        from .. import __version__
-
-        return {"app": MARKER, "version": __version__}
-
-    if idle_exit is not None:
-        from nicegui import Client
-
-        idle = {"since": time.monotonic()}
-
-        def check_idle():
-            if any(c.has_socket_connection for c in list(Client.instances.values())):
-                idle["since"] = time.monotonic()
-            elif time.monotonic() - idle["since"] > idle_exit:
-                print(f"no browser tab open for {idle_exit:g} s; stopping")
-                app.shutdown()
-
-        def start_clock():
-            idle["since"] = time.monotonic()
-            _start_idle_timer(check_idle, min(5.0, idle_exit / 4))
-
-        app.on_startup(start_clock)
-
-    if window:
-        # Its own window on the system's web view (Edge WebView2 on Windows), the same app inside; closing the
-        # window stops the planner.
-        ui.run(title="physim experiment planner", host=args.host, port=args.port, native=True,
-               window_size=(1400, 900), reload=False, show_welcome_message=False)
-        return
-    ui.run(title="physim experiment planner", host=args.host, port=args.port, show=not args.no_browser,
-           reload=False, show_welcome_message=True)
-
-
-def wants_window(window: bool, desktop: bool, browser: bool, no_browser: bool,
-                 available: Optional[bool] = None) -> Optional[bool]:
-    """Whether to open the planner in its own window: asked for by ``--window`` or ``--desktop`` (the installed
-    shortcut), unless ``--browser`` or ``--no-browser`` says otherwise. ``None`` when a window was asked for
-    but pywebview is not installed (the caller then uses the browser and says so)."""
-    if not (window or desktop) or browser or no_browser:
-        return False
-    if available is None:
-        available = window_available()
-    return True if available else None
-
-
-def window_available() -> bool:
-    """Whether the planner can open in its own window: pywebview is installed (``pip install pywebview``;
-    the installer bundles it)."""
-    try:
-        import webview  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-def _start_idle_timer(check, every: float) -> None:
-    import asyncio
-
-    async def loop():
-        while True:
-            await asyncio.sleep(every)
-            check()
-
-    asyncio.get_running_loop().create_task(loop())
-
-
-__all__ = ["FIGURES", "MARKER", "build_page", "log_path", "main", "pick_port", "planner_at", "wants_window",
-           "window_available", "figure_energy_loss", "figure_geometry", "figure_kinematics",
-           "figure_excitation", "figure_spectra", "figure_strips", "figure_sweep", "figure_trajectories",
-           "report_zip", "themed"]
+    ui.timer(0.5, tick)

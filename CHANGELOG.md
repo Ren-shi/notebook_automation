@@ -17,6 +17,15 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - A fully hidden detector's warning names the detector in front, and shadowing is now a warning, not a note.
 
 ### Changed
+- The planner app has one mode (backlog 64): the guided steps, the guided/expert switch and the example drop-down are
+  gone. The left panel is the setup as a list of decisions (Beam, Target and reaction, Particle detectors, γ-ray
+  detectors, Run conditions), each a card showing its state and its consequence ("CD at 30 mm, behind the target ·
+  126°–163°, 2.31 sr, 662/s"), with rarely touched fields behind "More" and the checks always at the top. A status
+  strip names the experiment, beam, target, detectors, last run and warnings on every tab. The app opens on
+  experiments: **New experiment** asks for the beam, target and what to measure; the examples are templates.
+  **Import a setup file** and **Export the setup** replace Load and Save. The tabs are the stages: Setup, Plan,
+  Run, Data, Analysis, Report, Physics. `physim.nuclear.workbench` has the cards, strip, checks and templates
+  without the page; `physim.nuclear.app` is now a package with one module per tab.
 - Particle–γ coincidence rates and beam times now include the angular correlation: each particle detector has its
   own γ-ray efficiency (`gamma_efficiency` in each row of `Planner.rates()`). Particle rates are unchanged.
 - A γ-ray detector without `efficiency` now takes its efficiency from the response model, where it took its
