@@ -1,4 +1,5 @@
-"""The planner web app (backlog item 41): every figure renders, and the app serves every example page."""
+"""The planner web app (backlog items 41 and 64): every figure renders, and the app serves every example page in
+one mode, with the seven stages as tabs."""
 
 import os
 import socket
@@ -57,12 +58,15 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def test_the_app_serves_every_example():
+def test_the_app_serves_every_example(tmp_path):
     pytest.importorskip("nicegui")
+    from physim.nuclear import workbench
+
     port = _free_port()
     # NiceGUI switches to its own test mode when it sees pytest's variables; the app here is a normal run.
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST")}
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PHYSIM_EXPERIMENTS"] = str(tmp_path)
     proc = subprocess.Popen([sys.executable, "-m", "physim", "app", "--no-browser", "--port", str(port)],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     try:
@@ -76,14 +80,21 @@ def test_the_app_serves_every_example():
                     out = proc.stdout.read().decode(errors="replace") if proc.poll() is not None else ""
                     pytest.fail(f"the app did not start: {out}")
                 time.sleep(0.5)
-        for name in Planner.examples():
+        stages = [label for _, label in workbench.STAGES]
+        pages = [f"?example={name}" for name in Planner.examples()]
+        pages += [f"?template={key}" for key, _, _ in workbench.TEMPLATES] + [""]
+        for query in pages:
             # Building the page computes every tab on the server; an error there gives a 500.
-            for mode, marker in (("expert", "Rates and beam time"), ("guided", "What do you want to measure?")):
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/?example={name}&mode={mode}",
-                                            timeout=120) as r:
-                    assert r.status == 200
-                    body = r.read().decode()
-                assert "physim" in body and marker in body, (name, mode)
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/{query}", timeout=120) as r:
+                assert r.status == 200
+                body = r.read().decode()
+            assert "physim" in body and "Rates and beam time" in body, query
+            # One mode: the seven stages, in order; no guided steps, no mode switch, no example drop-down.
+            at = [body.find(f'"label":"{label}"') for label in stages]
+            assert all(i >= 0 for i in at) and at == sorted(at), (query, at)
+            for gone in ("What do you want to measure?", "Expert view", "Start from example"):
+                assert gone not in body, (query, gone)
+            assert "New experiment" in body and "Run conditions" in body
     finally:
         proc.terminate()
         proc.wait(timeout=30)
