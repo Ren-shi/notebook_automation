@@ -43,6 +43,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The Plan tab (backlog 65): one page, answers first. It shows the beam time the counts wanted need against the beam time
+  planned; per particle detector its rate, busy fraction (from `[run] dead_time`), share of the excitations and safe
+  rings; per γ-ray detector its efficiency at the transition and its coincidence rate; and the particle × γ matrix.
+  Each number has its ?. Below come the checks as panels that open: kinematics, energy loss, the orbit and safe
+  distance, the correlation and Doppler shifts, the γ efficiency curves, and the rates per strip with the sweep.
+  `Planner.plan()` returns the same numbers, and the next run's `summary.json` keeps them as its predictions.
 - Experiments and runs (backlog 63, `physim.nuclear.runs`): an experiment is a folder (under
   `~/.physim/experiments`) with the current setup and its runs; each run keeps its exact setup (`setup.toml`), its
   counters and the Plan's predictions (`summary.json`) and its data as compact columns (`events.npz`, about 7 bytes

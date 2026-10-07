@@ -1476,9 +1476,27 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
         ui.button("Show the run record", icon="menu_book", on_click=show).props("dense flat no-caps")
 
+    @ui.refreshable
+    def efficiency_panel() -> None:
+        """The full-energy and total efficiency of each γ-ray detector against energy."""
+        gds = P().experiment.gamma_detectors
+        if not gds:
+            ui.label("No γ-ray detectors.").classes("text-sm ps-muted")
+            return
+        with ui.row().classes("w-full gap-2").style("flex-wrap: wrap"):
+            for i, gd in enumerate(gds):
+                with ui.column().classes("ps-plate gap-0").style("flex: 1 1 360px; min-width: 0"):
+                    ui.label(gd.name or f"γ{i + 1}").classes("text-sm font-medium")
+                    ui.plotly(themed(figure_efficiency(P(), f"gamma:{i}"), state["theme"])).classes("w-full")
+
+    @ui.refreshable
+    def plan_answers() -> None:
+        tab_plan.render_answers(ctx)
+
     panels = {"geometry": geometry_panel, "kinematics": kinematics_panel, "rates": rates_panel,
               "energy_loss": energy_loss_panel, "spectra": spectra_panel, "trajectories": trajectories_panel,
-              "gamma": gamma_panel, "report": report_panel}
+              "gamma": gamma_panel, "report": report_panel, "efficiency": efficiency_panel,
+              "plan": plan_answers}
 
     def refresh_results() -> None:
         readouts.refresh()
@@ -1698,7 +1716,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         add_gamma_detector=add_gamma_detector, duplicate_gamma_detector=duplicate_gamma_detector,
         remove_gamma_detector=remove_gamma_detector, open_card=open_card, block=block, readouts=readouts,
         run_panel=run_panel, analysis_block=analysis_block, alignment_block=alignment_block,
-        multistep_block=multistep_block)
+        multistep_block=multistep_block, open_explanation=open_explanation, efficiency_panel=efficiency_panel,
+        plan_answers=plan_answers)
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)

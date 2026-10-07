@@ -289,13 +289,9 @@ class Planner:
         """The Plan's predictions at this moment, kept in the next run's summary (to compare with what it
         measured)."""
         try:
-            t = self.rates()
-        except Exception:  # noqa: BLE001 - a setup whose rates fail still runs; it just has no predictions
+            return self.plan()
+        except Exception:  # noqa: BLE001 - a setup whose plan fails still runs; it just has no predictions
             return {}
-        rows = [{k: v for k, v in row.items() if not isinstance(v, (np.ndarray, tuple))} for row in t["rows"]]
-        return {"rows": rows, "beam_time_s": t["beam_time_s"], "counts_wanted": t["counts_wanted"],
-                "particles_per_second": t["particles_per_second"], "measured": t["measured"],
-                "gamma_efficiency": t["gamma_efficiency"]}
 
     def start_run(self, kind: str = "beam", duration=None, budget=_runs.DEFAULT_BUDGET_S, seed: Optional[int] = None,
                   background: bool = False, progress=None, **options):
@@ -797,6 +793,55 @@ class Planner:
         return {"rows": rows, "strips": strips, "beam_time_s": r.beam_time_s, "counts_wanted": r.counts_wanted,
                 "particles_per_second": r.particles_per_second, "measured": what, "gamma_efficiency": eff,
                 "gamma_efficiency_typical": typical}
+
+    def plan(self) -> dict:
+        """What one checks before asking for beam, answers first (backlog item 65): the counts wanted and the beam
+        time they need against the beam time planned; per particle detector its rate, the share of its time the
+        acquisition is busy, its share of the excitations and its safe and unsafe rings; per γ-ray detector its
+        full-energy efficiency at the transition and its coincidence rate; and the particle × γ coincidence rates.
+        Plain numbers (no arrays), so a run's summary can keep them."""
+        r = self._rates()
+        t = self.rates()
+        exp = self.experiment
+        dead = _q(exp.run.dead_time).to("s") if exp.run.dead_time is not None else 0.0
+        total_rate = sum(row["rate_per_s"] for row in t["rows"])
+        excitations = {row["detector"]: row.get("excitation_per_s") or 0.0 for row in t["rows"]}
+        all_exc = sum(excitations.values())
+        unsafe = self.safety()
+        detectors = []
+        for row, g in zip(t["rows"], r.array):
+            rings = sorted({seg[0] for seg in g.segments})
+            bad = sorted(unsafe.get(g.name, ()))
+            busy = row["rate_per_s"] * dead
+            detectors.append({
+                "detector": row["detector"], "theta_range": [float(x) for x in row["theta_range"]],
+                "solid_angle_msr": row["solid_angle_msr"], "rate_per_s": row["rate_per_s"],
+                "dead_time_fraction": busy / (1 + busy), "excitation_per_s": excitations[row["detector"]],
+                "excitation_share": excitations[row["detector"]] / all_exc if all_exc > 0 else None,
+                "coincidence_per_s": row.get("coincidence_per_s"), "counts_in_run": row["counts_in_run"],
+                "beam_time_s": row["beam_time_s"], "relative_error": row["relative_error"],
+                "rings": len(rings), "unsafe_rings": bad, "safe_rings": [k for k in rings if k not in bad]})
+        gammas, matrix = [], {}
+        if exp.excitation is not None and exp.gamma_detectors:
+            r.gamma_efficiency()
+            effs = r._gamma_effs
+            factors = r.correlation()
+            for i, (gd, eff) in enumerate(zip(exp.gamma_detectors, effs)):
+                name = gd.name or f"G{i + 1}"
+                pairs = {d: excitations[d] * eff * factors.get(d, {}).get(name, 1.0) for d in excitations}
+                for d, v in pairs.items():
+                    matrix.setdefault(d, {})[name] = v
+                gammas.append({"detector": name, "efficiency": eff, "energy_kev": 1e3 * exp.excitation.energy_mev,
+                               "coincidence_per_s": sum(pairs.values())})
+        timed = [d for d in detectors if d["beam_time_s"] is not None]
+        needed = max(timed, key=lambda d: d["beam_time_s"]) if timed else None
+        return {"measured": t["measured"], "counts_wanted": t["counts_wanted"], "beam_time_s": t["beam_time_s"],
+                "beam_time_needed_s": needed["beam_time_s"] if needed else None,
+                "limiting_detector": needed["detector"] if needed else None,
+                "enough": (needed["beam_time_s"] <= t["beam_time_s"]) if needed else None,
+                "particles_per_second": t["particles_per_second"], "dead_time_s": dead,
+                "live_fraction": 1 / (1 + dead * total_rate), "detectors": detectors, "gamma_detectors": gammas,
+                "coincidences": matrix, "gamma_efficiency": t["gamma_efficiency"]}
 
     def energy_loss(self) -> dict:
         """The beam through each layer (energy in and out, loss, straggling), the beam energy through the target,

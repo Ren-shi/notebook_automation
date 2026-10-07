@@ -95,6 +95,8 @@ def test_the_app_serves_every_example(tmp_path):
             for gone in ("What do you want to measure?", "Expert view", "Start from example"):
                 assert gone not in body, (query, gone)
             assert "New experiment" in body and "Run conditions" in body
+            # The Plan tab answers without a button pressed, and its checks are there (backlog 65).
+            assert "Beam time needed" in body and "Kinematics: where the particles go" in body, query
     finally:
         proc.terminate()
         proc.wait(timeout=30)
