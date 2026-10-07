@@ -41,6 +41,15 @@ def test_a_template_brings_only_its_detectors():
     assert len(wb.new_setup("62Ni", "237 MeV", "194Pt", detectors_from="blank").detectors) == 1
 
 
+def test_an_elastic_run_with_gamma_detectors_has_no_gamma_rays(tmp_path):
+    # A template's clovers on a setup that excites nothing: the run's data hold particles only.
+    p = Planner(wb.new_setup("62Ni", "237 MeV", "208Pb", measure="elastic", detectors_from="coulex-cd-clovers"))
+    p.create_experiment(root=tmp_path)
+    run = p.start_run("beam", duration="1 h", budget="5 s")
+    assert run.gammas() is None and run.gammas(plain=True) is None
+    assert len(run.events().columns["event"])
+
+
 def test_every_card_has_a_consequence_that_follows_its_fields():
     p = Planner.example("coulex_ni58")
     cards = wb.decisions(p)
