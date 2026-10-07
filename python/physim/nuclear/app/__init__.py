@@ -17,7 +17,8 @@ from .figures import *  # noqa: F401,F403 - the figures, style and field lists, 
 from .figures import (FIGURES, THEMES, _crystals_of, _shown, _value, figure_energy_loss,  # noqa: F401
                       figure_excitation, figure_geometry, figure_kinematics, figure_spectra, figure_strips,
                       figure_sweep, figure_trajectories, report_zip, themed)
-from .server import MARKER, log_path, main, pick_port, planner_at, port_free  # noqa: F401
+from .server import (MARKER, log_path, main, pick_port, planner_at, port_free, wants_window,  # noqa: F401
+                     window_available)
 
 
 def build_page(*args, **kwargs):
@@ -28,6 +29,7 @@ def build_page(*args, **kwargs):
     return _build(*args, **kwargs)
 
 
-__all__ = ["FIGURES", "MARKER", "build_page", "log_path", "main", "pick_port", "planner_at", "figure_energy_loss",
+__all__ = ["FIGURES", "MARKER", "build_page", "log_path", "main", "pick_port", "planner_at", "wants_window",
+           "window_available", "figure_energy_loss",
            "figure_geometry", "figure_kinematics", "figure_excitation", "figure_spectra", "figure_strips",
            "figure_sweep", "figure_trajectories", "report_zip", "themed"]

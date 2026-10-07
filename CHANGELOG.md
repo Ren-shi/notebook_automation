@@ -105,6 +105,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
   blocking volume round the housing. The efficiency, the peak-to-total ratio, the spectrum shapes and the
   simulated γ rays follow; `simulate_gammas(..., plain=True)` and `Response(..., bare=True)` leave both out. In
   the app, two switches per clover, and the spectrum with and without.
+- The planner in its own window (backlog 61): `physim app --window`, and the installed shortcut (`--desktop`), open
+  the same app in a desktop window on the system's web view (pywebview; the `window` extra, 5 MB). `--browser`
+  keeps the browser; without pywebview the browser opens and the command says so.
 - A movable target and sources placed anywhere (backlog 60): `[target] position` moves the target along the beam
   (every angle, distance and Doppler correction follows; the scene draws it there); `ladder` and `selected` for
   a target ladder; `source_run(..., position=...)` for a source off centre. `physim.nuclear.alignment` shows what a

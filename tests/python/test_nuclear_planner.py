@@ -160,7 +160,7 @@ def test_gamma_detectors_in_the_geometry():
     r = np.linalg.norm(ge["outline"] - ge["centre"], axis=1)
     assert np.allclose(r, 35.0)
     assert np.allclose((ge["outline"] - ge["centre"]) @ (ge["centre"] / 120.0), 0.0, atol=1e-9)
-    assert g["extent"] >= 1.25 * 150.0
+    assert g["extent"] >= 1.25 * 150.0 - 1e-9  # 187.5 up to rounding (187.49999999999997 on some numpy builds)
     assert Planner.example("alpha_on_gold").geometry()["gamma_detectors"] == []
 
 
