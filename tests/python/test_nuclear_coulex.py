@@ -36,6 +36,35 @@ def test_backscattering_in_the_sudden_limit_is_a_closed_form(lam, exact):
     np.testing.assert_allclose(orbit_integrals(lam, 1.0, 0.0), exact, rtol=1e-8)
 
 
+@pytest.mark.parametrize("lam, xi", [(1, 0.381), (2, 0.381), (2, 0.112), (3, 1.203)])
+def test_orbit_integrals_agree_with_a_brute_force_integration(lam, xi):
+    """The panels, the half-orbit symmetry and the endpoint expansion of the tail against a plain fine
+    trapezoidal integration of the whole orbit, to the stated 1e-9 (absolute; the integrals are of order 1)."""
+    from physim.nuclear.coulex import _orbit_pieces, orbit_integrals
+
+    for eps in (1.0, 1.5, 4.0, 20.0):
+        w = np.linspace(0.0, 16.0, 2_000_001)
+        g, phase, _ = _orbit_pieces(lam, eps, xi, w)
+        e = np.exp(1j * phase)
+        brute = np.array([2 * np.trapezoid(e * (g[mu] if mu >= 0 else np.conj(g[-mu])), w).real
+                          for mu in range(-lam, lam + 1)])
+        got = orbit_integrals(lam, eps, xi)
+        assert np.max(np.abs(got - brute)) < 5e-9, (eps, got, brute)
+        assert np.all(got.imag == 0)
+
+
+def test_a_probability_table_is_fast():
+    import time
+
+    from physim.nuclear.coulex import orbit_integrals
+
+    orbit_integrals.cache_clear()
+    c = Coulex("16O", "58Ni", 50.0, energy=1.454, multipolarity="E1", b_up="0.01 e2b")  # the slowest case before
+    t = time.perf_counter()
+    c.probability(np.linspace(1.0, 180.0, 180))
+    assert time.perf_counter() - t < 2.0
+
+
 def test_excitation_probability_closed_form_at_180_degrees():
     c = ni58(energy="1e-9 MeV")  # ξ → 0
     assert c.xi < 1e-8

@@ -22,6 +22,7 @@ lengths in mm, angles in degrees, solid angles in msr::
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -70,6 +71,12 @@ class Hit:
     incidence: float
     #: Position in the face's own coordinates (u, v), mm.
     local: tuple
+
+
+@lru_cache(maxsize=None)
+def _gauss(order: int) -> tuple:
+    """Gauss–Legendre points and weights, computed once per order (the faces ask for them thousands of times)."""
+    return np.polynomial.legendre.leggauss(order)
 
 
 class Geometry:
@@ -223,7 +230,7 @@ class Geometry:
 
     def _nodes(self, segment: Optional[tuple] = None, order: int = QUADRATURE_ORDER) -> tuple:
         """Quadrature points (local u, v) and weights (area, mm²) over the face or one segment."""
-        x, w = np.polynomial.legendre.leggauss(order)
+        x, w = _gauss(order)
         if self.shape == "rectangle":
             a, b = self.width / 2, self.height / 2
             if segment is None:

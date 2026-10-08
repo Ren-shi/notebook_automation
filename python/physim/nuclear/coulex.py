@@ -67,43 +67,95 @@ def ylm_equator(lam: int, mu: int) -> float:
     return y if mu >= 0 else (-1) ** m * y
 
 
+@lru_cache(maxsize=None)
+def _gauss(n: int) -> tuple:
+    return np.polynomial.legendre.leggauss(n)
+
+
+def _orbit_pieces(lam: int, eps_: float, xi: float, w: np.ndarray) -> tuple:
+    """On the orbit points ``w``: g_μ(w) = e^{iμφ(w)} / (ε cosh w + 1)^λ for μ = 0 … λ (a list; g_{−μ} is its
+    conjugate), the phase Φ(w) = ξ(ε sinh w + w) and Φ'(w)."""
+    ch, sh = np.cosh(w), np.sinh(w)
+    r = eps_ * ch + 1.0
+    e_iphi = ((ch + eps_) + 1j * math.sqrt(max(eps_ * eps_ - 1.0, 0.0)) * sh) / r
+    base = 1.0 / r**lam
+    powers = [np.ones_like(e_iphi)]
+    for _ in range(lam):
+        powers.append(powers[-1] * e_iphi)  # |e^{iφ}| = 1: products, not complex powers
+    return [base * q for q in powers], xi * (eps_ * sh + w), xi * (eps_ * ch + 1.0)
+
+
+#: The quadrature: Gauss–Legendre points per panel, the phase one panel spans, the widest panel, and the order of
+#: the endpoint expansion that stands in for the oscillating tail.
+_ORBIT_POINTS = 16
+_ORBIT_PHASE_PER_PANEL = 4.0
+_ORBIT_PANEL_MAX = 0.5
+_ORBIT_TAIL_ORDER = 2
+
+
 @lru_cache(maxsize=8192)
 def orbit_integrals(lam: int, epsilon: float, xi: float, tol: float = 1e-9) -> np.ndarray:
     """I_μ = ∫ e^{iξ(ε sinh w + w)} e^{iμφ(w)} / (ε cosh w + 1)^λ dw over the hyperbolic orbit, for μ = −λ…λ.
 
     The orbit is r = a(ε cosh w + 1), t = (a/v)(ε sinh w + w), with the position x = a(cosh w + ε),
-    y = a √(ε² − 1) sinh w measured from the scattering centre. The integral is done in Gauss–Legendre panels,
-    each spanning about a radian of the phase, out to where the integrand has fallen below ``tol``.
+    y = a √(ε² − 1) sinh w measured from the scattering centre. The integrand at −w is the conjugate of that at
+    w, so I_μ = 2 Re ∫₀^∞; that half is done in Gauss–Legendre panels, each spanning a few radians of the phase
+    (or half a unit of w where the phase is slow), out to a cut w_c, and the oscillating tail beyond the cut is
+    taken by its endpoint expansion (integration by parts, ``_ORBIT_TAIL_ORDER`` times): the cut is placed where
+    the expansion's remainder, about (f / Φ')(a / Φ')^order with f = r^−λ and a ≈ λ + 2, is below ``tol``. The
+    result is good to ``tol`` in absolute terms (the largest integrals are of order 1).
 
     Results are kept, so asking again for the same orbit costs nothing; do not change the array returned.
     """
     eps_ = max(epsilon, 1.0)
-    # Out to where (ε cosh w)^−λ < tol, or (for ξ > 0) where the fast oscillation has averaged it away.
+    order = _ORBIT_TAIL_ORDER
+    # Where the integrand itself has fallen below tol (the only cut without oscillation to help).
     w_amp = math.acosh(max((1 / tol) ** (1 / lam) / eps_, 1.0)) + 1.0
-    w_max = w_amp
+    w_max, tail = w_amp, False
     if xi > 0:
-        # Beyond w the integrand is ~ e^{−λw}, and oscillates with dφ/dw ≈ ξ ε e^w/2: what is left is below
-        # (ε e^w/2)^−λ / (ξ ε e^w/2).
-        w_osc = math.log(2 * (1 / (tol * xi)) ** (1 / (lam + 1)) / eps_) if tol * xi < 1 else 0.0
-        w_max = min(w_amp, max(w_osc, 3.0) + 1.0)
-    edges = [0.0]
-    while edges[-1] < w_max:
-        w = edges[-1]
-        rate = xi * (eps_ * math.cosh(w) + 1.0)
-        edges.append(min(w + min(0.5, 2.0 / (rate + 1e-300)), w_max))
-    edges = np.array(edges)
-    x, wts = np.polynomial.legendre.leggauss(16)
+        # The endpoint expansion to `order` leaves about h (a / Φ')^order with h = f / Φ': cut where that is below
+        # tol, at least at w = 3 and only where the phase is fast enough for the expansion to hold.
+        a = lam + 2.0
+        wg = np.arange(3.0, w_amp + 0.05, 0.05)
+        rg = eps_ * np.cosh(wg) + 1.0
+        dphi = xi * rg
+        bound = rg ** (-lam) / dphi * (a / dphi) ** order
+        ok = np.flatnonzero((bound < tol) & (dphi > 10.0))
+        if len(ok):
+            w_max, tail = float(wg[ok[0]]), True
+    # Panel edges: equal steps of the phase Φ (``_ORBIT_PHASE_PER_PANEL`` each), never wider than
+    # ``_ORBIT_PANEL_MAX`` in w, from the node density integrated on a fine grid.
+    wf = np.linspace(0.0, w_max, 1001)
+    density = np.maximum(1.0 / _ORBIT_PANEL_MAX, xi * (eps_ * np.cosh(wf) + 1.0) / _ORBIT_PHASE_PER_PANEL)
+    cum = np.concatenate([[0.0], np.cumsum(0.5 * (density[1:] + density[:-1]) * np.diff(wf))])
+    edges = np.interp(np.arange(0.0, math.floor(cum[-1]) + 1.0), cum, wf)
+    if edges[-1] < w_max - 1e-12:
+        edges = np.append(edges, w_max)
+    x, wts = _gauss(_ORBIT_POINTS)
     lo, hi = edges[:-1], edges[1:]
     w = ((hi - lo)[:, None] * (x[None, :] + 1) / 2 + lo[:, None]).ravel()
     weight = ((hi - lo)[:, None] / 2 * wts[None, :]).ravel()
-    w = np.concatenate([-w[::-1], w])
-    weight = np.concatenate([weight[::-1], weight])
-    ch, sh = np.cosh(w), np.sinh(w)
-    r = eps_ * ch + 1.0
-    phase = np.exp(1j * xi * (eps_ * sh + w))
-    e_iphi = ((ch + eps_) + 1j * math.sqrt(max(eps_ * eps_ - 1.0, 0.0)) * sh) / r
-    base = weight * phase / r**lam
-    out = np.array([np.sum(base * e_iphi**mu) for mu in range(-lam, lam + 1)])
+    g, phase, _ = _orbit_pieces(lam, eps_, xi, w)
+    e = weight * np.exp(1j * phase)
+    half = np.empty(2 * lam + 1, dtype=complex)
+    for mu in range(lam + 1):
+        half[lam + mu] = np.sum(e * g[mu])
+        half[lam - mu] = np.sum(e * np.conj(g[mu]))
+    if tail:
+        # ∫_c^∞ g e^{iΦ} dw = e^{iΦ(c)} (−h + h₂ − …)(c), h = g / (iΦ'), h₂ = h' / (iΦ'), by parts; h' by a
+        # central difference.
+        d = 1e-4
+        ws = np.array([w_max - d, w_max, w_max + d])
+        gs, phases, dphis = _orbit_pieces(lam, eps_, xi, ws)
+        at_cut = np.exp(1j * phases[1])
+        for mu in range(lam + 1):
+            for idx, gg in (((lam + mu, gs[mu]), (lam - mu, np.conj(gs[mu]))) if mu else ((lam, gs[0]),)):
+                h = gg / (1j * dphis)
+                term = -h[1]
+                if order >= 2:
+                    term += (h[2] - h[0]) / (2 * d) / (1j * dphis[1])
+                half[idx] += term * at_cut
+    out = 2 * half.real + 0j
     out.setflags(write=False)
     return out
 
