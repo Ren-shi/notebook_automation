@@ -223,7 +223,8 @@ The tabs are the stages of an experiment, left to right:
   - a particle gate;
   - singles or coincidences, with the random coincidences shown, subtracted, or left out;
   - add-back and suppression on or off;
-  - the binning and the range;
+  - the binning, and a view window for the γ-ray panels (the spectra always hold the whole range of the run,
+    up to the highest line recorded; the window only zooms);
   - the real part of the run, or the whole run scaled.
 
   **Gates** are named and kept with the experiment, and the analysis uses them by name. Make one from a detector,

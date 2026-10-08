@@ -33,6 +33,26 @@ def taken(tmp_path_factory):
     return p
 
 
+def test_the_gamma_spectrum_holds_the_whole_run_and_a_view_only_zooms(taken):
+    pytest.importorskip("plotly")
+    from physim.nuclear.app.figures import figure_histogram
+
+    run = taken.run
+    g = run.gammas()
+    lo, hi = dv.gamma_range(g)
+    assert lo == 0.0 and hi >= 1.3 * g.energy_mev and hi >= float(g["measured"].max())
+    name = g.detector_names()[0]
+    whole = dv.gamma_spectrum(run, name, randoms="none")
+    assert whole["edges"][-1] == pytest.approx(hi)
+    wide = dv.gamma_spectrum(run, name, randoms="none", range=(0.0, 10.0))
+    assert whole["counts"].sum() == pytest.approx(wide["counts"].sum())   # nothing of the run is cut off
+    spec = dict(whole, scale=1e3, xlabel="γ-ray energy (keV)", view=(400.0, 800.0))
+    fig = figure_histogram([spec])
+    assert list(fig.layout.xaxis.range) == [400.0, 800.0]
+    assert fig.data[0].y.sum() == pytest.approx(2 * whole["counts"].sum())  # the data are all still there
+    assert figure_histogram([dict(spec, view=None)]).layout.xaxis.range is None
+
+
 def test_every_spectrum_is_there_and_the_recoil_correction_finds_the_line(taken):
     run = taken.run
     grid = dv.grid(run)

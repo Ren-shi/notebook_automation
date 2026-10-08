@@ -9,8 +9,6 @@ from pathlib import Path
 from .. import dataviews as dv
 from .figures import figure_energy_ring, figure_gamma_crystal, figure_histogram, themed
 
-GAMMA_RANGE_FACTOR = (0.6, 1.3)
-
 
 def options(ctx) -> dict:
     return ctx.data_options
@@ -30,13 +28,13 @@ def _gate(ctx):
 def _gamma_spec(ctx, run, name: str) -> dict:
     o = options(ctx)
     g = run.gammas()
-    e0 = g.energy_mev
-    rng = (o["lo_kev"] * 1e-3, o["hi_kev"] * 1e-3) if o["lo_kev"] and o["hi_kev"] else (
-        GAMMA_RANGE_FACTOR[0] * e0, GAMMA_RANGE_FACTOR[1] * e0)
+    # The histogram always holds the whole range of the run (every line, up to the highest energy recorded);
+    # "γ from / to" only zooms the view, so nothing is lost from the panel or its CSV.
     s = dv.gamma_spectrum(run, name, correction=o["correction"], gate=_gate(ctx), mode=o["mode"],
-                          randoms=o["randoms"], addback=o["addback"], bins=int(o["bins"]), range=rng,
-                          scaled=o["scaled"])
-    return dict(s, scale=1e3, xlabel="γ-ray energy (keV)")
+                          randoms=o["randoms"], addback=o["addback"], bins=int(o["bins"]),
+                          range=dv.gamma_range(g), scaled=o["scaled"])
+    view = (float(o["lo_kev"]), float(o["hi_kev"])) if o["lo_kev"] is not None and o["hi_kev"] else None
+    return dict(s, scale=1e3, xlabel="γ-ray energy (keV)", view=view)
 
 
 def _particle_spec(ctx, run, name: str) -> dict:
@@ -73,8 +71,9 @@ def controls(ctx, run) -> None:
                   on_change=lambda e: o.update(bins=int(e.value or 200))).props("dense outlined").classes(
             "w-24").on("blur", redraw)
         if run.gammas() is not None:
-            ui.number("γ from (keV)", value=o["lo_kev"], on_change=lambda e: o.update(lo_kev=e.value)).props(
-                "dense outlined").classes("w-28").on("blur", redraw)
+            ui.number("γ view from (keV)", value=o["lo_kev"], on_change=lambda e: o.update(lo_kev=e.value)).props(
+                "dense outlined").classes("w-32").on("blur", redraw).tooltip(
+                "Zooms the γ-ray panels; the spectra keep their whole range (empty: everything the run recorded)")
             ui.number("to (keV)", value=o["hi_kev"], on_change=lambda e: o.update(hi_kev=e.value)).props(
                 "dense outlined").classes("w-24").on("blur", redraw)
         if run.scale > 1.000001:
