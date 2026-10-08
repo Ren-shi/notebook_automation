@@ -25,6 +25,10 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - A fully hidden detector's warning names the detector in front, and shadowing is now a warning, not a note.
 
 ### Changed
+- The app no longer rebuilds every tab after every edit: only the tab on screen is rebuilt, the others when they
+  are next shown; the rates and the Doppler table are computed in a worker thread first (a spinner in the header
+  while they are), so the page answers at once instead of freezing. The cards and the strip follow once the
+  numbers are ready, and a card is not rebuilt under a field being typed in.
 - The Coulomb-excitation orbit integrals are 20 to 600 times faster at the same accuracy (10⁻⁹): the half-orbit
   symmetry, panels of four radians of phase, and the oscillating tail by its endpoint expansion instead of
   quadrature out to where it dies. A P(θ) table takes 50 ms instead of 2 s (an E1 table, 0.06 s instead of

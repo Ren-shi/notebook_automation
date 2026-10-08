@@ -113,12 +113,12 @@ def main(argv: Optional[list] = None) -> None:
 
     @ui.page("/")
     def index(example: Optional[str] = None, template: Optional[str] = None, experiment: Optional[str] = None,
-              theme: Optional[str] = None):
+              theme: Optional[str] = None, prebuild: Optional[str] = None):
         from .figures import THEMES
         from .page import build_page
 
         build_page(example=example or args.example, template=template, experiment=experiment,
-                   theme=theme if theme in THEMES else None)
+                   theme=theme if theme in THEMES else None, prebuild=prebuild == "all")
 
     @app.get("/physim-planner")
     def marker():

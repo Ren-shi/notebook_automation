@@ -72,7 +72,7 @@ def _starting_planner(example: Optional[str], template: Optional[str], experimen
 
 
 def build_page(example: Optional[str] = None, events: int = 100_000, theme: Optional[str] = None,
-               template: Optional[str] = None, experiment: Optional[str] = None) -> None:
+               template: Optional[str] = None, experiment: Optional[str] = None, prebuild: bool = False) -> None:
     """Build the planner page for the current client (call inside a NiceGUI page function).
 
     It opens ``experiment`` (a folder), or a new setup from ``template`` (:data:`physim.nuclear.workbench.TEMPLATES`)
@@ -101,9 +101,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     # -- actions ----------------------------------------------------------------------------------------------
     def changed(ok: bool) -> None:
         if ok:
-            refresh_results()
-        else:
-            ui.notify("; ".join(P().problems), type="negative", multi_line=True)
+            refresh_results()  # rebuilds the setup panel and the strip once the numbers are ready
+            return
+        ui.notify("; ".join(P().problems), type="negative", multi_line=True)
         setup_panel.refresh()
         status_strip.refresh()
 
@@ -1655,17 +1655,81 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
               "gamma": gamma_panel, "report": report_panel, "efficiency": efficiency_panel,
               "plan": plan_answers}
 
+    #: The container of each stage's content, and the stages whose content is stale (emptied, rebuilt when shown).
+    stage_boxes: dict = {}
+    dirty: set = set()
+
+    def render_stage(key: str) -> None:
+        """Build a stage's content into its container (emptying what was there)."""
+        box = stage_boxes.get(key)
+        if box is None:
+            return
+        box.clear()
+        with box:
+            try:
+                stage_modules[key].render(ctx)
+            except Exception as err:  # noqa: BLE001 -- say why instead of an empty tab
+                ui.label(f"This tab could not be shown: {err}").classes("text-sm ps-warn")
+        dirty.discard(key)
+
+    def show_stage(key: str) -> None:
+        """A tab was chosen: build it if its content is stale (or was never built)."""
+        state["stage"] = key
+        if key in dirty:
+            render_stage(key)
+
+    def warm() -> None:
+        """The numbers every tab starts from, computed once (in a worker thread) so the page does not wait."""
+        p = P()
+        p.rates()
+        p.warnings()
+        if p.experiment.excitation is not None:
+            p.gamma()
+
+    def refresh_current() -> None:
+        key = state["stage"]
+        if key == "setup":
+            if not scene_current():  # the scene is redrawn in place, so the camera stays where it is
+                geometry_panel.refresh()
+            reading_box.refresh()
+            return
+        render_stage(key)
+
     def refresh_results() -> None:
-        readouts.refresh()
-        reading_box.refresh()
-        run_panel.refresh()
-        data_view.refresh()
-        analysis_view.refresh()
-        report_view.refresh()
-        for name, p in panels.items():
-            if name == "geometry" and scene_current():
-                continue  # the scene is redrawn in place, so the camera stays where it is
-            p.refresh()
+        """After the setup (or the run) changed. The tabs not on screen are emptied and marked, to be rebuilt when
+        they are shown; the heavy numbers are computed off the event loop; then the strip, the setup panel and the
+        tab on screen are rebuilt. Another change in the meantime supersedes this one."""
+        state["generation"] = token = state.get("generation", 0) + 1
+        current = state["stage"]
+        for key, box in stage_boxes.items():
+            if key != current:
+                box.clear()
+                dirty.add(key)
+        busy = state.get("busy")
+        if busy is not None:
+            busy.set_visibility(True)
+
+        async def go() -> None:
+            try:
+                await run.io_bound(warm)
+            except Exception:  # noqa: BLE001 -- the panels say what is wrong
+                pass
+            if state.get("generation") != token:
+                return
+            if busy is not None:
+                busy.set_visibility(False)
+            try:  # the cards are not rebuilt under a field being typed in; the next blur brings them up to date
+                typing = await ui.run_javascript(
+                    "!!document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)",
+                    timeout=1.0)
+            except Exception:  # noqa: BLE001
+                typing = False
+            if not typing:
+                setup_panel.refresh()
+            status_strip.refresh()
+            refresh_current()
+
+        ui.timer(0.01, go, once=True)
 
     @ui.refreshable
     def reading_box(tab: str) -> None:
@@ -1878,15 +1942,21 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     @ui.refreshable
     def main_area() -> None:
-        with ui.tabs(value=state["stage"], on_change=lambda e: state.update(stage=e.value)).classes("w-full").props(
+        with ui.tabs(value=state["stage"], on_change=lambda e: show_stage(e.value)).classes("w-full").props(
                 "dense no-caps align=left") as tabs:
             for key, label in wb.STAGES:
                 ui.tab(key, label=label)
         state["tabs"] = tabs
+        # Only the tab on screen is built now; the others are built when first shown, and rebuilt when shown
+        # after a change (refresh_results).
         with ui.tab_panels(tabs, value=state["stage"]).classes("w-full"):
             for key, _ in wb.STAGES:
                 with ui.tab_panel(key):
-                    stage_modules[key].render(ctx)
+                    stage_boxes[key] = ui.column().classes("w-full gap-2")
+                    dirty.add(key)
+            for key, _ in wb.STAGES:
+                if key == state["stage"] or prebuild:  # prebuild: every tab now (the served-page test)
+                    render_stage(key)
 
     def set_theme(name: str) -> None:
         if name == state["theme"]:
@@ -1931,6 +2001,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     with ui.header(elevated=False).classes("items-center ps-header py-1"):
         ui.label("physim").classes("text-lg font-semibold")
         ui.label("experiment workbench").classes("ps-muted")
+        state["busy"] = ui.spinner("dots", size="sm").classes("ps-muted").tooltip("Computing the numbers")
+        state["busy"].set_visibility(False)
         ui.space()
         ui.button("Experiments", icon="folder_open",
                   on_click=lambda: (experiments_list.refresh(), experiments_dialog.open())).props(
