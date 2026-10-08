@@ -532,7 +532,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         return [{"name": k, "label": lab, "field": k, "align": "left"} for k, lab in spec]
 
     # -- the scene and its side panel ---------------------------------------------------------------------------
-    scene_state = {"view": None, "key": None, "element": None, "live": {}, "track": None,
+    scene_state = {"view": None, "key": None, "element": None, "live": {}, "track": None, "full": False, "extras": [],
                    "tracks": {"n": 30, "select": "all", "weighted": True, "playing": True, "speed": 1.0},
                    "source": {"nuclide": "152Eu", "activity": "37 kBq", "time": "1 h", "run": False}}
 
@@ -893,11 +893,30 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 "dense flat no-caps")
 
     @ui.refreshable
+    def scene_full(on: bool) -> None:
+        """The scene on the whole screen: the setup panel, the status strip, the tabs and the panels beside and
+        below the scene are hidden, and the scene fills the window; off brings them back."""
+        scene_state["full"] = on
+        drawer = state.get("drawer")
+        if drawer is not None:
+            (drawer.hide if on else drawer.show)()
+        for el in (state.get("strip_box"), state.get("tabs"), *scene_state.get("extras", [])):
+            if el is not None:
+                el.set_visibility(not on)
+        geometry_panel.refresh()
+        # The scene follows its element's size once the window says it changed: once right away, and once more
+        # after the drawer has slid out of the way.
+        for delay in (0.15, 0.6):
+            ui.timer(delay, lambda: ui.run_javascript("window.dispatchEvent(new Event('resize'))"), once=True)
+
+    @ui.refreshable
     def geometry_panel():
         from ..scene_view import SceneView
 
+        full = scene_state["full"]
         with ui.row().classes("w-full items-start gap-3").style("flex-wrap: wrap"):
-            with ui.column().classes("ps-plate gap-1").style("flex: 1 1 520px; min-width: 0"):
+            with ui.column().classes("ps-plate gap-1").style(
+                    "flex: 1 1 100%; min-width: 0" if full else "flex: 1 1 520px; min-width: 0"):
                 with ui.row().classes("w-full items-center gap-1"):
                     ui.toggle({"angle": "Drag changes the angle", "distance": "the distance"}, value="angle",
                               on_change=lambda e: scene_state["view"].set_mode(e.value)).props(
@@ -910,19 +929,30 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                             "dense flat no-caps")
                     ui.button("Paper figure", icon="article", on_click=lambda: open_export("geometry", {})).props(
                         "dense flat no-caps").tooltip("Export the layout as a figure in a journal's style")
-                view = SceneView(P, state["theme"], scene_selected, scene_live, scene_moved)
+                    ui.button(icon="fullscreen_exit" if full else "fullscreen",
+                              on_click=lambda: scene_full(not scene_state["full"])).props(
+                        "dense flat round").tooltip("Back to the page (Esc)" if full
+                                                    else "The scene on the whole screen")
+                view = SceneView(P, state["theme"], scene_selected, scene_live, scene_moved,
+                                 height="calc(100vh - 175px)" if full else None)
                 view.on_track = scene_track
                 scene_state["view"] = view
                 tracks_toolbar()
                 if scene_state["key"] is not None:
                     view.select(scene_state["key"], scene_state["element"], notify=False)
-                ui.label("To scale; the numbers along the beam are mm from the target. Click a detector, a ring "
+                ui.label(("Full screen: the setup panel, the tabs and the numbers beside the scene are hidden; "
+                          "Esc or the button brings them back. " if full else "")
+                         + "To scale; the numbers along the beam are mm from the target. Click a detector, a ring "
                          "or a crystal to select it; drag a selected detector to move it. Drag the background to "
                          "turn the view, scroll to zoom.").classes(
                     "text-xs ps-muted")
-            with ui.column().classes("gap-2").style("flex: 0 1 360px; min-width: 300px"):
-                selection_panel()
-        geometry_tables()
+            if not full:
+                with ui.column().classes("gap-2").style("flex: 0 1 360px; min-width: 300px"):
+                    selection_panel()
+        if full:
+            ui.keyboard(on_key=lambda e: scene_full(False) if e.key.escape and e.action.keydown else None)
+        else:
+            geometry_tables()
 
     @ui.refreshable
     def geometry_tables():
@@ -1669,6 +1699,14 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         """One of the planner's results: its heading, how to read it, the panel, and its explanation."""
         if title:
             ui.label(title).classes("text-lg font-semibold mt-2")
+        if tab == "geometry":  # the scene's full-screen mode hides what stands above and below it
+            with ui.element("div").classes("w-full") as above:
+                reading_box(tab)
+            panels[tab]()
+            with ui.element("div").classes("w-full") as below:
+                explain(tab)
+            scene_state["extras"] = [above, below]
+            return
         reading_box(tab)
         panels[tab]()
         explain(tab)
@@ -1917,8 +1955,11 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     export_dialog.on("show", render_preview)
     with ui.left_drawer(value=True).classes("ps-rail").props("width=440 bordered behavior=desktop") as drawer:
         setup_panel()
+    state["drawer"] = drawer
     with ui.column().classes("w-full gap-2"):
-        status_strip()
+        with ui.element("div").classes("w-full") as strip_box:
+            status_strip()
+        state["strip_box"] = strip_box
         main_area()
     if offer_list:
         experiments_dialog.open()

@@ -51,6 +51,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- The scene on the whole screen: a ⛶ button on the Setup tab's scene toolbar hides the setup panel, the status
+  strip, the tabs and the panels beside and below the scene, and the scene fills the window (Esc or the button
+  brings the page back). `SceneView(..., height=)` sets the scene's height.
 - Contaminant reactions, beam spot and halo (backlog 74). `[target] contaminants` (`[["C", "10 ug/cm2"], ...]`) adds
   thin layers on the target's downstream face, each a channel of elastic scattering with its own kinematic line
   on the Data tab's energy-against-ring view; the backing's lines are drawn too. `[beam] halo_fraction` and

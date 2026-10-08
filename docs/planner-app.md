@@ -73,6 +73,11 @@ transparent box around its crystals.
 **Look around.** Drag the background to turn the view and scroll to zoom. **3D**, **Side**, **Top** and **Along
 beam** set the camera.
 
+**Full screen.** The ⛶ button at the right of the scene's toolbar gives the scene the whole window: the setup
+panel, the status strip, the tabs and the numbers beside and below the scene are hidden, and the scene fills the
+height. Selecting, dragging, the camera buttons and the tracks work as before. Esc, or the same button, brings the
+page back.
+
 **Select.** Click a detector: it turns orange, its distance, angle and size appear beside it, and the panel on the
 right shows its numbers.
 - A particle detector shows the angles it covers, its solid angle, how much of it other detectors hide, its rate
