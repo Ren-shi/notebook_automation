@@ -32,7 +32,7 @@ import numpy as np
 
 from . import data
 from .detectors import Array, angles
-from .kinematics import TwoBody
+from .kinematics import TwoBody, lab_points
 from .quantity import Quantity
 from .rutherford import Rutherford
 from .stopping import Stopping
@@ -468,34 +468,43 @@ class Rates:
                 zs, wz = self._depth_nodes(ch.layer)
                 es = beam_energy_at(self.experiment, ch.layer, zs, self.layers)
                 sums = {p: np.zeros(len(dirs)) for p in PARTICLES}
+                reacs, ws = [], []
                 for e, w in zip(es, wz):
                     if e <= 0:
                         continue
                     try:
-                        ruth = reaction_at(self.experiment, ch, float(e), self.layers)
+                        reacs.append(reaction_at(self.experiment, ch, float(e), self.layers))
                     except ValueError:  # below the excitation threshold, or no energy left
                         continue
+                    ws.append(w)
+                if reacs:
+                    ws = np.array(ws)[:, None]
                     for p in PARTICLES:
-                        for sigma, _ in self._branches(ruth, theta, p):
-                            sums[p] += w * sigma
+                        for sigma, _ in self._branches_many(reacs, theta, p):
+                            sums[p] += (ws * sigma).sum(axis=0)
                 for p in PARTICLES:
                     per_seg = np.bincount(index, sums[p] * dom, minlength=len(segs))
                     rate = self.particles_per_second * ch.atoms_per_cm2 * per_seg * MB_CM2
                     rows += [RateRow(g.name, seg, ch.label, p, float(r)) for seg, r in zip(segs, rate) if r > 0]
         return rows
 
-    def _branches(self, ruth: Rutherford, theta: np.ndarray, particle: str) -> list:
-        """[(lab cross section mb/sr, lab energy MeV)] for each kinematic branch at lab angles ``theta``; zero where
-        the particle cannot go, leaves with less than ``min_energy``, or the ejectile's CM angle is below the
-        floor."""
+    def _branches_many(self, reacs: list, theta: np.ndarray, particle: str) -> list:
+        """[(lab cross section mb/sr, lab energy MeV)] for the first and the second kinematic branch at lab angles
+        ``theta``, for several reactions at once (one per beam energy; :func:`physim.nuclear.kinematics.lab_points`):
+        arrays of shape (len(reacs), len(theta)), zero (energy NaN) where the particle cannot go, leaves with less
+        than ``min_energy``, or the ejectile's CM angle is below the floor."""
         out = []
-        for pt in ruth.kinematics.at_lab(theta, particle):
-            if pt is None:
-                continue
-            th_ej = np.asarray(pt.theta_cm) if particle == "ejectile" else 180.0 - np.asarray(pt.theta_cm)
+        for pt in lab_points([r.kinematics for r in reacs], theta, particle):
+            th_ej = pt.theta_cm if particle == "ejectile" else 180.0 - pt.theta_cm
             ok = (~np.isnan(th_ej)) & (th_ej >= self.theta_floor) & (np.nan_to_num(pt.energy) >= self.min_energy)
+            if not ok.any():  # a branch the particle never reaches (the second one, mostly)
+                out.append((np.zeros(ok.shape), np.full(ok.shape, np.nan)))
+                continue
+            safe = np.where(ok, th_ej, 90.0)
             with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
-                sigma = np.asarray(ruth.cross_section_cm(np.where(ok, th_ej, 90.0))) * np.asarray(pt.jacobian)
+                sigma = np.array([np.asarray(r.cross_section_cm(safe[i])) if ok[i].any() else np.zeros(ok.shape[1])
+                                  for i, r in enumerate(reacs)])
+                sigma = sigma * pt.jacobian
             out.append((np.where(ok, sigma, 0.0), np.where(ok, pt.energy, np.nan)))
         return out
 
@@ -666,20 +675,22 @@ class Rates:
             e_a = _after(det_st, e_face, dead / ci)
             return e_a - _after(det_st, e_a, active / ci)
 
+        reacs, js = [], []
+        for j, e in enumerate(es):
+            if e <= 0:
+                continue
+            try:
+                reacs.append(reaction_at(self.experiment, ch, float(e), self.layers))
+            except ValueError:
+                continue
+            js.append(j)
+        branches = self._branches_many(reacs, theta, particle) if reacs else []
         out = []
         for branch in (0, 1):
             energy = np.full((n_depth, len(dirs)), np.nan)
             sigma = np.zeros((n_depth, len(dirs)))
-            for j, e in enumerate(es):
-                if e <= 0:
-                    continue
-                try:
-                    reac = reaction_at(self.experiment, ch, float(e), self.layers)
-                except ValueError:
-                    continue
-                branches = self._branches(reac, theta, particle)
-                if branch < len(branches):
-                    sigma[j], energy[j] = branches[branch]
+            if branch < len(branches):
+                sigma[js], energy[js] = branches[branch]
             weight = np.where(np.isnan(energy), 0.0, sigma * dom[None, :])
             if weight.sum() <= 0:
                 continue

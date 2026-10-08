@@ -29,6 +29,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
   symmetry, panels of four radians of phase, and the oscillating tail by its endpoint expansion instead of
   quadrature out to where it dies. A P(θ) table takes 50 ms instead of 2 s (an E1 table, 0.06 s instead of
   30 s), so the planner's rates and the Doppler table after an edit take a fraction of what they did.
+- The rates transform the kinematics for all beam energies through the target at once
+  (`kinematics.lab_points`, the one-body formulas broadcast) instead of once per energy and branch: a few
+  hundred fewer calls per detector, the same numbers.
 - The planner app has one mode (backlog 64): the guided steps, the guided/expert switch and the example drop-down are
   gone. The left panel is the setup as a list of decisions (Beam, Target and reaction, Particle detectors, γ-ray
   detectors, Run conditions), each a card showing its state and its consequence ("CD at 30 mm, behind the target ·
