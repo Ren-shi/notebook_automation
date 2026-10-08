@@ -48,9 +48,11 @@ When ξ ≳ 1 the collision is slower than the nuclear motion, and the excitatio
 (a²/4)/sin⁴(θ/2), in the CM frame. The lab cross section and the total follow as for elastic scattering.
 
 **Numerics.**
-- Gauss–Legendre panels (16 points each) that span about a radian of the phase, out to where the integrand is below
-  10⁻⁹. P(θ) is tabulated every 1° (181 orbit integrals, about 2 s) and interpolated with four-point cubics, to
-  ~10⁻⁵.
+- The integrand at −w is the conjugate of that at w, so I_μ = 2 Re ∫₀^∞. That half is done in Gauss–Legendre
+  panels (16 points each) spanning about four radians of the phase, out to a cut; beyond the cut the oscillating
+  tail is taken by its endpoint expansion (integration by parts, twice), and the cut is placed where the
+  expansion's remainder is below 10⁻⁹. P(θ) is tabulated every 1° (181 orbit integrals, about 50 ms) and
+  interpolated with four-point cubics, to ~10⁻⁵.
 - `probability(θ, exact=True)` integrates each angle directly.
 
 ## When it applies
