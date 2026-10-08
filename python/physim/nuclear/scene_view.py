@@ -70,7 +70,10 @@ class SceneView:
     allowed place."""
 
     def __init__(self, planner: Callable, theme: str = "light", on_select: Optional[Callable] = None,
-                 on_live: Optional[Callable] = None, on_moved: Optional[Callable] = None):
+                 on_live: Optional[Callable] = None, on_moved: Optional[Callable] = None,
+                 height: Optional[str] = None):
+        """``height`` is the scene's CSS height (``HEIGHT`` px unless given; "calc(100vh - 175px)" fills the
+        window). The scene follows its element's size, so the page may change it and send a resize event."""
         from nicegui import ui
 
         self._ui = ui
@@ -100,7 +103,8 @@ class SceneView:
         self.scene = ui.scene(
             width=800, height=HEIGHT, grid=False, background_color=self.colours["ground"],
             camera=ui.scene.perspective_camera(fov=40, near=1.0, far=1e5), on_click=self._clicked,
-            click_events=["click"], on_drag_end=self._dropped).classes("w-full").style(f"height: {HEIGHT}px")
+            click_events=["click"], on_drag_end=self._dropped).classes("w-full").style(
+            f"height: {height or f'{HEIGHT}px'}")
         self.scene.on("drag", self._dragging, throttle=0.12)
         self.scene.on("init", self._clicks_only)
         self.draw()
