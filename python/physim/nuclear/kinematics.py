@@ -166,26 +166,16 @@ class TwoBody:
 
     # -- CM angle -> lab ---------------------------------------------------------------------------------------
 
+    def _parameters(self, particle: str) -> tuple:
+        """(g, γ_cm, p_cm, E_cm of the particle, β_cm, its mass): what the lab transformation needs."""
+        k = self._index(particle)
+        return self._g(k), self.gamma_cm, self.p_cm, self._e_cm[k], self.beta_cm, self.m3 if k == 3 else self.m4
+
     def at_cm(self, theta_cm: ArrayLike, particle: str = "ejectile") -> LabPoint:
         """Lab quantities of the ejectile (or recoil) leaving at CM angle ``theta_cm`` (degrees)."""
-        k = self._index(particle)
-        m = self.m3 if k == 3 else self.m4
         th = np.radians(np.asarray(theta_cm, dtype=float))
-        c, s = np.cos(th), np.sin(th)
-        g, gam, p, e = self._g(k), self.gamma_cm, self.p_cm, self._e_cm[k]
-        p_par = gam * p * (c + g)  # along the beam
-        p_perp = p * s
-        theta_lab = np.degrees(np.arctan2(p_perp, p_par))
-        energy = gam * (e + self.beta_cm * p * c) - m
-        # dθ_lab/dθ_cm from tan θ_lab = sin θ* / (γ (cos θ* + g)).
-        denom = gam**2 * (c + g) ** 2 + s**2
-        dlab_dcm = gam * (1.0 + g * c) / denom
-        with np.errstate(divide="ignore", invalid="ignore"):
-            sin_lab = np.sin(np.radians(theta_lab))
-            # At θ* = 0 or 180° both sines vanish; the ratio tends to (dθ*/dθ_lab)².
-            jac = np.where(np.abs(s) > 1e-9, np.abs(s / (sin_lab * dlab_dcm)), 1.0 / dlab_dcm**2)
-            de_dtheta = -gam * self.beta_cm * p * s / dlab_dcm * (math.pi / 180.0)  # per degree
-        return LabPoint(*(_out(x, theta_cm) for x in (np.degrees(th), theta_lab, energy, jac, de_dtheta)))
+        fields = _lab_from_cm(th, *self._parameters(particle))
+        return LabPoint(*(_out(x, theta_cm) for x in (np.degrees(th),) + fields))
 
     # -- lab angle -> CM ---------------------------------------------------------------------------------------
 
@@ -196,28 +186,8 @@ class TwoBody:
         the kinematics are double-valued and is NaN otherwise; both are NaN beyond the maximum lab angle.
         """
         k = self._index(particle)
-        g, gam = self._g(k), self.gamma_cm
         tl = np.radians(np.asarray(theta_lab, dtype=float))
-        a, b = np.cos(tl), gam * np.sin(tl)
-        # sin θ* cos θ_lab − γ sin θ_lab cos θ* = γ g sin θ_lab, i.e. R sin(θ* − δ) = b g.
-        r = np.hypot(a, b)
-        delta = np.arctan2(b, a)
-        with np.errstate(invalid="ignore"):
-            x = np.arcsin(np.clip(b * g / r, -1.0, 1.0))
-            inside = np.abs(b * g / r) <= 1.0 + 1e-12
-            cands = [delta + x, delta + np.pi - x]
-            sols = []
-            for cand in cands:
-                cand = np.where(inside, cand, np.nan)
-                ok = (cand >= -1e-12) & (cand <= np.pi + 1e-12)
-                # The squared equation also admits θ_lab + π; keep solutions whose momentum points the right way.
-                ok &= (np.sign(np.cos(cand) + g) == np.sign(a)) | (np.abs(a) < 1e-12)
-                sols.append(np.where(ok, np.clip(cand, 0.0, np.pi), np.nan))
-        first = np.fmin(sols[0], sols[1])
-        second = np.where(np.isclose(sols[0], sols[1], rtol=0, atol=1e-12) | np.isnan(sols[0]) | np.isnan(sols[1]),
-                          np.nan, np.fmax(sols[0], sols[1]))
-        if g <= 1.0 + _G_TOL:
-            second = np.full_like(first, np.nan)
+        first, second = _cm_from_lab(tl, self._g(k), self.gamma_cm)
         return _out(np.degrees(first), theta_lab), _out(np.degrees(second), theta_lab)
 
     def at_lab(self, theta_lab: ArrayLike, particle: str = "ejectile") -> tuple:
@@ -236,6 +206,70 @@ class TwoBody:
 
     def __repr__(self) -> str:
         return f"TwoBody({self.label} at {self.beam_energy_mev:g} MeV)"
+
+
+def _lab_from_cm(th: np.ndarray, g, gam, p, e, beta, m) -> tuple:
+    """(lab angle in degrees, lab energy, dΩ_cm/dΩ_lab, dE/dθ_lab per degree) at CM angles ``th`` (radians).
+    The parameters are those of :meth:`TwoBody._parameters`: scalars, or arrays that broadcast against ``th``
+    (one row per beam energy, for :func:`lab_points`)."""
+    c, s = np.cos(th), np.sin(th)
+    p_par = gam * p * (c + g)  # along the beam
+    p_perp = p * s
+    theta_lab = np.degrees(np.arctan2(p_perp, p_par))
+    energy = gam * (e + beta * p * c) - m
+    # dθ_lab/dθ_cm from tan θ_lab = sin θ* / (γ (cos θ* + g)).
+    denom = gam**2 * (c + g) ** 2 + s**2
+    dlab_dcm = gam * (1.0 + g * c) / denom
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sin_lab = np.sin(np.radians(theta_lab))
+        # At θ* = 0 or 180° both sines vanish; the ratio tends to (dθ*/dθ_lab)².
+        jac = np.where(np.abs(s) > 1e-9, np.abs(s / (sin_lab * dlab_dcm)), 1.0 / dlab_dcm**2)
+        de_dtheta = -gam * beta * p * s / dlab_dcm * (math.pi / 180.0)  # per degree
+    return theta_lab, energy, jac, de_dtheta
+
+
+def _cm_from_lab(tl: np.ndarray, g, gam) -> tuple:
+    """(first, second) CM angles in radians at lab angles ``tl`` (radians); ``g`` and ``gam`` scalars, or arrays
+    broadcasting against ``tl``. The second solution is NaN where the kinematics are single-valued."""
+    a, b = np.cos(tl), gam * np.sin(tl)
+    # sin θ* cos θ_lab − γ sin θ_lab cos θ* = γ g sin θ_lab, i.e. R sin(θ* − δ) = b g.
+    r = np.hypot(a, b)
+    delta = np.arctan2(b, a)
+    with np.errstate(invalid="ignore"):
+        x = np.arcsin(np.clip(b * g / r, -1.0, 1.0))
+        inside = np.abs(b * g / r) <= 1.0 + 1e-12
+        cands = [delta + x, delta + np.pi - x]
+        sols = []
+        for cand in cands:
+            cand = np.where(inside, cand, np.nan)
+            ok = (cand >= -1e-12) & (cand <= np.pi + 1e-12)
+            # The squared equation also admits θ_lab + π; keep solutions whose momentum points the right way.
+            ok &= (np.sign(np.cos(cand) + g) == np.sign(a)) | (np.abs(a) < 1e-12)
+            sols.append(np.where(ok, np.clip(cand, 0.0, np.pi), np.nan))
+    first = np.fmin(sols[0], sols[1])
+    second = np.where(np.isclose(sols[0], sols[1], rtol=0, atol=1e-12) | np.isnan(sols[0]) | np.isnan(sols[1]),
+                      np.nan, np.fmax(sols[0], sols[1]))
+    second = np.where(np.asarray(g) <= 1.0 + _G_TOL, np.nan, second)
+    return first, second
+
+
+def lab_points(bodies: list, theta_lab: ArrayLike, particle: str = "ejectile") -> tuple:
+    """:meth:`TwoBody.at_lab` for several kinematics at once (the beam energies through the target, say): the
+    (first, second) :class:`LabPoint` solutions with fields of shape (len(bodies), n_angles), the second NaN
+    where a body's kinematics are single-valued. The same formulas as the one-body methods, broadcast."""
+    tl = np.radians(np.atleast_1d(np.asarray(theta_lab, dtype=float)))[None, :]
+    cols = [np.array([b._parameters(particle)[i] for b in bodies], dtype=float)[:, None] for i in range(6)]
+    g, gam = cols[0], cols[1]
+    first, second = _cm_from_lab(tl, g, gam)
+    out = []
+    for th in (first, second):
+        th = np.broadcast_to(th, (len(bodies), tl.shape[1]))
+        if np.all(np.isnan(th)):  # no body is double-valued: the second branch is empty everywhere
+            out.append(LabPoint(*(np.full(th.shape, np.nan) for _ in range(5))))
+            continue
+        fields = _lab_from_cm(th, *cols)
+        out.append(LabPoint(np.degrees(th), *(np.broadcast_to(f, th.shape) for f in fields)))
+    return tuple(out)
 
 
 def _out(x: np.ndarray, like: ArrayLike) -> ArrayLike:

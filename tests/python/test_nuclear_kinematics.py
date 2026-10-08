@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from physim.nuclear import Experiment, data
-from physim.nuclear.kinematics import TwoBody, elastic, kinematic_factor
+from physim.nuclear.kinematics import TwoBody, elastic, kinematic_factor, lab_points
 
 REFERENCE = Path(__file__).resolve().parents[1] / "reference" / "nuclear"
 
@@ -218,3 +218,28 @@ def test_against_lise_reference_files():
         assert point.energy == pytest.approx(float(row["energy_mev"]), abs=tol), (name, row)
         if row.get("theta_cm_deg"):
             assert point.theta_cm == pytest.approx(float(row["theta_cm_deg"]), abs=0.01), (name, row)
+
+
+def test_lab_points_for_several_energies_equal_the_one_body_methods():
+    """The batched transformation (one row per beam energy, as the rates use it through the target) gives what
+    TwoBody.at_lab gives body by body: both branches, the NaNs beyond the maximum angle, single-valued recoils."""
+    bodies = [TwoBody("16O", "58Ni", e, excitation_mev=1.454) for e in (20.0, 35.0, 50.0)]
+    bodies += [TwoBody("58Ni", "12C", 200.0), TwoBody("4He", "197Au", 16.0)]
+    th = np.linspace(0.0, 180.0, 361)
+    for particle in ("ejectile", "recoil"):
+        first, second = lab_points(bodies, th, particle)
+        assert first.energy.shape == (len(bodies), len(th))
+        for i, b in enumerate(bodies):
+            p1, p2 = b.at_lab(th, particle)
+            for got, want in ((first, p1), (second, p2)):
+                if want is None:
+                    assert np.all(np.isnan(got.theta_cm[i]))
+                    continue
+                # Where the particle has no energy left (θ* at 180° for a recoil with g = 1) the lab angle is
+                # numerically undefined; everything else agrees to rounding.
+                live = np.nan_to_num(np.asarray(want.energy)) > 1e-9
+                for name in ("theta_cm", "theta_lab", "energy", "jacobian", "de_dtheta"):
+                    a, c = getattr(got, name)[i], np.asarray(getattr(want, name))
+                    assert np.array_equal(np.isnan(a), np.isnan(c)), (particle, i, name)
+                    m = ~np.isnan(c) & (live | (name != "theta_lab"))
+                    assert np.allclose(a[m], c[m], rtol=1e-12, atol=1e-12), (particle, i, name)
