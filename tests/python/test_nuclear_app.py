@@ -84,7 +84,9 @@ def test_the_app_serves_every_example(tmp_path):
         pages = [f"?example={name}" for name in Planner.examples()]
         pages += [f"?template={key}" for key, _, _ in workbench.TEMPLATES] + [""]
         for query in pages:
-            # Building the page computes every tab on the server; an error there gives a 500.
+            # Only the tab on screen is built when the page is served; ``prebuild=all`` builds every tab now, so
+            # an error in any of them gives a 500 here.
+            query += ("&" if query else "?") + "prebuild=all"
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/{query}", timeout=120) as r:
                 assert r.status == 200
                 body = r.read().decode()
