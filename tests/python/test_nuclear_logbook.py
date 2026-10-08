@@ -36,6 +36,31 @@ def test_the_report_lists_both_runs_with_their_setups_and_the_analysis(experimen
     assert "physics-register" in page
 
 
+def test_every_run_has_its_spectra_in_the_report_with_the_doppler_correction(experiment):
+    pytest.importorskip("matplotlib")
+    p, result = experiment
+    page = logbook.experiment_html(p, result)
+    assert page.count("<figure><img alt=\"Spectra of run") == 2
+    assert "Doppler-corrected for the recoil" in page and "the counts each crystal recorded from the source" in page
+    beam = p.run
+    v = logbook.run_views(p, beam, result)
+    assert set(v["particles"]) == set(beam.events().detectors)
+    assert set(v["gammas"]) == set(beam.gammas().detector_names()) and v["correction"] == "recoil"
+    for s in v["gammas"].values():
+        assert s["raw"]["counts"].sum() == pytest.approx(s["corrected"]["counts"].sum(), rel=0.02)
+    png, caption = logbook.run_spectra_png(p, beam, result)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n" and "corrected for the recoil" in caption
+    source = p.folder.load_run(1)
+    assert logbook.run_views(p, source)["source"] and logbook.run_spectra_png(p, source)[0][:4] == b"\x89PNG"
+    # An analysis run with a named gate: the report's spectra take that gate and say so.
+    assert v["gate"] is None and "every counted particle" in caption
+    out = p.analyse(gate="CD rings 3-10")
+    if out["available"]:
+        gated = p.analysis().history[-1]
+        assert logbook.run_views(p, beam, gated)["gate"].name == "CD rings 3-10"
+        assert "gate “CD rings 3-10”" in logbook.run_spectra_png(p, beam, gated)[1]
+
+
 def test_the_record_explains_the_counters_and_the_gate(experiment):
     p, result = experiment
     xs = logbook.run_explanations(p)

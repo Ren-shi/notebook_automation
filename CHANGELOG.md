@@ -11,6 +11,10 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Fixed
+- The experiment's report now carries every run's spectra: a panel per particle detector and, per γ-ray detector,
+  the spectrum as measured and Doppler-corrected for the emitting nucleus (the correction and the gate the
+  analysis used), and a source run's crystals; before, no γ-ray spectrum reached any report
+  (`logbook.run_spectra_png`, `run_views`).
 - The Data tab's γ-ray spectra no longer stop at 1.3 × the transition energy (0.6 to 1.3 × E_γ in the app, which
   cut off every line above it, such as ⁴⁰K at 1461 keV): the histogram now runs from 0 to the highest of
   1.3 × E_γ, the singles spectrum's top and the highest energy recorded (`dataviews.gamma_range`), and "γ view

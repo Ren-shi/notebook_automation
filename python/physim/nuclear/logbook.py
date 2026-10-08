@@ -8,7 +8,7 @@ chose, and the links to the physics register::
 
     from physim.nuclear import logbook
 
-    page = logbook.experiment_html(planner, result)          # one self-contained page
+    page = logbook.experiment_html(planner, result)          # one self-contained page, every run's spectra in it
     data = logbook.experiment_zip(planner, result)           # it, the run record, the setup, the beam-time report,
                                                              # and the experiment folder with every run
     for x in logbook.run_explanations(planner, planner.run):  # each with its formula, numbers and meaning
@@ -17,12 +17,15 @@ chose, and the links to the physics register::
 
 from __future__ import annotations
 
+import base64
 import html
 import io
 import math
 import zipfile
 from pathlib import Path
 from typing import Optional
+
+import numpy as np
 
 from .record import DOCS, Explanation, _explanation_html, _g, record_css
 
@@ -153,9 +156,124 @@ def setup_history(planner) -> list:
     return out
 
 
+def run_views(planner, run, result=None) -> dict:
+    """What the record draws of a run: the spectra of every particle detector and, for every γ-ray detector, the
+    raw spectrum and the Doppler-corrected one (:mod:`physim.nuclear.dataviews`), with the correction and the gate
+    the analysis used (``result``) or, without an analysis, the correction for the nucleus that was excited and no
+    gate. Returns {"particles": {name: spectrum}, "gammas": {name: {"raw": spectrum, "corrected": spectrum}},
+    "correction", "gate", "source": the crystals' spectra of a source run}."""
+    from . import dataviews as dv
+
+    if run.kind == "source":
+        sr = run.source()
+        return {"particles": {}, "gammas": {}, "correction": None, "gate": None,
+                "source": {n: {"counts": sr.spectra[n], "edges": sr.edges} for n in sr.names()}}
+    exp = run.experiment
+    settings = dict(getattr(result, "settings", {}) or {})
+    correction = settings.get("correction", "emitter")
+    if correction not in ("projectile", "recoil"):
+        correction = "recoil" if exp.excitation is not None and exp.excitation.excite == "target" else "projectile"
+    gate = _gate_of(planner, settings)
+    ev = run.events()
+    out = {"particles": {d: dv.particle_spectrum(run, d, gate=gate) for d in ev.detectors}, "gammas": {},
+           "correction": correction, "gate": gate, "source": None}
+    g = run.gammas()
+    if g is not None:
+        for n in g.detector_names():
+            out["gammas"][n] = {"raw": dv.gamma_spectrum(run, n, correction="off", gate=gate, randoms="none"),
+                                "corrected": dv.gamma_spectrum(run, n, correction=correction, gate=gate,
+                                                               randoms="none")}
+    return out
+
+
+def _gate_of(planner, settings: dict):
+    """The named gate of the Data tab an analysis was run with, if its settings are one gate's (the analysis keeps
+    the gate's detectors, rings, group and energy window, not its name)."""
+    def norm(v):
+        return list(v) if isinstance(v, (list, tuple)) else v
+
+    for g in planner.gates():
+        gs = g.settings()
+        if all(norm(settings.get(k)) == norm(getattr(gs, k))
+               for k in ("detectors", "rings", "particle_gate", "particle_energy")):
+            return g
+    return None
+
+
+def run_spectra_png(planner, run, result=None, dpi: int = 110) -> tuple:
+    """The run's spectra as one PNG (bytes) for the record, and its caption: a panel per particle detector, and
+    one per γ-ray detector with the raw and the Doppler-corrected spectrum over each other (a source run: a panel
+    per crystal). Needs matplotlib."""
+    from matplotlib.figure import Figure
+
+    v = run_views(planner, run, result)
+    panels = []
+    if v["source"]:
+        for n, s in v["source"].items():
+            panels.append((n, [("counts", s["edges"], s["counts"])], "γ-ray energy (keV)", True))
+    else:
+        for n, s in v["particles"].items():
+            panels.append((n, [("measured", s["edges"] * 1e3, s["counts"])], "energy (keV)", False))
+        for n, s in v["gammas"].items():
+            panels.append((n, [("as measured", s["raw"]["edges"] * 1e3, s["raw"]["counts"]),
+                               (f"corrected for the {v['correction']}", s["corrected"]["edges"] * 1e3,
+                                s["corrected"]["counts"])], "γ-ray energy (keV)", False))
+    if not panels:
+        return b"", ""
+    cols = min(3, len(panels))
+    rows = -(-len(panels) // cols)
+    fig = Figure(figsize=(3.4 * cols, 2.5 * rows), dpi=dpi)
+    axes = fig.subplots(rows, cols, squeeze=False)
+    for ax in axes.flat[len(panels):]:
+        ax.set_visible(False)
+    for ax, (title, lines, xlabel, log) in zip(axes.flat, panels):
+        for i, (label, edges, counts) in enumerate(lines):
+            y = np.asarray(counts, dtype=float)
+            ax.stairs(np.where(y > 0, y, np.nan) if log else y, np.asarray(edges, dtype=float), label=label,
+                      color=("#0072B2", "#D55E00")[i % 2], lw=0.9 if i == 0 else 1.1)
+        ax.set_title(title, fontsize=9)
+        ax.set_xlabel(xlabel, fontsize=8)
+        ax.set_ylabel("counts", fontsize=8)
+        ax.tick_params(labelsize=7)
+        if log:
+            ax.set_yscale("log")
+        if len(lines) > 1:
+            ax.legend(fontsize=7, frameon=False)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    if v["source"]:
+        caption = f"Run {run.number}: the counts each crystal recorded from the source, over {_time(run.duration_s)}."
+    else:
+        caption = (f"Run {run.number}: the real part of the run ({_time(run.real_s)}), counts per bin. γ-ray "
+                   f"spectra as measured and Doppler-corrected for the {v['correction']}, in coincidence with "
+                   + (f"the particles of gate “{v['gate'].name}” ({v['gate'].describe()})" if v["gate"]
+                      else "every counted particle") + "; random coincidences not added; add-back and "
+                   "suppression as the setup has them.")
+    return buf.getvalue(), caption
+
+
+def _run_figure_html(planner, s: dict, result) -> str:
+    """The run's spectra as an embedded figure, or a line saying why not."""
+    try:
+        run = planner.run if planner.run is not None and planner.run.number == s["number"] \
+            else planner.folder.load_run(s["number"])
+        png, caption = run_spectra_png(planner, run, result if planner.run is run else None)
+    except ImportError:
+        return "<p>The spectra are not drawn: matplotlib is not installed.</p>"
+    except Exception as err:  # noqa: BLE001 - the record stands without the figure
+        return f"<p>The spectra could not be drawn: {html.escape(str(err), quote=False)}.</p>"
+    if not png:
+        return ""
+    return (f'<figure><img alt="Spectra of run {s["number"]}" style="max-width:100%" '
+            f'src="data:image/png;base64,{base64.b64encode(png).decode("ascii")}"><figcaption>'
+            f"{html.escape(caption, quote=False)}</figcaption></figure>")
+
+
 def experiment_html(planner, result=None, scene_png: Optional[str] = None) -> str:
     """The report of the experiment as one self-contained page: the setup and how it changed between runs, the
-    Plan, every run with its summary, the gates, the analysis of the current run (``result``, a
+    Plan, every run with its summary and its spectra (every particle detector; every γ-ray detector as measured
+    and Doppler-corrected, :func:`run_spectra_png`), the gates, the analysis of the current run (``result``, a
     :class:`~physim.nuclear.analysis.Result`), the run's numbers explained, and the physics register."""
     from .planner import REGISTER
 
@@ -226,6 +344,7 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None) -> st
                 parts.append(f"<li>Alignment run: the target assumed {s['assumed_offset_mm']:+g} mm off.</li>")
         parts.append(f"<li>{'Taken with another setup than the current one.' if s['stale'] else 'Taken with the current setup.'}"
                      "</li></ul>")
+        parts.append(_run_figure_html(planner, s, result))
     if planner.run is not None and planner.run.kind != "source":
         c = planner.compare()
         if c["rows"]:
@@ -287,4 +406,5 @@ def experiment_zip(planner, result=None, beam_time_report: bool = True, folder: 
     return buf.getvalue()
 
 
-__all__ = ["experiment_html", "experiment_zip", "run_explanations", "setup_history"]
+__all__ = ["experiment_html", "experiment_zip", "run_explanations", "run_spectra_png", "run_views",
+           "setup_history"]

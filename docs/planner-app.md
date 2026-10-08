@@ -241,7 +241,9 @@ The tabs are the stages of an experiment, left to right:
   whole run would give. The alignment check reads an alignment run's offset. The multi-step solution can fit the
   matrix element to the run's yields, and writes the GOSIA input file.
 - **Report:** **the record of the experiment**: the setup and how it changed between runs, the Plan, every run
-  with its summary, predicted against measured, the gates, and the analysis of the current run. Show it on the
+  with its summary and its spectra (each particle detector; each γ-ray detector as measured and Doppler-corrected
+  for the emitting nucleus, with the gate the analysis used; a source run's crystals), predicted against
+  measured, the gates, and the analysis of the current run. Show it on the
   page, or download it as a zip with the run record, the setup, the beam-time report and every run's data; or
   download the whole experiment folder. Below it, the beam-time report of the current setup and the run record,
   which now explains the run's counters and gates as well as the plan's numbers.
