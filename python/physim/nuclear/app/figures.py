@@ -469,8 +469,8 @@ def report_zip(planner: Planner, seed: int = 1, events: int = 200_000, journal: 
 # -- the Data tab's figures (backlog item 67) -------------------------------------------------------------------
 
 def figure_histogram(spectra: list, height: int = 200, log: bool = False, title: Optional[str] = None):
-    """One or more spectra (dicts with "counts", "edges", "label", and optionally "scale" for the edges and
-    "xlabel") as step lines; small for the grid."""
+    """One or more spectra (dicts with "counts", "edges", "label", and optionally "scale" for the edges,
+    "xlabel" and "view", a (low, high) window of the axis to show) as step lines; small for the grid."""
     go = _go()
     fig = go.Figure()
     for i, s in enumerate(spectra):
@@ -483,6 +483,9 @@ def figure_histogram(spectra: list, height: int = 200, log: bool = False, title:
                       title=dict(text=title, font=dict(size=12)) if title else None,
                       xaxis=dict(title=spectra[0].get("xlabel", "energy (MeV)") if spectra else ""),
                       yaxis=dict(title="counts", type="log" if log else "linear"))
+    view = next((s["view"] for s in spectra if s.get("view")), None)
+    if view is not None:
+        fig.update_xaxes(range=[float(view[0]), float(view[1])])
     return fig
 
 

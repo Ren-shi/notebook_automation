@@ -11,6 +11,10 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Fixed
+- The Data tab's γ-ray spectra no longer stop at 1.3 × the transition energy (0.6 to 1.3 × E_γ in the app, which
+  cut off every line above it, such as ⁴⁰K at 1461 keV): the histogram now runs from 0 to the highest of
+  1.3 × E_γ, the singles spectrum's top and the highest energy recorded (`dataviews.gamma_range`), and "γ view
+  from / to" zooms the panels without changing the data or the CSV.
 - A particle detector hidden behind another no longer reports counts in the analytic rates, peaks and beam times.
   - The integral leaves out directions that meet another detector first, as the event generator always did.
   - A partly hidden detector is integrated on a finer grid, so the shadow's edge is resolved within 0.5%.
