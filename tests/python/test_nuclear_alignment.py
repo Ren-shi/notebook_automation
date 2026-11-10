@@ -108,7 +108,8 @@ def test_the_correction_with_the_true_geometry_is_what_the_events_carry(ni):
 def test_the_diagnostic_is_flat_when_aligned_and_the_fit_recovers_an_offset(ni):
     exp, g = ni
     rows = diagnostic(g, exp)
-    assert len(rows) > 100 and all(r["error_kev"] > 0 and r["n"] >= 3 for r in rows)
+    # Every point has at least ten γ rays in the peak's window (the sample's rows, each with its weight).
+    assert len(rows) > 80 and all(r["error_kev"] > 0 and r["n"] >= 10 for r in rows)
     # Against the pattern a simulation with the right geometry gives, the plot is flat within statistics.
     reference = diagnostic(simulate_gammas(exp, 600_000, seed=7), exp)
     chi2 = flatness(rows, reference=reference)
@@ -152,3 +153,62 @@ def test_the_planner_and_the_figures():
     app.figure_alignment(p, r).to_json()
     app.figure_overlay(r).to_json()
     assert not Planner.example("alpha_on_gold").alignment()["available"]
+
+
+def test_the_fit_of_a_run_does_not_simulate_a_reference_as_large_as_the_run(ni, monkeypatch):
+    """A run counts every reaction once (63 million in an hour of beam on 194Pt): a reference simulation of that
+    many weighted events took over 14 GB. The reference is made of simulations of bounded size, sized by the γ
+    rays of the data, and of a bounded number of them."""
+    import copy
+
+    from physim.nuclear import alignment, gamma_events
+
+    exp, g = ni
+    asked = []
+    real = gamma_events.simulate_gammas
+
+    def recording(experiment, events, *args, **kwargs):
+        asked.append(events)
+        return real(experiment, min(events, 50_000), *args, **kwargs)
+
+    monkeypatch.setattr(gamma_events, "simulate_gammas", recording)
+    run_like = copy.copy(g)
+    run_like.events = copy.copy(g.events)
+    run_like.events.n_events = 63_000_000
+    found = fit_offset(run_like, exp, steps=3, refine=0)
+    # Each simulation gave a twelfth of the data's γ rays: the reference stops at the most it may hold.
+    assert asked == [alignment.REFERENCE_EVENTS] * alignment.REFERENCE_CHUNKS
+    assert found["passes"] == 1 and found["reference_events"] in (0, sum(asked))
+    asked.clear()
+    small = copy.copy(g)
+    small.events = copy.copy(g.events)
+    small.events.n_events = 20_000  # a short sample is not given simulations larger than itself
+    starved = fit_offset(small, exp, steps=3, refine=0)
+    # A thirtieth of the data's γ rays: more of the same would give no pattern either, and none is used.
+    assert asked == [20_000]
+    assert starved["against"] == "flat" and starved["reference_at_mm"] is None and starved["passes"] == 1
+
+
+def test_the_centroid_window_follows_the_width_of_the_corrected_peak():
+    """A fast emitter seen by a large crystal leaves a corrected peak many times wider than the detector's
+    resolution (62Ni at 9% of c: 20 keV FWHM against 2.5 keV). A window of the detector's width cut through the
+    peak, and the centroids scattered by six times their errors."""
+    from physim.nuclear import alignment
+
+    rng = np.random.default_rng(3)
+    e0, sigma_det, sigma_peak = 1.17291, 0.001, 0.008
+    x = np.concatenate([rng.normal(e0 + 0.0005, sigma_peak, 4000), rng.uniform(e0 - 0.07, e0 + 0.07, 1500)])
+    w = np.ones(len(x))
+    seen = alignment._peak_sigma(x, w, e0, sigma_det)
+    assert seen == pytest.approx(sigma_peak, rel=0.2)
+    centre, err, n = alignment._centroid(x, w, e0, seen)
+    assert abs(centre - (e0 + 0.0005)) < 4 * err and err == pytest.approx(sigma_peak / math.sqrt(4000), rel=0.5)
+    assert n > 3500
+    # With the detector's width the window cuts through the peak: over a third of it lies outside.
+    narrow = alignment._centroid(x, w, e0, 3 * sigma_det)
+    assert narrow[2] < 0.7 * n
+    # Too few γ rays to measure a width: none is given, and the detector's stands in.
+    assert math.isnan(alignment._peak_sigma(x[:20], w[:20], e0, sigma_det))
+    # A peak as narrow as the detector's resolution keeps the window it had.
+    sharp = rng.normal(e0, sigma_det, 4000)
+    assert alignment._peak_sigma(sharp, np.ones(4000), e0, sigma_det) < 3 * sigma_det

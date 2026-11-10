@@ -82,3 +82,60 @@ def test_the_zip_holds_the_record_and_the_experiment_folder(experiment):
         assert want in names, want
     assert any(n.startswith("report/") for n in names)
     assert sum(n.endswith("summary.json") for n in names) == 2 and sum(n.endswith("events.npz") for n in names) == 2
+
+
+def test_the_analysis_is_kept_with_the_run_and_outlives_the_session(tmp_path):
+    """The report used to lose the analysis on any edit of the setup, on reopening the experiment, and when a
+    source run became the current one: it lived only in the planner's memory."""
+    p = Planner.example("coulex_ni58")
+    p.create_experiment(root=tmp_path)
+    p.start_run("beam", duration="24 h", budget="30 min")
+    assert p.run_analysis() is None and "No run has been analysed" in logbook.experiment_html(p)
+    assert p.analyse()["available"]
+    assert (p.run.folder / "analysis.json").is_file()
+    kept = p.run_analysis()
+    assert kept is p.analysis().history[-1] and kept.b_e2fm4 > 0
+    q = Planner.open_experiment(p.experiment_folder)  # as after closing the app
+    again = q.run_analysis()
+    assert again.b_e2fm4 == pytest.approx(kept.b_e2fm4) and again.fit.area == pytest.approx(kept.fit.area)
+    assert again.steps == kept.steps and again.spectrum["counts"] == kept.spectrum["counts"]
+    assert again.total_unc == pytest.approx(kept.total_unc) and again.budget == pytest.approx(kept.budget)
+    assert q.set("run", "counts_wanted", 700) and q.run_analysis() is not None  # an edit clears the memory only
+    q.start_run("source", duration="10 min", source="60Co")  # the current run is now a source run
+    assert q.run_analysis() is None and list(logbook.run_analyses(q)) == [1]
+    page = logbook.experiment_html(q)
+    assert "Run 1: from the peak area to B(E2)" in page and "No run has been analysed" not in page
+    for want in ("The chain, step by step", "The uncertainty budget", "The shape of the nucleus", "Weisskopf units"):
+        assert want in page, want
+    q2 = Planner.open_experiment(p.experiment_folder)
+    q2.run = q2.folder.load_run(1)
+    assert "From the peak area to B(E2) and the shape" in q2.record_html()  # the run record finds it too
+
+
+def test_the_report_draws_the_level_scheme_and_the_fitted_peak(experiment):
+    pytest.importorskip("matplotlib")
+    p, result = experiment
+    schemes = logbook.level_schemes(p)
+    assert schemes and schemes[0]["table"]["nuclide"] == "58Ni"
+    assert logbook.level_scheme_png(schemes[0]["table"], 1454.0)[:4] == b"\x89PNG"
+    page = logbook.experiment_html(p, result)
+    assert 'alt="Level scheme of 58Ni"' in page
+    if result is not None and result.b_e2fm4 == result.b_e2fm4:
+        assert logbook.analysis_png(result)[:4] == b"\x89PNG" and 'alt="The fitted peak"' in page
+        assert "The shape of the nucleus" in page and "Weisskopf units" in page
+        fit = result.fit  # the curve drawn is the fit: at its centre, the height over the line
+        at_centre = fit.height + fit.level + fit.slope * (fit.centroid - fit.origin)
+        assert fit.curve(fit.centroid) == pytest.approx(at_centre)
+    from physim.nuclear.report import build
+
+    assert 'alt="Level scheme of 58Ni"' in build(p.experiment, events=5_000, validation=False).to_html()
+
+
+def test_the_beam_time_report_zip_carries_the_record_of_the_experiment(experiment):
+    pytest.importorskip("matplotlib")
+    from physim.nuclear.app.figures import report_zip
+
+    p, _ = experiment
+    z = zipfile.ZipFile(io.BytesIO(report_zip(p, events=5_000)))
+    assert {"report.html", "experiment.html", "record.html"} <= set(z.namelist())
+    assert "Spectra of run" in z.read("experiment.html").decode("utf-8")

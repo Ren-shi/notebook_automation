@@ -1261,7 +1261,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             off = ui.number("Assumed offset along the beam (mm)", value=default_offset, min=-20, max=20,
                             step=0.5).props(
                 "dense outlined").classes("w-64")
-            fit_too = ui.checkbox("Fit the offset back (about 15 s)", value=True)
+            fit_too = ui.checkbox("Fit the offset back (15 s on a sample, a few minutes on a long run)",
+                                  value=True)
         box = ui.column().classes("w-full")
 
         async def check() -> None:
@@ -1292,10 +1293,17 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     ui.plotly(themed(figure_gamma_crystal(view), state["theme"])).classes("w-full")
                 if "fit" in r:
                     f = r["fit"]
+                    if f.get("against") == "flat":
+                        judged = ("flat lines: a simulation with the assumed geometry gave too few γ rays "
+                                  "for a pattern")
+                    elif f.get("reference_at_mm"):
+                        judged = "a simulation with the target where the fit put it"
+                    else:
+                        judged = "a simulation with the assumed geometry"
                     ui.label(f"Fitted: the target is {f['offset_mm']:+.2f} ± {f['uncertainty_mm']:.2f} mm from "
                              f"where the analysis assumed it (truth {f['truth_mm']:+g} mm; χ² {f['chi2']:.0f} for "
-                             f"{f['degrees_of_freedom']} points, judged against a simulation with the assumed "
-                             "geometry). The scene shows the assumed target as a faint outline.").classes("text-sm")
+                             f"{f['degrees_of_freedom']} degrees of freedom, judged against {judged}). The scene "
+                             "shows the assumed target as a faint outline.").classes("text-sm")
 
         ui.button("Check the alignment", icon="straighten", on_click=check).props("dense flat no-caps")
 
@@ -1568,10 +1576,12 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     @ui.refreshable
     def report_panel():
-        ui.markdown("The report collects the setup, every warning, the detector table, kinematics, peaks, energy "
-                    "loss, spectra and each model's validation status. The zip holds `report.html` (print it to "
-                    "PDF from the browser), CSV tables, figures (PNG and PDF), the setup file and, with uproot "
-                    "installed, `events.root`.")
+        ui.markdown("The beam-time report is the plan: the setup, every warning, the detector table, kinematics, "
+                    "the level scheme, peaks, energy loss, predicted spectra and each model's validation status. It "
+                    "is computed from the setup, not from your runs. The zip holds `report.html` (print it to PDF "
+                    "from the browser), CSV tables, figures (PNG and PDF), the setup file and, with uproot "
+                    "installed, `events.root`; once the experiment has runs it also holds `experiment.html`, the "
+                    "record above with the runs' spectra and their analysis.")
 
         async def download():
             note = ui.notification("Building the report…", spinner=True, timeout=None)
