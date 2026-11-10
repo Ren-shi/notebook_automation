@@ -458,6 +458,13 @@ def report_zip(planner: Planner, seed: int = 1, events: int = 200_000, journal: 
 
     with tempfile.TemporaryDirectory() as tmp:
         build(planner.experiment, seed=seed, events=events, journal=journal, width=width).write(tmp)
+        if planner.folder is not None and planner.runs():
+            # The plan says what was expected; the record of the experiment says what the runs and their
+            # analysis gave. Both go out together.
+            from .. import logbook
+
+            (Path(tmp) / "experiment.html").write_text(logbook.experiment_html(planner), encoding="utf-8")
+            (Path(tmp) / "record.html").write_text(planner.record_html(), encoding="utf-8")
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for p in sorted(Path(tmp).rglob("*")):

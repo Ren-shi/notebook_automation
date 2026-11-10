@@ -299,3 +299,32 @@ def test_rate_rows_are_reused_when_the_beam_current_or_the_run_conditions_change
     p = Planner.example("coulex_ni58")
     assert p.set("beam", "energy", "31 MeV")
     assert Rates(p.experiment, previous=base).reused == set()  # the physics changed: nothing is taken
+
+
+def test_results_kept_on_disk_belong_to_the_setup_they_were_computed_for(tmp_path):
+    """The planner writes some results beside the experiment (multistep.json) and its runs (analysis.json,
+    alignment.json). A computation on a snapshot that ends after the setup changed names the setup it was
+    computed for, and the app's draft, which has no folder and no run, writes nothing."""
+    p = Planner.example("coulex_ni58")
+    p.create_experiment(root=tmp_path)
+    folder = p.experiment_folder
+    late = p.snapshot()  # a computation started on the worker ...
+    assert p.set("beam", "energy", "33 MeV")  # ... and a change applied before it ends
+    late._keep("multistep.json", {"answer": 1}, late.experiment_folder)
+    assert (folder / "multistep.json").is_file()
+    assert p._kept("multistep.json", folder) is None and p.kept_multistep() is None  # not the new setup's
+    assert late._kept("multistep.json", folder) == {"answer": 1}
+    assert p.set("beam", "energy", "30 MeV") and p.kept_multistep() == {"answer": 1}  # the setup it was for
+    p._cache[("multistep", p._default_role(), 4.0, 2, True)] = {"answer": 2}  # solved in this session
+    assert p.kept_multistep() == {"answer": 2}
+
+    draft = Planner(p.experiment)  # as the app makes its draft
+    assert draft.adopt(p) and draft.folder is None and draft.run is None and draft.experiment_folder is None
+    assert draft.set("beam", "energy", "40 MeV")
+    (folder / "multistep.json").unlink()
+    draft._keep("multistep.json", {"answer": 3}, draft.experiment_folder)
+    assert not (folder / "multistep.json").exists() and draft.kept_multistep() is None
+    assert draft.run_analysis() is None and draft.kept_alignment() is None
+    setup = (folder / "experiment.toml").read_text(encoding="utf-8")
+    assert "40 MeV" not in setup  # an edit of the draft is not saved
+    assert p.adopt(draft) and "40 MeV" in (folder / "experiment.toml").read_text(encoding="utf-8")  # Apply is

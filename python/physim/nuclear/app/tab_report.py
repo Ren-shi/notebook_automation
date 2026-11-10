@@ -10,12 +10,12 @@ from .. import logbook
 
 
 def _last_result(p):
+    """The analysis of the current run: this session's, or the one kept in the run's folder. The record finds
+    the other runs' analyses itself (:func:`physim.nuclear.logbook.run_analyses`)."""
     try:
-        a = p.analysis() if p.run is not None and p.run.kind != "source" and p._data_experiment().excitation \
-            is not None else None
+        return p.run_analysis()
     except Exception:  # noqa: BLE001 - no analysis is not an error here
         return None
-    return a.history[-1] if a is not None and a.history else None
 
 
 def experiment_block(ctx) -> None:
@@ -26,8 +26,10 @@ def experiment_block(ctx) -> None:
     ui.label("The record of the experiment").classes("text-lg font-semibold")
     runs = p.runs()
     ui.label(f"{p.name}: the setup and how it changed between runs, the Plan, the {len(runs)} run"
-             f"{'s' * (len(runs) != 1)} with their summaries, the gates, the analysis of the current run "
-             "(the last one you ran on the Analysis tab), and every number of the run explained.").classes(
+             f"{'s' * (len(runs) != 1)} with their summaries and spectra, the level schemes, the gates, the "
+             "analysis of every run you analysed (the fitted peak, the chain to B(E2), the uncertainty budget "
+             "and the shape; kept with the run, so it is still here after the setup changes or the app "
+             "closes), the multi-step solution once solved, and every number of the run explained.").classes(
         "text-sm ps-muted")
     holder = ui.column().classes("w-full")
 
@@ -35,7 +37,7 @@ def experiment_block(ctx) -> None:
         holder.clear()
         with holder:
             ui.spinner(size="md")
-        page = await run.io_bound(logbook.experiment_html, p, _last_result(p))
+        page = await run.io_bound(logbook.experiment_html, p.snapshot(), _last_result(p))
         holder.clear()
         with holder:
             ui.html('<div class="ps-record">' + page.split("<body>", 1)[1].rsplit("</body>", 1)[0] + "</div>",
@@ -44,7 +46,7 @@ def experiment_block(ctx) -> None:
     async def download() -> None:
         note = ui.notification("Building the record of the experiment…", spinner=True, timeout=None)
         try:
-            data = await run.io_bound(logbook.experiment_zip, p, _last_result(p))
+            data = await run.io_bound(logbook.experiment_zip, p.snapshot(), _last_result(p))
         finally:
             note.dismiss()
         ui.download.content(data, f"{p.experiment_folder.name if p.folder else 'experiment'}-record.zip")

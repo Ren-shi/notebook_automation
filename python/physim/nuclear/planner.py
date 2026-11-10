@@ -1135,6 +1135,12 @@ class Planner:
             # The fit says where the target is, from where the analysis assumed it: the truth is −offset.
             out["fit"] = found
             out["fit"]["truth_mm"] = -offset_mm
+        if self._beam_run() is not None:
+            o = out["overlay"]
+            self._keep("alignment.json", {"offset_mm": offset_mm, "energy_kev": out["energy_kev"],
+                                          "overlay": {k: o[k] for k in ("shift_kev", "broadening_kev",
+                                                                        "fwhm_true_kev", "fwhm_assumed_kev")},
+                                          "fit": out.get("fit")}, self.run.folder)
         return out
 
     def analysis(self, events: int = 400_000, seed: int = 1):
@@ -1170,9 +1176,31 @@ class Planner:
             r = self.analysis(events, seed).run(settings)
         except ValueError as e:
             return {"available": False, "reason": str(e)}
+        if self._beam_run() is not None:  # kept with the run: the reports read it from there
+            from .analysis import save_result
+
+            try:
+                save_result(self.run.folder, r)
+            except OSError:
+                pass
         out = asdict(r)
         out.update(available=True, total_unc=r.total_unc, runs=len(self.analysis(events, seed).history))
         return out
+
+    def run_analysis(self, run=None):
+        """The last analysis of a run (the current one by default), a
+        :class:`~physim.nuclear.analysis.Result`: the one made in this session, or the one kept in the run's
+        folder (``analysis.json``), which outlives a change of the setup and closing the app. None for a source
+        run or a run that was never analysed."""
+        from .analysis import load_result
+
+        run = run if run is not None else self.run
+        if run is None or run.kind == "source":
+            return None
+        kept = self._cache.get(("run", "analysis", run.label)) if run is self.run else None
+        if kept is not None and kept.history:
+            return kept.history[-1]
+        return load_result(run.folder)
 
     def compare(self, run=None) -> dict:
         """Predicted against measured (backlog item 68): the Plan's numbers kept in the run's summary beside what
@@ -1270,8 +1298,10 @@ class Planner:
         from .record import record_html
 
         if result is None:
-            for key, value in self._cache.items():
-                if "analysis" in key[:2] and value.history:
+            result = self.run_analysis()
+        if result is None and self._beam_run() is None:
+            for key, value in list(self._cache.items()):  # a worker thread may be adding to it
+                if isinstance(key, tuple) and key[:1] == ("analysis",) and value.history:
                     result = value.history[-1]
         return record_html(self, result, scene_png=scene_png)
 
@@ -1323,7 +1353,58 @@ class Planner:
                                  "total_difference_sigma": sh["total_difference_sigma"],
                                  "transition": sh["transition"]}
         self._cache[key] = out
+        if (role, angle_step, energies, shapes) == (self._default_role(), 4.0, 2, True):
+            self._keep("multistep.json", {k: v for k, v in out.items() if k != "gosia_input"}, self.experiment_folder)
         return out
+
+    def _default_role(self) -> Optional[str]:
+        exp = self.experiment
+        wanted = None if exp.excitation is None else ("target" if exp.excitation.excite == "target" else "beam")
+        return wanted if wanted in exp.levels else next(iter(exp.levels), None)
+
+    def _keep(self, name: str, what: dict, folder) -> None:
+        """Write a result beside the data it belongs to (the experiment's folder or a run's), with the setup it
+        was computed for, so that the reports find it later."""
+        import json
+
+        if folder is None:
+            return
+        try:
+            (Path(folder) / name).write_text(json.dumps(
+                {"setup": self.experiment.to_dict(), "result": what}, default=_runs._json_default), encoding="utf-8")
+        except (OSError, TypeError, ValueError):
+            pass
+
+    def _kept(self, name: str, folder, same_setup: bool = True) -> Optional[dict]:
+        import json
+
+        if folder is None or not (Path(folder) / name).is_file():
+            return None
+        try:
+            d = json.loads((Path(folder) / name).read_text(encoding="utf-8"))
+            if same_setup and _runs.physics_changes(d["setup"], json.loads(json.dumps(
+                    self.experiment.to_dict(), default=_runs._json_default))):
+                return None
+            return d["result"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    def kept_multistep(self) -> Optional[dict]:
+        """The multi-step solution of the current setup (:meth:`multistep` with its defaults) if it has been
+        solved, in this session or earlier (kept in the experiment's folder as ``multistep.json``); None if not,
+        or if the setup's physics changed since. Never starts the calculation."""
+        solved = self._cache.get(("multistep", self._default_role(), 4.0, 2, True))
+        if solved is not None:
+            return solved
+        return self._kept("multistep.json", self.experiment_folder)
+
+    def kept_alignment(self, run=None) -> Optional[dict]:
+        """The last alignment check of a run (the current one by default), as kept in its folder
+        (``alignment.json``): the assumed offset, the peak's shift and broadening, and the fitted offset."""
+        run = run if run is not None else self.run
+        if run is None or run.kind == "source":
+            return None
+        return self._kept("alignment.json", run.folder, same_setup=False)
 
     def fit_matrix_elements(self, measured: Optional[dict] = None, free: Optional[list] = None,
                             role: Optional[str] = None, beam_time_s: Optional[float] = None,

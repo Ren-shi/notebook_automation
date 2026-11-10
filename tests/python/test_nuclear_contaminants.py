@@ -36,9 +36,16 @@ def test_a_carbon_contaminant_has_its_elastic_line_in_every_ring():
         m = ev.select(det) & (ev["channel"] == carbon) & ~ev["recoil"]
         seen = sorted(set(ev["segment_i"][m].tolist()))
         assert len(seen) >= 10, det
+        # ¹⁶O scatters on ¹²C to 48.6° at most. The strip that angle crosses is lit only in part, and the energy
+        # there falls steeply with the CM angle: its median (3.8 MeV) is not the line at its middle (4.45 MeV).
+        limit = TwoBody("16O", "12C", 30.0).max_angle()
+        g = Array.from_experiment(exp)[det]
         for ring in seen:
             here = m & (ev["segment_i"] == ring)
             if here.sum() < 20:
+                continue
+            spans = [g.theta_range((ring, j)) for j in range(g.strips_y)]
+            if min(a for a, _ in spans) < limit < max(b for _, b in spans):
                 continue
             median = float(np.median(ev["measured"][here]))
             # The strip spans a range of angles: the line is at its middle, within the spread across the strip.

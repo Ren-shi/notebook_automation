@@ -772,6 +772,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         asks for them (it would compute them a second time, with the page waiting)."""
         return "rates" in P()._cache
 
+    # Whatever the page computes on a worker thread, a button's computation included, it computes on a snapshot
+    # of the planner (``P().snapshot()``): a setup applied meanwhile gets none of its results, and what the
+    # planner writes beside a run or the experiment (analysis.json, alignment.json, multistep.json) names the
+    # setup it was computed for.
     def keep(p: Planner, key: tuple, make, of_run: bool = False):
         """A figure or a table of the page, made once and kept: with the planner's own results for the setup
         ``p`` holds, so it goes when the setup changes; or (``of_run``) with the current run, for what is read
@@ -961,7 +965,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         with preview_box:
             ui.spinner(size="lg")
         try:
-            png = await run.io_bound(lambda: paper.preview(P(), name, j, w, **options))
+            png = await run.io_bound(lambda p=P().snapshot(): paper.preview(p, name, j, w, **options))
         except Exception as err:  # noqa: BLE001 -- show the reason instead of an empty dialog
             preview_box.clear()
             with preview_box:
@@ -993,7 +997,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         j, w, fmt = state["journal"], state["width"], state["format"]
         note = ui.notification("Drawing the figure…", spinner=True, timeout=None)
         try:
-            data = await run.io_bound(lambda: paper.export(P(), name, fmt, j, w, **options))
+            data = await run.io_bound(lambda p=P().snapshot(): paper.export(p, name, fmt, j, w, **options))
         finally:
             note.dismiss()
         ui.download.content(data, f"{name}-{j}-{w}.{fmt}")
@@ -1325,7 +1329,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     spectrum_box.clear()
                     with spectrum_box:
                         ui.spinner(size="md")
-                    fig = await run.io_bound(figure_detector_spectrum, P(), s["name"], state["events"])
+                    fig = await run.io_bound(figure_detector_spectrum, P().snapshot(), s["name"], state["events"])
                     spectrum_box.clear()
                     with spectrum_box:
                         ui.plotly(themed(fig, state["theme"])).classes("w-full")
@@ -1429,7 +1433,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         async def run_source() -> None:
             src.update(nuclide=nuclide.value, activity=activity.value, time=duration.value)
             try:
-                run_ = await run.io_bound(P().source_run, src["nuclide"], src["activity"], src["time"])
+                run_ = await run.io_bound(P().snapshot().source_run, src["nuclide"], src["activity"], src["time"])
             except ValueError as err:
                 ui.notify(str(err), type="negative", multi_line=True)
                 return
@@ -1459,7 +1463,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             if view is None:
                 return
             try:
-                r = await run.io_bound(P().tracks, int(count.value), ts["select"], ts["weighted"], 1,
+                r = await run.io_bound(P().snapshot().tracks, int(count.value), ts["select"], ts["weighted"], 1,
                                        max(state["events"], 200_000))
             except ValueError as err:
                 ui.notify(str(err), type="warning")
@@ -1625,7 +1629,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 async def do_sweep():
                     values = [v.strip() for v in vals.value.split(",") if v.strip()]
                     try:
-                        s = await run.io_bound(P().sweep, par.value, values, qty.value, det.value)
+                        s = await run.io_bound(P().snapshot().sweep, par.value, values, qty.value, det.value)
                     except (SetupError, ValueError, KeyError) as err:
                         ui.notify(str(err), type="negative", multi_line=True)
                         return
@@ -1662,7 +1666,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
             async def simulate():
                 state["events"] = int(n.value)
-                fig = await run.io_bound(figure_spectra, P(), int(n.value), int(seed.value))
+                fig = await run.io_bound(figure_spectra, P().snapshot(), int(n.value), int(seed.value))
                 plot_area.clear()
                 with plot_area:
                     plot(fig, "spectra", events=int(n.value), seed=int(seed.value))
@@ -1691,7 +1695,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             with holder:
                 ui.spinner(size="md")
             try:
-                g = await run.io_bound(P().gamma_spectra, max(state["events"], 400_000), 1)
+                g = await run.io_bound(P().snapshot().gamma_spectra, max(state["events"], 400_000), 1)
             except ValueError as err:
                 holder.clear()
                 with holder:
@@ -1788,7 +1792,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             out_box.clear()
             with out_box:
                 ui.spinner(size="md")
-            r = await run.io_bound(P().analyse, settings, max(state["events"], 400_000), 1, named.value or None)
+            r = await run.io_bound(P().snapshot().analyse, settings, max(state["events"], 400_000), 1, named.value or None)
             out_box.clear()
             with out_box:
                 show(r)
@@ -1871,14 +1875,15 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             off = ui.number("Assumed offset along the beam (mm)", value=default_offset, min=-20, max=20,
                             step=0.5).props(
                 "dense outlined").classes("w-64")
-            fit_too = ui.checkbox("Fit the offset back (about 15 s)", value=True)
+            fit_too = ui.checkbox("Fit the offset back (15 s on a sample, a few minutes on a long run)",
+                                  value=True)
         box = ui.column().classes("w-full")
 
         async def check() -> None:
             box.clear()
             with box:
                 ui.spinner(size="md")
-            r = await run.io_bound(P().alignment, float(off.value), max(state["events"], 400_000), 1,
+            r = await run.io_bound(P().snapshot().alignment, float(off.value), max(state["events"], 400_000), 1,
                                    bool(fit_too.value))
             if scene_state["view"] is not None and scene_state["view"].alive:
                 scene_state["view"].show_ghost(float(off.value))
@@ -1902,10 +1907,17 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     ui.plotly(themed(figure_gamma_crystal(view), state["theme"])).classes("w-full")
                 if "fit" in r:
                     f = r["fit"]
+                    if f.get("against") == "flat":
+                        judged = ("flat lines: a simulation with the assumed geometry gave too few γ rays "
+                                  "for a pattern")
+                    elif f.get("reference_at_mm"):
+                        judged = "a simulation with the target where the fit put it"
+                    else:
+                        judged = "a simulation with the assumed geometry"
                     ui.label(f"Fitted: the target is {f['offset_mm']:+.2f} ± {f['uncertainty_mm']:.2f} mm from "
                              f"where the analysis assumed it (truth {f['truth_mm']:+g} mm; χ² {f['chi2']:.0f} for "
-                             f"{f['degrees_of_freedom']} points, judged against a simulation with the assumed "
-                             "geometry). The scene shows the assumed target as a faint outline.").classes("text-sm")
+                             f"{f['degrees_of_freedom']} degrees of freedom, judged against {judged}). The scene "
+                             "shows the assumed target as a faint outline.").classes("text-sm")
 
         ui.button("Check the alignment", icon="straighten", on_click=check).props("dense flat no-caps")
 
@@ -2083,7 +2095,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 ui.spinner(size="md")
                 ui.label("Solving on a grid of angles and energies; a few levels take seconds, twenty take a "
                          "minute.").classes("text-xs ps-muted")
-            m = await run.io_bound(P().multistep)
+            m = await run.io_bound(P().snapshot().multistep)
             holder.clear()
             with holder:
                 if not m["available"]:
@@ -2130,7 +2142,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             with fit_box:
                 ui.spinner(size="md")
             try:
-                f = await run.io_bound(P().fit_matrix_elements)
+                f = await run.io_bound(P().snapshot().fit_matrix_elements)
             except (ValueError, KeyError) as err:
                 fit_box.clear()
                 with fit_box:
@@ -2172,15 +2184,17 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     @ui.refreshable
     def report_panel():
-        ui.markdown("The report collects the setup, every warning, the detector table, kinematics, peaks, energy "
-                    "loss, spectra and each model's validation status. The zip holds `report.html` (print it to "
-                    "PDF from the browser), CSV tables, figures (PNG and PDF), the setup file and, with uproot "
-                    "installed, `events.root`.")
+        ui.markdown("The beam-time report is the plan: the setup, every warning, the detector table, kinematics, "
+                    "the level scheme, peaks, energy loss, predicted spectra and each model's validation status. It "
+                    "is computed from the setup, not from your runs. The zip holds `report.html` (print it to PDF "
+                    "from the browser), CSV tables, figures (PNG and PDF), the setup file and, with uproot "
+                    "installed, `events.root`; once the experiment has runs it also holds `experiment.html`, the "
+                    "record above with the runs' spectra and their analysis.")
 
         async def download():
             note = ui.notification("Building the report…", spinner=True, timeout=None)
             try:
-                data = await run.io_bound(report_zip, P(), 1, 200_000, state["journal"], state["width"])
+                data = await run.io_bound(report_zip, P().snapshot(), 1, 200_000, state["journal"], state["width"])
             except ImportError as err:
                 ui.notify(f"The report export is not available in this version: {err}", type="warning")
                 return
@@ -2225,7 +2239,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             holder.clear()
             with holder:
                 ui.spinner(size="md")
-            page = await run.io_bound(lambda: P().record_html(scene_png=scene_png()))
+            page = await run.io_bound(lambda p=P().snapshot(): p.record_html(scene_png=scene_png()))
             holder.clear()
             with holder:
                 ui.add_css(record_css(".ps-record"))

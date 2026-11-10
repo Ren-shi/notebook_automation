@@ -15,8 +15,18 @@ in physim's Rust engine on all cores; the physics tables come from :mod:`physim.
     ev.columns["theta"]                  # per-particle arrays: angles, energies, depth, detector, strip, ...
 
 Events are weighted: each stands for a rate (per second), so rates and spectra are absolute. The scattering angle
-is drawn only over the range the detectors can see, which wastes few events on particles that miss. The same
+is drawn only over the ranges the detectors can see, which wastes few events on particles that miss. The same
 seed gives the same events on any machine and with any number of threads.
+
+**How the events are shared out.** A channel's detectors may see separate ranges of the CM angle
+(:func:`~physim.nuclear.rates.cm_ranges`): backscattered beam in one, and in another the slow recoils of distant
+collisions that just clear a detector's edge near 90°. Rutherford's cross section in the second can be hundreds of
+times that in the first, while none of its recoils leaves the target with enough energy to be counted. So when
+some channel has more than one range, a short pilot run (:data:`PILOT_PER_RANGE` events per range, always the same
+seed) finds the fraction of each range's particles that are counted, and the events are shared out by the rate
+*counted* from each range rather than the rate into it (:func:`share_out`). A range in which nothing is counted
+keeps a small share (:data:`FLOOR_SHARE`), so its rate is still there, with the larger statistical error its few
+events give; no count is dropped, whatever the shares.
 """
 
 from __future__ import annotations
@@ -37,7 +47,7 @@ from .rates import (
     beam_ion,
     beam_energy_at,
     channels,
-    cm_acceptance,
+    cm_ranges,
     coulex_for,
     energy_cut,
     energy_sigma,
@@ -72,10 +82,76 @@ COLUMNS = {
 }
 
 
-def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
+#: Events of the pilot run per sampled range (see :func:`share_out`), and its seed: always the same, so that an
+#: experiment has one generator input whatever seed its events are drawn with.
+PILOT_PER_RANGE = 4000
+PILOT_SEED = 0x51A7ED
+#: Share of a channel's events that its ranges keep whatever the pilot run finds in them, and the least a channel
+#: is picked relative to the average channel.
+FLOOR_SHARE = 0.05
+
+
+def share_out(config: dict, counted: Optional[list] = None) -> None:
+    """Sets how often each sampled range of ``config`` is picked (its ``probability``; any choice is unbiased, as
+    the weights carry it).
+
+    A channel is picked in proportion to its Rutherford rate, and its ranges half in proportion to their
+    Rutherford rates and half to their widths in ln sin²(θ*/2), as the angle is drawn inside a range. With
+    ``counted`` (the fraction of each range's particles that a detector counts, from a pilot run) every rate and
+    width is first multiplied by that fraction, so the events go where particles are counted;
+    :data:`FLOOR_SHARE` of a channel's events stay spread over its ranges by width, and no channel is picked less
+    than :data:`FLOOR_SHARE` of the average."""
+    chans = config["channels"]
+    owner = np.asarray(config["channel_of"])
+    r = np.array([1 / c["u_min"] - 1 / c["u_max"] for c in chans])
+    width = np.array([math.log(c["u_max"] / c["u_min"]) for c in chans])
+    amplitude = np.array([c["amplitude"] for c in chans])
+    f = np.ones(len(chans)) if counted is None else np.asarray(counted, dtype=float)
+    if not np.any(amplitude * r * f > 0):  # nothing counted anywhere: as without a pilot run
+        counted, f = None, np.ones(len(chans))
+    mass, share = np.zeros(len(chans)), np.ones(len(chans))
+    for k in np.unique(owner):
+        m = owner == k
+        mass[m] = (amplitude[m] * r[m] * f[m]).sum()
+        if m.sum() > 1:
+            rf, wf = r[m] * f[m], width[m] * f[m]
+            main = 0.5 * rf / rf.sum() + 0.5 * wf / wf.sum() if rf.sum() > 0 else width[m] / width[m].sum()
+            share[m] = (1 - FLOOR_SHARE) * main + FLOOR_SHARE * width[m] / width[m].sum()
+    if counted is not None:
+        per_channel = np.array([mass[owner == k][0] for k in np.unique(owner)])
+        mass = np.maximum(mass, FLOOR_SHARE * per_channel.mean())
+    for c, p in zip(chans, mass * share):
+        c["probability"] = max(float(p), 1e-300)
+
+
+def _counted_fractions(config: dict) -> list:
+    """The fraction of the particles reaching a face from each sampled range that the face counts, from a pilot
+    run that picks every range equally often; 1 for a range that sent none anywhere."""
+    chans = config["channels"]
+    pilot = dict(config, channels=[dict(c, probability=1.0) for c in chans])
+    n = PILOT_PER_RANGE * len(chans)
+    cols = nuclear_events(pilot, n, PILOT_SEED, n, 0)
+    reached = np.bincount(np.asarray(cols["channel"]), minlength=len(chans))
+    counted = np.bincount(np.asarray(cols["channel"]), weights=np.asarray(cols["counted"], dtype=float),
+                          minlength=len(chans))
+    return np.where(reached > 0, counted / np.maximum(reached, 1), 1.0).tolist()
+
+
+def channel_index(config: dict, column) -> np.ndarray:
+    """The ``channel`` column of :func:`physim._core.nuclear_events`, which numbers the sampled ranges of
+    ``config``, as indices into the channels :func:`generator_config` returned."""
+    column = np.asarray(column)
+    return np.asarray(config["channel_of"], dtype=column.dtype)[column]
+
+
+def generator_config(experiment, theta_floor: float = 0.5, pilot: bool = True) -> tuple:
     """The event generator's input for an experiment, and the reaction channels it covers.
 
     Returns (config dict for :func:`physim._core.nuclear_events`, list of :class:`~physim.nuclear.rates.Channel`).
+    ``config["channels"]`` has one entry per range of CM angle a channel is sampled over
+    (:func:`~physim.nuclear.rates.cm_ranges`), and ``config["channel_of"]`` the channel each belongs to
+    (:func:`channel_index` turns the generator's ``channel`` column into channel numbers). With ``pilot``, and a
+    channel that has more than one range, a pilot run sets how the events are shared out (:func:`share_out`).
     """
     layers = stack(experiment)
     array = Array.from_experiment(experiment)
@@ -123,20 +199,19 @@ def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
 
     z1 = experiment.beam.Z
     pps = experiment.beam.particles_per_second
-    chan_cfg, used = [], []
+    chan_cfg, used, channel_of = [], [], []
     for ch in channels(layers, experiment):
-        acc = cm_acceptance(experiment, layers, ch, array, theta_floor)
-        if acc is None:
+        ranges = cm_ranges(experiment, layers, ch, array, theta_floor)
+        if not ranges:
             continue
-        u_min, u_max = (math.sin(math.radians(a) / 2) ** 2 for a in acc)
         k = z1 * ch.nuclide.Z * E2_MEV_FM
-        # Rate at the middle of the layer: sets how often the channel is picked (any choice is unbiased).
+        # Rate at the middle of the layer: sets how often the channel is picked (any choice is unbiased). The
+        # rate into a range is ``amplitude`` × (1/u_min − 1/u_max).
         e_mid = float(beam_energy_at(experiment, ch.layer, [layers[ch.layer].thickness / 2], layers)[0])
         m1, m2 = data.nuclide(beam).atomic_mass_u, ch.nuclide.atomic_mass_u
         e_cm = max(e_mid * m2 / (m1 + m2), 1e-6)
-        rate = pps * ch.atoms_per_cm2 * 4 * math.pi * (k / (4 * e_cm)) ** 2 * (1 / u_min - 1 / u_max) * 1e-26
         cfg = {"layer": ch.layer, "target": species.index(ch.nuclide.name), "atoms_per_cm2": ch.atoms_per_cm2,
-               "k": k, "u_min": u_min, "u_max": u_max, "probability": max(rate, 1e-300)}
+               "k": k, "amplitude": pps * ch.atoms_per_cm2 * 4 * math.pi * (k / (4 * e_cm)) ** 2 * 1e-26}
         if ch.excitation is not None:
             # Excitation probability every 0.25° (from the Coulex at mid-layer, as for the analytic rates); with a
             # level scheme that decays by cascades, of every level the scheme excites (backlog item 71).
@@ -154,7 +229,10 @@ def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
             # inelastic events get as many samples as the elastic ones.
             cfg.update(excitation=ch.excitation.energy_mev, excite_recoil=ch.excitation.excite == "target",
                        p_table=p.tolist())
-        chan_cfg.append(cfg)
+        for lo, hi in ranges:
+            u_min, u_max = (math.sin(math.radians(a) / 2) ** 2 for a in (lo, hi))
+            chan_cfg.append(dict(cfg, u_min=u_min, u_max=u_max))
+            channel_of.append(len(used))
         used.append(ch)
     if not chan_cfg:
         raise ValueError("no detector can see any scattered particle or recoil: nothing to simulate")
@@ -169,6 +247,7 @@ def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
         "tilt": math.radians(tilt_deg(experiment)),
         "layers": layer_cfg,
         "channels": chan_cfg,
+        "channel_of": channel_of,
         "materials": len(materials),
         "tables": tables,
         "faces": faces,
@@ -179,6 +258,9 @@ def generator_config(experiment, theta_floor: float = 0.5) -> tuple:
                           if experiment.beam.halo_fraction is not None else 0.0),
         "halo_radius": _q(experiment.beam.halo_radius).to("mm") if experiment.beam.halo_radius is not None else 0.0,
     }
+    share_out(config)
+    if pilot and len(chan_cfg) > len(used):
+        share_out(config, _counted_fractions(config))
     return config, used
 
 
@@ -258,6 +340,7 @@ def simulate(experiment, events: int = 1_000_000, seed: int = 1, theta_floor: fl
         raise ValueError("events must be at least 1")
     config, used = generator_config(experiment, theta_floor)
     cols = dict(nuclear_events(config, int(events), int(seed)))
+    cols["channel"] = channel_index(config, cols["channel"])
     names = [d.name for d in Array.from_experiment(experiment)]
     reached = np.asarray(cols["detector"]) < len(names)  # particles stopped by dead material are left out
     if not reached.all():
@@ -266,4 +349,4 @@ def simulate(experiment, events: int = 1_000_000, seed: int = 1, theta_floor: fl
                   [ch.label for ch in used], _q(experiment.run.beam_time).to("s"), energy_cut(experiment))
 
 
-__all__ = ["COLUMNS", "Channel", "Events", "generator_config", "simulate"]
+__all__ = ["COLUMNS", "Channel", "Events", "channel_index", "generator_config", "share_out", "simulate"]
