@@ -53,7 +53,7 @@ import numpy as np
 from . import angular, data
 from .detectors import Array
 from .events import Events, simulate
-from .gamma import cascade_excitation, excitation_of
+from .gamma import cascade_excitation, excitation_of, excitation_order, start_levels
 from .kinematics import TwoBody
 from .quantity import Quantity
 from .rates import (Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels, exit_energy, stack, stopping,
@@ -579,7 +579,11 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
         notes.append(f"Lifetimes: each emitter slows down in the target and backing and decays after its level's "
                      f"lifetime; {stopped.mean():.1%} of the γ rays kept come from nuclei that had stopped.")
     if cex is not None:
-        notes.append(f"Each excitation decays by the level scheme's cascade: {len(cex.transitions())} transitions "
+        how = ("in first order (each level in one step from the ground state)" if excitation_order(experiment)
+               == "first" else "to all orders (the coupled equations: levels reached in several steps, and the "
+               "reorientation)")
+        notes.append(f"Each excitation starts in a level of the scheme, populated {how}, and decays by the level "
+                     f"scheme's cascade: {len(cex.transitions())} transitions "
                      "followed, each with its own orientation; the angular correlation between successive γ rays of "
                      "one cascade is not included.")
     cols = {"event": c["event"][rows], "particle": rows, "cascade": cascade, "initial": initial, "final": final,
@@ -816,12 +820,13 @@ def _rest_directions(table: tuple, theta_cm: np.ndarray, rng) -> np.ndarray:
 
 
 def _cascade_steps(cex, theta_cm: np.ndarray, rng) -> tuple:
-    """The decay of each excitation through the level scheme: the level it starts in, drawn from the direct
-    excitation probabilities at its CM angle, then each step down by the scheme's branches (a converted transition
-    gives no γ ray). Returns (index of the excitation each γ ray belongs to, initial level, final level, energy in
-    the nucleus's frame in MeV), one entry per γ ray emitted."""
+    """The decay of each excitation through the level scheme: the level it starts in, drawn from the populations
+    the collision leaves at its CM angle (to all orders, or the one-step probabilities of first order: whichever
+    solution ``cex`` is), then each step down by the scheme's branches (a converted transition gives no γ ray).
+    Returns (index of the excitation each γ ray belongs to, initial level, final level, energy in the nucleus's
+    frame in MeV), one entry per γ ray emitted."""
     grid, states = cex.table()
-    starts = sorted(cex.paths)
+    starts = start_levels(cex)
     p = np.array([[s.direct.get(lev, 0.0) for s in states] for lev in starts])
     p_at = np.array([np.interp(theta_cm, grid, row) for row in p])  # (levels, events)
     cum = np.cumsum(p_at, axis=0)

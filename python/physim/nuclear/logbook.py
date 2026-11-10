@@ -928,22 +928,17 @@ def doppler_html(planner, analyses: Optional[dict] = None, seen: Optional[dict] 
 
 
 def _not_reached(experiment) -> list:
-    """The levels of the excited nucleus's scheme that the simulated events never start in: those the ground
-    state does not excite in one step. [(label, energy in keV)]."""
+    """The levels of the excited nucleus's scheme that the simulated events never populate
+    (:func:`~physim.nuclear.gamma.unreached_levels`): with first-order events those no matrix element joins to
+    the ground state and no populated level decays to. [(label, energy in keV)]."""
     try:
-        from .gamma import cascade_excitation
+        from .gamma import cascade_excitation, unreached_levels
 
-        cex = cascade_excitation(experiment)
-        if cex is None:
+        missing = unreached_levels(experiment)
+        if not missing:
             return []
-        _, states = cex.table()
-        direct = {}
-        for st in states:
-            for n, v in st.direct.items():
-                direct[n] = max(direct.get(n, 0.0), float(v))
-        scheme = cex.scheme
-        return [(lv.label, float(lv.energy.value)) for n, lv in enumerate(scheme.levels)
-                if n != cex.ground and direct.get(n, 0.0) <= 0.0]
+        levels = cascade_excitation(experiment).scheme.levels
+        return [(levels[n].label, float(levels[n].energy.value)) for n in missing]
     except Exception:  # noqa: BLE001 - a note the report can do without
         return []
 
@@ -1178,14 +1173,20 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
     if not runs:
         sec["runs"].append("<p>No run yet.</p>")
     elif exp.excitation is not None and exp.gamma_detectors:
+        from .gamma import excitation_order
+
         missing = _not_reached(exp)
+        first_order = excitation_order(exp) == "first"
         sec["runs"].append(
             "<p>Each beam run is drawn three times: the energy in each particle detector, the energy against "
             "ring with the gates on it, and the γ-ray spectra as measured and Doppler-corrected.</p>"
-            + ("<p>The simulated events excite each level in one step from the ground state. A level reached "
-               "only in two steps is not populated in them, so its γ rays are not in these spectra: "
-               + e(", ".join(f"{lab} at {en:.0f} keV" for lab, en in missing))
-               + ". The multi-step solution in the analysis section gives what such levels would hold.</p>"
+            + ("<p>The simulated events of this setup "
+               + ("are first order (<code>order = \"first\"</code>): each level is excited in one step from the "
+                  "ground state, and a level reached only in two steps is not populated"
+                  if first_order else "do not populate every level of the scheme: no chain of matrix elements "
+                                      "joins these to the ground state")
+               + ". Their γ rays are not in these spectra: "
+               + e(", ".join(f"{lab} at {en:.0f} keV" for lab, en in missing)) + ".</p>"
                if missing else ""))
     for s in runs:
         sec["runs"].append(f"<h3>Run {s['number']}: {e(s['describe'])}</h3><ul>"

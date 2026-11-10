@@ -507,6 +507,10 @@ class Excitation:
 
     One state, reached from a 0⁺ ground state: its energy, multipolarity (E1, E2, E3), the reduced transition
     probability ``b_up`` = B(Eλ↑) as text with a unit (``"0.0695 e2b2"``), and which nucleus is excited.
+
+    With a level scheme of the excited nucleus (``[levels]``) the simulated events populate its levels as the
+    coupled equations give them, to all orders; ``order = "first"`` keeps first-order theory (each level in one
+    step from the ground state).
     """
 
     energy: QuantityLike
@@ -516,6 +520,9 @@ class Excitation:
     #: How the γ rays leave the nucleus: "correlated" with the scattered particle (also when left out), or
     #: "isotropic".
     emission: Optional[str] = None
+    #: How the levels of a level scheme are populated in the events: "all" orders (also when left out) or
+    #: "first" order.
+    order: Optional[str] = None
 
     SPECS = (
         _Field("excite", "str", check=lambda s: None if s in ("target", "projectile")
@@ -525,6 +532,7 @@ class Excitation:
         _Field("b_up", "str"),
         _Field("emission", "str", check=lambda s: None if s in ("correlated", "isotropic")
                else "must be 'correlated' or 'isotropic'"),
+        _Field("order", "str", check=lambda s: None if s in ("all", "first") else "must be 'all' or 'first'"),
     )
 
     @property

@@ -199,7 +199,13 @@ def test_the_gamma_ray_spectra_reach_the_top_of_the_level_scheme(tmp_path):
     assert dv.gamma_range(p.run.gammas(), p.run.experiment)[1] >= 2.5
     lines = {round(x["energy_kev"]): x["label"] for x in logbook.gamma_lines(p.experiment)}
     assert lines[1173] == "2+ → 0+" and lines[1163] == "4+ → 2+" and lines[2302] == "2+ → 0+" and 2048 not in lines
-    # The events excite each level in one step: the report says which levels they never reach.
+    # The events populate every level of this scheme, to all orders: the report has no note of levels left out.
+    assert logbook._not_reached(p.experiment) == []
+    page = logbook.experiment_html(p, plan_events=5_000)
+    assert "Their γ rays are not in these spectra" not in page
+    # First-order events excite each level in one step: the report says which levels they never reach.
+    assert p.set("reaction", "order", "first")
+    assert [label for label, _ in logbook._not_reached(p.experiment)] == ["0+", "4+", "0+"]
     page = logbook.experiment_html(p, plan_events=5_000)
     assert "4+ at 2336 keV" in page and "one step from the ground state" in page
 

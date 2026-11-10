@@ -38,8 +38,10 @@ give this γ ray (internal conversion takes α / (1 + α) of each transition). A
 tensors of its parent times U_k. Everything decays in flight, with the orientation it was given: there is no
 deorientation and no lifetime.
 
-Not included: multi-step excitation and reorientation (the excitation of each level is the direct one from the
-ground state), which is why the matrix elements enter only through their size.
+Not included here: multi-step excitation and reorientation (the excitation of each level is the direct one from
+the ground state), which is why the matrix elements enter only through their size.
+:class:`~physim.nuclear.coupled.CoupledChannels` has both, with this class's interface, and is what the simulated
+events of a setup with a level scheme use (:func:`physim.nuclear.gamma.cascade_excitation`).
 """
 
 from __future__ import annotations
@@ -144,7 +146,9 @@ class Populated:
 
     excitation: Excitation
     theta_cm: float
-    #: Probability of exciting each level directly, by level.
+    #: Probability that the collision leaves the nucleus in each level, before any decay, by level: in first
+    #: order the direct excitation from the ground state, to all orders
+    #: (:class:`~physim.nuclear.coupled.CoupledChannels`) the coupled equations' population.
     direct: dict
     #: Statistical tensors with feeding: by level, then by the pair (rank, component).
     tensors: dict
@@ -396,7 +400,11 @@ class Excitation:
     def at(self, theta_cm: float) -> Populated:
         """The populations and orientation after a collision at CM angle ``theta_cm`` (degrees), computed for
         this angle."""
-        direct = self._direct(theta_cm)
+        return self._populated(theta_cm, self._direct(theta_cm))
+
+    def _populated(self, theta_cm: float, direct: dict) -> Populated:
+        """The state at ``theta_cm`` from the density matrices the collision leaves (``direct``): with the
+        feeding of the decays, as statistical tensors."""
         rho = self._cascade(direct)
         tensors = {n: tensors_of(m, float(self.scheme.levels[n].spin)) for n, m in rho.items()}
         return Populated(self, float(theta_cm), {n: float(np.trace(m).real) for n, m in direct.items()}, tensors,

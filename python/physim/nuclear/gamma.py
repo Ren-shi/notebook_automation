@@ -20,7 +20,10 @@ targets), isotropically; the nucleus moves with its velocity just after the reac
 
 from __future__ import annotations
 
+import json
 import math
+import threading
+from collections import OrderedDict
 from functools import lru_cache
 
 import numpy as np
@@ -159,12 +162,38 @@ def excitation_of(experiment, isotropic=None):
     return _excitation(beam, target, e_mid, exc.excite, exc.energy_mev, exc.multipolarity, exc.b_up_e2fm, flat)
 
 
-def cascade_excitation(experiment, isotropic=None):
-    """The :class:`~physim.nuclear.orientation.Excitation` of the excited nucleus's whole level scheme (the setup's
-    ``[levels]`` of the target or the beam, whichever the reaction excites), when its decays follow more than one
-    transition: then each excitation decays by a cascade (backlog item 71). None when the setup has no such scheme,
-    so a single state keeps the one-γ-ray chain of item 55."""
+#: Accuracy of the coupled equations' probabilities in the events (relative, roughly; see
+#: :class:`~physim.nuclear.coupled.CoupledChannels`): far below what any run's statistics show.
+EVENT_TOLERANCE = 1e-4
+#: The solutions kept (one per beam, partner nucleus, energy, level scheme and order), and how many.
+_SOLVED: OrderedDict = OrderedDict()
+_SOLVED_MOST = 16
+_SOLVING = threading.Lock()
+
+
+def excitation_order(experiment) -> str:
+    """ "all" or "first": how the events populate the levels of a level scheme (``[reaction] order``)."""
+    exc = experiment.excitation
+    return (getattr(exc, "order", None) or "all") if exc is not None else "all"
+
+
+def cascade_excitation(experiment, isotropic=None, order=None, channel=None):
+    """The excitation of the excited nucleus's whole level scheme (the setup's ``[levels]`` of the target or the
+    beam, whichever the reaction excites), when its decays follow more than one transition: then each excitation
+    starts in a level drawn from this solution's populations and decays by a cascade (backlog item 71). None
+    when the setup has no such scheme, so a single state keeps the one-γ-ray chain of item 55.
+
+    It is the coupled equations' solution to all orders (:class:`~physim.nuclear.coupled.CoupledChannels`: the
+    levels reached in two steps, the reorientation, and the orientation of every level), or with ``order``
+    "first" (the setup's ``[reaction] order`` if None) first-order theory
+    (:class:`~physim.nuclear.orientation.Excitation`: each level in one step from the ground state).
+
+    ``channel`` (a :class:`~physim.nuclear.rates.Channel` with an excitation) picks the nucleus the excited one
+    scatters on and the layer; by default the target's main nuclide. The solution is at the beam energy in the
+    middle of the layer, and is kept with its table of angles: the events, the rates and the γ rays of one setup
+    share it."""
     from . import data
+    from .coupled import CoupledChannels
     from .orientation import Excitation
 
     exc = experiment.excitation
@@ -175,17 +204,72 @@ def cascade_excitation(experiment, isotropic=None):
     if scheme is None:
         return None
     layers = stack(experiment)
-    lay = layers[0]
-    target = data.nuclide(max(lay.nuclides.items(), key=lambda kv: kv[1])[0]).name
-    e_mid = round(float(beam_energy_at(experiment, 0, [lay.thickness / 2], layers)[0]), 9)
+    layer = 0 if channel is None else channel.layer
+    lay = layers[layer]
+    target = (data.nuclide(max(lay.nuclides.items(), key=lambda kv: kv[1])[0]).name if channel is None
+              else channel.nuclide.name)
+    e_mid = round(float(beam_energy_at(experiment, layer, [lay.thickness / 2], layers)[0]), 9)
     flat = (exc.emission == "isotropic") if isotropic is None else isotropic
-    try:
-        ex = Excitation(beam_ion(experiment), target, e_mid, scheme, excite=exc.excite, isotropic=flat)
-    except ValueError:
-        return None
-    if not ex.paths or len(ex.transitions()) < 2:
-        return None
-    return ex
+    order = order or excitation_order(experiment)
+    if order not in ("all", "first"):
+        raise ValueError("order must be 'all' or 'first'")
+    beam = beam_ion(experiment)
+    key = (beam, target, e_mid, exc.excite, bool(flat), order, json.dumps(scheme.to_dict(), sort_keys=True,
+                                                                         default=str))
+    with _SOLVING:  # one thread solves; the others then find the solution
+        if key in _SOLVED:
+            _SOLVED.move_to_end(key)
+            return _SOLVED[key]
+        try:
+            if order == "first":
+                ex = Excitation(beam, target, e_mid, scheme, excite=exc.excite, isotropic=flat)
+            else:
+                ex = CoupledChannels(beam, target, e_mid, scheme, excite=exc.excite, isotropic=flat,
+                                     tolerance=EVENT_TOLERANCE)
+        except ValueError:
+            ex = None
+        if ex is not None and (not ex.paths or len(ex.transitions()) < 2):
+            ex = None
+        if ex is not None:
+            ex.table()
+        _SOLVED[key] = ex
+        while len(_SOLVED) > _SOLVED_MOST:
+            _SOLVED.popitem(last=False)
+        return ex
+
+
+def state_transition(experiment) -> tuple:
+    """(initial, final) level indices of the γ ray of the ``[reaction]`` state to the ground state, as the γ-ray
+    events number them: in the level scheme the events follow (the level nearest the state's energy), or (1, 0)
+    for a single state."""
+    ex = cascade_excitation(experiment)
+    if ex is None:
+        return 1, 0
+    e_kev = 1e3 * experiment.excitation.energy_mev
+    levels = ex.scheme.levels
+    excited = [n for n in range(len(levels)) if n != ex.ground]
+    return min(excited, key=lambda n: abs(levels[n].energy.value - levels[ex.ground].energy.value - e_kev)), ex.ground
+
+
+def start_levels(ex) -> list:
+    """The levels an excitation can start in, by the table of ``ex`` (a solution of
+    :func:`cascade_excitation`): those populated after the collision at some angle. In first order they are the
+    levels a matrix element joins to the ground state; to all orders every level a chain of matrix elements
+    reaches."""
+    _, states = ex.table()
+    return sorted({n for s in states for n, v in s.direct.items() if v > 0})
+
+
+def unreached_levels(experiment) -> list:
+    """The levels of the excited nucleus's scheme that the simulated events never populate, as indices into the
+    scheme: no chain of matrix elements joins them to the ground state (or, in first order, no matrix element
+    does), and no populated level decays to them. Empty without a scheme that the events follow."""
+    ex = cascade_excitation(experiment)
+    if ex is None:
+        return []
+    _, states = ex.table()
+    seen = {n for s in states for n in s.tensors if s.population(n) > 0}
+    return [n for n in range(len(ex.scheme.levels)) if n != ex.ground and n not in seen]
 
 
 @lru_cache(maxsize=16)
@@ -275,4 +359,5 @@ def correlation_table(experiment, order: int = 4, crystal_points: int = 3) -> li
     return rows
 
 
-__all__ = ["correlation_table", "doppler_energy", "doppler_table", "excitation_of"]
+__all__ = ["cascade_excitation", "correlation_table", "doppler_energy", "doppler_table", "excitation_of",
+           "excitation_order", "start_levels", "state_transition", "unreached_levels"]

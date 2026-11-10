@@ -104,8 +104,35 @@ workflow builds the wheels, tests them and publishes to PyPI.
     `figures/`, and the experiment folder. `experiment.html` and `record.html` are gone from it, and
     `Report.write` writes the one report as `report.html` (`--pdf` adds the PDF). `Report.to_html()` and
     `record_html()` still give the plan and the record alone, from Python.
-  - Where the level scheme has levels the simulated events never start in (they excite each level in one step
-    from the ground state), the report names them: for ⁶²Ni the 0⁺ at 2049 keV and the 4⁺ at 2336 keV.
+  - Where the level scheme has levels the simulated events never populate, the report names them: with
+    first-order events (`[reaction] order = "first"`) for ⁶²Ni the 0⁺ at 2049 keV and the 4⁺ at 2336 keV.
+- The simulated events of a setup with a level scheme populate its levels as the coupled equations give them, to
+  all orders, where they excited each level in one step from the ground state. A run of ⁶²Ni (237 MeV) on ¹⁹⁴Pt now
+  holds the γ rays of the 4⁺ state (4⁺ → 2⁺, 1163.5 keV, 3% of the 2⁺ → 0⁺ line) and of the second 0⁺ state
+  (0⁺ → 2⁺, 875.6 keV, 4%), which first order never reaches; in a 40 min run their counts agree with the multi-step
+  yields (`Multistep.yields`) within statistics.
+  - The level an excitation starts in is drawn from the populations the collision leaves at its CM angle
+    (`gamma.cascade_excitation` is now a `CoupledChannels`, kept per setup). Each γ ray's angular distribution
+    comes from the same solution: the 4⁺ state has the alignment its two-step excitation gives it.
+  - The excitation probability of the event generator and of `Rates` is the sum of those populations
+    (`rates.excitation_probability`), so the two agree as before; in the ⁶²Ni example 3% more is excited than in
+    first order. A run's "coincidences in the peak" counts the `[reaction]` state's own γ ray; it counted the
+    full-energy γ rays of every transition.
+  - `[reaction] order = "first"` keeps first-order events, bit for bit those of before. A setup without a level
+    scheme (`coulex_ni58`) is unchanged.
+  - The table of 90 angles is solved with all angles together (`CoupledChannels.solve_many`), the forward
+    angles where less than 10⁻⁶ is excited staying in first order: 2 s for the six levels of ⁶²Ni, against 16 s
+    one angle after the other (first order: 0.2 s). It is made once per setup, beam energy and target.
+  - In the corrected spectrum of the ⁶²Ni example the 4⁺ → 2⁺ line does not stand apart: it lies 9.4 keV below
+    the 2⁺ line, whose Doppler-corrected width is 15 to 20 keV with crystals of 35 mm radius at 120 mm. The
+    0⁺ → 2⁺ line is clear of it.
+  - The analysis still extracts B(E2) with first-order theory. On the ⁶²Ni example it returns 5% more on events
+    with all orders than on first-order events (3% from the feeding of the 2⁺ state, the rest from the 4⁺ → 2⁺
+    line inside the fitted peak). With the ENSDF scheme added to `coulex_ni58`, the 2⁺ yield falls by 5% in the
+    CD and 2% in the strip detectors (the reorientation, mostly).
+  - Still left out: every excitation has the kinematics of the `[reaction]` state, and elastic scattering is not
+    reduced by the excitation probability (`record.LEFT_OUT`, `workbench.NOT_SIMULATED`,
+    `docs/theory/coulex.md`).
 - The app opens on Coulomb excitation of the beam at backward angles when there is no experiment yet: ⁶²Ni (6⁺,
   237 MeV) on ¹⁹⁴Pt, the first template (`coulex-beam-backward`, example `coulex_ni62_pt194`). Before, it opened
   on ¹⁶O on ⁵⁸Ni, which is still the second template.

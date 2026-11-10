@@ -148,6 +148,7 @@ class _CoulexReaction:
     def __init__(self, beam: str, channel: Channel, energy: float, coulex):
         self.kinematics = TwoBody(beam, channel.nuclide.name, energy, **channel.kinematics_args)
         self._ruth = Rutherford(beam, channel.nuclide.name, energy)
+        #: Anything with ``probability(theta_cm)``: see :func:`excitation_probability`.
         self._coulex = coulex
 
     def cross_section_cm(self, theta_cm):
@@ -171,12 +172,44 @@ def coulex_for(experiment, channel: Channel, layers: Optional[list] = None):
                       e.multipolarity, e.b_up_e2fm)
 
 
+class SchemeProbability:
+    """The probability that a collision excites the nucleus at all, against the CM angle, from a solution of its
+    level scheme (:func:`physim.nuclear.gamma.cascade_excitation`): the populations of all its excited levels
+    after the collision, summed, between the angles of the solution's table (and falling to zero at 0°)."""
+
+    def __init__(self, solution):
+        grid, states = solution.table()
+        self.solution = solution
+        self._grid = np.r_[0.0, grid]
+        self._total = np.r_[0.0, [sum(s.direct.values()) for s in states]]
+
+    def probability(self, theta_cm):
+        return np.interp(np.asarray(theta_cm, dtype=float), self._grid, self._total)
+
+
+def excitation_probability(experiment, channel: Channel, layers: Optional[list] = None):
+    """What gives the excitation probability P(θ) of a Coulomb-excitation channel, an object with
+    ``probability(theta_cm)``: with a level scheme whose cascades the events follow, the summed populations of
+    its solution for this channel (:class:`SchemeProbability`: to all orders, or first order if the setup says
+    so); otherwise the first-order :class:`~physim.nuclear.coulex.Coulex` of the ``[reaction]`` state. The rates
+    and the event generator both take it from here, so they agree."""
+    from .gamma import cascade_excitation
+
+    solution = cascade_excitation(experiment, channel=channel)
+    if solution is None:
+        return coulex_for(experiment, channel, layers)
+    kept = solution.__dict__.get("_scheme_probability")
+    if kept is None:
+        kept = solution.__dict__["_scheme_probability"] = SchemeProbability(solution)
+    return kept
+
+
 def reaction_at(experiment, channel: Channel, energy: float, layers: Optional[list] = None):
     """The reaction of a channel at one beam energy: an object with ``kinematics`` and ``cross_section_cm``."""
     beam = beam_ion(experiment)
     if channel.excitation is None:
         return Rutherford(beam, channel.nuclide.name, energy)
-    return _CoulexReaction(beam, channel, energy, coulex_for(experiment, channel, layers))
+    return _CoulexReaction(beam, channel, energy, excitation_probability(experiment, channel, layers))
 
 
 def beam_ion(experiment) -> str:
@@ -444,8 +477,11 @@ class Rates:
         #: coincidence window) do not enter them, so an edit of either reuses every row.
         beam = tuple((f.name, getattr(experiment.beam, f.name)) for f in fields(experiment.beam)
                      if f.name != "current")
+        exc = experiment.excitation
+        # The level scheme of the excited nucleus sets the excitation probability (:func:`excitation_probability`).
+        scheme = experiment.levels.get("target" if exc.excite == "target" else "beam") if exc is not None else None
         self._physics = repr((beam, experiment.target, experiment.reaction, experiment.excitation, depth_points,
-                              order, theta_floor, self.min_energy))
+                              order, theta_floor, self.min_energy, scheme.to_dict() if scheme is not None else None))
         self._peak_cache: dict = {}
         #: Detectors whose rows were taken from ``previous``.
         self.reused = self._unchanged(previous)
