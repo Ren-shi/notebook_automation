@@ -233,10 +233,32 @@ class Planner:
         self.problems = []
         self.experiment = exp
         self._earlier_rates = self._cache.get("rates", self._earlier_rates)
-        self._cache.clear()
+        # A new place for the new setup's results, not the old one emptied: a :meth:`snapshot` still computing
+        # the old setup's results on another thread keeps writing where they belong.
+        self._cache = {}
         if self.folder is not None:
             self.folder.save_setup(exp)
         return True
+
+    def adopt(self, other: Planner) -> bool:
+        """Take the setup ``other`` holds, and the results it has kept for it. This is how a draft edited on a
+        planner of its own is applied (the planner adopts the draft) or thrown away (the draft adopts the
+        planner). An invalid setup is not taken: returns whether it was. In an experiment folder the setup is
+        saved, as after any edit."""
+        if other.problems:
+            return False
+        if not self._apply(other.draft):
+            return False
+        # The same setup, so the same results: what the other has computed (or is still computing on a worker
+        # thread) is this planner's too.
+        self._cache = other._cache
+        return True
+
+    def snapshot(self) -> Planner:
+        """This planner as it is now, for a computation on another thread. It has the same setup, run and kept
+        results (what it computes, the planner has too) and does not follow later edits: a result still being
+        computed when the setup changes is kept with the setup it belongs to, never with the new one."""
+        return copy.copy(self)
 
     # -- experiments and runs ---------------------------------------------------------------------------------------
 
@@ -382,8 +404,8 @@ class Planner:
 
     def _set_run(self, run: Optional[_runs.RunData]) -> None:
         self.run = run
-        for key in [k for k in self._cache if isinstance(k, tuple) and k and k[0] in ("run",)]:
-            self._cache.pop(key)
+        for key in [k for k in list(self._cache) if isinstance(k, tuple) and k and k[0] in ("run",)]:
+            self._cache.pop(key, None)
 
     def stop_run(self) -> Optional[_runs.RunData]:
         """Stop the run being taken: what is accumulated is kept (the run's duration becomes the beam time taken).
@@ -763,7 +785,16 @@ class Planner:
 
     def warnings(self) -> list:
         """Setup problems, then validity and rate warnings: everything the banner should show."""
-        out = [Warning("error", "setup", p) for p in self.problems]
+        cache = self._cache
+        if "warnings" not in cache:
+            # The valid setup's own warnings are worked out once: the panel, the strip and the read-outs all ask.
+            cache["warnings"] = self._setup_warnings()
+        order = {"error": 0, "warning": 1, "note": 2}
+        return sorted([Warning("error", "setup", p) for p in self.problems] + cache["warnings"],
+                      key=lambda w: order[w.level])
+
+    def _setup_warnings(self) -> list:
+        out = []
         for text in self._rates().warnings():
             level = "warning" if any(k in text for k in ("pile-up", "not Rutherford", "Mott", "stops inside",
                                                          "records nothing", "beam path", "blocks", "hides")) else "note"
@@ -773,8 +804,7 @@ class Planner:
             if p.kind == "overlap":  # a detector in the beam is already reported above
                 out.append(Warning("warning", "setup", p.text.replace("would overlap", "overlaps")
                                    + " They cannot both stand there."))
-        order = {"error": 0, "warning": 1, "note": 2}
-        return sorted(out, key=lambda w: order[w.level])
+        return out
 
     def explain(self, tab: str) -> dict:
         """The "Explain" panel of a tab, with a link to its physics-register page."""
@@ -1270,7 +1300,7 @@ class Planner:
         if result is None:
             result = self.run_analysis()
         if result is None and self._beam_run() is None:
-            for key, value in self._cache.items():
+            for key, value in list(self._cache.items()):  # a worker thread may be adding to it
                 if isinstance(key, tuple) and key[:1] == ("analysis",) and value.history:
                     result = value.history[-1]
         return record_html(self, result, scene_png=scene_png)
@@ -1363,9 +1393,9 @@ class Planner:
         """The multi-step solution of the current setup (:meth:`multistep` with its defaults) if it has been
         solved, in this session or earlier (kept in the experiment's folder as ``multistep.json``); None if not,
         or if the setup's physics changed since. Never starts the calculation."""
-        for key, value in self._cache.items():
-            if isinstance(key, tuple) and key == ("multistep", self._default_role(), 4.0, 2, True):
-                return value
+        solved = self._cache.get(("multistep", self._default_role(), 4.0, 2, True))
+        if solved is not None:
+            return solved
         return self._kept("multistep.json", self.experiment_folder)
 
     def kept_alignment(self, run=None) -> Optional[dict]:

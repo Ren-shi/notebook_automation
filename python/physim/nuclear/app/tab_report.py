@@ -37,7 +37,7 @@ def experiment_block(ctx) -> None:
         holder.clear()
         with holder:
             ui.spinner(size="md")
-        page = await run.io_bound(logbook.experiment_html, p, _last_result(p))
+        page = await run.io_bound(logbook.experiment_html, p.snapshot(), _last_result(p))
         holder.clear()
         with holder:
             ui.html('<div class="ps-record">' + page.split("<body>", 1)[1].rsplit("</body>", 1)[0] + "</div>",
@@ -46,7 +46,7 @@ def experiment_block(ctx) -> None:
     async def download() -> None:
         note = ui.notification("Building the record of the experiment…", spinner=True, timeout=None)
         try:
-            data = await run.io_bound(logbook.experiment_zip, p, _last_result(p))
+            data = await run.io_bound(logbook.experiment_zip, p.snapshot(), _last_result(p))
         finally:
             note.dismiss()
         ui.download.content(data, f"{p.experiment_folder.name if p.folder else 'experiment'}-record.zip")

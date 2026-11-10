@@ -150,3 +150,44 @@ def test_coulex_needs_a_state_or_says_so():
         assert notes and "B(E2)" in notes[0]
     else:
         assert exp.excitation.excite == "projectile"
+
+
+def test_changes_between_the_applied_setup_and_a_draft():
+    """What the app's "not applied" bar lists, and which cards it marks."""
+    from physim.nuclear.planner import Planner
+
+    p = Planner.example("coulex_ni58")
+    draft = Planner(p.experiment)
+    draft.adopt(p)
+    assert wb.changes(p._draft, draft._draft) == []
+    assert draft.set("beam", "energy", "31 MeV") and draft.set("run", "counts_wanted", 888)
+    assert draft.set("detector 2", "distance", "90 mm")
+    found = wb.changes(p._draft, draft._draft)
+    assert found == ["Beam: energy 30 MeV → 31 MeV", "DSSD-L: distance 100 mm → 90 mm",
+                     "Run conditions: counts wanted 500 → 888"]
+    # Detectors are matched by name: with the first one removed, the others are not changes.
+    assert draft.remove_detector(0) and draft.add_detector(**{**p._draft["detectors"][2], "name": "New"})
+    found = wb.changes(p._draft, draft._draft)
+    assert "CD: removed" in found and "New: added" in found and not any(x.startswith("DSSD-R") for x in found)
+    assert wb.card_setup(draft._draft, "detector:0")["name"] == "DSSD-L"
+    assert wb.card_setup(p._draft, "detector:0", name="DSSD-L") == p._draft["detectors"][1]
+    assert wb.card_setup(draft._draft, "detector:0") != wb.card_setup(p._draft, "detector:0", name="DSSD-L")
+    assert wb.card_setup(draft._draft, "detector:1") == wb.card_setup(p._draft, "detector:1", name="DSSD-R")
+    assert wb.card_setup(p._draft, "detector:9") is None and wb.card_setup(p._draft, "gamma:0", name="nope") is None
+    assert wb.card_setup(draft._draft, "target") == wb.card_setup(p._draft, "target")
+    assert draft.set("reaction", "type", "elastic")
+    assert wb.card_setup(draft._draft, "target") != wb.card_setup(p._draft, "target")
+    assert any(x.startswith("Reaction: type") for x in wb.changes(p._draft, draft._draft))
+
+
+def test_the_cards_of_a_draft_compute_nothing():
+    from physim.nuclear.planner import Planner
+
+    p = Planner.example("coulex_ni58")
+    cards = wb.draft_decisions(p)
+    assert [c.key for c in cards] == [c.key for c in wb.decisions(p)]
+    assert "rates" in p._cache  # from decisions(); the draft's cards did not need them:
+    q = Planner.example("coulex_ni58")
+    cards = wb.draft_decisions(q)
+    assert not q._cache and all(c.consequence == "—" for c in cards)
+    assert cards[0].state == wb.decisions(q)[0].state and cards[0].values == q._draft["beam"]

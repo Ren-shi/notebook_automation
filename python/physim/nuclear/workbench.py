@@ -337,6 +337,83 @@ def decisions(planner) -> list:
     return out
 
 
+class _DraftOnly:
+    """A planner's draft and nothing else: its cards say what was chosen, and no consequence is worked out."""
+
+    def __init__(self, planner):
+        self.draft = planner.draft
+
+    def __getattr__(self, name):
+        raise AttributeError(name)
+
+
+def draft_decisions(planner) -> list:
+    """The cards of the planner's draft with their first line (what was chosen) and their fields, and "—" for the
+    consequence: nothing is computed. For a draft whose numbers are not there (yet)."""
+    return decisions(_DraftOnly(planner))
+
+
+def _named(items: list, word: str) -> dict:
+    return {(x.get("name") or f"{word} {i + 1}"): x for i, x in enumerate(items)}
+
+
+def card_setup(setup: dict, key: str, name: Optional[str] = None):
+    """The part of a setup (in the structure of a setup file) that the card ``key`` edits: "beam", "target" (with
+    the reaction), "run", or a detector, taken by ``name`` if given and by its place in the list ("detector:N",
+    "gamma:N") otherwise. None if the setup has no such detector."""
+    if key == "target":
+        return {"target": setup.get("target"), "reaction": setup.get("reaction", {"type": "elastic"})}
+    if key in ("beam", "run"):
+        return setup.get(key)
+    kind, i = key.split(":")
+    items = setup.get("detectors" if kind == "detector" else "gamma_detectors", [])
+    if name is not None:
+        return _named(items, "D" if kind == "detector" else "γ").get(name)
+    return items[int(i)] if int(i) < len(items) else None
+
+
+def changes(applied: dict, draft: dict) -> list:
+    """What differs between two setups (in the structure of a setup file), one line each: a changed field with
+    its old and new value ("Beam: energy 30 MeV → 31 MeV"), a detector added or removed. Detectors are matched by
+    name, so one that moved up the list after another was removed is not a change."""
+    out = []
+
+    def show(x) -> str:
+        return "—" if x is None else str(x)
+
+    def fields(title: str, a: Optional[dict], b: Optional[dict], skip: tuple = ()) -> None:
+        a, b = a or {}, b or {}
+        for k in dict.fromkeys([*a, *b]):
+            if k in skip or a.get(k) == b.get(k):
+                continue
+            label = k.replace("_", " ")
+            if isinstance(a.get(k), (dict, list)) or isinstance(b.get(k), (dict, list)):
+                out.append(f"{title}: {label}")
+            else:
+                out.append(f"{title}: {label} {show(a.get(k))} → {show(b.get(k))}")
+
+    for k in ("title", "description"):
+        if applied.get(k) != draft.get(k):
+            out.append(f"{k.capitalize()}: {show(draft.get(k))}")
+    fields("Beam", applied.get("beam"), draft.get("beam"))
+    fields("Target", applied.get("target"), draft.get("target"), skip=("backing",))
+    fields("Backing", (applied.get("target") or {}).get("backing"), (draft.get("target") or {}).get("backing"))
+    fields("Reaction", applied.get("reaction"), draft.get("reaction"))
+    for kind, word in (("detectors", "D"), ("gamma_detectors", "γ")):
+        a, b = _named(applied.get(kind, []), word), _named(draft.get(kind, []), word)
+        out += [f"{name}: added" for name in b if name not in a]
+        out += [f"{name}: removed" for name in a if name not in b]
+        for name in b:
+            if name in a:
+                fields(name, a[name], b[name])
+    fields("Run conditions", applied.get("run"), draft.get("run"))
+    known = ("schema", "title", "description", "beam", "target", "reaction", "detectors", "gamma_detectors", "run")
+    for k in dict.fromkeys([*applied, *draft]):
+        if k not in known and applied.get(k) != draft.get(k):
+            out.append("Level schemes" if k == "levels" else k.replace("_", " ").capitalize())
+    return out
+
+
 def checks(planner) -> list:
     """Everything the top of the setup panel shows: the setup's problems and warnings, and whether the setup's
     physics changed since the current run. Each is {"level", "text"}."""
@@ -549,6 +626,6 @@ def states(scheme, multipolarity: str = "E2", limit: int = 30) -> dict:
 _SUPERSCRIPT = {2: "²", 4: "⁴", 6: "⁶", 8: "⁸"}
 
 
-__all__ = ["COMPOUND", "GROUPS", "MEASUREMENTS", "NATURAL", "NOT_SIMULATED", "PHYSICS", "PHYSICS_FOR", "physics_for",
+__all__ = ["card_setup", "changes", "draft_decisions", "COMPOUND", "GROUPS", "MEASUREMENTS", "NATURAL", "NOT_SIMULATED", "PHYSICS", "PHYSICS_FOR", "physics_for",
            "STAGES", "TEMPLATES", "Decision", "checks", "decisions", "elements", "mass_numbers", "most_abundant",
            "new_setup", "new_setup_notes", "split_nuclide", "states", "status_strip", "template"]

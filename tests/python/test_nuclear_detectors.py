@@ -213,3 +213,19 @@ def test_setup_pictures():
     assert np.nanmin(th) == pytest.approx(lo, abs=0.05) and np.nanmax(th) == pytest.approx(hi, abs=0.05)
     ax3 = plot.setup_3d(exp)
     assert len(ax3.texts) == 5
+
+
+def test_the_polar_range_of_a_face_is_kept_per_placement():
+    from physim.nuclear.detectors import Geometry
+
+    def disc(z, radius=10.0, name="D"):
+        return Geometry(name, "circle", [0.0, 30.0, z], [0.0, -30.0, -z], radius=radius)
+
+    a = disc(40.0)
+    assert a.theta_range() == a._theta_range(None)
+    assert disc(40.0, name="other").theta_range() is a.theta_range()  # the same face, built again
+    for other in (disc(41.0), disc(40.0, radius=11.0)):  # moved, or resized: its own range
+        assert other.theta_range() == other._theta_range(None) != a.theta_range()
+    segment = Geometry("S", "annular", [0, 0, -40.0], [0, 0, 1.0], inner_radius=9.0, outer_radius=41.0, rings=4,
+                       sectors=4)
+    assert segment.theta_range((1, 2)) == segment._theta_range((1, 2))

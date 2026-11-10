@@ -71,12 +71,74 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - The integral leaves out directions that meet another detector first, as the event generator always did.
   - A partly hidden detector is integrated on a finer grid, so the shadow's edge is resolved within 0.5%.
   - A fully hidden detector's warning names the detector in front, and shadowing is now a warning, not a note.
+- The app could show one setup's numbers for another: a result still being computed on the worker thread when a
+  field was edited was kept for the new setup (the old rates under the new beam energy, until the next edit).
+  Each setup's results now have a place of their own, and a computation works on a snapshot of the planner
+  (`Planner.snapshot`), so a late result stays with the setup it was computed for. That holds for the buttons
+  too (Analyse, Check the alignment, Solve with all orders, the simulations): a multi-step solution that ends
+  after a change was applied is kept in `multistep.json` under the setup it was solved for, not the new one.
+- A tab left while the numbers were being computed kept its old content when you came back to it. Every tab is
+  marked stale by a change, the one on screen too.
 
 ### Changed
-- The app no longer rebuilds every tab after every edit: only the tab on screen is rebuilt, the others when they
-  are next shown; the rates and the Doppler table are computed in a worker thread first (a spinner in the header
-  while they are), so the page answers at once instead of freezing. The cards and the strip follow once the
-  numbers are ready, and a card is not rebuilt under a field being typed in.
+- The planner app applies the changes of the setup when you say so. Before, every field recomputed everything as
+  soon as you left it, so five changes meant five rounds of a second or more each, with the numbers of four
+  setups nobody wanted in between.
+  - A change now goes into a draft and waits: its field is outlined, its card says *not applied*, and a bar at
+    the top of the setup panel lists the changes (*Beam: energy 30 MeV → 31 MeV*) with **Apply** (Ctrl+Enter) and
+    **Discard**. Adding, copying, removing and dragging a detector wait in the same way. An edit takes 0.1 s and
+    computes nothing; moving from field to field with Tab keeps the cursor, since the panel is updated where it
+    stands instead of being rebuilt.
+  - What needs no rates follows the draft at once: each card's first line, the problems of a value, the scene,
+    the tables of angles, and the quick numbers of the selected detector. Everything else shows the applied
+    setup, and a note above the tabs says so.
+  - A second after the last change the draft's rates are worked out in the background, so Apply usually shows
+    its results in 0.2 to 0.3 s; pressed at once it takes what the rates take (1.5 s on the ⁵⁸Ni example).
+  - An edit of the beam current or of the run conditions (beam time, counts wanted, dead time, coincidence
+    window) reuses the rate rows instead of integrating again (`Rates`, 5 ms instead of 0.9 s): the run
+    conditions do not enter them and the current scales them. Apply then takes 0.4 to 0.5 s.
+  - In an experiment the setup is saved on Apply, not after every field; a run is taken of the applied setup.
+    Level-scheme actions with a button of their own (look up, remove, a matrix element, **Plan**) and the
+    emission pattern apply at once. The switch **Apply each change as I make it** brings the old behaviour back.
+  - `Planner.adopt` takes another planner's setup and the results it has for it (Apply: the page's planner adopts
+    the draft's; Discard: the reverse); `workbench.changes` lists what differs between two setups,
+    `workbench.draft_decisions` gives a draft's cards without computing anything.
+- The planner app no longer stops answering while it computes. Before, the page function, every tab switch and
+  every rebuild after an edit computed on the server's event loop: the page froze for one to five seconds at a
+  time, and for twelve seconds with the connection dropped ("Connection lost") on the Data tab of a long run.
+  Measured in a headless browser on the ⁵⁸Ni example and on an experiment whose current run holds an hour of
+  events (128 MB), before → after:
+
+  | | before | after |
+  |---|---|---|
+  | The page opens (first byte) | 2.2 to 5.1 s, server busy throughout | 0.03 to 0.08 s, then a spinner for 1.2 to 1.5 s |
+  | A change, Setup tab on screen, to the updated tab | 2.1 to 2.9 s (frozen 1.1 s) | Apply at once 0.4 to 1.5 s, after a pause 0.3 s (longest pause 0.1 s) |
+  | A change, Plan tab on screen | 4.2 to 4.3 s (frozen 2.0 s) | Apply at once 1.4 s, after a pause 0.2 s (0.1 s) |
+  | A change, Physics tab on screen | 3.9 s (frozen 1.6 s) | Apply at once 2.3 to 2.7 s (0.2 s) |
+  | Plan, first shown after a change | 2.3 to 3.5 s (frozen 1.3 to 2.4 s) | 0.4 s: built ahead |
+  | Data tab of the long run, first shown | 12.3 s frozen, connection lost | a spinner for 7 to 9 s if chosen at once (the page answers), 0.4 s once loaded ahead |
+  | A choice on the Data tab (the Doppler correction) | 3.3 s (frozen 2.8 s) | 0.7 s (0.09 s) |
+  | Another run made current, then Data | 1.2 s + 3.7 s (frozen 0.9 + 3.1 s) | 0.2 to 0.3 s + 0.4 s once its events are loaded |
+
+  - Everything a tab shows is computed on a worker thread and kept with the setup's results; the tab is then
+    built from what is kept, which takes the event loop tens of milliseconds. After a change the numbers come
+    first, then the setup panel, the strip and the tab on screen, then the other tabs in the order one looks at
+    them, so a tab is there when it is chosen (a spinner in the tab if it is chosen sooner). The current run's
+    events are loaded last. A tab that is up to date is shown as it is.
+  - The page is served before anything is computed: a spinner stands in the setup panel and the tab for the
+    second the rates take.
+  - The Plan tab's checks and the setup panel's cards are built when they are opened. The checks you left open
+    stay open when the tab is rebuilt after an edit.
+  - The Data tab keeps each view by what it depends on: changing the Doppler correction recomputes the γ-ray
+    spectra and leaves the particle spectra and the 2D views (2.4 of the 2.8 s) as they are.
+  - Kept instead of computed again: the polar-angle range of a detector face (`Geometry.theta_range`, 25 ms a
+    call, asked for forty times to build one page: the warnings, each card and each "How to read this" took 0.1
+    to 0.4 s each time they were shown, and the rate integrals 2.7 s instead of 1.4 s), the rate rows of a
+    detector (`Rates._select`), the setup's warnings (`Planner.warnings`), the cards' consequence lines, and each
+    figure in the page's theme, ready to send (a figure was themed and serialised three times per element).
+  - A run's events load in 5.2 s instead of 8.6 s for an hour of beam (on their own; 7 to 9 s beside the page): the particle and the γ-ray columns are
+    each inflated only when asked for (the file was inflated whole, twice), and each row's segment centre comes
+    from a table over the segments that were hit instead of a sort of all rows.
 - The Coulomb-excitation orbit integrals are 20 to 600 times faster at the same accuracy (10⁻⁹): the half-orbit
   symmetry, panels of four radians of phase, and the oscillating tail by its endpoint expansion instead of
   quadrature out to where it dies. A P(θ) table takes 50 ms instead of 2 s (an E1 table, 0.06 s instead of

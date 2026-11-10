@@ -152,3 +152,50 @@ def test_exports_have_the_panels_counts(taken, tmp_path):
 
     with uproot.open(path) as f:
         assert "segment_i == 2" in str(f["cut_ring_3_5"])
+
+
+def test_the_data_tab_computes_each_view_once_per_choice(taken):
+    """The Data tab's views are computed on the page's worker and kept by what each depends on: building the tab
+    then reads them, and a choice changes only the views it concerns."""
+    pytest.importorskip("plotly")
+    from types import SimpleNamespace
+
+    from physim.nuclear.app import tab_data
+
+    options = {"correction": "recoil", "mode": "coincidence", "randoms": "shown", "addback": True,
+               "crystals": False, "gate": None, "bins": 200, "lo_kev": None, "hi_kev": None, "scaled": False,
+               "view_detector": None, "view_correction": "off", "other": None, "compare_spectrum": None}
+    made = []
+
+    def keep(p, key, make, of_run=False):
+        kept = p._cache.setdefault("test page", {})
+        if key not in kept:
+            made.append(key)
+            kept[key] = make()
+        return kept[key]
+
+    ctx = SimpleNamespace(P=lambda: taken, state={"theme": "light"}, data_options=options, keep=keep,
+                          in_theme=lambda fig: fig.to_plotly_json())
+    snapshot = taken.snapshot()
+    tab_data.prepare(ctx, snapshot)  # what the worker does, on a snapshot of the planner
+    first = len(made)
+    assert first and snapshot.run._events is not None
+    panels = tab_data.panels(ctx, taken)  # what building the tab does: nothing is computed again
+    assert len(made) == first and [name for name, _, _ in panels][0] == "CD"
+    assert isinstance(panels[0][2], dict) and panels[0][1]["counts"].sum() > 0
+    tab_data.ring_view(ctx, taken)
+    tab_data.crystal_view(ctx, taken)
+    assert len(made) == first
+
+    options["correction"] = "off"  # the γ-ray spectra change; the particle spectra and the 2D views do not
+    tab_data.prepare(ctx, taken.snapshot())
+    again = made[first:]
+    assert again and all("gamma" in key for key in again), again
+    assert not any("particle" in key or key[1] in ("ring", "ring figure", "crystal figure") for key in again)
+    assert tab_data.panels(ctx, taken)[0][1] is panels[0][1]  # the CD's spectrum is the one kept
+
+    options.update(lo_kev=1000.0, hi_kev=1400.0)  # a zoom: a new small figure, the histogram as it was
+    before = len(made)
+    zoomed = tab_data.panels(ctx, taken)
+    assert all(key[1] == "small figure" for key in made[before:]) and len(made) > before
+    assert zoomed[-1][1]["view"] == (1000.0, 1400.0)

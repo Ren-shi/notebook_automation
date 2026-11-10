@@ -3,6 +3,8 @@ each a card with its state and its consequence, its fields, and the rarely touch
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from .. import guide
 from .. import workbench as wb
 
@@ -12,7 +14,7 @@ LEVEL_ICON = {"error": "error", "warning": "warning", "note": "info"}
 
 def render_checks(ctx) -> None:
     ui = ctx.ui
-    found = wb.checks(ctx.P())
+    found = ctx.checks()
     if not found:
         with ui.row().classes("items-center gap-1"):
             ui.icon("check_circle").classes("ps-ok")
@@ -50,13 +52,14 @@ def _group_header(ctx, group: str) -> None:
 
 def _card_body(ctx, d: wb.Decision) -> None:
     ui = ctx.ui
-    draft = ctx.P().draft
+    draft = ctx.D().draft
     if d.key.startswith("detector:"):
         i = int(d.key.split(":")[1])
         sel = ui.select(list(wb.SHAPE_FIELDS), value=d.values.get("shape", "circle"), label="Shape",
                         on_change=lambda e, k=i: ctx.edit(f"detector {k + 1}", "shape", e.value)).props(
             "dense outlined").classes("w-full")
         ctx.help_icon(sel, "detector", "shape")
+        ctx.mark(sel, f"detector {i + 1}", "shape")
     ctx.section("", d.fields, d.section, d.values)
     if d.key == "target":
         ctx.reaction_section(draft.get("reaction", {"type": "elastic"}), title="")
@@ -87,20 +90,20 @@ def render(ctx) -> None:
     ui = ctx.ui
     p = ctx.P()
     with ui.column().classes("w-full gap-1"):
-        render_checks(ctx)
+        ctx.checks_box()
         if p.running:
             with ui.row().classes("items-center gap-1 mt-1"):
                 ui.icon("lock").classes("ps-warn")
                 ui.label("A run is being taken: the setup is read-only until it ends.").classes("text-sm ps-warn")
-    coulex = p.draft.get("reaction", {}).get("type") == "coulex"
+    coulex = ctx.D().draft.get("reaction", {}).get("type") == "coulex"
     shown_groups = set()
     holder = ui.column().classes("w-full gap-1")
     if p.running:
         holder.classes("opacity-60").style("pointer-events: none")
     with holder:
-        decisions = wb.decisions(p)
-        groups_present = {d.group for d in decisions}
-        for d in decisions:
+        cards = ctx.cards()
+        groups_present = {d.group for d, _ in cards}
+        for d, changed in cards:
             if d.group not in shown_groups:
                 if d.group == "Run conditions" and coulex and "γ-ray detectors" not in groups_present:
                     _group_header(ctx, "γ-ray detectors")
@@ -114,13 +117,20 @@ def render(ctx) -> None:
             exp = ui.expansion(value=ctx.state.get("open") == d.key).classes("w-full ps-card").props("dense")
             with exp.add_slot("header"):
                 with ui.column().classes("gap-0 w-full"):
-                    ui.label(d.title).classes("text-sm font-semibold")
-                    ui.label(d.state).classes("text-sm")
+                    with ui.row().classes("items-center no-wrap gap-2"):
+                        title = ui.label(d.title).classes("text-sm font-semibold")
+                        mark = ui.label("not applied").classes("ps-pending-mark")
+                        mark.set_visibility(changed)
+                    state = ui.label(d.state).classes("text-sm")
                     with ui.row().classes("items-start no-wrap gap-1 w-full"):
-                        ui.label(d.consequence).classes("text-xs ps-accent ps-consequence")
+                        consequence = ui.label(d.consequence).classes("text-xs ps-accent ps-consequence")
+                        # The page brings these up to date where they stand after an edit (see sync_cards).
+                        ctx.card_parts[d.key] = SimpleNamespace(title=title, state=state, consequence=consequence,
+                                                                mark=mark)
                         ui.space()
                         ui.button(icon="science", on_click=lambda k=d.key: ctx.show_physics(wb.physics_for(k))).props(
                             "dense flat round size=xs").classes("ps-muted").on("click.stop", lambda: None).tooltip(
                             "The physics behind this line")
-            with exp:
-                _card_body(ctx, d)
+            # The fields of a card are built when it is opened: most cards stay closed, and the panel is rebuilt
+            # after every change.
+            ctx.when_opened(exp, lambda d=d: _card_body(ctx, d))

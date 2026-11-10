@@ -331,10 +331,29 @@ class Geometry:
         edge = self.outline(400)
         return np.r_[pts, edge[~np.isnan(edge[:, 0])]]
 
+    def _placement(self) -> tuple:
+        """Everything the face's outline in space depends on, as a key: its shape, sizes, centre and axes."""
+        return (self.shape, self.width, self.height, self.radius, self.inner_radius, self.outer_radius,
+                self.centre.tobytes(), self.n.tobytes(), self.u.tobytes(), self.v.tobytes())
+
     def theta_range(self, segment: Optional[tuple] = None) -> tuple:
         """(smallest, largest) polar angle on the face (or a segment), degrees; 0 or 180 if the beam axis
         crosses it. For the whole face the extremes lie on its edge and are found to ~1e-9°; for a segment they
-        are taken over its quadrature points (to a fraction of the segment's size)."""
+        are taken over its quadrature points (to a fraction of the segment's size).
+
+        The whole face's range is kept per placement: the warnings, the rates, the setup cards and the scene all
+        ask for it, of faces built again from the same setup, and the search along the edge takes 25 ms."""
+        if segment is not None:
+            return self._theta_range(segment)
+        key = self._placement()
+        found = _THETA_RANGES.get(key)
+        if found is None:
+            if len(_THETA_RANGES) >= 4096:
+                _THETA_RANGES.clear()
+            found = _THETA_RANGES[key] = self._theta_range(None)
+        return found
+
+    def _theta_range(self, segment: Optional[tuple]) -> tuple:
         theta = lambda p: angles(p)[0]  # noqa: E731
         if segment is None:
             lo = self._extreme_on_boundary(theta, -1.0)
@@ -370,6 +389,10 @@ class Geometry:
         dom = w * np.clip(-(p @ self.n) / r, 0, None) / r**2
         th, _ = angles(p)
         return float(np.sum(th * dom) / np.sum(dom))
+
+
+#: Whole-face polar-angle ranges by placement (:meth:`Geometry.theta_range`).
+_THETA_RANGES: dict = {}
 
 
 def _unit_rows(a: np.ndarray) -> np.ndarray:

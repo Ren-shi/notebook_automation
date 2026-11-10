@@ -406,9 +406,11 @@ class RunData:
 
     # -- the data ---------------------------------------------------------------------------------------------------
 
-    def _arrays(self) -> dict:
+    def _arrays(self, wanted=None) -> dict:
+        """The stored arrays, or those whose name ``wanted`` accepts. The file is compressed and reading an array
+        inflates it, so the particle and the γ-ray columns are each read only when asked for."""
         with np.load(self.folder / "events.npz") as z:
-            return {k: z[k] for k in z.files}
+            return {k: z[k] for k in z.files if wanted is None or wanted(k)}
 
     def events(self) -> Optional[Events]:
         """The particle events of the real part (see :class:`~physim.nuclear.events.Events`): one row per counted
@@ -416,7 +418,7 @@ class RunData:
         if self.kind == "source":
             return None
         if self._events is None:
-            a = self._arrays()
+            a = self._arrays(lambda k: k in PARTICLE_COLUMNS)
             cols = _load_particles(a)
             cols["recoil"] = cols["recoil"].astype(bool)
             cols["counted"] = np.ones(len(cols["event"]), dtype=bool)
@@ -436,11 +438,10 @@ class RunData:
             return None
         if plain not in self._gammas:
             prefix = "gp_" if plain else "g_"
-            a = self._arrays()
+            a = self._arrays(lambda k: k.startswith(prefix))
             if prefix + "particle" not in a:
-                if plain and "g_particle" in a:  # no add-back or shields: the plain chain is the same
-                    return self.gammas(False)
-                return None
+                # No add-back or shields: the plain chain is the same (None if the run has no γ rays at all).
+                return self.gammas(False) if plain else None
             self._gammas[plain] = _gamma_events(self, {k: a[prefix + k] for k in GAMMA_COLUMNS if prefix + k in a},
                                                 plain)
         return self._gammas[plain]
@@ -475,17 +476,21 @@ def _segment_directions(experiment: Experiment, cols: dict) -> tuple:
     phi = np.zeros(len(cols["detector"]))
     if not len(theta):
         return theta, phi
-    key = (cols["detector"].astype(np.int64) * 1_000_000 + cols["segment_i"].astype(np.int64) * 1000
-           + cols["segment_j"].astype(np.int64))
-    flat, inverse = np.unique(key, return_inverse=True)
-    inverse = np.asarray(inverse).reshape(-1)
-    unique = np.stack([flat // 1_000_000, (flat // 1000) % 1000, flat % 1000], axis=1)
-    th_u, ph_u = np.zeros(len(unique)), np.zeros(len(unique))
-    for n, (d, i, j) in enumerate(unique):
-        c = array.geometries[int(d)].segment_centre((int(i), int(j)), weighted=True)
-        th_u[n] = math.degrees(math.atan2(math.hypot(c[0], c[1]), c[2]))
-        ph_u[n] = math.degrees(math.atan2(c[1], c[0]))
-    return th_u[inverse], ph_u[inverse]
+    # One number per (detector, segment), and a table over those numbers: a pass over the rows marks the segments
+    # that were hit, each hit segment's centre is worked out once, and a second pass looks every row up. (Sorting
+    # the rows to find the distinct segments, as numpy.unique does, took 2 s for an hour of beam.)
+    det, si, sj = (cols[k].astype(np.int64) for k in ("detector", "segment_i", "segment_j"))
+    ni, nj = int(si.max()) + 1, int(sj.max()) + 1
+    code = (det * ni + si) * nj + sj
+    hit = np.zeros(int(code.max()) + 1, dtype=bool)
+    hit[code] = True
+    th_t, ph_t = np.zeros(len(hit)), np.zeros(len(hit))
+    for n in np.flatnonzero(hit):
+        d, i, j = int(n) // (ni * nj), (int(n) // nj) % ni, int(n) % nj
+        c = array.geometries[d].segment_centre((i, j), weighted=True)
+        th_t[n] = math.degrees(math.atan2(math.hypot(c[0], c[1]), c[2]))
+        ph_t[n] = math.degrees(math.atan2(c[1], c[0]))
+    return th_t[code], ph_t[code]
 
 
 def _beam_energies(experiment: Experiment, depth: np.ndarray) -> np.ndarray:
