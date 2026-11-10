@@ -1,4 +1,5 @@
-"""The planner page: the setup panel, the status strip and the stage tabs, assembled for one browser client."""
+"""The planner page: the header, the step bar and the stages, with the setup panel beside the Setup step, assembled
+for one browser client."""
 
 from __future__ import annotations
 
@@ -34,6 +35,26 @@ PENDING_STYLE = """
 .ps-pending-note { background: var(--ps-warnbox); border: 1px solid var(--ps-warn); margin-top: 6px; }
 .ps-pending-mark { color: var(--ps-warn); border: 1px solid var(--ps-warn); border-radius: 8px; padding: 0 6px;
   font-size: 11px; line-height: 16px; white-space: nowrap; }
+"""
+
+#: The step bar (the stages as numbered steps, each with its state and a line of status) and the foot of a step.
+STEP_STYLE = """
+.ps-steps { background: var(--ps-surface); border: 1px solid var(--ps-line); border-radius: 10px;
+  counter-reset: ps-step; position: sticky; top: 50px; z-index: 5; }
+.ps-steps .q-tab { counter-increment: ps-step; flex: 1 1 0; min-width: 118px; min-height: 54px; padding: 6px 14px;
+  border-right: 1px solid var(--ps-line); overflow: hidden; }
+.ps-steps .q-tab__content { align-items: flex-start; width: 100%; min-width: 0; }
+.ps-steps .q-tab__label { font-size: 14px; font-weight: 600; line-height: 1.35; }
+.ps-steps .q-tab__label::before { content: counter(ps-step); display: inline-block; margin-right: 8px;
+  color: var(--ps-muted); font-weight: 500; }
+.ps-steps .ps-step-done .q-tab__label::after { content: "\\2713"; margin-left: 6px; color: var(--ps-ok); }
+.ps-steps .ps-step-waiting .q-tab__label { color: var(--ps-muted); }
+.ps-steps .q-tab--active { background: var(--ps-note); }
+.ps-step-status { font-size: 12px; font-weight: 400; color: var(--ps-muted); width: 100%; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-step-status.ps-warn { color: var(--ps-warn); }
+.ps-step-hidden { display: none !important; }
+.ps-foot { border-top: 1px solid var(--ps-line); margin-top: 18px; padding: 10px 2px 4px; }
 """
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -103,13 +124,12 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     from .. import workbench as wb
     from ..experiment import Experiment, SetupError
     from . import panel as _panel
-    from . import strip as _strip
     from . import tab_analysis, tab_data, tab_physics, tab_plan, tab_report, tab_run, tab_setup
 
     first, offer_list = _starting_planner(example, template, experiment)
     state = {"planner": first, "events": events, "theme": theme or "light", "open": None, "stage": "setup",
              "export": None, "journal": "physical_review", "width": "single", "format": "pdf",
-             # Whether the setup's numbers are there (the panel and the strip show them); a page built whole
+             # Whether the setup's numbers are there (the panel and the step bar show them); a page built whole
              # (``prebuild``) computes them as it is built.
              "ready": prebuild,
              # Whether a change of the setup is applied as it is made, or waits for Apply (the default).
@@ -139,11 +159,11 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         moved), so the setup panel is rebuilt even under a field being typed in."""
         if ok:
             state["panel_due"] = panel or state.get("panel_due", False)
-            refresh_results()  # rebuilds the setup panel and the strip once the numbers are ready
+            refresh_results()  # rebuilds the setup panel and the step bar once the numbers are ready
             return
         ui.notify("; ".join(P().problems), type="negative", multi_line=True)
         setup_panel.refresh()
-        status_strip.refresh()
+        sync_steps()
 
     def pending() -> list:
         """The changes not applied, one line each (:func:`physim.nuclear.workbench.changes`)."""
@@ -301,6 +321,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             sync_cards()
         pending_bar.refresh()
         pending_note.refresh()
+        sync_foot()
         draft_views()
         if ok:
             compute_ahead()
@@ -351,6 +372,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         sync_cards()
         pending_bar.refresh()
         pending_note.refresh()
+        sync_foot()
         refresh_results()
 
     def discard_changes() -> None:
@@ -361,6 +383,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         setup_panel.refresh()
         pending_bar.refresh()
         pending_note.refresh()
+        sync_foot()
         draft_views()
 
     def direct(action) -> None:
@@ -379,6 +402,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         changed(ok, panel=True)
         pending_bar.refresh()
         pending_note.refresh()
+        sync_foot()
 
     def card_of(section: str) -> Optional[str]:
         if section in ("beam", "run"):
@@ -393,6 +417,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     def open_card(key: Optional[str]) -> None:
         state["open"] = key if key != "checks" else None
+        go_to("setup")  # the setup panel stands beside the Setup step
         drawer.show()
         if numbers_kept():
             setup_panel.refresh()
@@ -467,7 +492,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         setup_panel.refresh()
         pending_bar.refresh()
         pending_note.refresh()
-        status_strip.refresh()
+        sync_foot()
+        sync_steps()
         main_area.refresh()
         refresh_results()
 
@@ -854,7 +880,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     #: The panels each stage shows at once, and those it shows when asked (the Plan tab's checks, which open).
     stage_needs = {"setup": (("geometry",), ()),
-                   "plan": ((), ("kinematics", "energy_loss", "trajectories", "gamma", "efficiency", "rates")),
+                   "plan": ((), ("kinematics", "energy_loss", "trajectories", "gamma", "efficiency", "rates",
+                                 "spectra")),
                    "physics": (("gamma", "kinematics", "energy_loss", "trajectories", "geometry", "efficiency"), ()),
                    "data": ((), ()), "run": ((), ()), "analysis": ((), ()), "report": ((), ())}
 
@@ -882,11 +909,6 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 try:
                     needs(tab, p)
                 except Exception:  # noqa: BLE001 -- the panel says what is wrong when it is built
-                    pass
-            if key == "data" and p.run is None:
-                try:
-                    needs("spectra", p)
-                except Exception:  # noqa: BLE001
                     pass
         if key == "data" and p.run is not None:
             with run_work:
@@ -1512,7 +1534,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         drawer = state.get("drawer")
         if drawer is not None:
             (drawer.hide if on else drawer.show)()
-        for el in (state.get("strip_box"), state.get("tabs"), *scene_state.get("extras", [])):
+        for el in (state.get("strip_box"), state.get("tabs"), footer_boxes.get("setup"),
+                   *scene_state.get("extras", [])):
             if el is not None:
                 el.set_visibility(not on)
         geometry_panel.refresh()
@@ -1752,7 +1775,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 "dense outlined").classes("w-36")
             rings = ui.input("Rings or strips", placeholder="all, or 4-15").props("dense outlined").classes("w-36")
             named = ui.select({"": "none (the choices here)"} | {g.name: g.name for g in P().gates()}, value="",
-                              label="Gate from the Data tab").props("dense outlined").classes("w-56").tooltip(
+                              label="Gate from the Data step").props("dense outlined").classes("w-56").tooltip(
                 "A named gate replaces the detectors, rings and particle gate here")
         with ui.row().classes("w-full items-end gap-2"):
             ref_e = ui.input("Reference transition", placeholder="328 keV").props("dense outlined").classes("w-40")
@@ -1796,6 +1819,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             out_box.clear()
             with out_box:
                 show(r)
+            sync_steps()
 
         def show(r: dict) -> None:
             if not r["available"]:
@@ -1903,7 +1927,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     corr_key = "recoil" if exc.excite == "target" else "projectile"
                     view = dv.gamma_vs_crystal(P().run, corr_key, offset_mm=float(off.value))
                     ui.label("The run's γ rays, corrected with the assumed geometry, crystal by crystal (as on "
-                             "the Data tab)").classes("ps-section mt-2")
+                             "the Data step)").classes("ps-section mt-2")
                     ui.plotly(themed(figure_gamma_crystal(view), state["theme"])).classes("w-full")
                 if "fit" in r:
                     f = r["fit"]
@@ -2290,8 +2314,26 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     async def show_stage(key: str) -> None:
         """A tab was chosen: it is shown as it is if it was built for the current setup, and built now if not."""
         state["stage"] = key
+        place_drawer()
         if key in dirty:
             await build_stage(key)
+
+    def go_to(key: str) -> None:
+        """Show a stage, as choosing it in the step bar does."""
+        if state.get("tabs") is not None and state["stage"] != key:
+            state["tabs"].set_value(key)
+
+    def advance(key: str) -> None:
+        """The button at the foot of a step: on to the next one, from its top."""
+        go_to(key)
+        ui.run_javascript("window.scrollTo({top: 0})")
+
+    def place_drawer() -> None:
+        """The setup panel stands beside the Setup step only: the other steps have the whole width."""
+        drawer = state.get("drawer")
+        if drawer is None or scene_state.get("full"):
+            return
+        (drawer.show if state["stage"] == "setup" else drawer.hide)()
 
     def working(on: bool) -> None:
         """The spinner in the header: on while anything asked for is being computed."""
@@ -2362,7 +2404,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 sync_cards()
             pending_bar.refresh()
             pending_note.refresh()
-            status_strip.refresh()
+            sync_foot()
+            sync_steps()
             while True:  # the stage on screen (the user may choose another tab while its numbers are computed)
                 key = state["stage"]
                 await run.io_bound(prepare, key, p)
@@ -2403,6 +2446,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 if gone() or state.get("data_choice") != n or state.get("generation", 0) != token:
                     return
             data_view.refresh()
+            sync_steps()
 
         later(go)
 
@@ -2495,7 +2539,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         if n is None or (P().run is not None and P().run.number == n):
             return
         P().load_run(n)
-        status_strip.refresh()
+        sync_steps()
         setup_panel.refresh()
         refresh_results()
 
@@ -2554,7 +2598,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     def finished() -> None:
         setup_panel.refresh()
-        status_strip.refresh()
+        sync_steps()
         refresh_results()
         if P().run is not None:
             ui.notify(f"Run {P().run.number} stored: {P().run.describe()}", type="positive", multi_line=True)
@@ -2618,17 +2662,68 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     stage_modules = {"setup": tab_setup, "plan": tab_plan, "run": tab_run, "data": tab_data,
                      "analysis": tab_analysis, "report": tab_report, "physics": tab_physics}
 
-    @ui.refreshable
-    def status_strip() -> None:
-        if state["ready"]:
-            _strip.render(ctx)
+    #: The step bar's elements, {step: (its tab, the line under its name)}, and the foot of each stage.
+    step_els: dict = {}
+    footer_boxes: dict = {}
+
+    def sync_foot() -> None:
+        """The foot of each step: what there is to do next, and the button that goes there
+        (:func:`physim.nuclear.workbench.next_step`)."""
+        waiting_changes = len(pending())
+        for key, box in footer_boxes.items():
+            if box.is_deleted:
+                continue
+            box.clear()
+            try:
+                nxt = wb.next_step(P(), key, waiting_changes)
+            except Exception:  # noqa: BLE001 -- the foot must never break the page
+                nxt = None
+            if nxt is None:
+                continue
+            with box:
+                with ui.row().classes("w-full items-center gap-3 ps-foot"):
+                    ui.label(nxt["hint"]).classes("text-sm ps-muted")
+                    ui.space()
+                    if nxt["label"]:
+                        ui.button(nxt["label"], on_click=lambda to=nxt["to"]: advance(to)).props(
+                            "unelevated no-caps icon-right=arrow_forward")
+
+    def sync_steps() -> None:
+        """The step bar, the foot of each step and the experiment's name in the header, from the experiment as
+        it stands (:func:`physim.nuclear.workbench.steps`): after the setup's numbers are there, a run is taken or
+        chosen, a gate is saved, a run is analysed. While the numbers of a change are on their way the bar keeps
+        what it showed; the pass that brings them calls this again."""
+        experiment_button.refresh()
+        sync_foot()
+        if not state["ready"] or not numbers_kept():
+            return
+        try:
+            found = wb.steps(P())
+        except Exception:  # noqa: BLE001 -- the step bar must never break the page
+            return
+        for step in found:
+            tab, status = step_els.get(step["key"], (None, None))
+            if tab is None or tab.is_deleted:
+                continue
+            tab.classes(remove="ps-step-done ps-step-ready ps-step-waiting", add=f"ps-step-{step['state']}")
+            status.set_text(step["status"])
+            status.classes(remove="ps-warn", add="ps-warn" if step["warn"] else "")
 
     @ui.refreshable
     def main_area() -> None:
-        with ui.tabs(value=state["stage"], on_change=lambda e: show_stage(e.value)).classes("w-full").props(
-                "dense no-caps align=left") as tabs:
+        step_els.clear()
+        footer_boxes.clear()
+        # The steps of the experiment, in order, each with its state and a line of status; the Physics reference
+        # is a stage without a step (the header's button and the ? beside a number show it).
+        with ui.tabs(value=state["stage"], on_change=lambda e: show_stage(e.value)).classes("w-full ps-steps").props(
+                "dense no-caps align=justify") as tabs:
             for key, label in wb.STAGES:
-                ui.tab(key, label=label)
+                tab = ui.tab(key, label=label)
+                if key not in dict(wb.STEPS):
+                    tab.classes("ps-step-hidden")
+                    continue
+                with tab:
+                    step_els[key] = (tab, ui.label("").classes("ps-step-status"))
         state["tabs"] = tabs
         # The stages are built by refresh_results, once their numbers are computed on the worker: the one on
         # screen first, then the others. ``prebuild`` builds every stage now (the served-page test).
@@ -2636,6 +2731,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             for key, _ in wb.STAGES:
                 with ui.tab_panel(key):
                     stage_boxes[key] = ui.column().classes("w-full gap-2")
+                    footer_boxes[key] = ui.element("div").classes("w-full")
                     dirty.add(key)
         built.clear()
         if prebuild:
@@ -2643,6 +2739,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 render_stage(key)
         else:
             waiting(state["stage"])
+        place_drawer()
+        sync_steps()
 
     def set_theme(name: str) -> None:
         if name == state["theme"]:
@@ -2685,25 +2783,42 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         keep=keep, in_theme=in_theme, when_opened=when_opened,
         gate_form=gate_form, fmt=_fmt, time_text=_time,
         analysis_view=analysis_view, report_view=report_view, show_physics=show_physics, levels_block=levels_block,
-        geometry_tables=geometry_tables, explain=explain, reading_box=reading_box, gamma_panel=gamma_panel)
+        geometry_tables=geometry_tables, explain=explain, reading_box=reading_box, gamma_panel=gamma_panel,
+        go_to=go_to)
+
+    @ui.refreshable
+    def experiment_button() -> None:
+        """In the header: the experiment's name, with what is done to an experiment as its menu, and beside it
+        the beam and the target."""
+        p = P()
+        d = p.draft
+        with ui.row().classes("items-center gap-2 no-wrap"):
+            with ui.button(p.name, icon="science").props("flat no-caps icon-right=expand_more"):
+                with ui.menu():
+                    ui.menu_item("Open an experiment…",
+                                 on_click=lambda: (experiments_list.refresh(), experiments_dialog.open()))
+                    ui.menu_item("New experiment…", on_click=lambda: new_dialog.open())
+                    ui.separator()
+                    ui.menu_item("Import a setup file…", on_click=lambda: upload_dialog.open())
+                    ui.menu_item("Export the setup…", on_click=export_setup)
+            ui.label(f"{d['beam'].get('nuclide', '?')} at {d['beam'].get('energy', '?')} on "
+                     f"{d['target'].get('material', '?')} {d['target'].get('thickness', '')}".strip()).classes(
+                "text-sm ps-muted gt-sm")
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)
     ui.add_css(PENDING_STYLE)
+    ui.add_css(STEP_STYLE)
     ui.add_css(record_css(".ps-record"))
     dark = ui.dark_mode(state["theme"] == "dark")
     with ui.header(elevated=False).classes("items-center ps-header py-1"):
         ui.label("physim").classes("text-lg font-semibold")
-        ui.label("experiment workbench").classes("ps-muted")
+        experiment_button()
         state["busy"] = ui.spinner("dots", size="sm").classes("ps-muted").tooltip("Computing the numbers")
         state["busy"].set_visibility(False)
         ui.space()
-        ui.button("Experiments", icon="folder_open",
-                  on_click=lambda: (experiments_list.refresh(), experiments_dialog.open())).props(
-            "flat no-caps")
-        ui.button("New experiment", icon="add", on_click=lambda: new_dialog.open()).props("flat no-caps")
-        ui.button("Import a setup file", icon="upload", on_click=lambda: upload_dialog.open()).props("flat no-caps")
-        ui.button("Export the setup", icon="download", on_click=export_setup).props("flat no-caps")
+        ui.button("Physics", icon="menu_book", on_click=lambda: go_to("physics")).props("flat no-caps").tooltip(
+            "The physics behind the numbers, and where each part is validated")
         theme_toggle = ui.toggle({"light": "Light", "dark": "Dark"}, value=state["theme"],
                                  on_change=lambda e: set_theme(e.value)).props("dense no-caps unelevated")
     with ui.dialog() as upload_dialog, ui.card():
@@ -2725,7 +2840,6 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     state["drawer"] = drawer
     with ui.column().classes("w-full gap-2"):
         with ui.element("div").classes("w-full") as strip_box:
-            status_strip()
             pending_note()
         state["strip_box"] = strip_box
         main_area()

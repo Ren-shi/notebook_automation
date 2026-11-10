@@ -4,7 +4,8 @@ The answers: the counts wanted and the beam time they need; per particle detecto
 excitations and safe rings; per γ-ray detector its efficiency at the transition and its coincidence rate; the
 particle × γ coincidence rates. Each number has its ? (the run record's explanation). Below them, the checks, in the
 order one makes them, as panels that open: the kinematics, the energy loss, the orbit and the safe distance, the
-particle–γ correlation and Doppler shifts, the γ-ray efficiency curves, and the rates per strip with the sweep."""
+particle–γ correlation and Doppler shifts, the γ-ray efficiency curves, the rates per strip with the sweep, and
+the spectra a simulated sample of the setup gives (what a run is predicted to record)."""
 
 from __future__ import annotations
 
@@ -16,7 +17,8 @@ CHECKS = (("kinematics", "Kinematics: where the particles go", False),
           ("trajectories", "The orbit and the safe distance", False),
           ("gamma", "The excitation, the particle–γ correlation and the Doppler shifts", True),
           ("efficiency", "γ-ray efficiency curves", True),
-          ("rates", "Rates per strip, and the beam-time sweep", False))
+          ("rates", "Rates per strip, and the beam-time sweep", False),
+          ("spectra", "Predicted spectra: what each detector will record", False))
 
 
 def _fmt(x, digits: int = 3) -> str:
@@ -123,7 +125,7 @@ def answers(ctx, pl: dict) -> None:
                     for n in names:
                         ui.label(_fmt(row.get(n, 0.0)))
         ui.label("Each number includes the particle–γ angular correlation; dead time and random coincidences are "
-                 "not taken off here (the Run tab measures them).").classes("text-xs ps-muted")
+                 "not taken off here (a run measures them).").classes("text-xs ps-muted")
 
 
 def render_answers(ctx) -> None:
@@ -142,7 +144,7 @@ def render(ctx) -> None:
     ctx.plan_answers()
     ctx.ui.label("The checks").classes("text-lg font-semibold mt-4")
     ctx.ui.label("Open each in turn: what the kinematics, the target and the detectors do to the numbers above. "
-                 "The same panels are on the Physics tab.").classes("text-xs ps-muted")
+                 "The same panels are in Physics, at the top right.").classes("text-xs ps-muted")
     coulex = p.experiment.excitation is not None and bool(p.experiment.gamma_detectors)
     # A check is built when it is first opened (its figure is computed by then, or a spinner says it is on its
     # way); the ones left open stay open when the tab is rebuilt after an edit.

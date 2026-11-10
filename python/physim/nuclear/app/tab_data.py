@@ -381,9 +381,14 @@ def render_view(ctx) -> None:
     p = ctx.P()
     run = p.run
     if run is None:
-        ctx.ui.markdown("No run yet. Take one on the **Run** tab: its spectra appear here, all at once. Below, a "
-                        "preview from a simulated sample of the current setup.")
-        ctx.block("spectra", "Preview")
+        ui = ctx.ui
+        ui.label("No run yet").classes("text-lg font-semibold")
+        ui.label("This step shows what a run recorded: every detector's spectrum at once, your gates, the energy "
+                 "against ring and the γ-ray energy against crystal, and the exports.").classes("text-sm")
+        with ui.row().classes("items-center gap-1"):
+            ui.label("What the setup is predicted to record is on the Plan step, under “Predicted "
+                     "spectra”.").classes("text-sm ps-muted")
+            ui.button("Open the plan", on_click=lambda: ctx.go_to("plan")).props("dense flat no-caps")
         return
     status = p.run_status()
     head = f"Run {run.number}: {run.describe()}"

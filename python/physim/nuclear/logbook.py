@@ -667,7 +667,7 @@ def level_schemes_html(planner) -> str:
             caption = (f"{t['nuclide']} (the {sc['role']}): the two levels the reaction is set up with, the ground "
                        f"state and the state at {mark:g} keV that is excited ({lam}, B({lam}↑) = "
                        f"{exc.b_up_e2fm:.4g} e²fm^{2 * int(lam[1])}). No level scheme has been looked up for this "
-                       "nucleus (Physics tab), so no other level is drawn.")
+                       "nucleus (Physics, in the app), so no other level is drawn.")
         else:
             shown = min(len(t["transitions"]), 24)
             caption = (f"{t['nuclide']} (the {sc['role']}): {len(t['levels'])} levels and {shown} "
@@ -1261,7 +1261,7 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
         sec["analysis"].append(analysis_html(result, "<h3>The simulated sample</h3>"))
     elif not analyses:
         sec["analysis"].append("<p>No run has been analysed yet: take a beam run and press Analyse on the "
-                               "Analysis tab. The analysis is then kept with the run and appears here.</p>")
+                               "Analysis step. The analysis is then kept with the run and appears here.</p>")
     m = planner.kept_multistep()
     if m and m.get("available"):
         sec["analysis"].append("<h3>All orders: multi-step excitation and reorientation</h3>" + multistep_html(m))

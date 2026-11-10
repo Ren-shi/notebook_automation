@@ -11,6 +11,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Fixed
+- The note on a large excitation probability said "first order is not enough … use GOSIA" for a setup whose
+  rates and events already follow its level scheme to all orders. It now says that they do, and that the analysis
+  still extracts B(E2) with first-order theory; without a level scheme it says to give one, or to use GOSIA.
 - γ-ray spectra reach the top of the level scheme. The predicted spectra and the singles stopped at 1.3 × the
   transition energy (1525 keV for ⁶²Ni's 1173 keV), short of the 2302 keV γ ray of its second 2⁺ state. They now
   go to 1.1 × the highest γ-ray energy of the scheme (2532 keV there) at the same width of bin
@@ -85,6 +88,23 @@ workflow builds the wheels, tests them and publishes to PyPI.
   marked stale by a change, the one on screen too.
 
 ### Changed
+- The app is laid out as a workflow. The seven equal tabs are a numbered step bar, **1 Setup → 2 Plan → 3 Run →
+  4 Data → 5 Analysis → 6 Report**, that stays at the top of the window (`workbench.STEPS`, `workbench.steps`).
+  - Each step has a line of status under its name (the detectors, the beam time needed, the runs, the current
+    run and its gates, the B(E2) of the analysed run, what the report holds), a tick when it has its result, and
+    the warning colour when it needs attention. A step that needs a run first says so.
+  - Each step ends with one button that leads on (`workbench.next_step`): *Next: check the plan*, *Next: take a
+    run*, *Next: look at run 2's data*, *Next: analyse run 2*, *Next: the report*.
+  - The setup panel stands beside the Setup step only; Plan, Run, Data, Analysis and Report have the whole width.
+    The status strip is gone: the experiment, beam and target are in the header, and the detectors and warnings
+    under **1 Setup**.
+  - Physics is a button at the top right, not a tab: it is a reference, not a step.
+  - The experiment's name in the header is a menu (open, new, import a setup file, export the setup) in place of
+    four buttons.
+  - The Data step without a run says what it needs; the predicted spectra it used to show are a check of the Plan
+    (*Predicted spectra: what each detector will record*).
+  - The Analysis step opens with a list that jumps to its four parts, and says when it works on a simulated
+    sample because there is no run.
 - There is one report. The Report tab showed three (the record of the experiment, the beam-time report of the
   setup and the run record), and the spectra of the runs were small panels in one of them. They are now the nine
   sections of a single document (`logbook.experiment_html`): summary; setup; plan; runs and their spectra; gates;

@@ -16,7 +16,10 @@ The app draws what this module returns, so every line it shows can be had from P
 → Run conditions. Each is a card with its current state in one line and its consequence in a second; its fields,
 and the rarely touched ones behind a "more" fold.
 
-**The stages** of the experiment are the app's tabs, left to right: :data:`STAGES`.
+**The steps** of an experiment are the app's step bar, left to right: :data:`STEPS` (Setup → Plan → Run → Data →
+Analysis → Report). :func:`steps` gives each step's state and the line under its name, and :func:`next_step` what
+the button at the foot of a step leads to. :data:`STAGES` are the steps and the Physics reference, which the app
+opens from its header.
 """
 
 from __future__ import annotations
@@ -27,9 +30,11 @@ from typing import Optional
 
 from . import guide
 
-#: The app's tabs, left to right: the stages of an experiment. (key, label)
+#: Everything the app's main area can show: the steps of an experiment, then the Physics reference. (key, label)
 STAGES = (("setup", "Setup"), ("plan", "Plan"), ("run", "Run"), ("data", "Data"), ("analysis", "Analysis"),
           ("report", "Report"), ("physics", "Physics"))
+#: The steps of an experiment, in the order they are taken: the app's step bar. (key, label)
+STEPS = STAGES[:6]
 
 # -- the fields of each decision: (field, label, placeholder) -------------------------------------------------------
 BEAM_FIELDS = [("nuclide", "Nuclide", "4He"), ("energy", "Energy", "5.5 MeV or 4 MeV/u"),
@@ -465,6 +470,141 @@ def status_strip(planner) -> list:
     ]
 
 
+# -- the steps ------------------------------------------------------------------------------------------------------
+
+def _span(seconds: float) -> str:
+    if seconds >= 86400:
+        return f"{seconds / 86400:.3g} d"
+    if seconds >= 3600:
+        return f"{seconds / 3600:.3g} h"
+    return f"{seconds / 60:.3g} min" if seconds >= 60 else f"{seconds:.3g} s"
+
+
+def _plan_line(p) -> tuple:
+    """(the line under Plan, done, warn) from the rates: the beam time the counts wanted need against the beam
+    time planned, or the highest rate when no counts are asked for."""
+    r = p.rates()
+    rows = r["rows"]
+    timed = [x for x in rows if x.get("beam_time_s") is not None]
+    if r.get("counts_wanted") and timed:
+        needed = max(x["beam_time_s"] for x in timed)
+        if needed != needed or needed == float("inf"):
+            return "the counts are never reached", False, True
+        enough = needed <= r["beam_time_s"]
+        return f"{_span(needed)} needed" + ("" if enough else f", {_span(r['beam_time_s'])} planned"), enough, not enough
+    fast = max(x["rate_per_s"] for x in rows)
+    return f"up to {_rate(fast)}", True, False
+
+
+def steps(planner) -> list:
+    """The step bar, left to right: for each of :data:`STEPS` {"key", "label", "number", "state", "status",
+    "warn"}.
+
+    ``state`` is "done" (the step has its result: a setup without errors, a beam time that is enough, a run, a
+    run's data, an analysis of the current run), "ready" (it can be worked on) or "waiting" (it needs a run
+    first). ``status`` is the line under the step's name, and ``warn`` marks a status that needs attention
+    (warnings in the setup, a beam time too short, a run taken with another setup). It reads what the page keeps
+    (the rates, the runs' summaries, the analysis kept with the run) and simulates nothing."""
+    p = planner
+    d = p.draft
+    n_p, n_g = len(d["detectors"]), len(d.get("gamma_detectors", []))
+    ws = _try(p.warnings, [])
+    errors = sum(w.level == "error" for w in ws) + len(p.problems)
+    warnings = sum(w.level == "warning" for w in ws)
+    setup = f"{n_p} particle" + (f" + {n_g} γ" if n_g else "")
+    if errors:
+        setup += f" · {errors} error{'s' * (errors != 1)}"
+    elif warnings:
+        setup += f" · {warnings} warning{'s' * (warnings != 1)}"
+    plan, plan_done, plan_warn = _try(lambda: _plan_line(p), ("", False, False))
+
+    runs = _try(p.runs, [])
+    run = p.run
+    stale = bool(_try(p.run_status, None) and p.run_status()["stale"])
+    if p.running:
+        taken, run_state = "a run is being taken", "ready"
+    elif runs:
+        last = run.describe().split(";")[0] if run is not None else runs[-1]["describe"].split(";")[0]
+        taken = f"{len(runs)} run{'s' * (len(runs) != 1)} · " + last[0].lower() + last[1:]
+        if stale:
+            taken = f"run {run.number}: setup changed since"
+        run_state = "done"
+    else:
+        taken, run_state = "no run yet", "ready"
+
+    if run is None:
+        data, data_state = "needs a run", "waiting"
+    else:
+        gates = len(_try(p.gates, []))
+        data = f"run {run.number}" + (f" · {gates} gate{'s' * (gates != 1)}" if gates and run.kind != "source" else "")
+        data_state = "done"
+
+    result = _try(p.run_analysis, None) if run is not None else None
+    coulex = p.experiment.excitation is not None and bool(p.experiment.gamma_detectors)
+    if not coulex:
+        analysis, analysis_state = "needs Coulomb excitation and γ detectors", "waiting"
+    elif result is not None and getattr(result, "b_e2fm4", None) is not None:
+        analysis, analysis_state = f"run {run.number}: B(E2↑) {_num(result.b_e2fm4, 4)} e²fm⁴", "done"
+    elif result is not None:
+        analysis, analysis_state = f"run {run.number} analysed", "done"
+    elif run is None:
+        analysis, analysis_state = "no run: on a sample", "ready"
+    elif run.kind == "source":
+        analysis, analysis_state = "the current run is a source run", "ready"
+    else:
+        analysis, analysis_state = f"run {run.number} not analysed yet", "ready"
+
+    report = f"the plan and {len(runs)} run{'s' * (len(runs) != 1)}" if runs else "the plan only"
+    out = {"setup": ("ready" if errors else "done", setup, bool(errors or warnings)),
+           "plan": ("done" if plan_done and not errors else "ready", plan, plan_warn),
+           "run": (run_state, taken, stale),
+           "data": (data_state, data, False),
+           "analysis": (analysis_state, analysis, False),
+           "report": ("ready", report, False)}
+    return [{"key": key, "label": label, "number": i, "state": out[key][0], "status": out[key][1],
+             "warn": out[key][2]} for i, (key, label) in enumerate(STEPS, 1)]
+
+
+def next_step(planner, key: str, pending: int = 0) -> Optional[dict]:
+    """What the foot of the step ``key`` says and where its button leads: {"hint", "label", "to"} (``label`` and
+    ``to`` None when there is nothing to go on to yet), or None for a stage that is not a step. ``pending`` is the
+    number of changes of the setup that wait for Apply."""
+    p = planner
+    run = p.run
+    if key == "setup":
+        if p.problems:
+            return {"hint": "The setup has a problem: the checks at the top of the setup panel say what.",
+                    "label": None, "to": None}
+        hint = (f"{pending} change{'s' * (pending != 1)} wait{'s' * (pending == 1)} for Apply: the plan is for the "
+                "setup as it was applied." if pending else "The setup is applied.")
+        return {"hint": hint, "label": "Next: check the plan", "to": "plan"}
+    if key == "plan":
+        return {"hint": "When the rates and the beam time are what you want, take a run.",
+                "label": "Next: take a run", "to": "run"}
+    if key == "run":
+        if p.running:
+            return {"hint": "The run is being taken; its data are there when it ends.", "label": None, "to": None}
+        if run is None:
+            return {"hint": "No run yet: choose its length above and press Run.", "label": None, "to": None}
+        return {"hint": f"Run {run.number} is the current run.", "label": f"Next: look at run {run.number}'s data",
+                "to": "data"}
+    if key == "data":
+        if run is None:
+            return {"hint": "The spectra are a run's.", "label": "Take a run", "to": "run"}
+        if run.kind == "source":
+            return {"hint": f"Run {run.number} is a source run: it measures the γ-ray efficiency. The analysis "
+                            "reads a beam run.", "label": "Take a beam run", "to": "run"}
+        return {"hint": "A gate saved here can be used by the analysis.", "label": f"Next: analyse run {run.number}",
+                "to": "analysis"}
+    if key == "analysis":
+        return {"hint": "The analysis of a run is kept with it, and the report holds it.",
+                "label": "Next: the report", "to": "report"}
+    if key == "report":
+        return {"hint": "The report is the last step: it holds the setup, the plan, the runs and their analysis.",
+                "label": None, "to": None}
+    return None
+
+
 # -- new experiments ------------------------------------------------------------------------------------------------
 
 def template(key: str):
@@ -636,5 +776,6 @@ _SUPERSCRIPT = {2: "²", 4: "⁴", 6: "⁶", 8: "⁸"}
 
 
 __all__ = ["card_setup", "changes", "draft_decisions", "COMPOUND", "GROUPS", "MEASUREMENTS", "NATURAL", "NOT_SIMULATED", "PHYSICS", "PHYSICS_FOR", "physics_for",
-           "STAGES", "TEMPLATES", "Decision", "checks", "decisions", "elements", "mass_numbers", "most_abundant",
-           "new_setup", "new_setup_notes", "split_nuclide", "states", "status_strip", "template"]
+           "STAGES", "STEPS", "TEMPLATES", "Decision", "checks", "decisions", "elements", "mass_numbers",
+           "most_abundant", "new_setup", "new_setup_notes", "next_step", "split_nuclide", "states", "status_strip",
+           "steps", "template"]
