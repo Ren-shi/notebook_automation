@@ -37,8 +37,9 @@ distance = "100 mm"
 thickness = "300 um"
 ```
 
-Each `[[detectors]]` block adds one detector; repeat it for as many as you need. Two complete examples are in
-physim (`physim.nuclear.example_names()` lists them).
+Each `[[detectors]]` block adds one detector; repeat it for as many as you need. Complete examples are in
+physim (`physim.nuclear.example_names()` lists them), among them `coulex_ni62_pt194`: ⁶²Ni at 237 MeV on ¹⁹⁴Pt
+with the silicon detectors at backward angles and the level schemes of both nuclei.
 
 From Python:
 

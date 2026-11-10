@@ -74,7 +74,10 @@ SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circl
 GROUPS = ("Beam", "Target and reaction", "Particle detectors", "γ-ray detectors", "Run conditions")
 
 #: Starting points for a new experiment's detectors: the examples, named for what they are. (key, label, example)
+#: The first is what the app opens when there is no experiment yet.
 TEMPLATES = (
+    ("coulex-beam-backward", "Coulomb excitation of the beam (62Ni on 194Pt) with silicon at backward angles",
+     "coulex_ni62_pt194"),
     ("coulex-cd-clovers", "Coulomb excitation of a target nucleus with a CD and clovers", "coulex_ni58"),
     ("elastic-dssd", "Elastic scattering with silicon pads", "alpha_on_gold"),
     ("elastic-array", "Elastic scattering with an array of strip detectors", "oxygen_on_lead_array"),

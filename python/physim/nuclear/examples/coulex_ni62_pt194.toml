@@ -1,0 +1,452 @@
+schema = "physim.experiment/1"
+title = "Coulomb excitation of 62Ni on 194Pt"
+description = "Coulomb excitation of a 62Ni beam (charge state 6+, 237 MeV) on 194Pt, seen at backward angles: an annular silicon detector 300 mm behind the target catches the backscattered beam (the beam comes in through its hole), two strip detectors stand at 130 deg, clear of the forward-scattered beam and of the target recoils, and four germanium detectors see the gamma rays. The reaction excites the projectile's first 2+ state (1172.91 keV). The level schemes of 62Ni (with its 4+ state at 2336 keV) and of 194Pt (2+ at 328 keV) are from ENSDF: the first feeds the cascades and the multi-step solution, the second is there to study the target's excitation."
+
+[reaction]
+type = "coulex"
+excite = "projectile"
+energy = "1172.91 keV"
+multipolarity = "E2"
+b_up = "884.105 e2fm4"
+
+[beam]
+nuclide = "62Ni"
+energy = "237 MeV"
+current = "1 pnA"
+charge_state = 6
+
+[target]
+material = "194Pt"
+thickness = "0.5 mg/cm2"
+
+[run]
+beam_time = "24 h"
+counts_wanted = 500
+
+[[detectors]]
+name = "CD"
+shape = "annular"
+theta = "180 deg"
+distance = "300 mm"
+inner_radius = "9 mm"
+outer_radius = "41 mm"
+rings = 16
+sectors = 24
+thickness = "300 um"
+dead_layer = "0.5 um"
+resolution = "50 keV"
+threshold = "500 keV"
+
+[[detectors]]
+name = "DSSD-L"
+shape = "rectangle"
+theta = "130 deg"
+phi = "0 deg"
+distance = "100 mm"
+width = "50 mm"
+height = "50 mm"
+strips_x = 16
+strips_y = 16
+thickness = "500 um"
+dead_layer = "0.5 um"
+resolution = "50 keV"
+threshold = "500 keV"
+
+[[detectors]]
+name = "DSSD-R"
+shape = "rectangle"
+theta = "130 deg"
+phi = "180 deg"
+distance = "100 mm"
+width = "50 mm"
+height = "50 mm"
+strips_x = 16
+strips_y = 16
+thickness = "500 um"
+dead_layer = "0.5 um"
+resolution = "50 keV"
+threshold = "500 keV"
+
+[[gamma_detectors]]
+name = "Ge90"
+theta = "90 deg"
+phi = "90 deg"
+distance = "120 mm"
+radius = "35 mm"
+resolution = "2.5 keV"
+
+[[gamma_detectors]]
+name = "Ge45"
+theta = "45 deg"
+phi = "-90 deg"
+distance = "120 mm"
+radius = "35 mm"
+resolution = "2.5 keV"
+
+[[gamma_detectors]]
+name = "Ge135"
+theta = "135 deg"
+phi = "90 deg"
+distance = "120 mm"
+radius = "35 mm"
+resolution = "2.5 keV"
+
+[[gamma_detectors]]
+name = "Ge0"
+theta = "25 deg"
+phi = "90 deg"
+distance = "150 mm"
+radius = "35 mm"
+resolution = "2.5 keV"
+
+[levels]
+
+[levels.beam]
+nuclide = "62Ni"
+reference = "ENSDF, adopted levels and γ rays of 62Ni, NDS 204, 1 (2025) (file dated 202507)"
+
+[[levels.beam.level]]
+energy = "0 keV"
+jpi = "0+"
+source = "ensdf"
+
+[[levels.beam.level]]
+energy = "1172.91 keV"
+energy_unc = 0.03
+jpi = "2+"
+half_life = "1.442e-12 s"
+half_life_unc = 2.1000000000000002e-14
+source = "ensdf"
+
+[[levels.beam.level]]
+energy = "2048.55 keV"
+energy_unc = 0.08
+jpi = "0+"
+half_life = "1.4e-12 s"
+half_life_unc = 5.1e-13
+source = "ensdf"
+
+[[levels.beam.level]]
+energy = "2301.85 keV"
+energy_unc = 0.07
+jpi = "2+"
+half_life = "6.4e-13 s"
+half_life_unc = 1.4e-13
+source = "ensdf"
+
+[[levels.beam.level]]
+energy = "2336.46 keV"
+energy_unc = 0.09
+jpi = "4+"
+half_life = "8.8e-13 s"
+half_life_unc = 2.1e-13
+source = "ensdf"
+
+[[levels.beam.level]]
+energy = "2890.63 keV"
+energy_unc = 0.15
+jpi = "0+"
+half_life = "3.1e-12 s"
+source = "ensdf"
+
+[[levels.beam.transition]]
+from = 1
+to = 0
+energy = "1172.89 keV"
+energy_unc = 0.03
+intensity = 100
+multipolarity = "E2"
+conversion = 0.000172
+conversion_unc = 2e-06
+b_e2_wu = 12.13
+b_e2_wu_unc = 0.18
+source = "ensdf"
+
+[[levels.beam.transition]]
+from = 2
+to = 1
+energy = "875.63 keV"
+energy_unc = 0.07
+intensity = 100
+multipolarity = "E2"
+conversion = 0.000335
+conversion_unc = 4.9999999999999996e-06
+b_e2_wu = 54
+b_e2_wu_unc = 31
+source = "ensdf"
+
+[[levels.beam.transition]]
+from = 2
+to = 0
+energy = "2048.4 keV"
+multipolarity = "E0"
+source = "ensdf"
+
+[[levels.beam.transition]]
+from = 3
+to = 1
+energy = "1128.88 keV"
+energy_unc = 0.1
+intensity = 76.8
+intensity_unc = 2.2
+multipolarity = "M1+E2+E0"
+mixing = 3.1
+mixing_unc = 0.1
+conversion = 0.000244
+conversion_unc = 1.4e-05
+b_e2_wu = 13
+b_e2_wu_unc = 3.6
+b_m1_wu = 0.00098
+b_m1_wu_unc = 0.00029
+source = "ensdf"
+
+[[levels.beam.transition]]
+from = 3
+to = 0
+energy = "2301.78 keV"
+energy_unc = 0.11
+intensity = 100
+intensity_unc = 3.3000000000000003
+multipolarity = "E2"
+conversion = 0.000504
+conversion_unc = 7e-06
+b_e2_wu = 0.53
+b_e2_wu_unc = 0.15
+source = "ensdf"
+
+[[levels.beam.transition]]
+from = 4
+to = 1
+energy = "1163.49 keV"
+energy_unc = 0.1
+intensity = 100
+multipolarity = "E2"
+conversion = 0.000174
+conversion_unc = 2e-06
+b_e2_wu = 21
+b_e2_wu_unc = 7
+source = "ensdf"
+
+[[levels.beam.transition]]
+from = 5
+to = 1
+energy = "1717.8 keV"
+energy_unc = 0.25
+intensity = 100
+multipolarity = "E2"
+conversion = 0.000255
+conversion_unc = 4e-06
+source = "ensdf"
+
+[[levels.beam.matrix_element]]
+from = 1
+to = 1
+multipolarity = "E2"
+value = "6.596887884 efm2"
+value_unc = 15.832530921167821
+source = "derived"
+note = "from the quadrupole moment Q = 0.05 b in ENSDF"
+
+[[levels.beam.matrix_element]]
+from = 0
+to = 1
+multipolarity = "E2"
+value = "29.73390887 efm2"
+value_unc = 0.22061432798318417
+source = "derived"
+note = "from B(E2) = 12.13 W.u. in ENSDF; sign assumed positive"
+
+[[levels.beam.matrix_element]]
+from = 1
+to = 2
+multipolarity = "E2"
+value = "28.05649941 efm2"
+value_unc = 8.05325445893181
+source = "derived"
+note = "from B(E2) = 54 W.u. in ENSDF; sign assumed positive"
+
+[[levels.beam.matrix_element]]
+from = 1
+to = 3
+multipolarity = "E2"
+value = "30.78174824 efm2"
+value_unc = 4.262088217547663
+source = "derived"
+note = "from B(E2) = 13 W.u. in ENSDF; sign assumed positive"
+
+[[levels.beam.matrix_element]]
+from = 0
+to = 3
+multipolarity = "E2"
+value = "6.215263427 efm2"
+value_unc = 0.8795184094419928
+source = "derived"
+note = "from B(E2) = 0.53 W.u. in ENSDF; sign assumed positive"
+
+[[levels.beam.matrix_element]]
+from = 1
+to = 4
+multipolarity = "E2"
+value = "52.48890412 efm2"
+value_unc = 8.748150687241662
+source = "derived"
+note = "from B(E2) = 21 W.u. in ENSDF; sign assumed positive"
+
+[[levels.beam.matrix_element]]
+from = 1
+to = 5
+multipolarity = "E2"
+value = "3.492560042 efm2"
+source = "derived"
+note = "from the half-life 3.1e-12 s and the γ-ray branching in ENSDF; sign assumed positive"
+
+[levels.target]
+nuclide = "194Pt"
+reference = "ENSDF, adopted levels and γ rays of 194Pt, NDS 177, 1 (2021) (file dated 202109)"
+
+[[levels.target.level]]
+energy = "0 keV"
+jpi = "0+"
+source = "ensdf"
+
+[[levels.target.level]]
+energy = "328.473 keV"
+energy_unc = 0.004
+jpi = "2+"
+half_life = "4.17e-11 s"
+half_life_unc = 1.7000000000000002e-12
+source = "ensdf"
+
+[[levels.target.level]]
+energy = "622.024 keV"
+energy_unc = 0.004
+jpi = "2+"
+half_life = "3.5e-11 s"
+half_life_unc = 4e-12
+source = "ensdf"
+
+[[levels.target.level]]
+energy = "811.288 keV"
+energy_unc = 0.007
+jpi = "4+"
+half_life = "3.7e-12 s"
+half_life_unc = 2e-13
+source = "ensdf"
+
+[[levels.target.transition]]
+from = 1
+to = 0
+energy = "328.469 keV"
+energy_unc = 0.006
+intensity = 100
+multipolarity = "E2"
+conversion = 0.0755
+b_e2_wu = 49.5
+b_e2_wu_unc = 2
+source = "ensdf"
+
+[[levels.target.transition]]
+from = 2
+to = 1
+energy = "293.547 keV"
+energy_unc = 0.007
+intensity = 100
+intensity_unc = 1
+multipolarity = "E2+M1+E0"
+mixing = 15
+mixing_unc = 2
+conversion = 0.106
+conversion_unc = 0.0016
+b_e2_wu = 89
+b_e2_wu_unc = 12
+b_m1_wu = 8.8e-05
+b_m1_wu_unc = 4.4999999999999996e-05
+source = "ensdf"
+
+[[levels.target.transition]]
+from = 2
+to = 0
+energy = "622.007 keV"
+energy_unc = 0.01
+intensity = 13.68
+intensity_unc = 0.15
+multipolarity = "E2"
+conversion = 0.01483
+b_e2_wu = 0.286
+b_e2_wu_unc = 0.044
+source = "ensdf"
+
+[[levels.target.transition]]
+from = 3
+to = 1
+energy = "482.806 keV"
+energy_unc = 0.008
+intensity = 100
+multipolarity = "E2"
+conversion = 0.027
+b_e2_wu = 85.1
+b_e2_wu_unc = 4.800000000000001
+source = "ensdf"
+
+[[levels.target.matrix_element]]
+from = 1
+to = 1
+multipolarity = "E2"
+value = "63.33012368 efm2"
+value_unc = 18.471286074695794
+source = "derived"
+note = "from the quadrupole moment Q = 0.48 b in ENSDF"
+
+[[levels.target.matrix_element]]
+from = 2
+to = 2
+multipolarity = "E2"
+value = "-65.96887884 efm2"
+value_unc = 65.96887883819926
+source = "derived"
+note = "from the quadrupole moment Q = -0.5 b in ENSDF"
+
+[[levels.target.matrix_element]]
+from = 3
+to = 3
+multipolarity = "E2"
+value = "66.30460049 efm2"
+value_unc = 132.60920098310234
+source = "derived"
+note = "from the quadrupole moment Q = 0.5 b in ENSDF"
+
+[[levels.target.matrix_element]]
+from = 0
+to = 1
+multipolarity = "E2"
+value = "128.4983542 efm2"
+value_unc = 2.595926348113461
+source = "derived"
+note = "from B(E2) = 49.5 W.u. in ENSDF; sign assumed positive"
+
+[[levels.target.matrix_element]]
+from = 1
+to = 2
+multipolarity = "E2"
+value = "172.3018614 efm2"
+value_unc = 11.615855825535355
+source = "derived"
+note = "from B(E2) = 89 W.u. in ENSDF; sign assumed positive"
+
+[[levels.target.matrix_element]]
+from = 0
+to = 2
+multipolarity = "E2"
+value = "9.767377711 efm2"
+value_unc = 0.7513367469772961
+source = "derived"
+note = "from B(E2) = 0.286 W.u. in ENSDF; sign assumed positive"
+
+[[levels.target.matrix_element]]
+from = 1
+to = 3
+multipolarity = "E2"
+value = "226.0455691 efm2"
+value_unc = 6.374963171098221
+source = "derived"
+note = "from B(E2) = 85.1 W.u. in ENSDF; sign assumed positive"

@@ -165,9 +165,10 @@ lives in a folder under `~/.physim/experiments`, where the setup is saved every 
   to measure: elastic scattering, or Coulomb excitation of the target or the beam. It names the experiment from
   them (for example *16O on 208Pb*) and puts one particle detector where the kinematics send the particles. For
   Coulomb excitation it takes the first 2⁺ state from your local ENSDF copy; without one it says what to enter.
-- **Detectors from** starts from a template instead: *Coulomb excitation of a target nucleus with a CD and
-  clovers*, *Elastic scattering with silicon pads*, *Elastic scattering with an array of strip detectors*, or
-  *Blank*. A template brings its own beam and target.
+- **Detectors from** starts from a template instead: *Coulomb excitation of the beam (62Ni on 194Pt) with
+  silicon at backward angles*, *Coulomb excitation of a target nucleus with a CD and clovers*, *Elastic
+  scattering with silicon pads*, *Elastic scattering with an array of strip detectors*, or *Blank*. A template
+  brings its own beam and target. The first of them is what the planner shows before there is any experiment.
 - **Experiments** (top) lists your experiments, newest first; **Open** one to carry on where you left it.
 - **Import a setup file** replaces the current setup with a `.toml` file; **Export the setup** downloads it (see
   {doc}`nuclear-setup`).
