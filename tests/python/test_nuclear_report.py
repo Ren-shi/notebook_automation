@@ -98,9 +98,13 @@ def test_exports(tmp_path, alpha):
     assert len(rows) == 6 and "solid_angle_msr" in rows[0] and "rate_per_s" in rows[0]
     assert Experiment.load(tmp_path / "setup.toml").to_dict() == alpha.experiment.to_dict()
     text = (tmp_path / "report.html").read_text(encoding="utf-8")
+    for heading in ("Warnings", "Detectors", "Kinematics", "Expected peaks", "Energy loss",
+                    "Simulated spectra", "Models and their validation", "Data and references"):
+        assert f"<h3>{heading}" in text, heading
+    assert '<h2 id="setup">2. The setup</h2>' in text and "No run yet" in text  # the one report, without runs
     for heading in ("Warnings", "Setup", "Detectors", "Kinematics", "Expected peaks", "Energy loss",
                     "Simulated spectra", "Models and their validation", "Data and references"):
-        assert f"<h2>{heading}" in text, heading
+        assert f"<h2>{heading}" in alpha.to_html(), heading  # the plan alone, as a page
     assert "pile-up" in text and "AME2020" in text and "@media print" in text
     assert text.count("data:image/png;base64,") == 4
     assert ">nan<" not in text.lower()
@@ -149,7 +153,8 @@ def test_coulomb_excitation_in_the_report(tmp_path):
     paths = {p.name for p in rep.write(tmp_path, figures=False, root=False)}
     assert "gamma.csv" in paths
     text = (tmp_path / "report.html").read_text(encoding="utf-8")
-    assert "<h2>Coulomb excitation" in text and "B(E2↑)" in text and "Doppler shift" in text
+    assert "<h3>Coulomb excitation" in text and "B(E2↑)" in text and "Doppler shift" in text
+    assert "<h2>Coulomb excitation" in rep.to_html()
     # The inelastic peak sits below the elastic one by the kinematic difference at the CD's angles: less than
     # E* for backscattered 16O, as the recoil takes part of Q.
     from physim.nuclear.kinematics import TwoBody
@@ -224,4 +229,4 @@ def test_the_app_downloads_the_report():
 
     data = report_zip(Planner.example("alpha_on_gold"), seed=1, events=20_000)
     names = zipfile.ZipFile(io.BytesIO(data)).namelist()
-    assert {"report.html", "detectors.csv", "setup.toml", "figures/spectra.pdf"} <= set(names)
+    assert {"report.html", "tables/detectors.csv", "setup.toml", "figures/spectra.pdf"} <= set(names)

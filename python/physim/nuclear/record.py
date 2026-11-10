@@ -393,7 +393,13 @@ def provenance(experiment) -> list:
 
 
 LEFT_OUT = (
-    "Excitation in more than one step and the reorientation effect (first-order theory only).",
+    "Excitation in more than one step and the reorientation effect where the setup has no level scheme of the "
+    "excited nucleus, or says order = \"first\": the events are then first-order theory. With a level scheme its "
+    "levels are populated, and oriented, as the coupled equations give them to all orders. The analysis extracts "
+    "B(E2) with first-order theory in either case.",
+    "With a level scheme: every excitation has the kinematics of the [reaction] state, whichever level it reached; "
+    "elastic scattering is not reduced by the excitation probability; the E1 polarisation and the excitation of "
+    "both nuclei in one collision are not in the coupled equations.",
     "Deorientation; and lifetimes only where the level scheme gives a half-life (the nucleus then slows down along "
     "its path and decays on the way, with its orientation unchanged; no angular straggling).",
     "Cascades: followed through the level scheme when the setup has one (one γ ray per excitation otherwise); the "
@@ -401,6 +407,25 @@ LEFT_OUT = (
     "Pile-up, summing, and reactions on contaminants of the target.",
     "Photon transport inside the crystals: the response is parametrised and typical unless measured.",
 )
+
+
+def method_html() -> str:
+    """The method of a Coulomb-excitation measurement as the simulation follows it, step by step (an ordered
+    list)."""
+    return ("<ol>"
+            "<li><b>Scattering.</b> The beam particle follows a Rutherford orbit past the target nucleus; "
+            "the scattering angle fixes how close it comes.</li>"
+            "<li><b>Excitation.</b> The passing charge's field lifts the nucleus to the state with "
+            "probability P(θ), proportional to B(Eλ↑), and leaves it oriented.</li>"
+            "<li><b>Detection of the particle.</b> The scattered beam or the recoil reaches a ring and sector "
+            "of a silicon detector, losing energy on the way out of the target and in the dead layer.</li>"
+            "<li><b>Decay.</b> The nucleus leaves the target and emits its γ ray in flight, with the angular "
+            "correlation its orientation gives, Doppler-shifted by its motion.</li>"
+            "<li><b>Detection of the γ ray.</b> A crystal records the full energy, a Compton deposit or an "
+            "escape peak, with its resolution; chance coincidences and the room background join the "
+            "spectrum.</li>"
+            "<li><b>Doppler correction.</b> From the segment and crystal that fired, and two-body kinematics, "
+            "the energy is corrected back to the nucleus's frame.</li></ol>")
 
 
 def record_html(planner, result=None, title: Optional[str] = None, scene_png: Optional[str] = None) -> str:
@@ -429,20 +454,7 @@ def record_html(planner, result=None, title: Optional[str] = None, scene_png: Op
                  "<p>Sources: <em>ensdf</em> is the evaluated data as read; <em>derived</em> is computed from "
                  "ENSDF's values by physim; <em>assumed</em> is a typical value, not a measurement; <em>user</em> "
                  "was given in the setup.</p>")
-    parts.append("<h2>3. The method, step by step</h2><ol>"
-                 "<li><b>Scattering.</b> The beam particle follows a Rutherford orbit past the target nucleus; "
-                 "the scattering angle fixes how close it comes.</li>"
-                 "<li><b>Excitation.</b> The passing charge's field lifts the nucleus to the state with "
-                 "probability P(θ), proportional to B(Eλ↑), and leaves it oriented.</li>"
-                 "<li><b>Detection of the particle.</b> The scattered beam or the recoil reaches a ring and sector "
-                 "of a silicon detector, losing energy on the way out of the target and in the dead layer.</li>"
-                 "<li><b>Decay.</b> The nucleus leaves the target and emits its γ ray in flight, with the angular "
-                 "correlation its orientation gives, Doppler-shifted by its motion.</li>"
-                 "<li><b>Detection of the γ ray.</b> A crystal records the full energy, a Compton deposit or an "
-                 "escape peak, with its resolution; chance coincidences and the room background join the "
-                 "spectrum.</li>"
-                 "<li><b>Doppler correction.</b> From the segment and crystal that fired, and two-body kinematics, "
-                 "the energy is corrected back to the nucleus's frame.</li></ol>")
+    parts.append("<h2>3. The method, step by step</h2>" + method_html())
     parts.append("<h2>4. Every number, explained</h2>")
     for x in explanations(planner):
         parts.append(_explanation_html(x))
@@ -489,7 +501,19 @@ def record_css(scope: str = "body") -> str:
             f"padding:8px 14px;margin:10px 0}}{s} .x h3{{margin:0 0 4px}}{s} .x .v{{font-family:monospace;"
             f"font-size:1.1em}}{s} .x .f{{font-family:monospace;background:rgba(127,127,127,0.12);padding:4px 8px;"
             f"margin:4px 0}}{s} .x .m{{margin:4px 0}}{s} .x .a{{opacity:0.75;font-size:0.92em}}"
-            + ("@media print{body{max-width:none}}" if scope == "body" else ""))
+            f"{s} ul{{list-style:disc;padding-left:1.5em}}{s} ol{{list-style:decimal;padding-left:1.5em}}"
+            f"{s} p{{margin:0.5em 0}}{s} a{{text-decoration:underline}}"
+            f"{s} figure{{margin:1em 0}}{s} figure img{{max-width:100%}}"
+            f"{s} img[alt^='Level scheme']{{max-width:62%}}{s} img[alt='Setup in 3D'],{s} img[alt='Coverage'],"
+            f"{s} img[alt='Kinematics'],{s} img[alt='Spectra']{{max-width:70%}}{s} figcaption{{font-size:0.88em;"
+            f"opacity:0.8}}{s} .sub{{opacity:0.7;margin-top:0}}{s} ol.toc{{columns:2;margin:0.6em 0 1em}}"
+            f"{s} ul.warnings li{{margin:0.2em 0}}{s} .err{{color:#a40000;font-weight:600}}"
+            f"{s} .warn{{color:#8a4b00}}{s} p.f{{font-family:monospace;background:rgba(127,127,127,0.12);"
+            f"padding:4px 8px}}"
+            + ("@page{size:A4;margin:16mm}@media print{body{max-width:none;font-size:10.5pt}"
+               "h2,h3,h4{break-after:avoid}figure,tr,.x{break-inside:avoid}figure img{max-height:225mm}"
+               "a{color:inherit;text-decoration:none}}"
+               if scope == "body" else ""))
 
 
 
@@ -502,5 +526,6 @@ def _explanation_html(x: Explanation) -> str:
             f'<div class="a">Assumptions: {e(x.assumptions)} <a href="{e(x.reference)}">Theory</a></div></div>')
 
 
-__all__ = ["DOCS", "Explanation", "LEFT_OUT", "analysis_explanations", "explanations", "provenance", "record_css",
+__all__ = ["DOCS", "Explanation", "LEFT_OUT", "analysis_explanations", "explanations", "method_html", "provenance",
+           "record_css",
            "record_html"]

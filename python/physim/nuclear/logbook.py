@@ -1,15 +1,15 @@
-"""The record of an experiment and its runs (backlog item 69): the report of the experiment, and the explanations of
-the numbers the runs add (their counters, the gates, predicted against measured).
+"""The report of an experiment (backlog item 69): one page with the setup, the plan, every run and its spectra, the
+gates, the Doppler correction, the analysis, every number explained, and the method.
 
-The beam-time report (:mod:`physim.nuclear.report`) and the run record (:mod:`physim.nuclear.record`) describe one
-setup; this module describes the experiment: its current setup and how it changed from run to run, the Plan, every
-run with its summary and the setup it was taken with, the gates of the Data tab, the analysis of the run the user
-chose, and the links to the physics register::
+There is one report. What used to be three pages (the beam-time report of the setup, the record of the experiment
+and the run record) are its sections, so the plan, the spectra the runs gave and the numbers' explanations are
+read together::
 
     from physim.nuclear import logbook
 
-    page = logbook.experiment_html(planner, result)          # one self-contained page, every run's spectra in it
-    data = logbook.experiment_zip(planner, result)           # it, the run record, the setup, the beam-time report,
+    page = logbook.experiment_html(planner, result)          # the report: one self-contained HTML page
+    pdf = logbook.experiment_pdf(planner, result)            # the same as a PDF, printed by a browser found here
+    data = logbook.experiment_zip(planner, result)           # report.html, report.pdf, the setup, the tables,
                                                              # and the experiment folder with every run
     for x in logbook.run_explanations(planner, planner.run):  # each with its formula, numbers and meaning
         assert x.recompute() == x.value
@@ -156,33 +156,110 @@ def setup_history(planner) -> list:
     return out
 
 
+class _CachedGate:
+    """A gate whose mask over a run's particles is worked out once: the report draws many spectra under it."""
+
+    def __init__(self, gate):
+        self.gate = gate
+        self._masks: dict = {}
+
+    @property
+    def name(self) -> str:
+        return self.gate.name
+
+    @property
+    def detectors(self):
+        return self.gate.detectors
+
+    def describe(self) -> str:
+        return self.gate.describe()
+
+    def mask(self, events, experiment) -> np.ndarray:
+        key = id(events)
+        if key not in self._masks:
+            self._masks[key] = (events, self.gate.mask(events, experiment))
+        return self._masks[key][1]
+
+
+#: The width of a bin of the report's γ-ray spectra, keV.
+GAMMA_BIN_KEV = 4.0
+
+
+def gamma_lines(experiment) -> list:
+    """The γ rays the excited nucleus can emit, for marking on a corrected spectrum: [{"energy_kev", "label"}],
+    from its level scheme (E0 transitions emit none), or the one transition of the reaction without a scheme."""
+    exc = experiment.excitation
+    if exc is None:
+        return []
+    scheme = experiment.levels.get("target" if exc.excite == "target" else "beam")
+    if scheme is None or not scheme.transitions:
+        return [{"energy_kev": 1e3 * exc.energy_mev, "label": "the transition"}]
+    out = []
+    for t in scheme.transitions:
+        if t.multipolarity.strip() == "E0":
+            continue
+        up, low = scheme.levels[t.initial], scheme.levels[t.final]
+        out.append({"energy_kev": float(t.energy.value), "label": f"{up.label} → {low.label}",
+                    "from_kev": float(up.energy.value)})
+    return sorted(out, key=lambda x: x["energy_kev"])
+
+
+def _correction_of(run, result) -> str:
+    settings = dict(getattr(result, "settings", {}) or {})
+    correction = settings.get("correction", "emitter")
+    if correction not in ("projectile", "recoil"):
+        exc = run.experiment.excitation
+        correction = "recoil" if exc is not None and exc.excite == "target" else "projectile"
+    return correction
+
+
+def _gamma_set(run, correction: str, gate=None) -> dict:
+    """The γ-ray spectra of a run under one gate: {"detectors": {name: {"raw", "corrected"}}, "total": {...}},
+    each a spectrum of :func:`~physim.nuclear.dataviews.gamma_spectrum` to the top of the level scheme."""
+    from . import dataviews as dv
+
+    g = run.gammas()
+    lo, hi = dv.gamma_range(g, run.experiment)
+    bins = max(int(round(1e3 * (hi - lo) / GAMMA_BIN_KEV)), 50)
+    out = {"detectors": {}, "total": None}
+    for n in g.detector_names():
+        out["detectors"][n] = {
+            "raw": dv.gamma_spectrum(run, n, correction="off", gate=gate, randoms="none", bins=bins, range=(lo, hi)),
+            "corrected": dv.gamma_spectrum(run, n, correction=correction, gate=gate, randoms="none", bins=bins,
+                                           range=(lo, hi))}
+    if out["detectors"]:
+        first = next(iter(out["detectors"].values()))
+        out["total"] = {k: {"edges": first[k]["edges"],
+                            "counts": np.sum([s[k]["counts"] for s in out["detectors"].values()], axis=0)}
+                        for k in ("raw", "corrected")}
+    return out
+
+
 def run_views(planner, run, result=None) -> dict:
-    """What the record draws of a run: the spectra of every particle detector and, for every γ-ray detector, the
-    raw spectrum and the Doppler-corrected one (:mod:`physim.nuclear.dataviews`), with the correction and the gate
-    the analysis used (``result``) or, without an analysis, the correction for the nucleus that was excited and no
-    gate. Returns {"particles": {name: spectrum}, "gammas": {name: {"raw": spectrum, "corrected": spectrum}},
-    "correction", "gate", "source": the crystals' spectra of a source run}."""
+    """What the report draws of a run: the spectra of every particle detector and, for every γ-ray detector, the
+    raw spectrum and the Doppler-corrected one (:mod:`physim.nuclear.dataviews`), to the top of the level scheme,
+    with the correction and the gate the analysis used (``result``) or, without an analysis, the correction for
+    the nucleus that was excited and no gate. Returns {"particles": {name: spectrum}, "gammas": {name: {"raw":
+    spectrum, "corrected": spectrum}}, "total": the γ-ray detectors summed, "particles_all": the particle
+    detectors' spectra without the gate (None without a gate), "correction", "gate", "source": the crystals'
+    spectra of a source run}."""
     from . import dataviews as dv
 
     if run.kind == "source":
         sr = run.source()
-        return {"particles": {}, "gammas": {}, "correction": None, "gate": None,
-                "source": {n: {"counts": sr.spectra[n], "edges": sr.edges} for n in sr.names()}}
-    exp = run.experiment
+        return {"particles": {}, "particles_all": None, "gammas": {}, "total": None, "correction": None,
+                "gate": None, "source": {n: {"counts": sr.spectra[n], "edges": sr.edges} for n in sr.names()}}
     settings = dict(getattr(result, "settings", {}) or {})
-    correction = settings.get("correction", "emitter")
-    if correction not in ("projectile", "recoil"):
-        correction = "recoil" if exp.excitation is not None and exp.excitation.excite == "target" else "projectile"
+    correction = _correction_of(run, result)
     gate = _gate_of(planner, settings)
+    cached = _CachedGate(gate) if gate is not None else None
     ev = run.events()
-    out = {"particles": {d: dv.particle_spectrum(run, d, gate=gate) for d in ev.detectors}, "gammas": {},
-           "correction": correction, "gate": gate, "source": None}
-    g = run.gammas()
-    if g is not None:
-        for n in g.detector_names():
-            out["gammas"][n] = {"raw": dv.gamma_spectrum(run, n, correction="off", gate=gate, randoms="none"),
-                                "corrected": dv.gamma_spectrum(run, n, correction=correction, gate=gate,
-                                                               randoms="none")}
+    out = {"particles": {d: dv.particle_spectrum(run, d, gate=cached) for d in ev.detectors}, "gammas": {},
+           "particles_all": ({d: dv.particle_spectrum(run, d) for d in ev.detectors} if gate is not None else None),
+           "total": None, "correction": correction, "gate": gate, "source": None}
+    if run.gammas() is not None:
+        both = _gamma_set(run, correction, cached)
+        out["gammas"], out["total"] = both["detectors"], both["total"]
     return out
 
 
@@ -200,74 +277,312 @@ def _gate_of(planner, settings: dict):
     return None
 
 
-def run_spectra_png(planner, run, result=None, dpi: int = 110) -> tuple:
-    """The run's spectra as one PNG (bytes) for the record, and its caption: a panel per particle detector, and
-    one per γ-ray detector with the raw and the Doppler-corrected spectrum over each other (a source run: a panel
-    per crystal). Needs matplotlib."""
+def _png(fig) -> bytes:
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    return buf.getvalue()
+
+
+def _gate_words(gate) -> str:
+    return (f"the particles of gate “{gate.name}” ({gate.describe()})" if gate is not None
+            else "every counted particle")
+
+
+def run_spectra_png(planner, run, result=None, dpi: int = 110, views: Optional[dict] = None) -> tuple:
+    """The spectra of a run's detectors as one PNG (bytes), and its caption: a panel per particle detector with
+    its measured-energy spectrum (a source run: a panel per crystal). The γ-ray spectra of a beam run have their
+    own figure (:func:`run_gamma_png`). Needs matplotlib."""
     from matplotlib.figure import Figure
 
-    v = run_views(planner, run, result)
+    v = views if views is not None else run_views(planner, run, result)
     panels = []
     if v["source"]:
         for n, s in v["source"].items():
-            panels.append((n, [("counts", s["edges"], s["counts"])], "γ-ray energy (keV)", True))
+            panels.append((n, [("", s["edges"], s["counts"])], "γ-ray energy (keV)"))
     else:
-        for n, s in v["particles"].items():
-            panels.append((n, [("measured", s["edges"] * 1e3, s["counts"])], "energy (keV)", False))
-        for n, s in v["gammas"].items():
-            panels.append((n, [("as measured", s["raw"]["edges"] * 1e3, s["raw"]["counts"]),
-                               (f"corrected for the {v['correction']}", s["corrected"]["edges"] * 1e3,
-                                s["corrected"]["counts"])], "γ-ray energy (keV)", False))
+        everything = v.get("particles_all") or v["particles"]
+        for n, s in everything.items():
+            lines = [("every counted particle", s["edges"], s["counts"])]
+            if v["gate"] is not None:
+                lines.append((f"gate “{v['gate'].name}”", v["particles"][n]["edges"], v["particles"][n]["counts"]))
+            panels.append((n, lines, "energy (MeV)"))
     if not panels:
         return b"", ""
     cols = min(3, len(panels))
     rows = -(-len(panels) // cols)
-    fig = Figure(figsize=(3.4 * cols, 2.5 * rows), dpi=dpi)
+    fig = Figure(figsize=(3.4 * cols, 2.4 * rows), dpi=dpi)
     axes = fig.subplots(rows, cols, squeeze=False)
     for ax in axes.flat[len(panels):]:
         ax.set_visible(False)
-    for ax, (title, lines, xlabel, log) in zip(axes.flat, panels):
+    for k, (ax, (title, lines, xlabel)) in enumerate(zip(axes.flat, panels)):
+        populated = []
         for i, (label, edges, counts) in enumerate(lines):
-            y = np.asarray(counts, dtype=float)
-            ax.stairs(np.where(y > 0, y, np.nan) if log else y, np.asarray(edges, dtype=float), label=label,
-                      color=("#0072B2", "#D55E00")[i % 2], lw=0.9 if i == 0 else 1.1)
+            y, edges = np.asarray(counts, dtype=float), np.asarray(edges, dtype=float)
+            if not np.any(y > 0):
+                continue
+            ax.stairs(np.where(y > 0, y, np.nan), edges, label=label, color=("#0072B2", "#D55E00")[i % 2],
+                      lw=0.9, fill=i > 0, alpha=1.0 if i == 0 else 0.55)
+            populated.append(edges[:-1][y > 0])
+        if populated:
+            ax.set_yscale("log")
+            if not v["source"]:  # the particles fill a small part of the range from zero
+                lo, hi = min(float(p.min()) for p in populated), max(float(p.max()) for p in populated)
+                ax.set_xlim(lo - 0.15 * (hi - lo) - 1e-9, hi + 0.15 * (hi - lo) + 1e-9)
+        else:
+            ax.text(0.5, 0.5, "no counts", transform=ax.transAxes, ha="center", va="center", fontsize=8)
         ax.set_title(title, fontsize=9)
         ax.set_xlabel(xlabel, fontsize=8)
         ax.set_ylabel("counts", fontsize=8)
         ax.tick_params(labelsize=7)
-        if log:
-            ax.set_yscale("log")
-        if len(lines) > 1:
-            ax.legend(fontsize=7, frameon=False)
+        if k == 0 and len(lines) > 1:
+            ax.legend(fontsize=6, frameon=False, loc="lower center")
     fig.tight_layout()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
     if v["source"]:
         caption = f"Run {run.number}: the counts each crystal recorded from the source, over {_time(run.duration_s)}."
     else:
-        caption = (f"Run {run.number}: the real part of the run ({_time(run.real_s)}), counts per bin. γ-ray "
-                   f"spectra as measured and Doppler-corrected for the {v['correction']}, in coincidence with "
-                   + (f"the particles of gate “{v['gate'].name}” ({v['gate'].describe()})" if v["gate"]
-                      else "every counted particle") + "; random coincidences not added; add-back and "
-                   "suppression as the setup has them.")
-    return buf.getvalue(), caption
+        caption = (f"Run {run.number}: the measured energy in each particle detector, counts per bin in the real "
+                   f"part of the run ({_time(run.real_s)}), for every counted particle"
+                   + (f", and filled, for {_gate_words(v['gate'])}, which the analysis took" if v["gate"] else "")
+                   + ".")
+    return _png(fig), caption
 
 
-def _run_figure_html(planner, s: dict, result) -> str:
-    """The run's spectra as an embedded figure, or a line saying why not."""
+def run_gamma_png(planner, run, result=None, dpi: int = 110, views: Optional[dict] = None) -> tuple:
+    """The γ-ray spectra of a beam run as one PNG (bytes), and its caption: all γ-ray detectors summed, then each
+    detector, as measured and Doppler-corrected over each other, to the top of the level scheme, with the γ
+    rays of the scheme marked on the corrected spectrum (:func:`gamma_lines`). (b"", "") without γ rays."""
+    from matplotlib.figure import Figure
+
+    v = views if views is not None else run_views(planner, run, result)
+    if not v["gammas"]:
+        return b"", ""
+    lines = gamma_lines(run.experiment)
+    panels = [("All γ-ray detectors", v["total"])] + list(v["gammas"].items())
+    cols = 1 if len(panels) <= 5 else 2  # five panels in a column fill a page
+    rows = -(-len(panels) // cols)
+    fig = Figure(figsize=(7.6, 1.62 * rows + 0.75), dpi=dpi)
+    axes = fig.subplots(rows, cols, squeeze=False, sharex=True)
+    for ax in axes.flat[len(panels):]:
+        ax.set_visible(False)
+    x0, x1 = 1e3 * float(v["total"]["raw"]["edges"][0]), 1e3 * float(v["total"]["raw"]["edges"][-1])
+    for k, (ax, (title, s)) in enumerate(zip(axes.flat, panels)):
+        top = 1.0
+        for i, (key, label) in enumerate((("raw", "as measured"), ("corrected", f"corrected for the {v['correction']}"))):
+            y = np.asarray(s[key]["counts"], dtype=float)
+            top = max(top, float(y.max()) if len(y) else 1.0)
+            ax.stairs(np.where(y > 0, y, np.nan), 1e3 * np.asarray(s[key]["edges"], dtype=float), label=label,
+                      color=("#0072B2", "#D55E00")[i], lw=0.8 if i == 0 else 1.1)
+        ax.set_yscale("log")
+        ax.set_ylim(0.5, top * 4)
+        level, last = 0, -1e9
+        for ln in lines:
+            ax.axvline(ln["energy_kev"], color="#555", lw=0.5, ls=":")
+            if k < cols:  # the energies of the lines, above the first row; close ones on two levels
+                level = (level + 1) % 3 if ln["energy_kev"] - last < 0.03 * (x1 - x0) else 0
+                last = ln["energy_kev"]
+                ax.text(ln["energy_kev"], 1.02 + 0.13 * level, f"{ln['energy_kev']:.0f}", fontsize=6, ha="center",
+                        va="bottom", color="#333", transform=ax.get_xaxis_transform(), clip_on=False)
+        ax.set_xlim(x0, x1)
+        ax.text(0.995, 0.93, title, transform=ax.transAxes, ha="right", va="top", fontsize=8)
+        ax.set_ylabel(f"counts / {GAMMA_BIN_KEV:g} keV", fontsize=7)
+        ax.tick_params(labelsize=7)
+        if k == 0:
+            ax.legend(fontsize=7, frameon=False, loc="upper left", ncols=2)
+    for ax in axes[-1]:
+        ax.set_xlabel("γ-ray energy (keV)", fontsize=8)
+    fig.tight_layout()
+    fig.subplots_adjust(top=1 - 0.5 / fig.get_figheight(), hspace=0.12)
+    marked = (" The dotted lines, with their energies in keV above the top panel, mark the γ rays of the level "
+              "scheme: "
+              + ", ".join(f"{ln['energy_kev']:.1f} keV ({ln['label']})" for ln in lines) + "." if lines else "")
+    caption = (f"Run {run.number}: the γ-ray spectra in the real part of the run ({_time(run.real_s)}), as measured "
+               f"and Doppler-corrected for the {v['correction']}, in coincidence with {_gate_words(v['gate'])}; "
+               "random coincidences not added; add-back and suppression as the setup has them. The correction "
+               "gathers the line that the emitter's motion spreads over the measured spectrum." + marked)
+    return _png(fig), caption
+
+
+def run_rings_png(planner, run, dpi: int = 110) -> tuple:
+    """The measured energy against ring (or strip) of every particle detector of a beam run as one PNG, with the
+    kinematic line of each group and the window of every gate that has one drawn on it, and its caption."""
+    from matplotlib.colors import LogNorm
+    from matplotlib.figure import Figure
+    from matplotlib.patches import Rectangle
+
+    from . import dataviews as dv
+
+    ev = run.events()
+    gates = list(planner.gates())
+    names = list(ev.detectors)
+    if not names:
+        return b"", ""
+    cols = min(3, len(names))
+    rows = -(-len(names) // cols)
+    fig = Figure(figsize=(3.6 * cols, 3.0 * rows), dpi=dpi)
+    axes = fig.subplots(rows, cols, squeeze=False)
+    for ax in axes.flat[len(names):]:
+        ax.set_visible(False)
+    colours = ("#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9")
+    drawn, undrawn, outside = [], [], []
+    for ax, name in zip(axes.flat, names):
+        view = dv.energy_vs_ring(run, name)
+        h = np.asarray(view["counts"], dtype=float).T
+        n_rings = len(view["rings"])
+        edges = np.asarray(view["edges"], dtype=float)
+        lo, hi = float(edges[0]), float(edges[-1])
+        if h.max() > 0:
+            ax.pcolormesh(np.arange(n_rings + 1) + 0.5, edges, np.where(h > 0, h, np.nan),
+                          norm=LogNorm(vmin=max(1.0, h.max() / 300), vmax=max(h.max(), 2)), cmap="Blues",
+                          rasterized=True)
+            filled = np.flatnonzero(h.sum(axis=1) > 0)
+            lo, hi = float(edges[filled[0]]), float(edges[filled[-1] + 1])
+            lo, hi = lo - 0.12 * (hi - lo), hi + 0.12 * (hi - lo)
+        for ln in view["lines"]:
+            ax.plot(np.asarray(ln["rings"]) + 1, ln["energy"], lw=0.9,
+                    color="#000000" if ln["group"] == "elastic" else "#D55E00",
+                    ls="-" if ln["group"] == "elastic" else "--")
+        for i, gate in enumerate(gates):
+            if gate.detectors is not None and name not in gate.detectors:
+                continue
+            if gate.rings is None and gate.energy is None:
+                continue
+            r0, r1 = (gate.rings[0], gate.rings[-1]) if gate.rings is not None else (0, n_rings - 1)
+            e0, e1 = gate.energy if gate.energy is not None else (lo + 0.02 * (hi - lo), hi - 0.02 * (hi - lo))
+            if e1 < lo or e0 > hi:  # its window lies outside the energies the run recorded: said, not drawn
+                if gate.name not in outside:
+                    outside.append(gate.name)
+                continue
+            ax.add_patch(Rectangle((r0 + 0.5, e0), r1 - r0 + 1, e1 - e0, fill=False, lw=1.2,
+                                   ec=colours[i % len(colours)]))
+            ax.text(r0 + 0.6, min(e1, hi - 0.01 * (hi - lo)), gate.name, fontsize=6, color=colours[i % len(colours)],
+                    va="top" if e1 >= hi - 0.05 * (hi - lo) else "bottom")
+            if gate.name not in drawn:
+                drawn.append(gate.name)
+        ax.set_title(name, fontsize=9)
+        ax.set_xlabel("ring or strip", fontsize=8)
+        ax.set_ylabel("measured energy (MeV)", fontsize=8)
+        ax.set_xlim(0.5, n_rings + 0.5)
+        ax.set_ylim(lo, hi)
+        ax.tick_params(labelsize=7)
+    undrawn = [g.name for g in gates if g.name not in drawn and g.name not in outside]
+    fig.tight_layout()
+    caption = (f"Run {run.number}: the measured energy against ring (or strip) in each particle detector, on a "
+               "logarithmic scale of counts, over the energies the run recorded. The solid black lines are where "
+               "elastic scattering puts each group, the dashed orange ones where the excited group falls.")
+    if drawn:
+        caption += " The boxes are the gates with a window: " + ", ".join(f"“{n}”" for n in drawn) + "."
+    if outside:
+        caption += (" The window of " + ", ".join(f"“{n}”" for n in outside) + " lies outside these energies: "
+                    "no particle of the run passes it.")
+    if undrawn:
+        caption += (" Not drawn as a box (they take whole detectors or a group by its kinematic line): "
+                    + ", ".join(f"“{n}”" for n in undrawn) + ".")
+    return _png(fig), caption
+
+
+def run_gates_png(planner, run, result=None, dpi: int = 110) -> tuple:
+    """What each gate does to the γ-ray spectrum of a beam run: the Doppler-corrected spectrum of all γ-ray
+    detectors with every counted particle and under each named gate, as one PNG, its caption, and the rows
+    [{"gate", "what", "particles", "gammas", "in_peak"}] of the table beside it ("in_peak": γ rays within 1.5%
+    of the transition energy after the correction). (b"", "", []) without γ rays."""
+    from matplotlib.figure import Figure
+
+    g = run.gammas()
+    if g is None:
+        return b"", "", []
+    exp = run.experiment
+    correction = _correction_of(run, result)
+    ev = run.events()
+    e0 = 1e3 * g.energy_mev
+    sets = [("every counted particle", None)] + [(gt.name, _CachedGate(gt)) for gt in planner.gates()]
+    fig = Figure(figsize=(7.6, 3.4), dpi=dpi)
+    ax = fig.subplots()
+    colours = ("#000000", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#0072B2")
+    rows, top = [], 1.0
+    for i, (label, gate) in enumerate(sets):
+        s = _gamma_set(run, correction, gate)["total"]["corrected"]
+        y, edges = np.asarray(s["counts"], dtype=float), 1e3 * np.asarray(s["edges"], dtype=float)
+        top = max(top, float(y.max()))
+        ax.stairs(np.where(y > 0, y, np.nan), edges, label=label, color=colours[i % len(colours)],
+                  lw=1.0 if i == 0 else 0.9)
+        centres = (edges[:-1] + edges[1:]) / 2
+        passed = ev["counted"] if gate is None else (gate.mask(ev, exp) & ev["counted"])
+        rows.append({"gate": label, "what": "" if gate is None else gate.describe(),
+                     "particles": int(np.sum(passed)), "gammas": float(y.sum()),
+                     "in_peak": float(y[np.abs(centres - e0) <= 0.015 * e0].sum())})
+    ax.axvspan(0.985 * e0, 1.015 * e0, color="#999", alpha=0.15, lw=0)
+    ax.set_yscale("log")
+    ax.set_ylim(0.5, top * 3)
+    ax.set_xlabel("γ-ray energy (keV)", fontsize=8)
+    ax.set_ylabel(f"counts / {GAMMA_BIN_KEV:g} keV", fontsize=8)
+    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=7, frameon=False, ncols=2)
+    fig.tight_layout()
+    caption = (f"Run {run.number}: the γ-ray spectrum of all detectors, Doppler-corrected for the {correction}, in "
+               "coincidence with every counted particle and with the particles of each gate. The grey band is "
+               f"{e0:.0f} keV ± 1.5%, the window of the last column of the table.")
+    return _png(fig), caption, rows
+
+
+def _figure(png: bytes, caption: str, alt: str) -> str:
+    return _img(png, alt, caption) if png else ""
+
+
+def _run_pieces(planner, s: dict, result, gated: bool) -> dict:
+    """What the report takes from one run, read once (a long run is gigabytes in memory and half a minute to
+    read): {"figures": its detectors' spectra, the energy against ring with the gates, and the γ-ray spectra as
+    measured and Doppler-corrected, as HTML, or a line saying why not; "gates": the γ-ray spectrum under each
+    gate with its table (``gated``), as HTML; "seen": {"correction", "widths"} for the Doppler section}."""
+    def e(text) -> str:
+        return html.escape(str(text), quote=False)
+
+    n = s["number"]
+    out = {"figures": "", "gates": "", "seen": None}
     try:
-        run = planner.run if planner.run is not None and planner.run.number == s["number"] \
-            else planner.folder.load_run(s["number"])
-        png, caption = run_spectra_png(planner, run, result)
+        run = planner.run if planner.run is not None and planner.run.number == n else planner.folder.load_run(n)
+    except Exception as err:  # noqa: BLE001 - the report stands without the run
+        out["figures"] = f"<p>The run could not be read: {e(err)}.</p>"
+        return out
+    try:
+        views = run_views(planner, run, result)
+        png, caption = run_spectra_png(planner, run, result, views=views)
+        parts = [_figure(png, caption, f"Spectra of run {n}")]
+        if run.kind != "source":
+            png, caption = run_rings_png(planner, run)
+            parts.append(_figure(png, caption, f"Energy against ring of run {n}"))
+            png, caption = run_gamma_png(planner, run, result, views=views)
+            parts.append(_figure(png, caption, f"γ-ray spectra of run {n}"))
+        out["figures"] = "".join(parts)
     except ImportError:
-        return "<p>The spectra are not drawn: matplotlib is not installed.</p>"
-    except Exception as err:  # noqa: BLE001 - the record stands without the figure
-        return f"<p>The spectra could not be drawn: {html.escape(str(err), quote=False)}.</p>"
-    if not png:
-        return ""
-    return (f'<figure><img alt="Spectra of run {s["number"]}" style="max-width:100%" '
-            f'src="data:image/png;base64,{base64.b64encode(png).decode("ascii")}"><figcaption>'
-            f"{html.escape(caption, quote=False)}</figcaption></figure>")
+        out["figures"] = "<p>The spectra are not drawn: matplotlib is not installed.</p>"
+    except Exception as err:  # noqa: BLE001 - the report stands without the figures
+        out["figures"] = f"<p>The spectra could not be drawn: {e(err)}.</p>"
+    if run.kind == "source":
+        return out
+    if gated:
+        try:
+            png, caption, rows = run_gates_png(planner, run, result)
+            if png:
+                out["gates"] = (f"<h3>Run {n} under each gate</h3>" + _figure(png, caption, f"Run {n} under each gate")
+                                + "<table><thead><tr><th>Gate</th><th>Particles that pass</th>"
+                                "<th>γ rays in coincidence</th><th>Of these, at the transition</th></tr></thead>"
+                                "<tbody>"
+                                + "".join(f"<tr><td>{e(r['gate'])}</td><td>{r['particles']:,}</td>"
+                                          f"<td>{r['gammas']:,.0f}</td><td>{r['in_peak']:,.0f}</td></tr>"
+                                          for r in rows) + "</tbody></table>")
+        except ImportError:
+            out["gates"] = "<p>The gated spectra are not drawn: matplotlib is not installed.</p>"
+        except Exception as err:  # noqa: BLE001 - the report stands without the figure
+            out["gates"] = f"<p>Run {n}: the gated spectra could not be drawn: {e(err)}.</p>"
+    try:
+        from .alignment import peak_widths
+
+        g = run.gammas()
+        out["seen"] = {"correction": _correction_of(run, result),
+                       "widths": peak_widths(g, run.experiment) if g is not None else {}}
+    except Exception:  # noqa: BLE001 - the Doppler section then reads the run itself
+        out["seen"] = None
+    return out
 
 
 def _img(png: bytes, alt: str, caption: str) -> str:
@@ -510,6 +825,191 @@ def multistep_html(m: dict) -> str:
     return "".join(parts)
 
 
+def doppler_html(planner, analyses: Optional[dict] = None, seen: Optional[dict] = None) -> str:
+    """The Doppler correction of the experiment for the report: which nucleus is corrected for and why, the
+    formula, where each quantity in it comes from, the geometry it uses, the speeds and shifts it deals with for
+    every pair of particle and γ-ray detector, and, for each beam run, the settings its analysis used and the
+    width of the corrected peak in each crystal (``seen``: {run number: {"correction", "widths"}} if already
+    worked out; the runs are read here otherwise). Empty without Coulomb excitation and γ-ray detectors."""
+    from . import dataviews as dv
+
+    exp = planner.experiment
+    exc = exp.excitation
+    if exc is None or not exp.gamma_detectors:
+        return ""
+
+    def e(text) -> str:
+        return html.escape(str(text), quote=False)
+
+    emitter = "recoil" if exc.excite == "target" else "projectile"
+    who = "the target nucleus, which recoils" if emitter == "recoil" else "the beam nucleus, which is scattered"
+    parts = [f"<p>{e(dv.correction_reason(exp, emitter))} The spectra and the analysis correct for {who}.</p>",
+             '<p class="f">E₀ = E_measured × (1 − β cos α) / √(1 − β²)</p>',
+             "<p>with β the emitter's speed in units of c and α the angle between its direction and the "
+             "direction of the γ ray. Neither is measured directly; each event's are worked out from the "
+             "segment of the particle detector and the crystal that fired:</p><ol>"
+             "<li><b>The particle's direction</b> is the centre of the ring and sector (or the two strips) it "
+             "hit, seen from the target at the position the analysis assumes.</li>"
+             "<li><b>The orbit.</b> Two-body kinematics at the beam energy in the middle of the target, with the "
+             f"excitation energy of {1e3 * exc.energy_mev:g} keV taken from the motion, gives the CM angle of "
+             "the collision from that direction, whichever of the two nuclei was detected.</li>"
+             "<li><b>The emitter.</b> The same kinematics gives the direction and the energy of the nucleus "
+             "that emits: the detected particle itself, or its partner on the other side of the beam.</li>"
+             "<li><b>Its speed β</b> is that energy less what the nucleus loses on its way out of the target "
+             "from the middle of it.</li>"
+             "<li><b>The γ ray's direction</b> is the centre of the crystal that fired. A crystal sees the "
+             "emitter over its whole opening angle, so the corrected line keeps a width: the larger β and the "
+             "crystal's opening angle, the wider.</li></ol>"]
+    tgt = exp.target.position_mm
+    parts.append(f"<h3>The geometry it uses</h3><p>The target stands at {tgt:+g} mm along the beam from the "
+                 "chamber's centre." if abs(tgt) > 1e-9 else
+                 "<h3>The geometry it uses</h3><p>The target stands at the chamber's centre.")
+    parts.append(" The table gives each crystal as the correction sees it.</p>"
+                 "<table><thead><tr><th>Crystal</th><th>θ (deg)</th><th>φ (deg)</th><th>Distance (mm)</th>"
+                 "<th>Radius (mm)</th><th>Opening half-angle (deg)</th></tr></thead><tbody>")
+    for i, gd in enumerate(exp.gamma_detectors):
+        for label, centre, radius in gd.elements():
+            c = np.asarray(centre, dtype=float)
+            d = float(np.linalg.norm(c))
+            theta = math.degrees(math.acos(max(-1.0, min(1.0, c[2] / d))))
+            phi = math.degrees(math.atan2(c[1], c[0]))
+            name = (gd.name or f"G{i + 1}") + (f" {label}" if label else "")
+            parts.append(f"<tr><td>{e(name)}</td><td>{theta:.1f}</td><td>{phi:.1f}</td><td>{d:.1f}</td>"
+                         f"<td>{radius:.1f}</td><td>{math.degrees(math.atan2(radius, d)):.1f}</td></tr>")
+    parts.append("</tbody></table>")
+    try:
+        rows = planner.gamma().get("doppler", [])
+    except Exception:  # noqa: BLE001 - the report stands without the table
+        rows = []
+    if rows:
+        parts.append("<h3>The speeds and the shifts</h3><p>For the scattered particle reaching each particle "
+                     "detector and the γ ray each γ-ray detector: the emitter's mean speed, the mean energy the "
+                     "crystal measures, its shift from the transition energy, the width the motion gives the "
+                     "measured line, and its width with the detector's resolution.</p><table><thead><tr>"
+                     "<th>Particle detector</th><th>γ-ray detector</th><th>β</th><th>Measured (keV)</th>"
+                     "<th>Shift (keV)</th><th>Doppler FWHM (keV)</th><th>FWHM (keV)</th></tr></thead><tbody>"
+                     + "".join(f"<tr><td>{e(r['particle_detector'])}</td><td>{e(r['gamma_detector'])}</td>"
+                               f"<td>{r['beta_mean']:.4f}</td><td>{r['mean_kev']:.1f}</td>"
+                               f"<td>{r['shift_kev']:+.1f}</td><td>{r['doppler_fwhm_kev']:.1f}</td>"
+                               f"<td>{r['fwhm_kev']:.1f}</td></tr>" for r in rows) + "</tbody></table>")
+    beam_runs = [s for s in planner.runs() if s["kind"] != "source"]
+    if beam_runs:
+        from .alignment import peak_widths
+        from .response import FWHM_PER_SIGMA
+
+        parts.append("<h3>In each run</h3><table><thead><tr><th>Run</th><th>Corrected for</th>"
+                     "<th>Target assumed</th><th>Particles</th><th>Corrected line, FWHM per crystal (keV)</th>"
+                     "</tr></thead><tbody>")
+        for s in beam_runs:
+            r = (analyses or {}).get(s["number"])
+            settings = dict(getattr(r, "settings", {}) or {})
+            offset = float(settings.get("target_offset_mm", 0.0) or 0.0)
+            try:
+                if seen is not None and s["number"] in seen:
+                    widths, correction = seen[s["number"]]["widths"], seen[s["number"]]["correction"]
+                else:
+                    run = planner.run if planner.run is not None and planner.run.number == s["number"] \
+                        else planner.folder.load_run(s["number"])
+                    g = run.gammas()
+                    widths = peak_widths(g, run.experiment) if g is not None else {}
+                    correction = _correction_of(run, r)
+                lines = ", ".join(f"{k} {1e3 * FWHM_PER_SIGMA * v:.1f}" for k, v in widths.items()) or "no γ rays"
+            except Exception as err:  # noqa: BLE001 - the report stands without the row's widths
+                lines, correction = f"not read ({err})", emitter
+            gate = _gate_of(planner, settings) if r is not None else None
+            parts.append(f"<tr><td>{s['number']}</td><td>the {e(correction)}"
+                         + ("" if r is not None else " (no analysis yet: the default)") + "</td><td>"
+                         + ("where it is" if abs(offset) < 1e-9 else f"{offset:+g} mm from where it is")
+                         + f"</td><td>{e(_gate_words(gate))}</td><td>{e(lines)}</td></tr>")
+        parts.append("</tbody></table><p>The width of the corrected line is measured on the run's spectrum of "
+                     "each crystal (its width at half maximum); it is never taken narrower than three times the "
+                     "detector's resolution.</p>")
+    return "".join(parts)
+
+
+def _not_reached(experiment) -> list:
+    """The levels of the excited nucleus's scheme that the simulated events never populate
+    (:func:`~physim.nuclear.gamma.unreached_levels`): with first-order events those no matrix element joins to
+    the ground state and no populated level decays to. [(label, energy in keV)]."""
+    try:
+        from .gamma import cascade_excitation, unreached_levels
+
+        missing = unreached_levels(experiment)
+        if not missing:
+            return []
+        levels = cascade_excitation(experiment).scheme.levels
+        return [(levels[n].label, float(levels[n].energy.value)) for n in missing]
+    except Exception:  # noqa: BLE001 - a note the report can do without
+        return []
+
+
+def pdf_browser() -> Optional[str]:
+    """The program that prints a page to PDF: a Chromium-based browser (Edge, Chrome or Chromium) found on this
+    computer, or the one ``$PHYSIM_PDF_BROWSER`` names. None if there is none."""
+    import os
+    import shutil
+
+    named = os.environ.get("PHYSIM_PDF_BROWSER")
+    if named:
+        return named if Path(named).is_file() or shutil.which(named) else None
+    for name in ("msedge", "chrome", "google-chrome", "chromium", "chromium-browser", "microsoft-edge"):
+        found = shutil.which(name)
+        if found:
+            return found
+    roots = [os.environ.get(k) for k in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA")]
+    tails = (r"Microsoft\Edge\Application\msedge.exe", r"Google\Chrome\Application\chrome.exe",
+             r"Chromium\Application\chrome.exe")
+    for root in roots:
+        for tail in tails:
+            if root and (Path(root) / tail).is_file():
+                return str(Path(root) / tail)
+    for path in ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                 "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+                 "/Applications/Chromium.app/Contents/MacOS/Chromium"):
+        if Path(path).is_file():
+            return path
+    return None
+
+
+def html_to_pdf(page: str, timeout: float = 240.0) -> Optional[bytes]:
+    """A self-contained HTML page as a PDF (bytes), printed by a browser of this computer without a window
+    (:func:`pdf_browser`), with the page's own print styles. None when there is no such browser or it fails: the
+    page itself prints to PDF from any browser."""
+    import subprocess
+    import tempfile
+
+    browser = pdf_browser()
+    if browser is None:
+        return None
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        src, out = Path(tmp) / "report.html", Path(tmp) / "report.pdf"
+        src.write_text(page, encoding="utf-8")
+        cmd = [browser, "--headless", "--disable-gpu", "--no-first-run", "--disable-extensions",
+               f"--user-data-dir={Path(tmp) / 'profile'}", "--no-pdf-header-footer",
+               f"--print-to-pdf={out}", src.as_uri()]
+        import time
+
+        started = time.monotonic()
+        try:
+            subprocess.run(cmd, check=False, timeout=timeout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        # The browser's launcher may return before the page is printed: wait for the file, and until it has
+        # stopped growing. A minute without a file means the browser gave none.
+        size, steady = -1, 0
+        while steady < 3 and time.monotonic() - started < timeout:
+            now = out.stat().st_size if out.is_file() else -1
+            steady = steady + 1 if now == size and now > 0 else 0
+            if now < 0 and time.monotonic() - started > 60:
+                break
+            size = now
+            time.sleep(0.3)
+        try:
+            return out.read_bytes() if size > 0 else None
+        except OSError:
+            return None
+
+
 def run_analyses(planner, result=None) -> dict:
     """{run number: Result} for every beam run of the experiment that has been analysed: ``result`` for the
     current run if given, else what :meth:`~physim.nuclear.planner.Planner.run_analysis` finds (this session's,
@@ -531,103 +1031,222 @@ def run_analyses(planner, result=None) -> dict:
     return out
 
 
-def experiment_html(planner, result=None, scene_png: Optional[str] = None) -> str:
-    """The report of the experiment as one self-contained page: the setup and how it changed between runs, the
-    Plan, every run with its summary and its spectra (every particle detector; every γ-ray detector as measured
-    and Doppler-corrected, :func:`run_spectra_png`), the gates, the analysis of the current run (``result``, a
-    :class:`~physim.nuclear.analysis.Result`), the run's numbers explained, and the physics register."""
+def _plan_report(planner, events: int, seed: int, journal: str, width: str, validation: bool):
+    """The beam-time report of the current setup (:class:`physim.nuclear.report.Report`), or None with the
+    reason it could not be built."""
+    try:
+        from .report import build
+
+        return build(planner.experiment, seed=seed, events=events, validation=validation, journal=journal,
+                     width=width), ""
+    except Exception as err:  # noqa: BLE001 - the report stands without the plan's figures
+        return None, str(err)
+
+
+#: The sections of the report, in order: (anchor, title).
+SECTIONS = (("summary", "Summary"), ("setup", "The setup"), ("plan", "The plan: what this setup should give"),
+            ("runs", "The runs and their spectra"), ("gates", "The gates"),
+            ("doppler", "The Doppler correction"), ("analysis", "The analysis"),
+            ("numbers", "Every number, explained"), ("method", "The data, the method and what is left out"))
+
+
+def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=None, plan_events: int = 50_000,
+                    seed: int = 1, journal: str = "physical_review", width: str = "single",
+                    validation: bool = False) -> str:
+    """The report of the experiment, one self-contained page with everything in it: a summary; the setup with
+    its warnings, level schemes and how it changed between runs; the plan (what the beam-time report holds:
+    detectors, rates and beam time, kinematics, expected peaks, Coulomb excitation, energy loss, predicted
+    spectra); every run with its summary and its spectra (the particle detectors, the energy against ring with
+    the gates drawn on it, every γ-ray detector as measured and Doppler-corrected to the top of the level
+    scheme); the gates and what each does to the γ-ray spectrum; the Doppler correction and its parameters; the
+    analysis of every analysed run, the alignment and the multi-step solution; every number explained (what the
+    run record holds); and the data, the method and what the simulation leaves out.
+
+    ``result`` is the analysis of the current run (a :class:`~physim.nuclear.analysis.Result`; the kept one is
+    used without it). ``plan`` is the setup's :class:`~physim.nuclear.report.Report` if already built; otherwise
+    it is built here with ``plan_events`` Monte Carlo events, ``seed`` and the figures' ``journal`` style and
+    ``width``, and ``validation`` runs the register's checks for the models' table."""
     from .planner import REGISTER
+    from .record import LEFT_OUT, analysis_explanations, explanations, method_html, provenance
 
     def e(text) -> str:  # text, not attributes: quotes stay as they are
         return html.escape(str(text), quote=False)
 
     exp = planner.experiment
-    parts = [f"<h1>{e(planner.name)}: the experiment</h1>"]
-    if planner.folder is not None:
-        parts.append(f"<p>Folder: <code>{e(str(planner.experiment_folder))}</code></p>")
+    why_no_plan = ""
+    if plan is None:
+        plan, why_no_plan = _plan_report(planner, plan_events, seed, journal, width, validation)
+    pp = None
+    if plan is not None:
+        try:
+            pp = plan.parts(dpi=150)
+        except Exception as err:  # noqa: BLE001 - the report stands without the plan's figures
+            why_no_plan = str(err)
+    runs = planner.runs()
+    analyses = run_analyses(planner, result)
+    gates = planner.gates()
+    pieces = {s["number"]: _run_pieces(planner, s, analyses.get(s["number"]), bool(gates)) for s in runs}
     b, t = exp.beam, exp.target
-    parts.append("<h2>1. The setup</h2><ul>"
-                 f"<li>Beam: {e(b.nuclide)} at {e(str(b.energy))}, {e(str(b.current))}.</li>"
-                 f"<li>Target: {e(t.material)}, {e(str(t.thickness))}.</li>"
-                 f"<li>Particle detectors: {e(', '.join(d.name or f'D{i + 1}' for i, d in enumerate(exp.detectors)))}.</li>"
-                 f"<li>γ-ray detectors: {e(', '.join(g.name or f'G{i + 1}' for i, g in enumerate(exp.gamma_detectors))) or 'none'}.</li>"
-                 f"<li>Beam time planned: {e(str(exp.run.beam_time))}.</li></ul>")
-    if scene_png:
-        parts.append(f'<p><img src="data:image/png;base64,{scene_png}" alt="the scene" style="max-width:100%"></p>')
+    sec = {key: [] for key, _ in SECTIONS}
+
+    # -- 1. summary -------------------------------------------------------------------------------------------
+    what = (f"Coulomb excitation of the {exp.excitation.excite} to {1e3 * exp.excitation.energy_mev:g} keV "
+            f"({exp.excitation.multipolarity})" if exp.excitation else "elastic scattering")
+    beam_runs = [s for s in runs if s["kind"] != "source"]
+    items = [f"{e(b.nuclide)} at {e(str(b.energy))} on {e(t.material)} ({e(str(t.thickness))}): {e(what)}.",
+             (f"{len(runs)} run{'s' * (len(runs) != 1)}: {len(beam_runs)} with beam, {len(runs) - len(beam_runs)} "
+              "with a source." if runs else "No run yet: the report holds the setup and the plan.")]
+    for n, r in analyses.items():
+        if r.b_e2fm4 == r.b_e2fm4:
+            items.append(f"Run {n}: B(E2↑) = {r.b_e2fm4:.4g} e²fm⁴ ± {100 * r.total_unc:.1f}% "
+                         f"({r.b_wu:.3g} W.u.; the value put in was {r.truth_e2fm4:.4g} e²fm⁴, pull "
+                         f"{r.pull:+.2f}).")
+        else:
+            items.append(f"Run {n}: the analysis found no peak.")
+    if beam_runs and not analyses:
+        items.append("No run has been analysed yet.")
+    sec["summary"].append("<ul>" + "".join(f"<li>{x}</li>" for x in items) + "</ul>")
+
+    # -- 2. the setup -----------------------------------------------------------------------------------------
+    if exp.description:
+        sec["setup"].append(f"<p>{e(exp.description)}</p>")
+    if planner.folder is not None:
+        sec["setup"].append(f"<p>Folder: <code>{e(str(planner.experiment_folder))}</code></p>")
+    sec["setup"].append("<ul>"
+                        f"<li>Beam: {e(b.nuclide)} at {e(str(b.energy))}, {e(str(b.current))}"
+                        + (f", charge state {b.charge_state}+" if b.charge_state else "") + ".</li>"
+                        f"<li>Target: {e(t.material)}, {e(str(t.thickness))}.</li>"
+                        f"<li>Particle detectors: {e(', '.join(d.name or f'D{i + 1}' for i, d in enumerate(exp.detectors)))}.</li>"
+                        f"<li>γ-ray detectors: {e(', '.join(g.name or f'G{i + 1}' for i, g in enumerate(exp.gamma_detectors))) or 'none'}.</li>"
+                        f"<li>Reaction: {e(what)}.</li>"
+                        f"<li>Beam time planned: {e(str(exp.run.beam_time))}"
+                        + (f", for {exp.run.counts_wanted} counts per detector" if exp.run.counts_wanted else "")
+                        + ".</li></ul>")
+    if pp:
+        sec["setup"].append(pp["setup_figures"])
+        sec["setup"].append("<h3>Warnings</h3>" + pp["warnings"])
+    elif scene_png:
+        sec["setup"].append(f'<p><img src="data:image/png;base64,{scene_png}" alt="the scene" '
+                            'style="max-width:100%"></p>')
     schemes = level_schemes_html(planner)
     if schemes:
-        parts.append("<h3>The level schemes</h3>" + schemes)
-    analyses = run_analyses(planner, result)
+        sec["setup"].append("<h3>The level schemes</h3>" + schemes)
     history = setup_history(planner)
     if history:
-        parts.append("<h3>How the setup changed between runs</h3><ul>")
+        sec["setup"].append("<h3>How the setup changed between runs</h3><ul>")
         for h in history:
-            what = f"run {h['run']} ({e(h['label'])})" if h["run"] is not None else e(h["label"])
+            which = f"run {h['run']} ({e(h['label'])})" if h["run"] is not None else e(h["label"])
             if h["run"] is not None and h is history[0]:
-                parts.append(f"<li>{what}: the setup as it started.</li>")
+                sec["setup"].append(f"<li>{which}: the setup as it started.</li>")
             else:
-                parts.append(f"<li>{what}: " + (e("; ".join(h["changes"])) if h["changes"] else
-                                                 "no change to the physics") + "</li>")
-        parts.append("</ul>")
+                sec["setup"].append(f"<li>{which}: " + (e("; ".join(h["changes"])) if h["changes"] else
+                                                        "no change to the physics") + "</li>")
+        sec["setup"].append("</ul>")
+
+    # -- 3. the plan ------------------------------------------------------------------------------------------
+    sec["plan"].append("<p>What the current setup should give, computed from the setup and not from the runs: "
+                       "the runs are compared with it in the next section.</p>")
     try:
         pl = planner.plan()
     except Exception:  # noqa: BLE001 - the report stands without the plan
         pl = None
     if pl:
-        parts.append("<h2>2. The Plan</h2>")
-        parts.append(f"<p>Beam time needed: {_time(pl['beam_time_needed_s'])}"
-                     + (f" ({e(str(pl['limiting_detector']))}, for {pl['counts_wanted']} {e(pl['measured'])})"
-                        if pl["limiting_detector"] else "") + f"; planned: {_time(pl['beam_time_s'])}.</p>")
-        parts.append("<table><thead><tr><th>Detector</th><th>Rate (1/s)</th><th>Busy</th><th>Coincidences (1/s)</th>"
-                     "<th>Safe rings</th></tr></thead><tbody>"
-                     + "".join(f"<tr><td>{e(d['detector'])}</td><td>{_g(d['rate_per_s'])}</td>"
-                               f"<td>{100 * d['dead_time_fraction']:.2g}%</td><td>{_g(d['coincidence_per_s'])}</td>"
-                               f"<td>{len(d['safe_rings'])} of {d['rings']}</td></tr>" for d in pl["detectors"])
-                     + "</tbody></table>")
-    runs = planner.runs()
-    parts.append("<h2>3. The runs</h2>")
+        sec["plan"].append("<h3>Beam time and load</h3>"
+                           f"<p>Beam time needed: {_time(pl['beam_time_needed_s'])}"
+                           + (f" ({e(str(pl['limiting_detector']))}, for {pl['counts_wanted']} {e(pl['measured'])})"
+                              if pl["limiting_detector"] else "") + f"; planned: {_time(pl['beam_time_s'])}.</p>")
+        sec["plan"].append("<table><thead><tr><th>Detector</th><th>Rate (1/s)</th><th>Busy</th>"
+                           "<th>Coincidences (1/s)</th><th>Safe rings</th></tr></thead><tbody>"
+                           + "".join(f"<tr><td>{e(d['detector'])}</td><td>{_g(d['rate_per_s'])}</td>"
+                                     f"<td>{100 * d['dead_time_fraction']:.2g}%</td><td>{_g(d['coincidence_per_s'])}</td>"
+                                     f"<td>{len(d['safe_rings'])} of {d['rings']}</td></tr>" for d in pl["detectors"])
+                           + "</tbody></table>")
+    if pp:
+        sec["plan"] += ["<h3>Detectors: coverage, cross sections, rates and beam time</h3>", pp["detectors"],
+                        "<h3>Kinematics</h3>", pp["kinematics"], "<h3>Expected peaks</h3>", pp["peaks"],
+                        pp["excitation_plain"], "<h3>Energy loss</h3>", pp["energy_loss"],
+                        "<h3>Simulated spectra</h3>", pp["spectra"]]
+    elif why_no_plan:
+        sec["plan"].append(f"<p>The plan's tables and figures could not be built: {e(why_no_plan)}.</p>")
+
+    # -- 4. the runs ------------------------------------------------------------------------------------------
     if not runs:
-        parts.append("<p>No run yet.</p>")
+        sec["runs"].append("<p>No run yet.</p>")
+    elif exp.excitation is not None and exp.gamma_detectors:
+        from .gamma import excitation_order
+
+        missing = _not_reached(exp)
+        first_order = excitation_order(exp) == "first"
+        sec["runs"].append(
+            "<p>Each beam run is drawn three times: the energy in each particle detector, the energy against "
+            "ring with the gates on it, and the γ-ray spectra as measured and Doppler-corrected.</p>"
+            + ("<p>The simulated events of this setup "
+               + ("are first order (<code>order = \"first\"</code>): each level is excited in one step from the "
+                  "ground state, and a level reached only in two steps is not populated"
+                  if first_order else "do not populate every level of the scheme: no chain of matrix elements "
+                                      "joins these to the ground state")
+               + ". Their γ rays are not in these spectra: "
+               + e(", ".join(f"{lab} at {en:.0f} keV" for lab, en in missing)) + ".</p>"
+               if missing else ""))
     for s in runs:
-        parts.append(f"<h3>Run {s['number']}: {e(s['describe'])}</h3><ul>"
-                     f"<li>Folder <code>{e(s['label'])}</code>; seed {s.get('seed')}; finished "
-                     f"{e(str(s.get('finished', ''))[:19])} (UTC).</li>")
+        sec["runs"].append(f"<h3>Run {s['number']}: {e(s['describe'])}</h3><ul>"
+                           f"<li>Folder <code>{e(s['label'])}</code>; seed {s.get('seed')}; finished "
+                           f"{e(str(s.get('finished', ''))[:19])} (UTC).</li>")
         if s["kind"] == "source":
             src = s.get("source", {})
-            parts.append(f"<li>{e(str(src.get('nuclide')))} source of {e(str(src.get('activity')))} at "
-                         f"{e(str(src.get('position') or 'the target'))}; counts per crystal: "
-                         + e(", ".join(f"{k} {v:,.0f}" for k, v in s.get("gamma_counts", {}).items())) + ".</li>")
+            sec["runs"].append(f"<li>{e(str(src.get('nuclide')))} source of {e(str(src.get('activity')))} at "
+                               f"{e(str(src.get('position') or 'the target'))}; counts per crystal: "
+                               + e(", ".join(f"{k} {v:,.0f}" for k, v in s.get("gamma_counts", {}).items()))
+                               + ".</li>")
         else:
-            parts.append(f"<li>{_time(s['real_s'])} simulated event by event of {_time(s['duration_s'])}"
-                         + ("; the rest scaled" if s.get("scaled") else "") + f"; {s.get('particles', 0):,} particles "
-                         f"and {s.get('gammas', 0):,} γ rays stored.</li>"
-                         "<li>Counts (rate): " + e(", ".join(f"{d} {c:,} ({s['rates_per_s'].get(d, 0):.4g}/s)"
-                                                             for d, c in s.get("counts", {}).items())) + ".</li>")
+            sec["runs"].append(f"<li>{_time(s['real_s'])} simulated event by event of {_time(s['duration_s'])}"
+                               + ("; the rest scaled" if s.get("scaled") else "")
+                               + f"; {s.get('particles', 0):,} particles and {s.get('gammas', 0):,} γ rays "
+                               "stored.</li><li>Counts (rate): "
+                               + e(", ".join(f"{d} {c:,} ({s['rates_per_s'].get(d, 0):.4g}/s)"
+                                             for d, c in s.get("counts", {}).items())) + ".</li>")
             if s.get("live_fraction") is not None:
-                parts.append(f"<li>Live fraction {s['live_fraction']:.4f}.</li>")
+                sec["runs"].append(f"<li>Live fraction {s['live_fraction']:.4f}.</li>")
             if s.get("assumed_offset_mm") is not None:
-                parts.append(f"<li>Alignment run: the target assumed {s['assumed_offset_mm']:+g} mm off.</li>")
-        parts.append(f"<li>{'Taken with another setup than the current one.' if s['stale'] else 'Taken with the current setup.'}"
-                     "</li></ul>")
-        parts.append(_run_figure_html(planner, s, analyses.get(s["number"])))
+                sec["runs"].append(f"<li>Alignment run: the target assumed {s['assumed_offset_mm']:+g} mm off.</li>")
+        sec["runs"].append("<li>" + ("Taken with another setup than the current one." if s["stale"]
+                                     else "Taken with the current setup.") + "</li></ul>")
+        sec["runs"].append(pieces[s["number"]]["figures"])
     if planner.run is not None and planner.run.kind != "source":
         c = planner.compare()
         if c["rows"]:
-            parts.append(f"<h3>Run {c['run']}: predicted against measured</h3><table><thead><tr><th>Quantity</th>"
-                         "<th></th><th>Predicted</th><th>Measured</th><th></th></tr></thead><tbody>"
-                         + "".join(f"<tr><td>{e(r['quantity'])}</td><td>{e(r['what'])}</td><td>{_g(r['predicted'])}"
-                                   f"</td><td>{_g(r['measured'])} ± {_g(r['uncertainty'])}</td><td>"
-                                   f"{ {True: 'agree', False: 'differ', None: ''}[r['agree']] }</td></tr>"
-                                   for r in c["rows"]) + "</tbody></table>")
-    gates = planner.gates()
-    parts.append("<h2>4. The data: gates and conditions</h2>")
-    parts.append("<ul>" + "".join(f"<li><b>{e(g.name)}</b>: {e(g.describe())}.</li>" for g in gates) + "</ul>"
-                 if gates else "<p>No gates: the spectra take every counted particle.</p>")
-    parts.append("<h2>5. The analysis</h2>")
+            sec["runs"].append(f"<h3>Run {c['run']}: predicted against measured</h3><table><thead><tr>"
+                               "<th>Quantity</th><th></th><th>Predicted</th><th>Measured</th><th></th></tr></thead>"
+                               "<tbody>"
+                               + "".join(f"<tr><td>{e(r['quantity'])}</td><td>{e(r['what'])}</td>"
+                                         f"<td>{_g(r['predicted'])}</td><td>{_g(r['measured'])} ± "
+                                         f"{_g(r['uncertainty'])}</td><td>"
+                                         f"{ {True: 'agree', False: 'differ', None: ''}[r['agree']] }</td></tr>"
+                                         for r in c["rows"]) + "</tbody></table>")
+
+    # -- 5. the gates -----------------------------------------------------------------------------------------
+    if gates:
+        sec["gates"].append("<p>A gate is a condition on the particles; a γ-ray spectrum under a gate holds the "
+                            "γ rays in coincidence with the particles that pass it.</p><ul>"
+                            + "".join(f"<li><b>{e(g.name)}</b>: {e(g.describe())}"
+                                      + (f" ({e(g.note)})" if g.note else "") + ".</li>" for g in gates) + "</ul>")
+        sec["gates"] += [pieces[s["number"]]["gates"] for s in beam_runs]
+    else:
+        sec["gates"].append("<p>No gates: the spectra take every counted particle. A gate is made on the Data "
+                            "tab, from the energy-against-ring view or by naming detectors and rings.</p>")
+
+    # -- 6. the Doppler correction ----------------------------------------------------------------------------
+    try:
+        dop = doppler_html(planner, analyses, {n: x["seen"] for n, x in pieces.items() if x["seen"] is not None})
+    except Exception as err:  # noqa: BLE001 - the report stands without the section
+        dop = f"<p>The Doppler correction could not be described: {e(err)}.</p>"
+    sec["doppler"].append(dop or "<p>No excited state or no γ-ray detector: there is no γ ray to correct.</p>")
+
+    # -- 7. the analysis --------------------------------------------------------------------------------------
     for s in runs:
         r = analyses.get(s["number"])
         if r is not None:
-            parts.append(analysis_html(r, f"<h3>Run {s['number']}: from the peak area to B(E2)</h3>"))
+            sec["analysis"].append(analysis_html(r, f"<h3>Run {s['number']}: from the peak area to B(E2)</h3>"))
         if s["kind"] != "source":
             try:
                 al = planner.kept_alignment(planner.run if planner.run is not None
@@ -636,46 +1255,106 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None) -> st
             except Exception:  # noqa: BLE001 - the report stands without it
                 al = None
             if al:
-                parts.append((f"<h3>Run {s['number']}: the alignment</h3>" if r is None else "") + alignment_html(al))
+                sec["analysis"].append((f"<h3>Run {s['number']}: the alignment</h3>" if r is None else "")
+                                       + alignment_html(al))
     if not analyses and result is not None:  # the analysis of a simulated sample, without a run
-        parts.append(analysis_html(result, "<h3>The simulated sample</h3>"))
+        sec["analysis"].append(analysis_html(result, "<h3>The simulated sample</h3>"))
     elif not analyses:
-        parts.append("<p>No run has been analysed yet: take a beam run and press Analyse on the Analysis tab. "
-                     "The analysis is then kept with the run and appears here.</p>")
+        sec["analysis"].append("<p>No run has been analysed yet: take a beam run and press Analyse on the "
+                               "Analysis tab. The analysis is then kept with the run and appears here.</p>")
     m = planner.kept_multistep()
     if m and m.get("available"):
-        parts.append("<h3>All orders: multi-step excitation and reorientation</h3>" + multistep_html(m))
+        sec["analysis"].append("<h3>All orders: multi-step excitation and reorientation</h3>" + multistep_html(m))
+
+    # -- 8. every number, explained ---------------------------------------------------------------------------
+    sec["numbers"].append("<p>Each number with its formula, the formula with this experiment's numbers in it, "
+                          "what it means and what it assumes.</p><h3>The plan's numbers</h3>")
+    try:
+        sec["numbers"] += [_explanation_html(x) for x in explanations(planner)]
+    except Exception as err:  # noqa: BLE001 - the report stands without them
+        sec["numbers"].append(f"<p>Not available: {e(err)}.</p>")
     xs = run_explanations(planner)
     if xs:
-        parts.append("<h2>6. The run's numbers, explained</h2>")
-        parts += [_explanation_html(x) for x in xs]
-    parts.append("<h2>7. The physics behind it</h2><ul>"
-                 + "".join(f'<li><a href="{DOCS}{e(path)}.html">{e(tab.replace("_", " "))}</a></li>'
-                           for tab, path in REGISTER.items()) + "</ul>")
-    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>"
-            f"{e(planner.name)}: the experiment</title><style>{record_css()}</style></head><body>"
-            + "\n".join(parts) + "</body></html>")
+        sec["numbers"].append(f"<h3>Run {planner.run.number}: its counters, its gates, and the plan against what "
+                              "it measured</h3>")
+        sec["numbers"] += [_explanation_html(x) for x in xs]
+    current = analyses.get(planner.run.number) if planner.run is not None else result
+    if current is not None:
+        try:
+            ax = analysis_explanations(planner, current)
+        except Exception:  # noqa: BLE001 - the report stands without them
+            ax = []
+        if ax:
+            sec["numbers"].append("<h3>From the peak area to B(E2) and the shape</h3>")
+            sec["numbers"] += [_explanation_html(x) for x in ax]
+
+    # -- 9. the data, the method and what is left out ---------------------------------------------------------
+    sec["method"].append("<h3>The nuclear data and where it comes from</h3>"
+                         "<table><thead><tr><th>Quantity</th><th>Value</th><th>Source</th></tr></thead><tbody>"
+                         + "".join(f"<tr><td>{e(q)}</td><td>{e(str(v))}</td><td>{e(src)}</td></tr>"
+                                   for q, v, src in provenance(exp)) + "</tbody></table>"
+                         "<p>Sources: <em>ensdf</em> is the evaluated data as read; <em>derived</em> is computed "
+                         "from ENSDF's values by physim; <em>assumed</em> is a typical value, not a measurement; "
+                         "<em>user</em> was given in the setup.</p>")
+    if exp.excitation is not None:
+        sec["method"].append("<h3>The method, step by step</h3>" + method_html())
+    sec["method"].append("<h3>What the simulation leaves out</h3><ul>"
+                         + "".join(f"<li>{e(x)}</li>" for x in LEFT_OUT) + "</ul>")
+    if pp:
+        sec["method"] += ["<h3>Models and their validation</h3>", pp["models"],
+                          "<h3>Data and references</h3>", pp["references"]]
+    sec["method"].append("<h3>The physics behind it</h3><ul>"
+                         + "".join(f'<li><a href="{DOCS}{e(path)}.html">{e(tab.replace("_", " "))}</a></li>'
+                                   for tab, path in REGISTER.items()) + "</ul>")
+
+    body = [f"<h1>{e(planner.name)}: the report</h1>"]
+    if pp:
+        body.append(f'<p class="sub">{pp["meta"]}</p>')
+    body.append('<ol class="toc">' + "".join(f'<li><a href="#{key}">{e(title)}</a></li>' for key, title in SECTIONS)
+                + "</ol>")
+    for i, (key, title) in enumerate(SECTIONS, 1):
+        body.append(f'<h2 id="{key}">{i}. {e(title)}</h2>')
+        body += sec[key]
+    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>"
+            f"{e(planner.name)}: the report</title><style>{record_css()}</style></head><body>"
+            + "\n".join(body) + "</body></html>")
 
 
-def experiment_zip(planner, result=None, beam_time_report: bool = True, folder: bool = True) -> bytes:
-    """The experiment's record as a zip: ``experiment.html`` (this report), ``record.html`` (the run record),
-    ``setup.toml``, the beam-time report of the current setup under ``report/`` (``beam_time_report``), and the
-    experiment folder with every run under ``experiment/`` (``folder``)."""
+def experiment_pdf(planner, result=None, page: Optional[str] = None, **options) -> Optional[bytes]:
+    """The report of the experiment as a PDF: :func:`experiment_html` (or ``page``, if already made) printed by
+    a browser of this computer (:func:`html_to_pdf`). None when no such browser is found."""
+    return html_to_pdf(page if page is not None else experiment_html(planner, result, **options))
+
+
+def experiment_zip(planner, result=None, folder: bool = True, pdf: bool = True, tables: bool = True,
+                   figures: bool = False, plan_events: int = 50_000, seed: int = 1,
+                   journal: str = "physical_review", width: str = "single", validation: bool = False) -> bytes:
+    """The experiment as a zip: ``report.html`` (the report, :func:`experiment_html`), ``report.pdf`` (the same,
+    when a browser of this computer can print it; ``pdf``), ``setup.toml``, the plan's tables as CSV under
+    ``tables/`` (``tables``) and its figures as PNG and PDF under ``figures/`` (``figures``), and the experiment
+    folder with every run under ``experiment/`` (``folder``)."""
+    import tempfile
+
+    plan, _ = _plan_report(planner, plan_events, seed, journal, width, validation)
+    page = experiment_html(planner, result, plan=plan, plan_events=plan_events, seed=seed, journal=journal,
+                           width=width, validation=validation)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("experiment.html", experiment_html(planner, result))
-        z.writestr("record.html", planner.record_html(result))
+        z.writestr("report.html", page)
+        if pdf:
+            data = html_to_pdf(page)
+            if data:
+                z.writestr("report.pdf", data)
         z.writestr("setup.toml", planner.to_toml())
-        if beam_time_report:
-            import tempfile
-
-            from .report import build
-
+        if plan is not None and (tables or figures):
             with tempfile.TemporaryDirectory() as tmp:
-                build(planner.experiment, events=50_000, validation=False).write(tmp, figures=False, root=False)
-                for p in sorted(Path(tmp).rglob("*")):
-                    if p.is_file():
-                        z.write(p, "report/" + p.relative_to(tmp).as_posix())
+                if tables:
+                    for p in plan.write_csv(Path(tmp) / "tables"):
+                        z.write(p, "tables/" + p.name)
+                if figures:
+                    for p in plan.write_figures(Path(tmp) / "figures"):
+                        z.write(p, "figures/" + p.name)
         if folder and planner.folder is not None:
             root = planner.experiment_folder
             for p in sorted(root.rglob("*")):
@@ -684,6 +1363,8 @@ def experiment_zip(planner, result=None, beam_time_report: bool = True, folder: 
     return buf.getvalue()
 
 
-__all__ = ["alignment_html", "analysis_html", "analysis_png", "experiment_html", "experiment_zip",
-           "level_scheme_png", "level_schemes", "level_schemes_html", "multistep_html", "run_analyses",
-           "run_explanations", "run_spectra_png", "run_views", "setup_history"]
+__all__ = ["GAMMA_BIN_KEV", "SECTIONS", "alignment_html", "analysis_html", "analysis_png", "doppler_html",
+           "experiment_html", "experiment_pdf", "experiment_zip", "gamma_lines", "html_to_pdf",
+           "level_scheme_png", "level_schemes", "level_schemes_html", "multistep_html", "pdf_browser",
+           "run_analyses", "run_explanations", "run_gamma_png", "run_gates_png", "run_rings_png",
+           "run_spectra_png", "run_views", "setup_history"]

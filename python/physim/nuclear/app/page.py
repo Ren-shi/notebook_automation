@@ -21,7 +21,7 @@ from .figures import (CLOVER_FIELDS, REACTION_FIELDS, REACTION_TYPES, STYLE, THE
                       figure_alignment, figure_gamma_crystal, figure_detector_spectrum, figure_efficiency, figure_energy_loss,
                       figure_excitation, figure_gamma_spectra, figure_kinematics, figure_levels, figure_overlay,
                       figure_source_spectrum, figure_spectra, figure_strips, figure_sweep, figure_trajectories,
-                      report_zip, themed)
+                      themed)
 
 #: How a change that is not applied yet looks: an outline on its field, a mark on its card, the bar that holds
 #: Apply and Discard at the top of the setup panel, and the note above the tabs.
@@ -2182,74 +2182,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         for note in pop["notes"][:4]:
             ui.label(note).classes("text-xs ps-muted")
 
-    @ui.refreshable
     def report_panel():
-        ui.markdown("The beam-time report is the plan: the setup, every warning, the detector table, kinematics, "
-                    "the level scheme, peaks, energy loss, predicted spectra and each model's validation status. It "
-                    "is computed from the setup, not from your runs. The zip holds `report.html` (print it to PDF "
-                    "from the browser), CSV tables, figures (PNG and PDF), the setup file and, with uproot "
-                    "installed, `events.root`; once the experiment has runs it also holds `experiment.html`, the "
-                    "record above with the runs' spectra and their analysis.")
-
-        async def download():
-            note = ui.notification("Building the report…", spinner=True, timeout=None)
-            try:
-                data = await run.io_bound(report_zip, P().snapshot(), 1, 200_000, state["journal"], state["width"])
-            except ImportError as err:
-                ui.notify(f"The report export is not available in this version: {err}", type="warning")
-                return
-            finally:
-                note.dismiss()
-            ui.download.content(data, "physim-report.zip")
-
-        def pick(key: str, value) -> None:
-            state[key] = value
-            if state["width"] not in paper.JOURNALS[state["journal"]].widths:
-                state["width"] = "single"
-            report_panel.refresh()
-
-        ui.label("The report's figures are drawn in a journal's style, at its column width.").classes(
-            "text-sm ps-muted")
-        with ui.row().classes("items-end gap-2"):
-            ui.select({k: j.label for k, j in paper.JOURNALS.items()}, value=state["journal"], label="Journal style",
-                      on_change=lambda e: pick("journal", e.value)).props("dense outlined").classes("w-80")
-            ui.select({k: f"{paper.WIDTHS[k]} · {mm:g} mm"
-                       for k, mm in paper.JOURNALS[state["journal"]].widths.items()}, value=state["width"],
-                      label="Figure width", on_change=lambda e: pick("width", e.value)).props(
-                "dense outlined").classes("w-56")
-        ui.button("Build and download the report", icon="description", on_click=download)
-        record_block()
-
-    def record_block() -> None:
-        """The run record: every number with its explanation, viewed here and saved as a page to print."""
-        ui.label("The run record").classes("font-semibold mt-4")
-        ui.label("Every number of the plan, and of the analysis once one has been run, with its formula, the "
-                 "formula with this run's numbers in it, what it means and what it assumes; the nuclear data and "
-                 "its provenance; the method step by step; and what the simulation leaves out. The same page is "
-                 "in the report's zip as record.html, to print to PDF.").classes("text-xs ps-muted")
-        holder = ui.column().classes("w-full")
-
-        def scene_png() -> Optional[str]:
-            try:
-                return base64.b64encode(paper.preview(P(), "geometry", state["journal"], state["width"])).decode()
-            except Exception:  # noqa: BLE001 -- the record stands without the picture
-                return None
-
-        async def show() -> None:
-            holder.clear()
-            with holder:
-                ui.spinner(size="md")
-            page = await run.io_bound(lambda p=P().snapshot(): p.record_html(scene_png=scene_png()))
-            holder.clear()
-            with holder:
-                ui.add_css(record_css(".ps-record"))
-                ui.html('<div class="ps-record">' + page.split("<body>", 1)[1].rsplit("</body>", 1)[0] + "</div>",
-                        sanitize=False).classes("w-full ps-plate")
-                ui.button("Save the record (HTML; print it to PDF)", icon="download",
-                          on_click=lambda: ui.download.content(page.encode("utf-8"), "run-record.html")).props(
-                    "dense flat no-caps")
-
-        ui.button("Show the run record", icon="menu_book", on_click=show).props("dense flat no-caps")
+        """The report of the experiment: one document (:mod:`physim.nuclear.app.tab_report`)."""
+        tab_report.experiment_block(ctx)
 
     @ui.refreshable
     def efficiency_panel() -> None:

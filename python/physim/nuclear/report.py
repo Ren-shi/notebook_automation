@@ -6,6 +6,7 @@
 
     rep = report.build(Experiment.example("oxygen_on_lead_array"), seed=1)
     rep.write("my-report")        # report.html, CSV tables, figures (PNG and PDF), setup file, events.root
+    rep.write("my-report", pdf=True)   # and report.pdf, printed by a browser found on this computer
 
 or from a terminal::
 
@@ -207,14 +208,18 @@ class Report:
 
     # -- HTML -----------------------------------------------------------------------------------------------------
 
-    def to_html(self) -> str:
-        """The report as one self-contained HTML page."""
+    def parts(self, dpi: int = 200) -> dict:
+        """The report's sections as HTML fragments, for :meth:`to_html` and for the report of the experiment
+        (:func:`physim.nuclear.logbook.experiment_html`), which holds them next to the runs and their analysis:
+        {"warnings", "setup", "setup_figures" (its two figures alone), "detectors", "kinematics", "peaks", "excitation", "excitation_plain" (under a
+        smaller heading, without the level schemes), "energy_loss", "spectra", "models", "references", "meta"}.
+        The figures are embedded as PNG at ``dpi``."""
         exp = self.experiment
         e = html.escape
         figs = {}
         for name, fig in self.figures().items():
             buf = io.BytesIO()
-            self._save(fig, buf, "png", dpi=200)
+            self._save(fig, buf, "png", dpi=dpi)
             figs[name] = base64.b64encode(buf.getvalue()).decode()
         b = exp.beam
         t = exp.target
@@ -266,6 +271,50 @@ class Report:
                             "the full-energy peak. This comes from the typical response of such crystals, not from "
                             "a calibration of these detectors: the coincidence counts and the beam time scale with "
                             "the efficiency you measure.")
+        setup_figures = f"""<figure><img alt="Setup in 3D" src="data:image/png;base64,{figs['geometry']}">
+<figcaption>Beam, target and detectors (mm).</figcaption></figure>
+<figure><img alt="Coverage" src="data:image/png;base64,{figs['coverage']}">
+<figcaption>Where each detector sits in (θ, φ) as seen from the target.</figcaption></figure>"""
+        return {
+            "warnings": f'<ul class="warnings">{warn_html}</ul>',
+            "setup": f"""{table(("", ""), setup_rows)}
+<p>Reaction: {e(exp.reaction)} scattering. Beam: {_fmt(self.planner.rates()['particles_per_second'])} particles
+per second.</p>
+{setup_figures}""",
+            "setup_figures": setup_figures,
+            "detectors": f"""{table(("Detector", "Shape", "θ (deg)", "φ (deg)", "Ω (msr)", "dσ/dΩ lab (mb/sr)", "Rate (1/s)",
+        "Monte Carlo (1/s)", "Counts in run", "Beam time"), det_rows)}
+<p>Rates count particles measured above threshold, from the target and its backing (scattered beam and recoils).
+dσ/dΩ is the Rutherford cross section of the scattered beam on the main target nuclide at the detector's mean
+angle, at the beam energy in the middle of the target. {e(counts_note)}</p>""",
+            "kinematics": f"""<figure><img alt="Kinematics" src="data:image/png;base64,{figs['kinematics']}">
+<figcaption>Lab energy against lab angle; the shaded bands are the detectors' angular coverage.</figcaption></figure>""",
+            "peaks": table(("Detector", "From", "Particle", "Mean (MeV)", "FWHM (keV)", "Rate (1/s)",
+                            "Above threshold"), peak_rows),
+            "excitation": self._excitation_html(),
+            "excitation_plain": self._excitation_html(level=3, schemes=False),
+            "energy_loss": table(("Layer", "Material", "Thickness (mg/cm²)", "Beam in (MeV)", "Beam out (MeV)",
+                                  "Loss (keV)", "Straggling FWHM (keV)"), loss_rows),
+            "spectra": f"""<figure><img alt="Spectra" src="data:image/png;base64,{figs['spectra']}">
+<figcaption>Measured-energy spectra, counts per bin in the planned beam time ({self.events:,} events, seed
+{self.seed}).</figcaption></figure>""",
+            "models": f"""<p>Status in physim's physics register (✅ checked by an automated test, 🟡 reference requested, — not
+applicable; "see register": the tool reference files are only in physim's source tree, so the comparison was not run
+here). Assumptions: elastic Rutherford scattering; straight tracks; Gaussian straggling and resolution;
+detector faces without inter-strip effects. See the register for each model's range of validity.</p>
+{table(("Model", "vs tools", "vs literature"), reg_rows)}""",
+            "references": f"""<ul>{''.join(f'<li>{e(x)}</li>' for x in m['data'])}</ul>
+<ul>{''.join(f'<li>{e(x)}</li>' for x in REFERENCES)}</ul>""",
+            "meta": (f"physim {e(m['version'])} (commit {e(m['commit'])}) · {e(m['date'])} · Monte Carlo seed "
+                     f"{self.seed}, {self.events:,} events"),
+        }
+
+    def to_html(self) -> str:
+        """The report as one self-contained HTML page."""
+        exp = self.experiment
+        e = html.escape
+        p = self.parts()
+        m = self.meta
         return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -287,62 +336,43 @@ img {{ max-width: 100%; }} figure {{ margin: 1rem 0; }} figcaption {{ font-size:
   figure, table {{ break-inside: avoid; }} }}
 </style></head><body>
 <h1>{e(exp.title)}</h1>
-<p class="sub">Beam-time report · physim {e(m['version'])} (commit {e(m['commit'])}) · {e(m['date'])} ·
-Monte Carlo seed {self.seed}, {self.events:,} events</p>
+<p class="sub">Beam-time report · {p['meta']}</p>
 {f'<p>{e(exp.description)}</p>' if exp.description else ''}
 
 <h2>Warnings</h2>
-<ul class="warnings">{warn_html}</ul>
+{p['warnings']}
 
 <h2>Setup</h2>
-{table(("", ""), setup_rows)}
-<p>Reaction: {e(exp.reaction)} scattering. Beam: {_fmt(self.planner.rates()['particles_per_second'])} particles
-per second.</p>
-<figure><img alt="Setup in 3D" src="data:image/png;base64,{figs['geometry']}">
-<figcaption>Beam, target and detectors (mm).</figcaption></figure>
-<figure><img alt="Coverage" src="data:image/png;base64,{figs['coverage']}">
-<figcaption>Where each detector sits in (θ, φ) as seen from the target.</figcaption></figure>
+{p['setup']}
 
 <h2>Detectors: coverage, cross sections, rates and beam time</h2>
-{table(("Detector", "Shape", "θ (deg)", "φ (deg)", "Ω (msr)", "dσ/dΩ lab (mb/sr)", "Rate (1/s)",
-        "Monte Carlo (1/s)", "Counts in run", "Beam time"), det_rows)}
-<p>Rates count particles measured above threshold, from the target and its backing (scattered beam and recoils).
-dσ/dΩ is the Rutherford cross section of the scattered beam on the main target nuclide at the detector's mean
-angle, at the beam energy in the middle of the target. {e(counts_note)}</p>
+{p['detectors']}
 
 <h2>Kinematics</h2>
-<figure><img alt="Kinematics" src="data:image/png;base64,{figs['kinematics']}">
-<figcaption>Lab energy against lab angle; the shaded bands are the detectors' angular coverage.</figcaption></figure>
+{p['kinematics']}
 
 <h2>Expected peaks</h2>
-{table(("Detector", "From", "Particle", "Mean (MeV)", "FWHM (keV)", "Rate (1/s)", "Above threshold"), peak_rows)}
+{p['peaks']}
 
-{self._excitation_html()}
+{p['excitation']}
 <h2>Energy loss</h2>
-{table(("Layer", "Material", "Thickness (mg/cm²)", "Beam in (MeV)", "Beam out (MeV)", "Loss (keV)",
-        "Straggling FWHM (keV)"), loss_rows)}
+{p['energy_loss']}
 
 <h2>Simulated spectra</h2>
-<figure><img alt="Spectra" src="data:image/png;base64,{figs['spectra']}">
-<figcaption>Measured-energy spectra, counts per bin in the planned beam time ({self.events:,} events, seed
-{self.seed}).</figcaption></figure>
+{p['spectra']}
 
 <h2>Models and their validation</h2>
-<p>Status in physim's physics register (✅ checked by an automated test, 🟡 reference requested, — not
-applicable; "see register": the tool reference files are only in physim's source tree, so the comparison was not run
-here). Assumptions: elastic Rutherford scattering; straight tracks; Gaussian straggling and resolution;
-detector faces without inter-strip effects. See the register for each model's range of validity.</p>
-{table(("Model", "vs tools", "vs literature"), reg_rows)}
+{p['models']}
 
 <h2>Data and references</h2>
-<ul>{''.join(f'<li>{e(s)}</li>' for s in m['data'])}</ul>
-<ul>{''.join(f'<li>{e(s)}</li>' for s in REFERENCES)}</ul>
+{p['references']}
 <p class="meta">Generated by physim {e(m['version'])}, commit {e(m['commit'])}, on {e(m['date'])}. The same
 setup file and seed reproduce every number.</p>
 </body></html>
 """
 
-    def _excitation_html(self) -> str:
+    def _excitation_html(self, level: int = 2, schemes: bool = True) -> str:
+        """The Coulomb-excitation section, under a heading of ``level``, with the level schemes (``schemes``)."""
         x = self.excitation
         if x is None:
             return ""
@@ -353,34 +383,45 @@ setup file and seed reproduce every number.</p>
                       f"<td>{r['mean_kev']:.2f}</td><td>{r['shift_kev']:+.2f}</td><td>{r['fwhm_kev']:.2f}</td></tr>"
                       for r in x["doppler"])
         safe = ("all angles" if x["max_safe_angle"] >= 180 else f"CM angles up to {x['max_safe_angle']:.0f}°")
-        try:
-            from .logbook import level_schemes_html
+        drawn = ""
+        if schemes:
+            try:
+                from .logbook import level_schemes_html
 
-            schemes = level_schemes_html(self.planner)
-        except Exception:  # noqa: BLE001 - the report stands without the figure
-            schemes = ""
-        return f"""<h2>Coulomb excitation</h2>
+                drawn = level_schemes_html(self.planner)
+            except Exception:  # noqa: BLE001 - the report stands without the figure
+                drawn = ""
+        sub = level + 1
+        return f"""<h{level}>Coulomb excitation</h{level}>
 <p>{e(s['excite'].capitalize())} excited to {s['energy_kev']:g} keV (B({e(s['multipolarity'])}↑) =
 {s['b_up_e2fm']:.4g} e² fm^{2 * int(s['multipolarity'][1])}), first-order semiclassical theory: adiabaticity
 ξ = {x['xi']:.2f}, Sommerfeld parameter η = {x['eta']:.1f}, total cross section {x['total_mb']:.3g} mb. Safe
 (Cline's criterion, closest approach ≥ {x['safe_distance_fm']:.1f} fm) at {safe}.</p>
-{schemes}
+{drawn}
 <table><thead><tr><th>Detector</th><th>Excitation events (1/s)</th></tr></thead><tbody>{rows}</tbody></table>
-{('<h3>γ rays</h3><table><thead><tr><th>Particle detector</th><th>γ detector</th><th>E_γ (keV)</th>'
+{(f'<h{sub}>γ rays</h{sub}><table><thead><tr><th>Particle detector</th><th>γ detector</th><th>E_γ (keV)</th>'
   '<th>Doppler shift (keV)</th><th>FWHM (keV)</th></tr></thead><tbody>' + dop + '</tbody></table>') if dop else ''}
 """
 
-    def write(self, directory: Union[str, Path], figures: bool = True, root: Optional[bool] = None) -> list:
-        """report.html, record.html (the run record: every number with its explanation, printable to PDF), the CSV
-        tables, the figures (PNG and PDF), the setup file and, with ``uproot`` installed (or ``root=True``),
-        ``events.root`` with the simulated events and spectra (:mod:`physim.nuclear.rootio`)."""
+    def write(self, directory: Union[str, Path], figures: bool = True, root: Optional[bool] = None,
+              pdf: bool = False) -> list:
+        """report.html (the report: this plan, and every number with its explanation, in one page,
+        :func:`physim.nuclear.logbook.experiment_html`), ``report.pdf`` with ``pdf`` where a browser of this
+        computer can print it, the CSV tables, the figures (PNG and PDF), the setup file and, with ``uproot``
+        installed (or ``root=True``), ``events.root`` with the simulated events and spectra
+        (:mod:`physim.nuclear.rootio`)."""
+        from . import logbook
+
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         paths = [d / "report.html"]
-        paths[0].write_text(self.to_html(), encoding="utf-8")
-        record = d / "record.html"
-        record.write_text(self.planner.record_html(), encoding="utf-8")
-        paths.append(record)
+        page = logbook.experiment_html(self.planner, plan=self)
+        paths[0].write_text(page, encoding="utf-8")
+        if pdf:
+            data = logbook.html_to_pdf(page)
+            if data:
+                (d / "report.pdf").write_bytes(data)
+                paths.append(d / "report.pdf")
         paths += self.write_csv(d)
         if figures:
             paths += self.write_figures(d / "figures")
@@ -508,6 +549,8 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--width", default="single", choices=list(WIDTHS),
                     help="column width of the figures (default: single; 'middle' only where the journal has one)")
     ap.add_argument("--no-root", action="store_true", help="skip events.root (written when uproot is installed)")
+    ap.add_argument("--pdf", action="store_true",
+                    help="also write report.pdf, printed by Edge, Chrome or Chromium if one is installed")
     args = ap.parse_args(argv)
     from .experiment import example_names
 
@@ -519,7 +562,8 @@ def main(argv: Optional[list] = None) -> int:
         rep = build(exp, seed=args.seed, events=args.events, journal=args.journal, width=args.width)
     except ValueError as err:
         ap.error(str(err))
-    paths = rep.write(args.output, figures=not args.no_figures, root=False if args.no_root else None)
+    paths = rep.write(args.output, figures=not args.no_figures, root=False if args.no_root else None,
+                      pdf=args.pdf)
     print(f"wrote {len(paths)} files to {args.output}/ (open report.html)")
     return 0
 

@@ -11,6 +11,10 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Fixed
+- γ-ray spectra reach the top of the level scheme. The predicted spectra and the singles stopped at 1.3 × the
+  transition energy (1525 keV for ⁶²Ni's 1173 keV), short of the 2302 keV γ ray of its second 2⁺ state. They now
+  go to 1.1 × the highest γ-ray energy of the scheme (2532 keV there) at the same width of bin
+  (`gamma_events.spectrum_top`); the Data tab and the report use the same top.
 - The event generator no longer spends nearly all its events where no detector counts anything. With ⁶²Ni on
   ¹⁹⁴Pt, strip detectors just behind 90° and the target 2 mm upstream, 100,000 events gave 1,400 counted particles
   and 60 excited ones, against 32,000 and 16,000 with the target in place; now about 37,000 and 19,000 wherever
@@ -81,6 +85,64 @@ workflow builds the wheels, tests them and publishes to PyPI.
   marked stale by a change, the one on screen too.
 
 ### Changed
+- There is one report. The Report tab showed three (the record of the experiment, the beam-time report of the
+  setup and the run record), and the spectra of the runs were small panels in one of them. They are now the nine
+  sections of a single document (`logbook.experiment_html`): summary; setup; plan; runs and their spectra; gates;
+  the Doppler correction; analysis; every number explained; data, method and what is left out.
+  - Each beam run is drawn in full: the energy in each particle detector (with the analysis's gate filled in),
+    the energy against ring with every gate's window drawn on it (`logbook.run_rings_png`), and every γ-ray
+    detector, and all of them summed, as measured and Doppler-corrected with the γ rays of the level scheme
+    marked (`run_gamma_png`).
+  - The gates have their own section: the corrected γ-ray spectrum under each gate, and a table of the particles
+    that pass and the γ rays in coincidence (`run_gates_png`).
+  - The Doppler correction has its own section (`doppler_html`): the nucleus corrected for and why, the formula,
+    where β and the angle come from event by event, the crystals as the correction sees them, the speed and
+    shift for every pair of particle and γ-ray detector, and each run's settings and corrected line widths.
+  - The report is saved as a PDF as well as HTML (`logbook.experiment_pdf`, `html_to_pdf`): Edge, Chrome or
+    Chromium prints it without a window. Without one of them the app says so; the HTML prints to the same pages.
+  - The zip holds `report.html`, `report.pdf`, the setup, the plan's tables under `tables/` and figures under
+    `figures/`, and the experiment folder. `experiment.html` and `record.html` are gone from it, and
+    `Report.write` writes the one report as `report.html` (`--pdf` adds the PDF). `Report.to_html()` and
+    `record_html()` still give the plan and the record alone, from Python.
+  - Where the level scheme has levels the simulated events never populate, the report names them: with
+    first-order events (`[reaction] order = "first"`) for ⁶²Ni the 0⁺ at 2049 keV and the 4⁺ at 2336 keV.
+- The simulated events of a setup with a level scheme populate its levels as the coupled equations give them, to
+  all orders, where they excited each level in one step from the ground state. A run of ⁶²Ni (237 MeV) on ¹⁹⁴Pt now
+  holds the γ rays of the 4⁺ state (4⁺ → 2⁺, 1163.5 keV, 3% of the 2⁺ → 0⁺ line) and of the second 0⁺ state
+  (0⁺ → 2⁺, 875.6 keV, 4%), which first order never reaches; in a 40 min run their counts agree with the multi-step
+  yields (`Multistep.yields`) within statistics.
+  - The level an excitation starts in is drawn from the populations the collision leaves at its CM angle
+    (`gamma.cascade_excitation` is now a `CoupledChannels`, kept per setup). Each γ ray's angular distribution
+    comes from the same solution: the 4⁺ state has the alignment its two-step excitation gives it.
+  - The excitation probability of the event generator and of `Rates` is the sum of those populations
+    (`rates.excitation_probability`), so the two agree as before; in the ⁶²Ni example 3% more is excited than in
+    first order. A run's "coincidences in the peak" counts the `[reaction]` state's own γ ray; it counted the
+    full-energy γ rays of every transition.
+  - `[reaction] order = "first"` keeps first-order events, bit for bit those of before. A setup without a level
+    scheme (`coulex_ni58`) is unchanged.
+  - The table of 90 angles is solved with all angles together (`CoupledChannels.solve_many`), the forward
+    angles where less than 10⁻⁶ is excited staying in first order: 2 s for the six levels of ⁶²Ni, against 16 s
+    one angle after the other (first order: 0.2 s). It is made once per setup, beam energy and target.
+  - In the corrected spectrum of the ⁶²Ni example the 4⁺ → 2⁺ line does not stand apart: it lies 9.4 keV below
+    the 2⁺ line, whose Doppler-corrected width is 15 to 20 keV with crystals of 35 mm radius at 120 mm. The
+    0⁺ → 2⁺ line is clear of it.
+  - The analysis still extracts B(E2) with first-order theory. On the ⁶²Ni example it returns 5% more on events
+    with all orders than on first-order events (3% from the feeding of the 2⁺ state, the rest from the 4⁺ → 2⁺
+    line inside the fitted peak). With the ENSDF scheme added to `coulex_ni58`, the 2⁺ yield falls by 5% in the
+    CD and 2% in the strip detectors (the reorientation, mostly).
+  - Still left out: every excitation has the kinematics of the `[reaction]` state, and elastic scattering is not
+    reduced by the excitation probability (`record.LEFT_OUT`, `workbench.NOT_SIMULATED`,
+    `docs/theory/coulex.md`).
+- The app opens on Coulomb excitation of the beam at backward angles when there is no experiment yet: ⁶²Ni (6⁺,
+  237 MeV) on ¹⁹⁴Pt, the first template (`coulex-beam-backward`, example `coulex_ni62_pt194`). Before, it opened
+  on ¹⁶O on ⁵⁸Ni, which is still the second template.
+  - The annular silicon detector stands 30 mm behind the target (126° to 163°; the beam comes in through its
+    hole), and the two strip detectors at 110° (96° to 124°), ending where the annular one begins. No particle
+    detector reaches forward of 90°, where the scattered beam and the slow ¹⁹⁴Pt recoils of distant collisions
+    arrive. The γ-ray detectors are those of the ⁵⁸Ni template.
+  - The reaction excites the projectile's first 2⁺ state (1172.91 keV). The setup carries the level schemes of
+    both nuclei from ENSDF: ⁶²Ni with its 4⁺ state at 2336 keV, and ¹⁹⁴Pt with its 2⁺ at 328 keV, for the
+    multi-step solution of either.
 - The planner app applies the changes of the setup when you say so. Before, every field recomputed everything as
   soon as you left it, so five changes meant five rounds of a second or more each, with the numbers of four
   setups nobody wanted in between.

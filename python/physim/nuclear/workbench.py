@@ -74,7 +74,10 @@ SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circl
 GROUPS = ("Beam", "Target and reaction", "Particle detectors", "γ-ray detectors", "Run conditions")
 
 #: Starting points for a new experiment's detectors: the examples, named for what they are. (key, label, example)
+#: The first is what the app opens when there is no experiment yet.
 TEMPLATES = (
+    ("coulex-beam-backward", "Coulomb excitation of the beam (62Ni on 194Pt) with silicon at backward angles",
+     "coulex_ni62_pt194"),
     ("coulex-cd-clovers", "Coulomb excitation of a target nucleus with a CD and clovers", "coulex_ni58"),
     ("elastic-dssd", "Elastic scattering with silicon pads", "alpha_on_gold"),
     ("elastic-array", "Elastic scattering with an array of strip detectors", "oxygen_on_lead_array"),
@@ -125,6 +128,12 @@ def physics_for(key: str) -> str:
 NOT_SIMULATED = (
     (71, "Cascades in part", "without a level scheme each excitation emits one γ ray; with one, the cascade is "
                              "followed, but the angular correlation between its successive γ rays is not"),
+    (71, "Excitation in several steps in part", "with a level scheme its levels are populated to all orders (a 4⁺ "
+                                                "state through the 2⁺, the reorientation), each with its own "
+                                                "orientation; without one, or with order = \"first\", only what one "
+                                                "step from the ground state reaches. Every excitation keeps the "
+                                                "kinematics of the [reaction] state, and elastic scattering is not "
+                                                "reduced by what is excited"),
     (72, "Summing and pile-up in part", "γ rays of one cascade sum in a crystal, and pile-up follows the "
                                         "shaping time, but a summed or piled signal is one Gaussian, without the "
                                         "electronics' shapes; dead time is a simple correction"),

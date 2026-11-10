@@ -1,9 +1,10 @@
-"""The record of an experiment and its runs (backlog item 69): the report lists every run with its setup and the
-analysis of the beam run, and the run record explains the counters and the gates."""
+"""The report of an experiment (backlog item 69): one document with the setup, the plan, every run with its
+spectra, the gates, the Doppler correction, the analysis and every number explained."""
 
 import io
 import zipfile
 
+import numpy as np
 import pytest
 
 from physim.nuclear import dataviews as dv
@@ -48,8 +49,9 @@ def test_every_run_has_its_spectra_in_the_report_with_the_doppler_correction(exp
     assert set(v["gammas"]) == set(beam.gammas().detector_names()) and v["correction"] == "recoil"
     for s in v["gammas"].values():
         assert s["raw"]["counts"].sum() == pytest.approx(s["corrected"]["counts"].sum(), rel=0.02)
-    png, caption = logbook.run_spectra_png(p, beam, result)
+    png, caption = logbook.run_gamma_png(p, beam, result)
     assert png[:8] == b"\x89PNG\r\n\x1a\n" and "corrected for the recoil" in caption
+    assert logbook.run_spectra_png(p, beam, result)[0][:4] == b"\x89PNG"
     source = p.folder.load_run(1)
     assert logbook.run_views(p, source)["source"] and logbook.run_spectra_png(p, source)[0][:4] == b"\x89PNG"
     # An analysis run with a named gate: the report's spectra take that gate and say so.
@@ -78,9 +80,13 @@ def test_the_zip_holds_the_record_and_the_experiment_folder(experiment):
     p, result = experiment
     z = zipfile.ZipFile(io.BytesIO(logbook.experiment_zip(p, result)))
     names = z.namelist()
-    for want in ("experiment.html", "record.html", "setup.toml", "experiment/experiment.toml", "experiment/gates.json"):
+    for want in ("report.html", "setup.toml", "tables/detectors.csv", "experiment/experiment.toml",
+                 "experiment/gates.json"):
         assert want in names, want
-    assert any(n.startswith("report/") for n in names)
+    # One report: the pages that used to stand beside it are its sections.
+    assert not {"experiment.html", "record.html"} & set(names)
+    if logbook.pdf_browser():
+        assert z.read("report.pdf")[:5] == b"%PDF-"
     assert sum(n.endswith("summary.json") for n in names) == 2 and sum(n.endswith("events.npz") for n in names) == 2
 
 
@@ -131,11 +137,82 @@ def test_the_report_draws_the_level_scheme_and_the_fitted_peak(experiment):
     assert 'alt="Level scheme of 58Ni"' in build(p.experiment, events=5_000, validation=False).to_html()
 
 
-def test_the_beam_time_report_zip_carries_the_record_of_the_experiment(experiment):
+def test_the_app_download_is_the_one_report_with_the_runs_in_it(experiment):
     pytest.importorskip("matplotlib")
     from physim.nuclear.app.figures import report_zip
 
     p, _ = experiment
     z = zipfile.ZipFile(io.BytesIO(report_zip(p, events=5_000)))
-    assert {"report.html", "experiment.html", "record.html"} <= set(z.namelist())
-    assert "Spectra of run" in z.read("experiment.html").decode("utf-8")
+    names = set(z.namelist())
+    assert {"report.html", "tables/detectors.csv", "figures/spectra.pdf", "setup.toml"} <= names
+    assert not {"experiment.html", "record.html"} & names
+    assert "Spectra of run" in z.read("report.html").decode("utf-8")
+
+
+def test_the_report_is_one_document_with_every_section(experiment):
+    """There were three pages (the beam-time report, the record of the experiment and the run record); they are
+    the sections of one."""
+    pytest.importorskip("matplotlib")
+    p, result = experiment
+    page = logbook.experiment_html(p, result, plan_events=5_000)
+    at = [page.index(f'<h2 id="{key}">{i}. ') for i, (key, _) in enumerate(logbook.SECTIONS, 1)]
+    assert at == sorted(at) and len(at) == 9
+    # What each of the three held is in it: the plan's tables and figures, the runs, the numbers' explanations.
+    for want in ("Detectors: coverage, cross sections, rates and beam time", 'alt="Kinematics"', "Expected peaks",
+                 "Energy loss", 'alt="Spectra"', "Run 1: 152Eu source run", 'id="coincidences"',
+                 "The nuclear data and where it comes from", "What the simulation leaves out",
+                 "Models and their validation", "AME2020", "@media print"):
+        assert want in page, want
+    # Every beam run with its particles, the gates on the energy against ring, and its γ rays, both ways.
+    for alt in ("Spectra of run 2", "Energy against ring of run 2", "γ-ray spectra of run 2", "Run 2 under each gate"):
+        assert f'<img alt="{alt}"' in page, alt
+    assert "CD rings 3-10" in page and "Particles that pass" in page
+    # The Doppler correction and what it works with.
+    for want in ("E₀ = E_measured × (1 − β cos α) / √(1 − β²)", "Opening half-angle", "The speeds and the shifts",
+                 "Corrected line, FWHM per crystal"):
+        assert want in page, want
+    png, caption, rows = logbook.run_gates_png(p, p.run, result)
+    assert png[:4] == b"\x89PNG" and [r["gate"] for r in rows] == ["every counted particle", "CD rings 3-10"]
+    assert 0 < rows[1]["particles"] < rows[0]["particles"]  # eight of the CD's rings, of three detectors
+    assert rows[1]["gammas"] <= rows[0]["gammas"] and rows[1]["in_peak"] <= rows[0]["in_peak"]
+    png, caption = logbook.run_rings_png(p, p.run)
+    assert png[:4] == b"\x89PNG" and "“CD rings 3-10”" in caption
+
+
+def test_the_gamma_ray_spectra_reach_the_top_of_the_level_scheme(tmp_path):
+    """They stopped at 1.3 × the transition energy (1525 keV for 62Ni's 1173 keV), short of the 2302 keV γ ray of
+    its second 2+ state."""
+    from physim.nuclear.gamma_events import spectrum_top
+
+    p = Planner.example("coulex_ni62_pt194")
+    assert spectrum_top(p.experiment) == pytest.approx(1.1 * 2.30178, rel=1e-6)
+    assert spectrum_top(Planner.example("coulex_ni58").experiment) == pytest.approx(1.3 * 1.454)
+    predicted = p.gamma_spectra(events=20_000)["spectra"]
+    edges = next(iter(predicted.values()))["edges"]
+    assert edges[-1] == pytest.approx(2.532, abs=0.001) and 1e3 * (edges[1] - edges[0]) == pytest.approx(5.08, abs=0.05)
+    p.create_experiment(root=tmp_path)
+    p.start_run("beam", duration="24 h", budget="1 min")
+    v = logbook.run_views(p, p.run)
+    assert v["correction"] == "projectile" and v["total"]["corrected"]["edges"][-1] >= 2.5
+    width = 1e3 * float(np.diff(v["total"]["raw"]["edges"])[0])
+    assert width == pytest.approx(logbook.GAMMA_BIN_KEV, rel=0.02)
+    assert dv.gamma_range(p.run.gammas(), p.run.experiment)[1] >= 2.5
+    lines = {round(x["energy_kev"]): x["label"] for x in logbook.gamma_lines(p.experiment)}
+    assert lines[1173] == "2+ → 0+" and lines[1163] == "4+ → 2+" and lines[2302] == "2+ → 0+" and 2048 not in lines
+    # The events populate every level of this scheme, to all orders: the report has no note of levels left out.
+    assert logbook._not_reached(p.experiment) == []
+    page = logbook.experiment_html(p, plan_events=5_000)
+    assert "Their γ rays are not in these spectra" not in page
+    # First-order events excite each level in one step: the report says which levels they never reach.
+    assert p.set("reaction", "order", "first")
+    assert [label for label, _ in logbook._not_reached(p.experiment)] == ["0+", "4+", "0+"]
+    page = logbook.experiment_html(p, plan_events=5_000)
+    assert "4+ at 2336 keV" in page and "one step from the ground state" in page
+
+
+def test_the_report_prints_to_pdf_where_a_browser_is_found():
+    if logbook.pdf_browser() is None:
+        assert logbook.html_to_pdf("<html><body><p>x</p></body></html>") is None
+        pytest.skip("no Edge, Chrome or Chromium here")
+    data = logbook.html_to_pdf("<!doctype html><html><body><h1>A report</h1><p>One page.</p></body></html>")
+    assert data is not None and data[:5] == b"%PDF-" and len(data) > 500

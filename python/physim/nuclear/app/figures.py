@@ -3,9 +3,7 @@ they work in a notebook as well."""
 
 from __future__ import annotations
 
-import io
 import math
-import zipfile
 from typing import Optional
 
 import numpy as np
@@ -449,28 +447,13 @@ FIGURES = {"geometry": figure_geometry, "kinematics": figure_kinematics, "energy
 
 def report_zip(planner: Planner, seed: int = 1, events: int = 200_000, journal: str = "physical_review",
                width: str = "single") -> bytes:
-    """The report folder (HTML, CSV, figures in a journal's style, setup, ROOT file if uproot is installed) as a
-    zip archive."""
-    import tempfile
-    from pathlib import Path
+    """The report as a zip archive (:func:`physim.nuclear.logbook.experiment_zip`): ``report.html`` and, where a
+    browser can print it, ``report.pdf``; the setup file; the plan's tables (``tables/``, CSV) and figures in a
+    journal's style (``figures/``, PNG and PDF); and the experiment folder with every run, if there is one."""
+    from .. import logbook
 
-    from ..report import build
-
-    with tempfile.TemporaryDirectory() as tmp:
-        build(planner.experiment, seed=seed, events=events, journal=journal, width=width).write(tmp)
-        if planner.folder is not None and planner.runs():
-            # The plan says what was expected; the record of the experiment says what the runs and their
-            # analysis gave. Both go out together.
-            from .. import logbook
-
-            (Path(tmp) / "experiment.html").write_text(logbook.experiment_html(planner), encoding="utf-8")
-            (Path(tmp) / "record.html").write_text(planner.record_html(), encoding="utf-8")
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            for p in sorted(Path(tmp).rglob("*")):
-                if p.is_file():
-                    z.write(p, p.relative_to(tmp).as_posix())
-        return buf.getvalue()
+    return logbook.experiment_zip(planner, None, figures=True, plan_events=events, seed=seed, journal=journal,
+                                  width=width, validation=True)
 
 
 # -- the Data tab's figures (backlog item 67) -------------------------------------------------------------------

@@ -71,7 +71,7 @@ jobs:
           Get-Content "$env:LOCALAPPDATA\physim\planner.log" -ErrorAction SilentlyContinue
           if (-not $ok) { throw "the planner did not start" }
           "planner $($r.version) is running"
-          foreach ($example in "alpha_on_gold", "oxygen_on_lead_array", "coulex_ni58") {
+          foreach ($example in "alpha_on_gold", "oxygen_on_lead_array", "coulex_ni58", "coulex_ni62_pt194") {
             $page = Invoke-WebRequest "http://127.0.0.1:8080/?example=$example" -TimeoutSec 180 -UseBasicParsing
             if ($page.StatusCode -ne 200) { throw "$example gave $($page.StatusCode)" }
             "$example page served"

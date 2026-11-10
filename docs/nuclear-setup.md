@@ -37,8 +37,9 @@ distance = "100 mm"
 thickness = "300 um"
 ```
 
-Each `[[detectors]]` block adds one detector; repeat it for as many as you need. Two complete examples are in
-physim (`physim.nuclear.example_names()` lists them).
+Each `[[detectors]]` block adds one detector; repeat it for as many as you need. Complete examples are in
+physim (`physim.nuclear.example_names()` lists them), among them `coulex_ni62_pt194`: ⁶²Ni at 237 MeV on ¹⁹⁴Pt
+with the silicon detectors at backward angles and the level schemes of both nuclei.
 
 From Python:
 
@@ -97,6 +98,7 @@ distance **d** from the target. θ = 0° is straight downstream and θ = 180° s
 | `energy` | for `coulex` | Energy of the excited state, e.g. `"1.454 MeV"`. |
 | `multipolarity` | no | `"E2"` (default), `"E1"` or `"E3"`: the transition from the 0⁺ ground state. |
 | `emission` | no | `"correlated"` (default): the γ rays follow the particle–γ angular correlation. `"isotropic"`: they leave evenly in all directions. |
+| `order` | no | With a level scheme of the excited nucleus (`[levels]`): `"all"` (default) populates its levels in the simulated events as the coupled equations give them, to all orders (a 4⁺ state reached through the 2⁺, the reorientation); `"first"` keeps first-order theory, each level in one step from the ground state. Without a level scheme the events are first order. |
 | `b_up` | for `coulex` | B(Eλ↑), the reduced transition probability up, with its unit: `"0.0695 e2b2"` or `"695 e2fm4"` for E2 (`e2b`/`e2fm2` for E1, `e2b3`/`e2fm6` for E3). Take it from ENSDF; physim does not look it up. |
 
 A Coulomb-excitation setup:
@@ -359,7 +361,8 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
   particle is in the backward ring, and those at 45° and 135° see 1.5 times.
 - **Not included:** excitation in two or more steps and reorientation (first order only, so the matrix elements
   enter through their size and not their sign), deorientation in vacuum, and lifetimes: every state decays in
-  flight with the orientation it was given.
+  flight with the orientation it was given. The simulated events of a setup with a level scheme do have the
+  further steps and the reorientation: see "Multi-step excitation and reorientation" below.
 
 ## Particle–γ events
 
@@ -466,8 +469,9 @@ assumed, user), the method step by step from scattering to the Doppler-corrected
 the chain from the peak area to B(E2) and the shape, the uncertainty budget, and what the simulation leaves out.
 It is written for a reader who knows nuclear physics and is new to Coulomb excitation.
 
-In the app, the **?** beside a number in the scene's side panel and in the analysis opens its explanation, and
-**Show the run record** on the Report tab shows the page; the report's zip holds the same page as `record.html`.
+In the app, the **?** beside a number in the scene's side panel and in the analysis opens its explanation. The
+explanations, the data's provenance, the method and what is left out are sections of the report (below); the
+record on its own is `record_html`, for use from Python.
 
 ## Multi-step excitation and reorientation
 
@@ -517,6 +521,16 @@ ms.gosia_input(y)                   # a GOSIA input file for this setup, with th
 In the app, **Solve with all orders** in the "Excitation and γ rays" tab (once a level scheme is looked up) shows
 the yields with all orders and with first order, the prolate–zero–oblate comparison per ring, and offers the
 GOSIA input file.
+
+**In the simulated events.** With a level scheme of the excited nucleus whose decays follow more than one
+transition, the events and runs take this solution: each excitation starts in a level drawn from the populations
+the collision leaves at its angle, each γ ray has the angular distribution of its level's own orientation, and
+the excitation probability of the rates and of the event generator is the sum of the populations. A 4⁺ state,
+which only two steps reach, is then in the γ-ray spectra. `[reaction] order = "first"` gives first-order events
+instead. The table of angles is solved once per setup, all angles together (about 2 s for the six levels of
+⁶²Ni). {doc}`theory/coulex` has the numbers for the ⁶²Ni example and what is left out: every excitation keeps
+the kinematics of the `[reaction]` state, elastic scattering is not reduced by what is excited, and the analysis
+still extracts B(E2) with first-order theory.
 
 Not included: the E1 polarisation correction, deorientation, lifetimes, mutual excitation of both nuclei, and
 nuclear interference above the safe energy.
@@ -708,20 +722,48 @@ current sets the absolute scale. `energy_spread` and `spot_size` (both FWHM) ent
 widths. The same `seed` always gives the same events. {doc}`theory/events` explains the method and
 {doc}`physics-register/rates-and-events` how it is checked.
 
-## The beam-time report and data files
+## The report and data files
 
-One command writes the report and every table:
+There is one report. It is a single page with nine sections:
 
-```bash
-python -m physim.nuclear.report my_setup.toml -o my-report --seed 1
+1. **Summary**: the reaction, the runs, and the result of each analysed run.
+2. **The setup**: the beam, target and detectors, the scene and the coverage, the warnings, the level schemes,
+   and how the setup changed between runs.
+3. **The plan**: what the setup should give. Rates and beam time, kinematics, expected peaks, Coulomb excitation,
+   energy loss and predicted spectra. This is what the beam-time report held.
+4. **The runs and their spectra**: for each beam run the energy in each particle detector, the energy against
+   ring with the gates drawn on it, and every γ-ray detector as measured and Doppler-corrected, to the top of
+   the level scheme with its γ rays marked; for a source run its crystals; and predicted against measured.
+5. **The gates**: each gate, and the corrected γ-ray spectrum under each with the counts that pass.
+6. **The Doppler correction**: which nucleus is corrected for, the formula, where β and the angle come from, the
+   crystals as the correction sees them, the speed and shift for every pair of detectors, and each run's settings
+   and corrected line widths.
+7. **The analysis**: every analysed run from the peak area to B(E2), the alignment, the multi-step solution.
+8. **Every number, explained**: what the run record held.
+9. **The data, the method and what is left out**, with the models' validation and the references.
+
+```python
+from physim.nuclear import logbook
+
+page = logbook.experiment_html(planner)        # the report as one self-contained HTML page
+pdf = logbook.experiment_pdf(planner)          # the same as a PDF; None if no browser is found to print it
+data = logbook.experiment_zip(planner)         # report.html, report.pdf, setup, tables, the experiment folder
 ```
 
-From Python, `physim.nuclear.report.build(exp, seed=1).write("my-report")` does the same. The folder then holds:
+The PDF is printed by Edge, Chrome or Chromium without a window (`logbook.pdf_browser()` says which is found;
+`$PHYSIM_PDF_BROWSER` names another). Without one, open `report.html` and print it: it has the same print styles.
 
-- **`report.html`**: the whole report on one page, with figures embedded. It covers the setup, every warning, the
-  detector table, kinematics, expected peaks, energy loss, simulated spectra, the validation status of each model,
-  data sources and references to cite. Print it from the browser ("Save as PDF") for the PDF version; the page has
-  print styles.
+For a setup file alone, without an experiment, one command writes the report and every table:
+
+```bash
+python -m physim.nuclear.report my_setup.toml -o my-report --seed 1 --pdf
+```
+
+From Python, `physim.nuclear.report.build(exp, seed=1).write("my-report", pdf=True)` does the same. The folder then
+holds:
+
+- **`report.html`** (and **`report.pdf`** with `--pdf`): the report, with figures embedded. Without runs its
+  sections on the runs, the gates and the analysis say so. `build(exp).to_html()` gives the plan alone as a page.
 - **`figures/`**: the geometry, coverage, kinematics and spectra figures, as PNG (600 dpi) and PDF. They are
   drawn in a journal's style at its column width: Physical Review, one column, unless you say otherwise with
   `--journal nature --width double` (or `build(exp, journal="nature", width="double")`). The styles are
