@@ -84,10 +84,10 @@ workflow builds the wheels, tests them and publishes to PyPI.
 - The app opens on Coulomb excitation of the beam at backward angles when there is no experiment yet: ⁶²Ni (6⁺,
   237 MeV) on ¹⁹⁴Pt, the first template (`coulex-beam-backward`, example `coulex_ni62_pt194`). Before, it opened
   on ¹⁶O on ⁵⁸Ni, which is still the second template.
-  - The annular silicon detector stands 300 mm behind the target (172° to 178°; the beam comes in through its
-    hole), and the two strip detectors at 130° (115° to 144°). No particle detector reaches forward of 90°, where
-    the scattered beam and the slow ¹⁹⁴Pt recoils of distant collisions arrive. The γ-ray detectors are those of
-    the ⁵⁸Ni template.
+  - The annular silicon detector stands 30 mm behind the target (126° to 163°; the beam comes in through its
+    hole), and the two strip detectors at 110° (96° to 124°), ending where the annular one begins. No particle
+    detector reaches forward of 90°, where the scattered beam and the slow ¹⁹⁴Pt recoils of distant collisions
+    arrive. The γ-ray detectors are those of the ⁵⁸Ni template.
   - The reaction excites the projectile's first 2⁺ state (1172.91 keV). The setup carries the level schemes of
     both nuclei from ENSDF: ⁶²Ni with its 4⁺ state at 2336 keV, and ¹⁹⁴Pt with its 2⁺ at 328 keV, for the
     multi-step solution of either.

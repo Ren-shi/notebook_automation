@@ -1,6 +1,6 @@
 schema = "physim.experiment/1"
 title = "Coulomb excitation of 62Ni on 194Pt"
-description = "Coulomb excitation of a 62Ni beam (charge state 6+, 237 MeV) on 194Pt, seen at backward angles: an annular silicon detector 300 mm behind the target catches the backscattered beam (the beam comes in through its hole), two strip detectors stand at 130 deg, clear of the forward-scattered beam and of the target recoils, and four germanium detectors see the gamma rays. The reaction excites the projectile's first 2+ state (1172.91 keV). The level schemes of 62Ni (with its 4+ state at 2336 keV) and of 194Pt (2+ at 328 keV) are from ENSDF: the first feeds the cascades and the multi-step solution, the second is there to study the target's excitation."
+description = "Coulomb excitation of a 62Ni beam (charge state 6+, 237 MeV) on 194Pt, seen at backward angles: an annular silicon detector 30 mm behind the target catches the backscattered beam (the beam comes in through its hole), two strip detectors stand at 110 deg, behind 90 deg and so clear of the forward-scattered beam and of the target recoils, and four germanium detectors see the gamma rays. The reaction excites the projectile's first 2+ state (1172.91 keV). The level schemes of 62Ni (with its 4+ state at 2336 keV) and of 194Pt (2+ at 328 keV) are from ENSDF: the first feeds the cascades and the multi-step solution, the second is there to study the target's excitation."
 
 [reaction]
 type = "coulex"
@@ -27,7 +27,7 @@ counts_wanted = 500
 name = "CD"
 shape = "annular"
 theta = "180 deg"
-distance = "300 mm"
+distance = "30 mm"
 inner_radius = "9 mm"
 outer_radius = "41 mm"
 rings = 16
@@ -40,7 +40,7 @@ threshold = "500 keV"
 [[detectors]]
 name = "DSSD-L"
 shape = "rectangle"
-theta = "130 deg"
+theta = "110 deg"
 phi = "0 deg"
 distance = "100 mm"
 width = "50 mm"
@@ -55,7 +55,7 @@ threshold = "500 keV"
 [[detectors]]
 name = "DSSD-R"
 shape = "rectangle"
-theta = "130 deg"
+theta = "110 deg"
 phi = "180 deg"
 distance = "100 mm"
 width = "50 mm"

@@ -154,13 +154,14 @@ def test_the_app_opens_on_the_beam_excitation_at_backward_angles(tmp_path, monke
     assert (exp.beam.nuclide, exp.beam.charge_state, exp.beam.energy_mev) == ("62Ni", 6, 237.0)
     assert exp.target.material == "194Pt" and exp.excitation.excite == "projectile"
     assert exp.excitation.energy_mev == pytest.approx(1.17291)
-    # The silicon behind the target stands 300 mm from it, and no particle detector reaches forward of 90°:
+    # The silicon behind the target stands 30 mm from it, and no particle detector reaches forward of 90°:
     # there the scattered beam and the slow 194Pt recoils of distant collisions arrive.
     cd = exp.detectors[0]
-    assert cd.position_mm() == pytest.approx((0.0, 0.0, -300.0), abs=1e-9)
+    assert cd.position_mm() == pytest.approx((0.0, 0.0, -30.0), abs=1e-9)
     ranges = {g.name: g.theta_range() for g in Array.from_experiment(exp)}
-    assert all(lo > 100 for lo, _ in ranges.values()), ranges
-    assert ranges["CD"][0] > 170
+    assert all(lo > 95 for lo, _ in ranges.values()), ranges
+    # The strip detectors end where the annular one begins: it does not stand in their way.
+    assert ranges["CD"][0] > 126 and all(hi < ranges["CD"][0] for name, (_, hi) in ranges.items() if name != "CD")
     # Both nuclei have their level scheme: 62Ni to its 4+, 194Pt with its first 2+.
     beam, target = exp.levels["beam"], exp.levels["target"]
     assert [(lv.label, round(lv.energy.value)) for lv in beam.levels[1:5:3]] == [("2+", 1173), ("4+", 2336)]
