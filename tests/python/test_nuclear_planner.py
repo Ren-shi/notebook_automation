@@ -200,3 +200,102 @@ def test_energy_loss_tab():
     assert el["depth_mg_cm2"][-1] == pytest.approx(0.22)
     for d in el["detectors"]:
         assert d["after_dead_layer_mev"] < d["ejectile_energy_mev"] < d["punch_through_mev"]
+
+
+def test_a_snapshot_keeps_its_results_with_its_setup():
+    """What a worker thread computes while the setup is edited belongs to the old setup, never the new one."""
+    p = Planner.example("alpha_on_gold")
+    old = p.snapshot()
+    assert old.rates() is not None and "rates" in p._cache  # computed by the snapshot, kept by the planner too
+    before = p.rates()["rows"][0]["rate_per_s"]
+
+    late = p.snapshot()  # a computation that starts now ...
+    assert p.set("beam", "current", "7 pnA")  # ... and an edit before it ends
+    assert "rates" not in p._cache
+    assert late.rates()["rows"][0]["rate_per_s"] == before
+    assert "rates" not in p._cache  # the late result did not land in the new setup's results
+    assert p.rates()["rows"][0]["rate_per_s"] != before
+    assert late.experiment is not p.experiment and late.rates()["rows"][0]["rate_per_s"] == before
+
+
+def test_warnings_are_worked_out_once_per_setup():
+    p = Planner.example("coulex_ni58")
+    worked_out = []
+    inner = p._setup_warnings
+    p._setup_warnings = lambda: worked_out.append(1) or inner()
+    first = p.warnings()
+    assert [w.text for w in p.warnings()] == [w.text for w in first] and len(worked_out) == 1
+    assert all(w.level != "error" for w in first)
+    assert not p.set("beam", "energy", "fast")  # an invalid draft: its problem leads, the setup's own follow
+    now = p.warnings()
+    assert now[0].level == "error" and [w.text for w in now[1:]] == [w.text for w in first]
+    assert len(worked_out) == 1
+    assert p.set("beam", "energy", "150 MeV")  # a new setup: worked out again
+    p.warnings()
+    assert len(worked_out) == 2
+
+
+def test_rate_rows_are_selected_once():
+    from physim.nuclear.rates import Rates
+
+    r = Rates(Planner.example("coulex_ni58").experiment)
+    for counted in (True, False):
+        fresh = r._select_rows("CD", None, counted)
+        assert [(x.segment, x.channel, x.particle, x.rate) for x in r._select("CD", None, counted)] == \
+               [(x.segment, x.channel, x.particle, x.rate) for x in fresh]
+        r._select("CD", None, counted).clear()  # the caller's list is its own
+        assert len(r._select("CD", None, counted)) == len(fresh)
+    assert r.rate("CD", (0, 0)) == pytest.approx(sum(x.rate for x in r._select_rows("CD", (0, 0), True)))
+    with pytest.raises(KeyError):
+        r.rate("nope")
+
+
+def test_a_planner_adopts_a_draft_edited_apart():
+    """The app edits a draft on a planner of its own; Apply is the page's planner adopting it, Discard the
+    reverse."""
+    p = Planner.example("alpha_on_gold")
+    before = p.rates()["rows"][0]["rate_per_s"]
+    draft = Planner(p.experiment)
+    assert draft.adopt(p) and draft._draft == p._draft and draft._cache is p._cache
+
+    assert draft.set("beam", "current", "7 pnA") and draft.set("run", "counts_wanted", 4321)
+    assert p._draft["beam"]["current"] != "7 pnA" and p.rates()["rows"][0]["rate_per_s"] == before
+    after = draft.rates()["rows"][0]["rate_per_s"]  # worked out for the draft, ahead of Apply
+    setup = p.experiment
+    assert p.adopt(draft)
+    assert p.experiment is not setup and p._draft == draft._draft and p.experiment.run.counts_wanted == 4321
+    assert p._cache is draft._cache and p.rates()["rows"][0]["rate_per_s"] == after != before
+
+    assert not draft.set("beam", "energy", "fast")  # an invalid draft is not taken
+    assert not p.adopt(draft) and p._draft["beam"]["energy"] != "fast"
+    assert draft.adopt(p) and not draft.problems and draft._draft == p._draft  # Discard
+
+
+def test_rate_rows_are_reused_when_the_beam_current_or_the_run_conditions_change():
+    """The run conditions do not enter the rate integrals and the beam current scales them: an edit of either
+    takes the rows (and the peaks) of the rates before it."""
+    from physim.nuclear.rates import Rates
+
+    def rows(r):
+        return {(x.detector, x.segment, x.channel, x.particle): x.rate for x in r.rows}
+
+    base = Rates(Planner.example("coulex_ni58").experiment)
+    base.peaks("CD")  # kept by the rates before the edit, and so taken along
+    for section, field, value, exact in (("run", "counts_wanted", 4321, True), ("run", "beam_time", "3 d", True),
+                                         ("run", "dead_time", "20 us", True), ("beam", "current", "0.7 pnA", False)):
+        p = Planner.example("coulex_ni58")
+        assert p.set(section, field, value), p.problems
+        fresh, again = Rates(p.experiment), Rates(p.experiment, previous=base)
+        assert again.reused == {"CD", "DSSD-L", "DSSD-R"}, (field, again.reused)
+        a, b = rows(again), rows(fresh)
+        assert a.keys() == b.keys()
+        assert all(a[k] == (b[k] if exact else pytest.approx(b[k], rel=1e-12)) for k in b), field
+        for x, y in zip(again.peaks("CD"), fresh.peaks("CD")):
+            assert (x.channel, x.particle, x.branch, x.mean, x.sigma) == (y.channel, y.particle, y.branch, y.mean,
+                                                                           y.sigma)
+            assert x.rate == pytest.approx(y.rate, rel=1e-12)
+        assert again.warnings() == fresh.warnings() and again.rate("CD") == pytest.approx(fresh.rate("CD"), rel=1e-12)
+        assert again.beam_time_s == fresh.beam_time_s and again.counts_wanted == fresh.counts_wanted
+    p = Planner.example("coulex_ni58")
+    assert p.set("beam", "energy", "31 MeV")
+    assert Rates(p.experiment, previous=base).reused == set()  # the physics changed: nothing is taken

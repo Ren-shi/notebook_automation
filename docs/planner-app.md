@@ -94,11 +94,12 @@ right shows its numbers.
   the target. With **the distance**, it moves along its own direction.
 - A detector around the beam (an S3, a CD) always slides along the beam.
 - The panel follows the move: angles, solid angle, shadowing and a quick estimate of the rate. When you let go,
-  the scene and the panel settle first and the other tabs follow, the Monte Carlo included.
+  the detector stays where you put it and the move joins the changes that wait for **Apply** (see
+  [Change, then Apply](#change-then-apply)); the panel keeps the quick numbers until then.
 - A drag cannot put a detector in the beam, inside another detector or the target, or through the chamber wall. It
   stops at the limit, or turns red and returns to the last allowed place when you let go, and a message says why.
 - For an exact value, type it under **Exact values** in the panel, or in the setup panel on the left. Typed values
-  are not held back; the warnings report a detector in the beam and detectors that overlap.
+  are not held back; once applied, the warnings report a detector in the beam and detectors that overlap.
 
 **Tracks.** **Show tracks** draws a sample of simulated events and animates them: the beam particle to the
 target, then the scattered beam, the recoil and the γ ray to what they hit, which lights up. Choose how many
@@ -158,7 +159,7 @@ paper.figure(p, "kinematics", journal="nature", width="double").savefig("kinemat
 ## Experiments
 
 The planner works on **experiments**. An experiment has a name, its current setup and the runs taken with it, and
-lives in a folder under `~/.physim/experiments`, where every change is saved as you make it.
+lives in a folder under `~/.physim/experiments`, where the setup is saved every time you press **Apply**.
 
 - The first time, the planner offers **New experiment**. It asks for the beam and its energy, the target, and what
   to measure: elastic scattering, or Coulomb excitation of the target or the beam. It names the experiment from
@@ -179,11 +180,37 @@ The left panel is the setup, as the decisions you make in order: **Beam**, **Tar
 detectors**, **γ-ray detectors**, **Run conditions**. Each is a card with two lines:
 
 - what you chose, for example *CD: annular at 30 mm, behind the target (θ 180 deg)*;
-- what it leads to, for example *126°–163°, 2.31 sr, 662/s*. This line changes as soon as you change a field.
+- what it leads to, for example *126°–163°, 2.31 sr, 662/s*. This line is worked out when you press **Apply**.
 
 Open a card to change its fields. The rarely touched ones (dead layers, crystal pitch, housing, absorbers, the
 backing, the coincidence window and dead time) are behind **More**. The **?** in each field explains what the
 value is, a typical value, and what raising it does. **Add** above the detectors offers ready-made ones.
+
+### Change, then Apply
+
+Change as many fields as you like, then press **Apply**: the numbers are worked out once, for all the changes
+together.
+
+- **A change waits.** When you leave a field (Tab, Enter or a click elsewhere), its value goes into the setup you
+  are editing and nothing is computed. The field gets an outline, its card a *not applied* mark and the line
+  *Not applied yet*, and a bar at the top of the panel lists the changes: *Beam: energy 30 MeV → 31 MeV*. Adding,
+  copying, removing or dragging a detector waits in the same way.
+- **What follows at once**, because it needs no rates: the first line of each card, a problem with a value (in
+  red at the top; Apply waits until it is fixed), the scene, the tables of angles under it, and for a selected
+  detector its place, what it covers and a quick estimate of its rate.
+- **Everything else shows the setup as it is applied**: the status strip, every tab, the warnings. A note above
+  the tabs says so while changes wait.
+- **Apply** (in the bar, in the note, or Ctrl+Enter from anywhere, a field you are typing in included) works out
+  the numbers and brings every tab up to date. If you pause for a second or two first, they are worked out in the
+  background meanwhile and Apply shows them at once. In an experiment, Apply also saves the setup; changes that
+  are not applied are not saved, and are dropped if you open another experiment or close the page.
+- **Discard** puts the fields, the cards and the scene back to the applied setup.
+- **Run** takes the applied setup: it asks you to apply or discard first.
+- Some changes have a button of their own beside a result and apply at once, leaving waiting changes as they are:
+  **Look up in ENSDF** and **Remove** for a level scheme, a matrix element typed into the level table, **Plan**
+  beside a state, and the *Correlated / Isotropic* choice.
+- **Apply each change as I make it**, the switch at the top of the panel, brings the old behaviour back: every
+  change is applied when you leave its field. The planner remembers the switch in this browser.
 
 **The checks are always at the top of the panel:** problems with the setup in red, then warnings (detectors
 counting too fast, too few counts, angles where Rutherford's formula fails, detectors in the beam or behind
@@ -259,6 +286,23 @@ The tabs are the stages of an experiment, left to right:
 
 Each result opens with **How to read this**, using your numbers, and ends with an **Explain** panel giving the
 formula, the assumptions and where they stop being valid.
+
+## While the planner computes
+
+The page keeps answering while numbers are worked out; nothing you click has to wait for them.
+
+- **Opening the page:** it is there at once, with a spinner in the setup panel and in the tab for the second or so
+  the count rates take.
+- **After Apply:** the dots in the header turn while the rates are worked out (about a second for the examples;
+  nothing if they were worked out while you paused; a fraction of a second if you changed only the beam current
+  or the run conditions, which reuse the rates). Then the checks, the cards, the status strip and the tab on
+  screen follow, and after them the other tabs, one by one, so the tab you choose next is already built. If you
+  choose one sooner, it shows a spinner and then its content.
+- **The checks on the Plan tab and the cards of the setup panel** are filled when you open them. A check you left
+  open stays open after an edit.
+- **A run's events** are loaded after the tabs are built: seven to nine seconds, and about 1.5 GB of memory, for
+  an hour of beam simulated event by event. Open the Data tab before that and it shows a spinner until they are there. A
+  choice on the Data tab recomputes only the views it changes.
 
 ## A Coulomb-excitation plan
 

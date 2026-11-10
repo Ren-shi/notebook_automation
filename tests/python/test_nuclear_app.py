@@ -209,3 +209,213 @@ def test_the_window_is_chosen_from_the_flags():
     assert app.wants_window(False, False, False, False, available=True) is False
     assert app.wants_window(True, False, False, False, available=False) is None
     assert isinstance(app.window_available(), bool)
+
+
+# -- the page stays responsive (the numbers on a worker thread, the tabs built from what is kept) -------------------
+
+def _page(example: str, scenario):
+    """Run ``scenario(user, planner, on_loop)`` on the planner page of an example, in NiceGUI's simulated browser.
+    ``on_loop`` collects, for every rate integral computed, whether it ran on the event loop's thread (it must
+    not: the page would stop answering for as long as it takes)."""
+    import asyncio
+    import threading
+
+    pytest.importorskip("nicegui")
+    from nicegui.testing import user_simulation
+
+    from physim.nuclear import planner as planner_module
+    from physim.nuclear.app.page import build_page
+
+    planner = Planner.example(example)
+    on_loop = []
+    rates = planner_module.Rates
+
+    def watched(*args, **kwargs):
+        on_loop.append(threading.current_thread() is threading.main_thread())
+        return rates(*args, **kwargs)
+
+    async def main():
+        async with user_simulation(lambda: build_page(example=example)) as user:
+            await scenario(user, planner, on_loop)
+            await asyncio.sleep(0.2)  # let what the last click started end with the page still there
+
+    original = Planner.example
+    Planner.example = classmethod(lambda cls, name: planner)
+    planner_module.Rates = watched
+    try:
+        asyncio.run(main())
+    finally:
+        Planner.example = original
+        planner_module.Rates = rates
+
+
+def _kept(planner, *key) -> bool:
+    return ("page",) + key in planner._cache
+
+
+def test_the_page_is_served_before_its_numbers_and_builds_the_tabs_ahead():
+    pytest.importorskip("nicegui")
+
+    async def scenario(user, p, on_loop):
+        from nicegui import ui
+
+        await user.open("/")
+        # Served at once: nothing was computed to build it, and a spinner stands where the numbers will be.
+        assert "rates" not in p._cache
+        await user.should_see("Computing the setup's numbers")
+        await user.should_see("Run conditions", retries=600)  # the setup panel, once the rates are there
+        await user.should_see("Drag changes the angle", retries=600)  # the Setup tab
+        assert "rates" in p._cache and "warnings" in p._cache
+        # The other tabs follow without being asked for, and the Plan's checks are computed though still closed.
+        await user.should_see("Beam time needed", retries=600)
+        await user.should_see("Not simulated yet", retries=600)
+        for _ in range(600):
+            if _kept(p, "figure", "light", "strips", "A20"):
+                break
+            await asyncio_sleep(0.05)
+        assert _kept(p, "figure", "light", "kinematics") and _kept(p, "figure", "light", "strips", "A20")
+        assert on_loop == [False]  # the rates: once, on the worker thread
+        # A check is built when it is opened, from the figure that is waiting for it.
+        assert "Sweep one parameter" not in _texts(user)
+        check = next(e for e in user.find(kind=ui.expansion).elements
+                     if e.props.get("label") == "Rates per strip, and the beam-time sweep")
+        check.value = True
+        await user.should_see("Sweep one parameter", retries=100)
+
+    _page("alpha_on_gold", scenario)
+
+
+async def asyncio_sleep(seconds: float) -> None:
+    import asyncio
+
+    await asyncio.sleep(seconds)
+
+
+def _texts(user) -> str:
+    """Every label's text on the simulated page."""
+    from nicegui import ui
+
+    return " | ".join(str(e.text) for e in user.find(kind=ui.label).elements if e.visible)
+
+
+def _fields(user, label):
+    from nicegui import ui
+
+    return [e for e in user.find(kind=ui.input).elements if e.props.get("label") == label]
+
+
+async def _open_card(user, title: str, field: str):
+    """Open a card of the setup panel (its fields are built then) and return its field ``field``."""
+    from nicegui import ui
+
+    assert not _fields(user, field)
+    card = next(e for e in user.find(kind=ui.expansion).elements if "header" in e.slots and any(
+        getattr(c, "text", None) == title for h in e.slots["header"].children for c in h.descendants()))
+    card.value = True
+    for _ in range(100):
+        await asyncio_sleep(0.05)
+        if _fields(user, field):
+            break
+    return _fields(user, field)[0]
+
+
+def _type(user, box, text: str) -> None:
+    """Type into a field and leave it, as a user does."""
+    from nicegui.testing import UserInteraction
+
+    box.value = text
+    UserInteraction(user, {box}, None).trigger("blur")
+
+
+def _press(user, label: str) -> None:
+    from nicegui import ui
+    from nicegui.testing import UserInteraction
+
+    button = next(e for e in user.find(kind=ui.button).elements if e.text == label)
+    UserInteraction(user, {button}, None).click()
+
+
+def test_changes_wait_for_apply_and_are_computed_off_the_loop():
+    pytest.importorskip("nicegui")
+
+    async def scenario(user, p, on_loop):
+        await user.open("/")
+        await user.should_see("Beam time needed", retries=600)
+        first, setup, beam = p._cache, p.experiment, p.experiment.beam.particles_per_second
+        before = p.rates()["rows"][0]["rate_per_s"]
+        current = await _open_card(user, "Beam", "Current")
+        new = "3 pnA" if str(current.value) != "3 pnA" else "2 pnA"
+        _type(user, current, new)
+        await asyncio_sleep(0.1)
+        # The change waits: the applied setup and its numbers are as they were, the field is marked, and the bar
+        # at the top of the panel names the change.
+        assert p.experiment is setup and p._cache is first
+        assert "ps-pending" in current.classes
+        texts = _texts(user)
+        assert "1 change not applied" in texts and f"→ {new}" in texts and "not applied" in texts
+        counts = (await _open_card(user, "Run conditions", "Counts wanted"))
+        _type(user, counts, "4321")
+        await asyncio_sleep(0.1)
+        assert "2 changes not applied" in _texts(user) and p.experiment is setup
+        # The draft's numbers are worked out ahead, on the worker, on the draft's own planner.
+        await asyncio_sleep(2.0)
+        assert p.experiment is setup and p._cache is first
+        _press(user, "Apply")
+        await asyncio_sleep(0.1)
+        assert p.experiment is not setup and p._cache is not first
+        assert "rates" in p._cache  # adopted from the draft: nothing to wait for
+        assert p.experiment.beam.particles_per_second != beam and p.experiment.run.counts_wanted == 4321
+        for _ in range(600):
+            if _kept(p, "figure", "light", "strips", "A20"):  # the last thing the pass after a change computes
+                break
+            await asyncio_sleep(0.05)
+        assert _kept(p, "figure", "light", "strips", "A20")
+        assert p.rates()["rows"][0]["rate_per_s"] == pytest.approx(
+            before * p.experiment.beam.particles_per_second / beam, rel=1e-9)
+        texts = _texts(user)
+        assert "not applied" not in texts and new in texts  # the Beam card's line; no bar, no mark
+        assert "ps-pending" not in current.classes
+        assert on_loop and not any(on_loop)
+
+    _page("alpha_on_gold", scenario)
+
+
+def test_discard_and_applying_each_change_as_it_is_made():
+    pytest.importorskip("nicegui")
+    from nicegui import ui
+
+    async def scenario(user, p, on_loop):
+        await user.open("/")
+        await user.should_see("Beam time needed", retries=600)
+        setup = p.experiment
+        await _open_card(user, "Beam", "Current")
+        energy = next(e for e in _fields(user, "Energy") if e.value != "64 MeV")  # not the New experiment form's
+        was = energy.value
+        _type(user, energy, "6.25 MeV")
+        await asyncio_sleep(0.1)
+        assert "1 change not applied" in _texts(user) and p.experiment is setup
+        _type(user, energy, "fast")  # not a setup: said at the top of the panel, and Apply would not take it
+        await asyncio_sleep(0.1)
+        assert p.experiment is setup
+        _press(user, "Apply")
+        await asyncio_sleep(0.1)
+        assert p.experiment is setup
+        _press(user, "Discard")
+        await asyncio_sleep(0.2)
+        assert "not applied" not in _texts(user) and p.experiment is setup
+        energy = next(e for e in _fields(user, "Energy") if str(e.value) == str(was))  # the panel was built again
+        # With the switch on, a change is applied as it is made.
+        switch = next(e for e in user.find(kind=ui.switch).elements if e.text == "Apply each change as I make it")
+        switch.value = True
+        await asyncio_sleep(0.1)
+        _type(user, energy, "6.25 MeV")
+        await asyncio_sleep(0.2)
+        assert p.experiment is not setup and p.experiment.beam.energy_mev == pytest.approx(6.25)
+        assert "not applied" not in _texts(user)
+        for _ in range(600):
+            if "rates" in p._cache:
+                break
+            await asyncio_sleep(0.05)
+        assert "rates" in p._cache and not any(on_loop)
+
+    _page("alpha_on_gold", scenario)

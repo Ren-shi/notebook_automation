@@ -164,3 +164,25 @@ def test_experiment_names_and_folders(tmp_path):
     listed = Planner.experiments(tmp_path)
     assert {x["path"] for x in listed} == {str(one.path), str(two.path)}
     assert isinstance(RunData, type)
+
+
+def test_segment_directions_match_each_rows_own_segment():
+    """The table over the hit segments gives every row the centre of its own segment."""
+    import math
+
+    from physim.nuclear.detectors import Array
+    from physim.nuclear.runs import _segment_directions
+
+    exp = Planner.example("coulex_ni58").experiment
+    array = Array.from_experiment(exp)
+    rng = np.random.default_rng(3)
+    det = rng.integers(0, len(array.geometries), 400)
+    si = np.array([rng.integers(0, len({s[0] for s in array.geometries[d].segments})) for d in det])
+    sj = np.array([rng.integers(0, len({s[1] for s in array.geometries[d].segments})) for d in det])
+    theta, phi = _segment_directions(exp, {"detector": det, "segment_i": si, "segment_j": sj})
+    for k in range(0, 400, 7):
+        c = array.geometries[int(det[k])].segment_centre((int(si[k]), int(sj[k])), weighted=True)
+        assert theta[k] == math.degrees(math.atan2(math.hypot(c[0], c[1]), c[2]))
+        assert phi[k] == math.degrees(math.atan2(c[1], c[0]))
+    empty = _segment_directions(exp, {"detector": det[:0], "segment_i": si[:0], "segment_j": sj[:0]})
+    assert len(empty[0]) == 0 and len(empty[1]) == 0

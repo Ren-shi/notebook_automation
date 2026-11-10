@@ -1,5 +1,10 @@
 """The Data tab (backlog item 67): every spectrum of the current run on screen, the operations as the user's
-choices, gates as named objects, the 2D views, run overlays and exports (:mod:`physim.nuclear.dataviews`)."""
+choices, gates as named objects, the 2D views, run overlays and exports (:mod:`physim.nuclear.dataviews`).
+
+Loading a run's events and histogramming them takes seconds for a long run, so none of it is done while the tab
+is built: :func:`prepare` computes every view for the current choices on the page's worker thread and keeps each
+by what it depends on (``ctx.keep``), and the tab is then built from what is kept. A choice that changes one
+kind of view (the Doppler correction, say) leaves the others as they are."""
 
 from __future__ import annotations
 
@@ -14,33 +19,126 @@ def options(ctx) -> dict:
     return ctx.data_options
 
 
-def _gate(ctx):
+def _gate(ctx, p=None):
     name = options(ctx)["gate"]
     if not name:
         return None
     try:
-        return ctx.P().gate(name)
+        return (p or ctx.P()).gate(name)
     except KeyError:
         options(ctx)["gate"] = None
         return None
 
 
-def _gamma_spec(ctx, run, name: str) -> dict:
+def _gate_key(gate) -> tuple:
+    """What tells one gate from another (a gate can be saved again under its name)."""
+    return None if gate is None else (gate.name, gate.describe())
+
+
+def panels(ctx, p) -> list:
+    """The grid for the current choices: (name, spectrum, its small figure) per particle detector and per γ-ray
+    detector (or crystal), or per crystal of a source run. Each spectrum and figure is computed once per choice
+    it depends on and kept with the run."""
+    run = p.run
     o = options(ctx)
+    theme = ctx.state["theme"]
+    out = []
+
+    def add(name: str, key: tuple, make, view=None) -> None:
+        spec = ctx.keep(p, ("data", "spectrum") + key, make, of_run=True)
+        if view is not None:
+            # "γ from / to" only zooms the view: the histogram keeps the whole range of the run.
+            spec = dict(spec, view=view)
+        fig = ctx.keep(p, ("data", "small figure", theme, view) + key,
+                       lambda: ctx.in_theme(figure_histogram([spec], height=190)), of_run=True)
+        out.append((name, spec, fig))
+
+    if run.kind == "source":
+        sr = run.source()
+        for n in sr.names():
+            add(n, ("source", n), lambda n=n: dict(counts=sr.spectra[n], edges=sr.edges, label=n, scale=1e3,
+                                                   xlabel="γ-ray energy (keV)"))
+        return out
+    ev = run.events()
+    gate = _gate(ctx, p)
+    bins, scaled = int(o["bins"]), o["scaled"]
+    for d in ev.detectors:
+        add(d, ("particle", d, _gate_key(gate), bins, scaled),
+            lambda d=d: dict(dv.particle_spectrum(run, d, gate=gate, bins=bins, scaled=scaled),
+                             xlabel="energy (MeV)"))
     g = run.gammas()
-    # The histogram always holds the whole range of the run (every line, up to the highest energy recorded);
-    # "γ from / to" only zooms the view, so nothing is lost from the panel or its CSV.
-    s = dv.gamma_spectrum(run, name, correction=o["correction"], gate=_gate(ctx), mode=o["mode"],
-                          randoms=o["randoms"], addback=o["addback"], bins=int(o["bins"]),
-                          range=dv.gamma_range(g), scaled=o["scaled"])
-    view = (float(o["lo_kev"]), float(o["hi_kev"])) if o["lo_kev"] is not None and o["hi_kev"] else None
-    return dict(s, scale=1e3, xlabel="γ-ray energy (keV)", view=view)
+    if g is not None:
+        correction, mode, randoms, addback = o["correction"], o["mode"], o["randoms"], o["addback"]
+        view = (float(o["lo_kev"]), float(o["hi_kev"])) if o["lo_kev"] is not None and o["hi_kev"] else None
+        for n in (g.crystal_names if o["crystals"] else g.detector_names()):
+            # The histogram always holds the whole range of the run (every line, up to the highest energy
+            # recorded), so nothing is lost from the panel or its CSV.
+            add(n, ("gamma", n, correction, _gate_key(gate), mode, randoms, addback, bins, scaled),
+                lambda n=n: dict(dv.gamma_spectrum(run, n, correction=correction, gate=gate, mode=mode,
+                                                   randoms=randoms, addback=addback, bins=bins,
+                                                   range=dv.gamma_range(g), scaled=scaled),
+                                 scale=1e3, xlabel="γ-ray energy (keV)"), view)
+    return out
 
 
-def _particle_spec(ctx, run, name: str) -> dict:
+def ring_view(ctx, p) -> tuple:
+    """(detector, figure) of the energy-against-ring view chosen."""
+    run = p.run
+    ev = run.events()
+    det = options(ctx)["view_detector"] or ev.detectors[0]
+    view = ctx.keep(p, ("data", "ring", det), lambda: dv.energy_vs_ring(run, det), of_run=True)
+    return det, ctx.keep(p, ("data", "ring figure", ctx.state["theme"], det),
+                         lambda: ctx.in_theme(figure_energy_ring(view)), of_run=True)
+
+
+def crystal_view(ctx, p):
+    """The γ-ray-energy-against-crystal figure for the correction chosen."""
+    run = p.run
+    corr = options(ctx)["view_correction"]
+    return ctx.keep(p, ("data", "crystal figure", ctx.state["theme"], corr),
+                    lambda: ctx.in_theme(figure_gamma_crystal(dv.gamma_vs_crystal(run, corr))), of_run=True)
+
+
+def compared(ctx, p):
+    """The overlay of the current run and the one chosen under "Compare runs": {"figure", "differences"}, or
+    {"error"}; None when no run is chosen. The other run's events are loaded for it."""
+    run = p.run
     o = options(ctx)
-    return dict(dv.particle_spectrum(run, name, gate=_gate(ctx), bins=int(o["bins"]), scaled=o["scaled"]),
-                xlabel="energy (MeV)")
+    if o["other"] is None or run.kind == "source":
+        return None
+    ev = run.events()
+    g = run.gammas()
+    name = o["compare_spectrum"] or (list(ev.detectors) + (g.detector_names() if g is not None else []))[0]
+    which = "particle" if name in ev.detectors else "gamma"
+    opts = {"bins": int(o["bins"])} if which == "particle" else {
+        "correction": o["correction"], "randoms": o["randoms"], "addback": o["addback"], "bins": int(o["bins"])}
+
+    def make() -> dict:
+        try:
+            ov = dv.overlay(run, p.folder.load_run(o["other"]), name, which, **opts)
+        except (ValueError, KeyError) as err:
+            return {"error": str(err)}
+        specs = [dict(x, scale=1e3 if which == "gamma" else 1.0,
+                      xlabel="γ-ray energy (keV)" if which == "gamma" else "energy (MeV)") for x in ov["spectra"]]
+        return {"figure": ctx.in_theme(figure_histogram(specs, height=340)), "differences": ov["differences"]}
+
+    return ctx.keep(p, ("data", "compare", ctx.state["theme"], o["other"], name) + tuple(sorted(opts.items())),
+                    make, of_run=True)
+
+
+def prepare(ctx, p) -> None:
+    """Load the current run's events and compute every view of the tab for the current choices, on the page's
+    worker thread (``p`` is a snapshot of the planner). What is kept already is not computed again."""
+    run = p.run
+    if run is None:
+        return
+    panels(ctx, p)
+    if run.kind == "source":
+        return
+    ring_view(ctx, p)
+    if run.gammas() is not None:
+        crystal_view(ctx, p)
+    compared(ctx, p)
 
 
 def controls(ctx, run) -> None:
@@ -91,21 +189,9 @@ def controls(ctx, run) -> None:
 def grid(ctx, run) -> None:
     ui = ctx.ui
     o = options(ctx)
-    theme = ctx.state["theme"]
-    if run.kind == "source":
-        sr = run.source()
-        panels = [(n, dict(counts=sr.spectra[n], edges=sr.edges, label=n, scale=1e3, xlabel="γ-ray energy (keV)"))
-                  for n in sr.names()]
-    else:
-        ev = run.events()
-        panels = [(d, _particle_spec(ctx, run, d)) for d in ev.detectors]
-        g = run.gammas()
-        if g is not None:
-            names = g.crystal_names if o["crystals"] else g.detector_names()
-            panels += [(n, _gamma_spec(ctx, run, n)) for n in names]
     with ui.element("div").classes("w-full").style(
             "display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px"):
-        for name, spec in panels:
+        for name, spec, fig in panels(ctx, ctx.P()):
             with ui.column().classes("ps-plate gap-0").style("min-width: 0"):
                 with ui.row().classes("w-full items-center no-wrap"):
                     ui.label(name).classes("text-sm font-medium")
@@ -113,7 +199,7 @@ def grid(ctx, run) -> None:
                     ui.space()
                     ui.button(icon="open_in_full", on_click=lambda n=name, s=spec: enlarge(ctx, run, n, s)).props(
                         "dense flat round size=sm").tooltip("Enlarge, and download the spectrum")
-                ui.plotly(themed(figure_histogram([spec], height=190), theme)).classes("w-full")
+                ui.plotly(fig).classes("w-full")
     ui.label(("The whole run: the real part scaled, with the full run's Poisson fluctuations. " if o["scaled"]
               else f"The real part: {run.describe().split(';', 1)[-1].strip()}. ")
              + "Counts per bin.").classes("text-xs ps-muted")
@@ -210,9 +296,8 @@ def views_2d(ctx, run) -> None:
         ui.select(list(ev.detectors), value=o["view_detector"] or ev.detectors[0], label="Energy against ring of",
                   on_change=lambda e: (o.update(view_detector=e.value), ctx.refresh_data())).props(
             "dense outlined").classes("w-48")
-    det = o["view_detector"] or ev.detectors[0]
-    view = dv.energy_vs_ring(run, det)
-    plot = ui.plotly(themed(figure_energy_ring(view), ctx.state["theme"])).classes("w-full")
+    det, figure = ring_view(ctx, ctx.P())
+    plot = ui.plotly(figure).classes("w-full")
 
     def selected(e) -> None:
         r = (e.args or {}).get("range") or {}
@@ -231,7 +316,7 @@ def views_2d(ctx, run) -> None:
         ui.select({k: k.capitalize() for k in dv.CORRECTIONS}, value=corr, label="γ-ray energy against crystal",
                   on_change=lambda e: (o.update(view_correction=e.value), ctx.refresh_data())).props(
             "dense outlined").classes("w-56 mt-2")
-        ui.plotly(themed(figure_gamma_crystal(dv.gamma_vs_crystal(run, corr)), ctx.state["theme"])).classes("w-full")
+        ui.plotly(crystal_view(ctx, ctx.P())).classes("w-full")
         ui.label("With the right correction every crystal's line sits at the transition energy; a misplaced target "
                  "moves each crystal's line by its own amount.").classes("text-xs ps-muted")
 
@@ -255,21 +340,13 @@ def compare(ctx, run) -> None:
         ui.select(spectra, value=o["compare_spectrum"] or spectra[0], label="Spectrum",
                   on_change=lambda e: (o.update(compare_spectrum=e.value), ctx.refresh_data())).props(
             "dense outlined").classes("w-40")
-    if o["other"] is None:
+    ov = compared(ctx, p)
+    if ov is None:
         return
-    other = p.folder.load_run(o["other"])
-    name = o["compare_spectrum"] or spectra[0]
-    which = "particle" if name in ev.detectors else "gamma"
-    opts = {"bins": int(o["bins"])} if which == "particle" else {
-        "correction": o["correction"], "randoms": o["randoms"], "addback": o["addback"], "bins": int(o["bins"])}
-    try:
-        ov = dv.overlay(run, other, name, which, **opts)
-    except (ValueError, KeyError) as err:
-        ui.label(str(err)).classes("text-sm ps-warn")
+    if "error" in ov:
+        ui.label(ov["error"]).classes("text-sm ps-warn")
         return
-    specs = [dict(s, scale=1e3 if which == "gamma" else 1.0,
-                  xlabel="γ-ray energy (keV)" if which == "gamma" else "energy (MeV)") for s in ov["spectra"]]
-    ui.plotly(themed(figure_histogram(specs, height=340), ctx.state["theme"])).classes("w-full")
+    ui.plotly(ov["figure"]).classes("w-full")
     ui.label("Setups differ in: " + ("; ".join(ov["differences"]) if ov["differences"] else "nothing but labels")
              + ".").classes("text-xs ps-muted")
 

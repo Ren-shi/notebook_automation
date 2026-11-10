@@ -24,7 +24,7 @@ Angles in degrees, energies in MeV, rates per second. Only elastic (Rutherford) 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from functools import lru_cache
 from typing import Optional
 
@@ -416,9 +416,13 @@ class Rates:
         self._partly_hidden = {behind for (_, behind), frac in shadows.items() if frac < 1 - 1e-6}
         self._shadowed = {behind for _, behind in shadows}
         self._only = only
-        #: Everything but the detectors that decides a detector's rows.
-        self._physics = repr((experiment.beam, experiment.target, experiment.reaction, experiment.excitation,
-                              experiment.run, depth_points, order, theta_floor, self.min_energy))
+        #: Everything but the detectors that decides a detector's rows, up to the beam's intensity: the rows are
+        #: proportional to the particles per second, and the run conditions (beam time, counts wanted, dead time,
+        #: coincidence window) do not enter them, so an edit of either reuses every row.
+        beam = tuple((f.name, getattr(experiment.beam, f.name)) for f in fields(experiment.beam)
+                     if f.name != "current")
+        self._physics = repr((beam, experiment.target, experiment.reaction, experiment.excitation, depth_points,
+                              order, theta_floor, self.min_energy))
         self._peak_cache: dict = {}
         #: Detectors whose rows were taken from ``previous``.
         self.reused = self._unchanged(previous)
@@ -453,8 +457,14 @@ class Rates:
             if self._only is not None and g.name != self._only:
                 continue
             if g.name in self.reused:
-                rows += [r for r in previous.rows if r.detector == g.name]
-                self._peak_cache.update({k: v for k, v in previous._peak_cache.items() if k[0] == g.name})
+                scale = self.particles_per_second / previous.particles_per_second
+                if scale == 1.0:
+                    rows += [r for r in previous.rows if r.detector == g.name]
+                    self._peak_cache.update({k: v for k, v in previous._peak_cache.items() if k[0] == g.name})
+                else:  # another beam current: the same rows and peaks, in proportion
+                    rows += [replace(r, rate=r.rate * scale) for r in previous.rows if r.detector == g.name]
+                    self._peak_cache.update({k: [replace(pk, rate=pk.rate * scale) for pk in v]
+                                             for k, v in previous._peak_cache.items() if k[0] == g.name})
                 continue
             segs = g.segments
             parts = [g.directions(seg, self._order_for(g)) for seg in segs]
@@ -516,9 +526,18 @@ class Rates:
         return sum(pk.rate * pk.counted_fraction for pk in peaks) / total if total > 0 else 0.0
 
     def _select(self, detector: str, segment: Optional[tuple], counted: bool) -> list:
+        """The rows of a detector (or one segment), scaled by the counted fraction with ``counted``. Kept per
+        choice: the rows do not change once computed, and every total, table and warning asks for them again."""
+        key = (detector, None if segment is None else tuple(segment), bool(counted))
+        kept = self.__dict__.setdefault("_selected", {})
+        if key not in kept:
+            kept[key] = self._select_rows(*key)
+        return list(kept[key])
+
+    def _select_rows(self, detector: str, segment: Optional[tuple], counted: bool) -> list:
         if detector not in [g.name for g in self.array]:
             raise KeyError(detector)
-        rows = [r for r in self.rows if r.detector == detector and (segment is None or r.segment == tuple(segment))]
+        rows = [r for r in self.rows if r.detector == detector and (segment is None or r.segment == segment)]
         if counted:
             frac = {(c, p): self._counted_fraction(detector, c, p) for c, p in {(r.channel, r.particle) for r in rows}}
             rows = [RateRow(r.detector, r.segment, r.channel, r.particle, r.rate * frac[(r.channel, r.particle)])

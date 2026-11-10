@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import math
+import threading
 import time
 from typing import Optional
 
@@ -20,6 +22,19 @@ from .figures import (CLOVER_FIELDS, REACTION_FIELDS, REACTION_TYPES, STYLE, THE
                       figure_excitation, figure_gamma_spectra, figure_kinematics, figure_levels, figure_overlay,
                       figure_source_spectrum, figure_spectra, figure_strips, figure_sweep, figure_trajectories,
                       report_zip, themed)
+
+#: How a change that is not applied yet looks: an outline on its field, a mark on its card, the bar that holds
+#: Apply and Discard at the top of the setup panel, and the note above the tabs.
+PENDING_STYLE = """
+.ps-pending.q-field--outlined .q-field__control:before { border: 2px solid var(--ps-warn) !important; }
+.ps-pending .q-field__label { color: var(--ps-warn) !important; }
+.ps-pending-bar { padding: 0 2px; }
+.ps-pending-bar.ps-pending-on { position: sticky; top: 0; z-index: 3; background: var(--ps-warnbox);
+  border: 1px solid var(--ps-warn); border-radius: 8px; padding: 8px 10px; margin: 0 0 6px 0; }
+.ps-pending-note { background: var(--ps-warnbox); border: 1px solid var(--ps-warn); margin-top: 6px; }
+.ps-pending-mark { color: var(--ps-warn); border: 1px solid var(--ps-warn); border-radius: 8px; padding: 0 6px;
+  font-size: 11px; line-height: 16px; white-space: nowrap; }
+"""
 
 # ---------------------------------------------------------------------------------------------------------------
 # The page
@@ -81,7 +96,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     system's setting the first time."""
     from types import SimpleNamespace
 
-    from nicegui import run, ui
+    from nicegui import Client, background_tasks, run, ui
 
     from .. import paper
     from .. import runs as _runs
@@ -93,19 +108,277 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     first, offer_list = _starting_planner(example, template, experiment)
     state = {"planner": first, "events": events, "theme": theme or "light", "open": None, "stage": "setup",
-             "export": None, "journal": "physical_review", "width": "single", "format": "pdf"}
+             "export": None, "journal": "physical_review", "width": "single", "format": "pdf",
+             # Whether the setup's numbers are there (the panel and the strip show them); a page built whole
+             # (``prebuild``) computes them as it is built.
+             "ready": prebuild,
+             # Whether a change of the setup is applied as it is made, or waits for Apply (the default).
+             "auto_apply": False}
+    client = ui.context.client
 
     def P() -> Planner:  # noqa: N802
+        """The planner of the setup that is applied: every number on the page is its."""
         return state["planner"]
 
+    def draft_of(planner: Planner) -> Planner:
+        """A planner of its own for the setup as it is being edited. Edits go to it and compute nothing; Apply
+        makes the page's planner adopt it, Discard makes it adopt the page's planner."""
+        draft = Planner(planner.experiment)
+        draft.adopt(planner)
+        return draft
+
+    state["draft"] = draft_of(first)
+
+    def D() -> Planner:  # noqa: N802
+        """The planner of the draft: the setup with the changes not applied yet."""
+        return state["draft"]
+
     # -- actions ----------------------------------------------------------------------------------------------
-    def changed(ok: bool) -> None:
+    def changed(ok: bool, panel: bool = False) -> None:
+        """After an edit of the setup. ``panel``: the cards themselves changed (a detector added, removed or
+        moved), so the setup panel is rebuilt even under a field being typed in."""
         if ok:
+            state["panel_due"] = panel or state.get("panel_due", False)
             refresh_results()  # rebuilds the setup panel and the strip once the numbers are ready
             return
         ui.notify("; ".join(P().problems), type="negative", multi_line=True)
         setup_panel.refresh()
         status_strip.refresh()
+
+    def pending() -> list:
+        """The changes not applied, one line each (:func:`physim.nuclear.workbench.changes`)."""
+        return wb.changes(P()._draft, D()._draft)
+
+    def value_in(setup: dict, section: str, field: str):
+        """A field of a setup (in the structure of a setup file) by the planner's section name; None if the setup
+        has no such field (or no such detector)."""
+        if section == "title":
+            return setup.get("title")
+        if section == "backing":
+            return setup["target"].get("backing", {}).get(field)
+        if section.startswith(("gamma detector", "detector")):
+            gamma = section.startswith("gamma")
+            items = setup.get("gamma_detectors" if gamma else "detectors", [])
+            i = int(section.split()[2 if gamma else 1]) - 1
+            return items[i].get(field) if i < len(items) else None
+        return setup.get(section, {}).get(field)
+
+    def is_pending(section: str, field: str) -> bool:
+        """Whether a field of the draft differs from the applied setup (a detector is found there by its name)."""
+        now = value_in(D()._draft, section, field)
+        if section.startswith(("gamma detector", "detector")):
+            key = card_of(section)
+            mine = wb.card_setup(D()._draft, key) or {}
+            theirs = wb.card_setup(P()._draft, key, name=mine.get("name"))
+            return theirs is None or theirs.get(field) != now
+        return value_in(P()._draft, section, field) != now
+
+    #: The setup panel's parts as they stand on the page, so an edit can update them where they are instead of
+    #: rebuilding the panel under the next field being typed in: each card's labels by its key, each field's
+    #: element by (section, field), and the text inputs among them.
+    card_parts: dict = {}
+    field_marks: list = []
+    field_inputs: dict = {}
+    field_shown: dict = {}
+
+    def scene_shows() -> tuple:
+        """What a drawing of the scene depends on: the draft's setup, and the applied one's numbers once they are
+        there (the rings that see unsafe collisions are painted from them)."""
+        return D().experiment, P().experiment if numbers_kept() else None
+
+    def draw_scene() -> None:
+        """Draw the scene again if what it shows has changed (a drawing takes the tracks off)."""
+        view = scene_state["view"]
+        if view is None or not view.alive or view.busy:
+            return
+        now = scene_shows()
+        was = scene_state.get("shows")
+        if was is None or any(a is not b for a, b in zip(was, now)):
+            view.draw()
+            scene_state["shows"] = now
+
+    def mark(element, section: str, field: str, register: bool = True) -> None:
+        """Outline a field's element if its value is not applied yet."""
+        if register:
+            field_marks.append((section, field, element))
+        if is_pending(section, field):
+            element.classes(add="ps-pending")
+        else:
+            element.classes(remove="ps-pending")
+
+    def cards() -> list:
+        """The setup panel's cards for the draft: (card, whether it holds a change not applied). A card as it is
+        applied has its consequence line from the applied setup's numbers; a changed one says to press Apply; and
+        while the numbers are on their way the lines say so."""
+        d, p = D(), P()
+        applied = p._cache.get(("page", "decisions", repr(p._draft), tuple(p.problems)))
+        if applied is None and (prebuild or numbers_kept()):
+            applied = decisions(p)
+        if applied is not None and d._draft == p._draft and not d.problems:
+            return [(c, False) for c in applied]
+        by_title = {(c.group, c.title): c for c in applied or []}
+        out = []
+        for c in wb.draft_decisions(d):
+            name = c.values.get("name") if c.key.startswith(("detector:", "gamma:")) else None
+            same = wb.card_setup(d._draft, c.key) == wb.card_setup(p._draft, c.key, name=name)
+            was = by_title.get((c.group, c.title))
+            if not same:
+                c.consequence = "Not applied yet: Apply works out its numbers"
+            elif was is not None:
+                c.consequence = was.consequence
+            else:
+                c.consequence = "…"
+            out.append((c, not same))
+        return out
+
+    def checks() -> list:
+        """What stands at the top of the setup panel: the draft's problems, then the applied setup's warnings."""
+        found = [{"level": "error", "text": text} for text in D().problems]
+        return found + (wb.checks(P()) if prebuild or numbers_kept() else [])
+
+    def sync_cards() -> None:
+        """Bring the setup panel up to date with the draft where it stands: the cards' lines, the fields' values
+        and their marks. The panel is rebuilt only if its cards are no longer the draft's."""
+        now = cards()
+        if [c.key for c, _ in now] != list(card_parts) or any(part.title.is_deleted for part in card_parts.values()):
+            setup_panel.refresh()
+            return
+        for c, changed_ in now:
+            part = card_parts[c.key]
+            part.title.set_text(c.title)
+            part.state.set_text(c.state)
+            part.consequence.set_text(c.consequence)
+            part.mark.set_visibility(changed_)
+        draft = D()._draft
+        for (section, field), box in list(field_inputs.items()):
+            if box.is_deleted:
+                field_inputs.pop((section, field))
+                continue
+            # A field follows the draft when the draft's value changed, and is left alone otherwise: it may hold
+            # what is being typed into it.
+            text = _shown(field, value_in(draft, section, field)) or ""
+            if text != field_shown.get((section, field)):
+                field_shown[(section, field)] = text
+                if (box.value or "") != text:
+                    box.value = text
+        field_marks[:] = [m for m in field_marks if not m[2].is_deleted]
+        for section, field, element in field_marks:
+            mark(element, section, field, register=False)
+        checks_box.refresh()
+
+    def draft_views() -> None:
+        """What follows the draft without any number being worked out: the scene, the quick numbers beside it and
+        the geometry tables."""
+        draw_scene()
+        if "setup" in built and "setup" not in dirty:
+            selection_panel.refresh()
+            if detectors_of(D()._draft) != scene_state.get("tables"):
+                geometry_tables.refresh()
+
+    def detectors_of(setup: dict) -> str:
+        return repr((setup.get("detectors"), setup.get("gamma_detectors")))
+
+    def locked() -> bool:
+        if P().running:
+            ui.notify("A run is being taken: the setup is read-only until it ends.", type="warning")
+        return P().running
+
+    def staged(ok: bool, rebuild: bool = False) -> None:
+        """After an edit of the draft. Nothing is computed: the cards, the bar and the scene follow the draft, and
+        the numbers wait for Apply (unless every change is applied as it is made). ``rebuild``: the cards or their
+        fields changed, so the panel is built again."""
+        if not ok:
+            ui.notify("; ".join(D().problems), type="negative", multi_line=True)
+        elif state["auto_apply"] and not P().running:
+            state["panel_due"] = rebuild or state.get("panel_due", False)
+            apply_changes()
+            if not rebuild:
+                sync_cards()
+            return
+        if rebuild:
+            setup_panel.refresh()
+        else:
+            sync_cards()
+        pending_bar.refresh()
+        pending_note.refresh()
+        draft_views()
+        if ok:
+            compute_ahead()
+
+    def compute_ahead() -> None:
+        """Once the draft has stood for a second: its rates, warnings and Doppler table on the worker, on the
+        draft's own planner. Apply adopts them, so its numbers are usually there at once. A later edit makes an
+        earlier request stand down before it starts."""
+        state["draft_edit"] = n = state.get("draft_edit", 0) + 1
+        d = D()
+
+        def numbers() -> None:
+            with work:
+                if state.get("draft_edit") != n or D() is not d or d.problems:
+                    return
+                snapshot = d.snapshot()
+                try:
+                    snapshot.rates()
+                    snapshot.warnings()
+                    if snapshot.experiment.excitation is not None:
+                        snapshot.gamma()
+                except Exception:  # noqa: BLE001 -- Apply says what is wrong
+                    pass
+
+        async def go() -> None:
+            await asyncio.sleep(1.0)
+            if gone() or state.get("draft_edit") != n or not pending():
+                return
+            await run.io_bound(numbers)
+
+        later(go)
+
+    def apply_changes() -> None:
+        """Apply the draft: the page's planner takes it (with the numbers already worked out for it, if any), the
+        experiment folder's setup is saved, and everything on the page is brought up to date. The setup panel is
+        updated where it stands if a field is being typed in (Ctrl+Enter from a field keeps the cursor there)."""
+        d, p = D(), P()
+        if d._draft == p._draft:
+            return
+        if p.running:
+            ui.notify("A run is being taken: the changes wait until it ends.", type="warning")
+            return
+        if d.problems:
+            ui.notify("Not applied: " + "; ".join(d.problems), type="negative", multi_line=True)
+            return
+        state["draft_edit"] = state.get("draft_edit", 0) + 1
+        p.adopt(d)
+        sync_cards()
+        pending_bar.refresh()
+        pending_note.refresh()
+        refresh_results()
+
+    def discard_changes() -> None:
+        """Throw the draft away: the fields, the cards and the scene go back to the applied setup."""
+        state["draft_edit"] = state.get("draft_edit", 0) + 1
+        D().adopt(P())
+        state["compound"] = False
+        setup_panel.refresh()
+        pending_bar.refresh()
+        pending_note.refresh()
+        draft_views()
+
+    def direct(action) -> None:
+        """A change made with a button of its own on a result (a level scheme looked up, a matrix element, the
+        emission pattern): ``action(planner)`` is applied at once, and made in the draft as well, where the
+        changes not applied stay as they are. An error of the action is the caller's to report."""
+        if locked():
+            return
+        ok = action(P())
+        try:
+            action(D())
+        except Exception:  # noqa: BLE001 -- the draft may have moved away from where the action makes sense
+            pass
+        if D()._draft == P()._draft:
+            D().adopt(P())  # nothing pending: the draft has the applied setup's results again
+        changed(ok, panel=True)
+        pending_bar.refresh()
+        pending_note.refresh()
 
     def card_of(section: str) -> Optional[str]:
         if section in ("beam", "run"):
@@ -121,78 +394,82 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     def open_card(key: Optional[str]) -> None:
         state["open"] = key if key != "checks" else None
         drawer.show()
-        setup_panel.refresh()
+        if numbers_kept():
+            setup_panel.refresh()
+        else:  # the numbers of a change are on their way: the panel is rebuilt when they are there
+            state["panel_due"] = True
 
-    def edit(section: str, field: str, text) -> None:
+    def edit(section: str, field: str, text, rebuild: bool = False) -> None:
+        """A field of the setup was changed: the draft takes the value. ``rebuild``: the choice changes which
+        fields or cards there are (a select does; a text field is updated where it stands)."""
         value = _value(field, text)
-        d = P().draft
-        if section == "title":
-            old = d.get("title")
-        elif section == "backing":
-            old = d["target"].get("backing", {}).get(field)
-        elif section.startswith("gamma detector"):
-            old = d["gamma_detectors"][int(section.split()[2]) - 1].get(field)
-        elif section.startswith("detector"):
-            old = d["detectors"][int(section.split()[1]) - 1].get(field)
-        else:
-            old = d.get(section, {}).get(field)
+        old = value_in(D()._draft, section, field)
         if (None if old is None else str(old)) == (None if value is None else str(value)):
             return
-        if P().running:
-            ui.notify("A run is being taken: the setup is read-only until it ends.", type="warning")
+        if locked():
             return
         state["open"] = card_of(section) or state["open"]
-        changed(P().set(section, field, value))
+        staged(D().set(section, field, value), rebuild or field in ("model", "shape", "crystals", "nuclide", "material"))
 
     def add_detector(key: str = "side"):
         def run_() -> None:
-            names = [det.get("name") for det in P().draft["detectors"]]
-            changed(P().add_detector(**guide.placement(key, names)))
-            setup_panel.refresh()
+            names = [det.get("name") for det in D().draft["detectors"]]
+            if not locked():
+                staged(D().add_detector(**guide.placement(key, names)), rebuild=True)
         return run_
 
     def duplicate_detector(k: int):
         def run() -> None:
-            changed(P().duplicate_detector(k))
-            setup_panel.refresh()
+            if not locked():
+                staged(D().duplicate_detector(k), rebuild=True)
         return run
 
     def remove_detector(k: int):
         def run() -> None:
-            if len(P().draft["detectors"]) == 1:
+            if len(D().draft["detectors"]) == 1:
                 ui.notify("A setup needs at least one particle detector.", type="warning")
                 return
-            changed(P().remove_detector(k))
-            setup_panel.refresh()
+            if not locked():
+                staged(D().remove_detector(k), rebuild=True)
         return run
 
     def add_gamma_detector(key: str = "disc"):
         def run() -> None:
-            names = [g.get("name") for g in P().draft.get("gamma_detectors", [])]
-            changed(P().add_gamma_detector(**guide.gamma_placement(key, names)))
-            setup_panel.refresh()
+            names = [g.get("name") for g in D().draft.get("gamma_detectors", [])]
+            if not locked():
+                staged(D().add_gamma_detector(**guide.gamma_placement(key, names)), rebuild=True)
         return run
 
     def duplicate_gamma_detector(k: int):
         def run() -> None:
-            changed(P().duplicate_gamma_detector(k))
-            setup_panel.refresh()
+            if not locked():
+                staged(D().duplicate_gamma_detector(k), rebuild=True)
         return run
 
     def remove_gamma_detector(k: int):
         def run() -> None:
-            changed(P().remove_gamma_detector(k))
-            setup_panel.refresh()
+            if not locked():
+                staged(D().remove_gamma_detector(k), rebuild=True)
         return run
 
     def use(planner: Planner) -> None:
+        lost = len(pending())
         state["planner"] = planner
+        if lost:
+            ui.notify(f"{lost} change{'s' * (lost != 1)} of the setup you left had not been applied, and "
+                      f"{'were' if lost != 1 else 'was'} dropped.", type="warning", multi_line=True,
+                      close_button=True)
+        state["draft"] = draft_of(planner)
+        state["draft_edit"] = state.get("draft_edit", 0) + 1
         state["open"] = None
         state["compound"] = False
+        state["ready"] = prebuild
         setup_panel.refresh()
+        pending_bar.refresh()
+        pending_note.refresh()
         status_strip.refresh()
-        refresh_results()
         main_area.refresh()
+        refresh_results()
 
     async def open_experiment(path: str) -> None:
         experiments_dialog.close()
@@ -252,6 +529,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         if P().problems:
             ui.notify("Fix the setup problems first.", type="warning")
             return
+        if pending():
+            ui.notify("The file holds the setup as it is applied, without the changes not applied yet.",
+                      type="warning")
         ui.download.content(P().to_toml(), "setup.toml")
 
     # -- setup panel ------------------------------------------------------------------------------------------
@@ -293,6 +573,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     "dense outlined").classes("w-full")
                 bind(inp, sec_name, field)
                 help_icon(inp, sec_name, field)
+                field_inputs[(sec_name, field)] = inp
+                field_shown[(sec_name, field)] = _shown(field, v) or ""
+                mark(inp, sec_name, field)
 
     def nuclide_picker(sec_name: str, field: str, value, placeholder: str) -> None:
         """The beam's nuclide or the target's material as two choices, the element and its mass number (a target may
@@ -312,16 +595,19 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 return
             state["compound"] = False
             a = wb.most_abundant(new)
-            edit(sec_name, field, (new if target else f"{a}{new}") if a else f"{next(iter(wb.mass_numbers(new)))}{new}")
+            edit(sec_name, field, (new if target else f"{a}{new}") if a else f"{next(iter(wb.mass_numbers(new)))}{new}",
+                 rebuild=True)
 
         el = ui.select(options, value=symbol if symbol in options else None, with_input=True,
                        label="Target element" if target else "Beam element",
                        on_change=lambda e: set_element(e.value)).props("dense outlined options-dense").classes("w-full")
         help_icon(el, sec_name, field)
+        mark(el, sec_name, field)
         if compound:
             inp = ui.input("Material", value=_shown(field, value), placeholder=placeholder).props(
                 "dense outlined").classes("w-full")
             bind(inp, sec_name, field)
+            mark(inp, sec_name, field)
             return
         if symbol is None:
             ui.label("")
@@ -330,13 +616,80 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         if target:
             masses = {wb.NATURAL: "natural mix", **masses}
         current = str(parts[1]) if parts and parts[1] is not None else (wb.NATURAL if target else None)
-        ui.select(masses, value=current if current in masses else None, label="Mass number",
-                  on_change=lambda e: edit(sec_name, field, symbol if e.value == wb.NATURAL else f"{e.value}{symbol}")
-                  ).props("dense outlined options-dense").classes("w-full")
+        mass = ui.select(masses, value=current if current in masses else None, label="Mass number",
+                         on_change=lambda e: edit(sec_name, field,
+                                                  symbol if e.value == wb.NATURAL else f"{e.value}{symbol}",
+                                                  rebuild=True)).props("dense outlined options-dense").classes("w-full")
+        mark(mass, sec_name, field)
 
     @ui.refreshable
     def setup_panel():
+        card_parts.clear()
+        field_marks.clear()
+        field_inputs.clear()
+        field_shown.clear()
+        if not state["ready"]:  # the rates are being computed on the worker (refresh_results)
+            with ui.row().classes("items-center gap-2 ps-muted p-2"):
+                ui.spinner(size="md")
+                ui.label("Computing the setup's numbers…").classes("text-sm")
+            return
         _panel.render(ctx)
+
+    @ui.refreshable
+    def checks_box() -> None:
+        _panel.render_checks(ctx)
+
+    def changes_and_buttons(found: list, lines: int) -> None:
+        for text in found[:lines]:
+            ui.label(text).classes("text-xs ps-num")
+        if len(found) > lines:
+            ui.label(f"… and {len(found) - lines} more").classes("text-xs ps-muted")
+        with ui.row().classes("items-center gap-2"):
+            go = ui.button("Apply", icon="check", on_click=lambda: apply_changes()).props(
+                "dense unelevated no-caps").tooltip("Work out the numbers of the setup as you have changed it "
+                                                    "(Ctrl+Enter)")
+            if D().problems or P().running:
+                go.disable()
+            ui.button("Discard", icon="undo", on_click=discard_changes).props("dense flat no-caps").tooltip(
+                "Back to the setup as it is applied")
+
+    @ui.refreshable
+    def pending_bar() -> None:
+        """At the top of the setup panel: the changes not applied, with Apply and Discard, and the switch that
+        applies every change as it is made."""
+        found = pending()
+        with ui.column().classes("w-full gap-1 ps-pending-bar" + (" ps-pending-on" if found else "")):
+            if found:
+                with ui.row().classes("items-center gap-1 no-wrap"):
+                    ui.icon("edit_note").classes("ps-warn")
+                    ui.label(f"{len(found)} change{'s' * (len(found) != 1)} not applied").classes(
+                        "text-sm font-semibold ps-warn")
+                changes_and_buttons(found, 5)
+            ui.switch("Apply each change as I make it", value=state["auto_apply"],
+                      on_change=lambda e: set_auto_apply(e.value)).props("dense size=xs").classes(
+                "text-xs ps-muted").tooltip("Off: change several fields, then press Apply. On: the numbers are "
+                                            "worked out after every change, as before.")
+
+    @ui.refreshable
+    def pending_note() -> None:
+        """Above the tabs while changes wait: whose numbers the page shows."""
+        found = pending()
+        if not found:
+            return
+        with ui.row().classes("w-full items-center gap-3 ps-pending-note rounded px-3 py-1"):
+            ui.icon("edit_note").classes("ps-warn")
+            ui.label(f"The numbers on this page are for the setup before your {len(found)} "
+                     f"change{'s' * (len(found) != 1)}. The scene shows the changed setup.").classes("text-sm")
+            ui.space()
+            ui.button("Apply", icon="check", on_click=lambda: apply_changes()).props("dense unelevated no-caps")
+            ui.button("Discard", icon="undo", on_click=discard_changes).props("dense flat no-caps")
+
+    def set_auto_apply(on: bool) -> None:
+        state["auto_apply"] = bool(on)
+        ui.run_javascript("try { localStorage.setItem('physim-planner-auto-apply', '%s') } catch (e) {}"
+                          % ("on" if on else "off"))
+        if on:
+            apply_changes()
 
     def clover_switches(i: int, gd: dict, numbers: bool = True) -> None:
         """Add-back and Compton suppression for a clover: two switches, and (``numbers``) the numbers behind
@@ -357,19 +710,24 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             ui.label(title).classes("ps-section mt-3")
         kind = reaction.get("type", "elastic")
         sel = ui.select(REACTION_TYPES, value=kind, label="What happens in the target",
-                        on_change=lambda e: edit("reaction", "type", e.value)).props("dense outlined").classes(
-            "w-full")
+                        on_change=lambda e: edit("reaction", "type", e.value, rebuild=True)).props(
+            "dense outlined").classes("w-full")
         help_icon(sel, "reaction", "type")
+        mark(sel, "reaction", "type")
         if kind != "coulex":
             return
         with ui.grid(columns=2).classes("w-full gap-1"):
             exc = ui.select({"target": "Target nucleus", "projectile": "Beam nucleus"},
                             value=reaction.get("excite", "target"), label="Excited nucleus",
-                            on_change=lambda e: edit("reaction", "excite", e.value)).props("dense outlined")
+                            on_change=lambda e: edit("reaction", "excite", e.value, rebuild=True)).props(
+                "dense outlined")
             help_icon(exc, "reaction", "excite")
+            mark(exc, "reaction", "excite")
             mul = ui.select(["E1", "E2", "E3"], value=reaction.get("multipolarity", "E2"), label="Multipolarity",
-                            on_change=lambda e: edit("reaction", "multipolarity", e.value)).props("dense outlined")
+                            on_change=lambda e: edit("reaction", "multipolarity", e.value, rebuild=True)).props(
+                "dense outlined")
             help_icon(mul, "reaction", "multipolarity")
+            mark(mul, "reaction", "multipolarity")
         state_picker(reaction)
         section("", REACTION_FIELDS, "reaction", reaction)
 
@@ -378,9 +736,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         its energy and B(Eλ↑) below, which can still be typed over."""
         role = "target" if reaction.get("excite", "target") == "target" else "beam"
         multipolarity = reaction.get("multipolarity", "E2")
-        scheme = P().experiment.levels.get(role) if not P().problems else None
+        scheme = D().experiment.levels.get(role) if not D().problems else None
         choices = wb.states(scheme, multipolarity)
-        nuclide = P().level_nuclides()[role] or role
+        nuclide = D().level_nuclides()[role] or role
         if not choices:
             ui.label(f"No state of {nuclide} with a known B({multipolarity}↑) in the local ENSDF copy: enter the "
                      "state's energy and B(Eλ↑) below.").classes("text-xs ps-muted")
@@ -393,15 +751,193 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                        None)
 
         def pick(level) -> None:
-            if level is None or level == current:
+            if level is None or level == current or locked():
                 return
             try:
-                changed(P().use_state(role, level, multipolarity))
+                staged(D().use_state(role, level, multipolarity), rebuild=True)
             except ValueError as err:
                 ui.notify(str(err), type="warning")
 
         ui.select(choices, value=current, label=f"State of {nuclide}",
                   on_change=lambda e: pick(e.value)).props("dense outlined options-dense").classes("w-full")
+
+    # -- results kept for the setup on screen, computed off the event loop ------------------------------------------
+    #: One computation at a time for this page: a second request for the same numbers waits for the first, then
+    #: finds them kept. Loading a run's events has its own turn, so the setup's numbers do not wait behind it.
+    work = threading.Lock()
+    run_work = threading.Lock()
+
+    def numbers_kept() -> bool:
+        """Whether the current setup's rates are there. While the worker computes them, nothing on the event loop
+        asks for them (it would compute them a second time, with the page waiting)."""
+        return "rates" in P()._cache
+
+    def keep(p: Planner, key: tuple, make, of_run: bool = False):
+        """A figure or a table of the page, made once and kept: with the planner's own results for the setup
+        ``p`` holds, so it goes when the setup changes; or (``of_run``) with the current run, for what is read
+        from the run's events alone, so a change of the setup leaves it. A tab shown again, a second tab with the
+        same figure and the worker that prepares a tab all find it here."""
+        if of_run and p.run is not None:
+            kept = p.run.__dict__.setdefault("_page_kept", {})
+            if key not in kept:
+                kept[key] = make()
+            return kept[key]
+        cache = p._cache
+        if ("page",) + key not in cache:
+            cache[("page",) + key] = make()
+        return cache[("page",) + key]
+
+    def sendable(fig) -> dict:
+        """A Plotly figure as the browser takes it. ``ui.plotly`` turns a figure into this every time the element
+        is built or styled (5 ms a time, three times per element); a figure kept in this form is turned once."""
+        return fig.to_plotly_json()
+
+    def in_theme(fig):
+        """The figure in the page's theme, ready to send (:func:`themed` takes 20 to 60 ms: the kept figures are
+        themed when they are made, and come through here as they are)."""
+        return fig if isinstance(fig, dict) else sendable(themed(fig, state["theme"]))
+
+    #: The figures the panels show, by name: each takes the planner and what the panel chose.
+    makers = {"kinematics": figure_kinematics, "energy_loss": figure_energy_loss,
+              "trajectories": figure_trajectories, "gamma": figure_excitation, "strips": figure_strips,
+              "spectra": figure_spectra, "efficiency": figure_efficiency,
+              "levels": lambda p, role: figure_levels(p.levels()[role])}
+
+    def shown(name: str, *chosen, p: Optional[Planner] = None):
+        """The figure ``name`` of the setup, in the page's theme: drawn once per setup and theme."""
+        p = p or P()
+        theme = state["theme"]
+        return keep(p, ("figure", theme, name) + chosen, lambda: sendable(themed(makers[name](p, *chosen), theme)))
+
+    def decisions(p: Optional[Planner] = None) -> list:
+        """The setup panel's cards (:func:`physim.nuclear.workbench.decisions`), worked out once per setup and
+        per state of the fields: each card's consequence line reads the rates, the stopping tables or the
+        kinematics."""
+        p = p or P()
+        return keep(p, ("decisions", repr(p._draft), tuple(p.problems)), lambda: wb.decisions(p))
+
+    def reading(tab: str, p: Optional[Planner] = None) -> list:
+        """The "How to read this" lines of a panel (:func:`physim.nuclear.guide.reading`), once per setup."""
+        p = p or P()
+        return keep(p, ("reading", tab), lambda: guide.reading(p, tab))
+
+    def needs(tab: str, p: Planner) -> None:
+        """Compute and keep what the panel ``tab`` shows (on a worker thread, before the panel is built)."""
+        if tab in guide._READINGS:
+            try:
+                reading(tab, p)
+            except Exception:  # noqa: BLE001 -- a reading must never break the page
+                pass
+        if tab == "geometry":
+            p.geometry()
+            p.selection()
+        elif tab in ("kinematics", "energy_loss", "trajectories"):
+            shown(tab, p=p)
+        elif tab == "gamma":
+            for role in ("target", "beam"):
+                if p.levels()[role]:
+                    shown("levels", role, p=p)
+            if p.gamma()["available"]:
+                shown("gamma", p=p)
+                p.populations()
+        elif tab == "efficiency":
+            for i in range(len(p.experiment.gamma_detectors)):
+                shown("efficiency", f"gamma:{i}", p=p)
+        elif tab == "rates":
+            shown("strips", p.rates()["rows"][0]["detector"], p=p)
+        elif tab == "spectra":
+            shown("spectra", state["events"], 1, p=p)
+
+    #: The panels each stage shows at once, and those it shows when asked (the Plan tab's checks, which open).
+    stage_needs = {"setup": (("geometry",), ()),
+                   "plan": ((), ("kinematics", "energy_loss", "trajectories", "gamma", "efficiency", "rates")),
+                   "physics": (("gamma", "kinematics", "energy_loss", "trajectories", "geometry", "efficiency"), ()),
+                   "data": ((), ()), "run": ((), ()), "analysis": ((), ()), "report": ((), ())}
+
+    def warm(p: Planner) -> None:
+        """The numbers every tab starts from: the rates, the warnings, the Doppler table."""
+        p.rates()
+        p.warnings()
+        if p.experiment.excitation is not None:
+            p.gamma()
+        decisions(p)
+
+    def prepare(key: str, p: Planner, everything: bool = False) -> None:
+        """Compute and keep what the stage ``key`` shows when it is built (``everything``: also what it shows only
+        when asked), for the snapshot ``p``. Runs on a worker thread; the page builds the stage afterwards from
+        what is kept, which takes the event loop a few tens of milliseconds instead of seconds."""
+        with work:
+            try:
+                warm(p)
+            except Exception:  # noqa: BLE001 -- the panels say what is wrong
+                return
+            first, later = stage_needs[key]
+            if key == "plan":  # the checks left open are built with the tab
+                first = tuple(tab for tab in later if tab in state.get("checks_open", ()))
+            for tab in first + (later if everything else ()):
+                try:
+                    needs(tab, p)
+                except Exception:  # noqa: BLE001 -- the panel says what is wrong when it is built
+                    pass
+            if key == "data" and p.run is None:
+                try:
+                    needs("spectra", p)
+                except Exception:  # noqa: BLE001
+                    pass
+        if key == "data" and p.run is not None:
+            with run_work:
+                try:
+                    tab_data.prepare(ctx, p)
+                except Exception:  # noqa: BLE001 -- the tab says what is wrong when it is built
+                    pass
+
+    def with_work(fn, *args) -> None:
+        with work:
+            try:
+                fn(*args)
+            except Exception:  # noqa: BLE001 -- the panel says what is wrong when it is built
+                pass
+
+    def when_opened(expansion, build, tab: Optional[str] = None) -> None:
+        """Build what an expansion holds when it is first opened, not before (most stay closed): ``build()`` fills
+        it, after the worker has computed what the panel ``tab`` shows (a spinner meanwhile; no wait if it is
+        kept already). An expansion that starts open, or a page built whole, is filled at once."""
+        if prebuild or expansion.value:
+            with expansion:
+                build()
+            return
+        with expansion:
+            box = ui.column().classes("w-full gap-2")
+        filled = []
+
+        async def fill(e) -> None:
+            if not e.value or filled:
+                return
+            filled.append(True)
+            if tab is not None:
+                with box:
+                    ui.spinner(size="md")
+                await run.io_bound(with_work, needs, tab, P().snapshot())
+                if box.is_deleted:
+                    return
+                box.clear()
+            with box:
+                build()
+
+        expansion.on_value_change(fill)
+
+    def later(job) -> None:
+        """Start a coroutine of the page on its own, not inside the element whose event asked for it: that element
+        may be rebuilt before the coroutine ends, and NiceGUI cancels what a deleted element started."""
+        async def run_() -> None:
+            with client:
+                await job()
+
+        background_tasks.create(run_(), name="planner page")
+
+    def gone() -> bool:
+        """Whether this page's browser tab is closed (nothing is left to update)."""
+        return client.id not in Client.instances
 
     # -- figures and their export ---------------------------------------------------------------------------------
     def plot(fig, name: str, **options) -> None:
@@ -411,7 +947,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 ui.space()
                 ui.button("Paper figure", icon="article", on_click=lambda: open_export(name, options)).props(
                     "dense flat no-caps").tooltip("Export this figure in a journal's style")
-            ui.plotly(themed(fig, state["theme"])).classes("w-full")
+            ui.plotly(in_theme(fig)).classes("w-full")
 
     def open_export(name: str, options: dict) -> None:
         state["export"] = (name, options)
@@ -566,24 +1102,36 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 labels[name].set_text(value)
 
     def scene_moved(key: str, position, mode: str) -> None:
-        """A detector was dropped at a new place: the scene and its side panel follow at once, the other results
-        (and the Monte Carlo) a moment later."""
-        ok = P().move(key, position, mode)
-        selection_panel.refresh()
+        """A detector was dropped at a new place: the draft takes it. The scene and the quick numbers beside it
+        follow at once; the other numbers wait for Apply."""
+        if locked():
+            return
+        staged(D().move(key, position, mode))
 
-        def rest() -> None:
-            changed(ok)
-            setup_panel.refresh()
+    class SceneSetup:
+        """What the scene asks of a planner, answered from the draft: the setup to draw, the quick numbers of a
+        drag, and the rings that see unsafe collisions once they are known (they need the rates)."""
 
-        ui.timer(0.05, rest, once=True)
+        @property
+        def experiment(self):
+            return D().experiment
+
+        def live(self, key: str, fields=None) -> dict:
+            return D().live(key, fields)
+
+        def safety(self) -> dict:
+            if D()._draft == P()._draft:
+                return P().safety() if numbers_kept() else {}
+            return D().safety() if "rates" in D()._cache else {}
+
+    scene_setup = SceneSetup()
 
     def scene_current() -> bool:
         """Redraw the scene in place (the camera stays), if it is on the page and in the right theme."""
         view = scene_state["view"]
         if view is None or not view.alive or view.theme != state["theme"]:
             return False
-        if not view.busy and view.drawn is not P().experiment:
-            view.draw()
+        draw_scene()
         selection_panel.refresh()
         geometry_tables.refresh()
         return True
@@ -599,11 +1147,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             except ValueError:
                 pass
             kind, i = key.split(":")
-            entry = P().draft["detectors" if kind == "detector" else "gamma_detectors"][int(i)]
-            if str(entry.get(field)) == text:
+            entry = D().draft["detectors" if kind == "detector" else "gamma_detectors"][int(i)]
+            if str(entry.get(field)) == text or locked():
                 return
-            changed(P().place(key, **{field: text}))
-            setup_panel.refresh()
+            staged(D().place(key, **{field: text}))
         return run_
 
     def open_explanation(key: str, detector: Optional[str] = None, gamma_detector: Optional[str] = None,
@@ -668,6 +1215,15 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         if scene_state["track"] is not None:
             track_panel(scene_state["track"])
             return
+        if D()._draft != P()._draft:  # changes wait for Apply: the quick numbers of the draft
+            draft_selection(key)
+            return
+        if not numbers_kept():  # a change is being computed: the panel is rebuilt when its numbers are there
+            with ui.row().classes("items-center gap-2 ps-muted ps-card p-3 w-full"):
+                ui.spinner(size="sm")
+                ui.label("Computing…").classes("text-sm")
+            scene_state["live"] = {}
+            return
         try:
             s = P().selection(key, element)
         except (IndexError, KeyError, ValueError):
@@ -689,18 +1245,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 live[name] = lab
 
         def place_inputs(fields) -> None:
-            kind, i = key.split(":")
-            entry = P().draft["detectors" if kind == "detector" else "gamma_detectors"][int(i)]
-            if "position" in entry:
-                ui.label("Placed by position: edit it in the setup panel.").classes("text-xs ps-muted")
-                return
-            ui.label("Exact values").classes("ps-section mt-2")
-            with ui.row().classes("w-full no-wrap gap-2"):
-                for field, label, unit in fields:
-                    box = ui.input(label, value=str(entry.get(field, "") or "")).props("dense outlined").classes(
-                        "min-w-0")
-                    box.on("blur", typed_place(key, field, unit))
-                    box.on("keydown.enter", typed_place(key, field, unit))
+            exact_values(key, fields)
 
         with ui.column().classes("w-full ps-card p-3 gap-1"):
             if s["kind"] == "experiment":
@@ -787,6 +1332,69 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
                 ui.button("Simulate its spectrum", icon="play_arrow", on_click=spectrum).props(
                     "dense flat no-caps").classes("mt-1")
+
+    def exact_values(key: str, fields) -> None:
+        """The place of the selected detector as fields to type in (they change the draft, as a drag does)."""
+        kind, i = key.split(":")
+        entry = D().draft["detectors" if kind == "detector" else "gamma_detectors"][int(i)]
+        if "position" in entry:
+            ui.label("Placed by position: edit it in the setup panel.").classes("text-xs ps-muted")
+            return
+        ui.label("Exact values").classes("ps-section mt-2")
+        with ui.row().classes("w-full no-wrap gap-2"):
+            for field, label, unit in fields:
+                box = ui.input(label, value=str(entry.get(field, "") or "")).props("dense outlined").classes(
+                    "min-w-0")
+                box.on("blur", typed_place(key, field, unit))
+                box.on("keydown.enter", typed_place(key, field, unit))
+
+    def draft_selection(key: Optional[str]) -> None:
+        """Beside the scene while changes wait for Apply: what follows from the draft's geometry alone. For a
+        detector, where it stands, what it covers and a coarse estimate of its rate (as during a drag)."""
+        from .. import scene as _scene
+
+        live = scene_state["live"] = {}
+        d = D()
+        values = None
+        if key is not None and key != "target":
+            try:
+                values = d.live(key)
+            except (IndexError, KeyError, ValueError):
+                values = None
+
+        def row(label: str, name: str) -> None:
+            with ui.row().classes("w-full justify-between no-wrap gap-3 items-center"):
+                ui.label(label).classes("text-sm ps-muted")
+                live[name] = ui.label("").classes("text-sm ps-num text-right")
+
+        with ui.column().classes("w-full ps-card p-3 gap-1"):
+            if values is None or "name" not in values:
+                draft = d._draft
+                ui.label("The whole experiment").classes("ps-section")
+                ui.label(f"{len(draft['detectors'])} particle detectors, "
+                         f"{len(draft.get('gamma_detectors', []))} γ-ray detectors").classes("text-sm")
+            else:
+                gamma = key.startswith("gamma")
+                ui.label("γ-ray detector" if gamma else "Particle detector").classes("ps-section")
+                ui.label(values["name"]).classes("text-base font-medium")
+                row("Centre", "place")
+                if gamma:
+                    row("Half-angle", "half")
+                    row("Geometric coverage", "geometric")
+                else:
+                    row("Covers θ", "covers")
+                    row("Solid angle", "omega")
+                    row("Hidden by others", "hidden")
+                    row("Particles reaching it (estimate)", "rate")
+                live["status"] = ui.label("").classes("text-xs ps-warn")
+                scene_live(values)
+                live["status"].set_text(f"Not allowed here: {values['problem']}" if values.get("problem") else "")
+                if not gamma and _scene.on_axis(d.experiment, key):
+                    exact_values(key, (("distance", "Distance", "mm"),))
+                else:
+                    exact_values(key, (("theta", "θ", "deg"), ("phi", "φ", "deg"), ("distance", "Distance", "mm")))
+            ui.label("These follow from where things stand in the setup as you have changed it. Apply works out "
+                     "the rates, the coincidences and the rest.").classes("text-xs ps-accent mt-1")
 
     def gamma_response(key: str, s: dict) -> None:
         """The efficiency curve of the selected γ-ray detector, what it is built from, and a calibration-source
@@ -933,10 +1541,11 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                               on_click=lambda: scene_full(not scene_state["full"])).props(
                         "dense flat round").tooltip("Back to the page (Esc)" if full
                                                     else "The scene on the whole screen")
-                view = SceneView(P, state["theme"], scene_selected, scene_live, scene_moved,
+                view = SceneView(lambda: scene_setup, state["theme"], scene_selected, scene_live, scene_moved,
                                  height="calc(100vh - 175px)" if full else None)
                 view.on_track = scene_track
                 scene_state["view"] = view
+                scene_state["shows"] = scene_shows()
                 tracks_toolbar()
                 if scene_state["key"] is not None:
                     view.select(scene_state["key"], scene_state["element"], notify=False)
@@ -956,13 +1565,14 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     @ui.refreshable
     def geometry_tables():
+        scene_state["tables"] = detectors_of(D()._draft)
         rows = [{"detector": d["name"], "omega": _fmt(d["solid_angle_msr"]),
                  "theta": f"{d['theta_range'][0]:.1f}–{d['theta_range'][1]:.1f}",
                  "phi": f"{d['phi_range'][0]:.1f}–{d['phi_range'][1]:.1f}", "segments": d["segments"]}
-                for d in P().geometry()["detectors"]]
+                for d in D().geometry()["detectors"]]
         ui.table(columns=columns((("detector", "Particle detector"), ("omega", "Ω (msr)"), ("theta", "θ (deg)"),
                                   ("phi", "φ (deg)"), ("segments", "Segments"))), rows=rows).props("dense flat")
-        gammas = P().geometry()["gamma_detectors"]
+        gammas = D().geometry()["gamma_detectors"]
         if gammas:
             ui.table(columns=columns((("detector", "γ-ray detector"), ("theta", "θ (deg)"),
                                       ("distance", "Distance (mm)"), ("half", "Half-angle (deg)"))),
@@ -971,7 +1581,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     @ui.refreshable
     def kinematics_panel():
-        plot(figure_kinematics(P()), "kinematics")
+        plot(shown("kinematics"), "kinematics")
 
     @ui.refreshable
     def rates_panel():
@@ -996,7 +1606,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
         @ui.refreshable
         def strips(name):
-            plot(figure_strips(P(), name), "strips", detector=name)
+            plot(shown("strips", name), "strips", detector=name)
 
         ui.select(names, value=names[0], label="Rates per strip of",
                   on_change=lambda e: strips.refresh(e.value)).props("dense outlined").classes("w-48")
@@ -1036,7 +1646,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                         "ein": f"{x['energy_in_mev']:.4f}", "eout": f"{x['energy_out_mev']:.4f}",
                         "loss": f"{x['loss_mev'] * 1e3:.1f}", "strag": f"{x['straggling_fwhm_mev'] * 1e3:.1f}"}
                        for x in el["layers"]]).props("dense flat")
-        plot(figure_energy_loss(P()), "energy_loss")
+        plot(shown("energy_loss"), "energy_loss")
         ui.table(columns=columns((("detector", "Detector"), ("e", "Scattered beam (MeV)"),
                                   ("dl", "After dead layer (MeV)"), ("pt", "Punch-through above (MeV)"))),
                  rows=[{"detector": x["detector"], "e": f"{x['ejectile_energy_mev']:.4f}",
@@ -1060,7 +1670,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             ui.button("Simulate", icon="play_arrow", on_click=simulate)
         plot_area = ui.column().classes("w-full")
         with plot_area:
-            plot(figure_spectra(P(), state["events"], 1), "spectra", events=state["events"], seed=1)
+            plot(shown("spectra", state["events"], 1), "spectra", events=state["events"], seed=1)
         gamma_block()
 
     def gamma_block() -> None:
@@ -1305,26 +1915,21 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         ui.label(f"{P().experiment.beam.nuclide} on {t['target']}: head-on distance d₀ = {t['d0_fm']:.2f} fm, "
                  f"nuclear range {t['interaction_radius_fm']:.1f} fm, grazing angle "
                  f"{t['grazing_angle_deg']:.1f}° (CM).").classes("text-sm")
-        plot(figure_trajectories(P()), "trajectories")
+        plot(shown("trajectories"), "trajectories")
 
     def lookup_levels(role: str):
         def run() -> None:
             try:
-                ok = P().lookup_levels(role)
+                direct(lambda planner: planner.lookup_levels(role))
             except (LookupError, ValueError) as e:
                 ui.notify(str(e), type="warning", multi_line=True)
-                return
-            changed(ok)
         return run
 
     def remove_levels(role: str):
-        return lambda: changed(P().remove_levels(role))
+        return lambda: direct(lambda planner: planner.remove_levels(role))
 
     def use_state(role: str, level: int, multipolarity: str):
-        def run() -> None:
-            changed(P().use_state(role, level, multipolarity))
-            setup_panel.refresh()
-        return run
+        return lambda: direct(lambda planner: planner.use_state(role, level, multipolarity))
 
     def matrix_element_input(role: str, m: dict) -> None:
         """A matrix element as an editable field: a new value, with its unit, becomes the user's."""
@@ -1340,12 +1945,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             if text == shown:
                 return
             try:
-                ok = P().set_matrix_element(role, m["from"], m["to"], m["multipolarity"], text)
+                direct(lambda planner: planner.set_matrix_element(role, m["from"], m["to"], m["multipolarity"], text))
             except ValueError as e:
                 ui.notify(str(e), type="negative", multi_line=True)
                 box.value = shown
-                return
-            changed(ok)
 
         box.on("blur", apply)
         box.on("keydown.enter", apply)
@@ -1374,7 +1977,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             ui.label(table["reference"]).classes("text-xs ps-muted")
             for note in table["notes"]:
                 ui.label(note).classes("text-xs ps-muted")
-            ui.plotly(themed(figure_levels(table), state["theme"])).classes("w-full")
+            ui.plotly(shown("levels", role)).classes("w-full")
             names = [f"{lv['jpi']} {lv['energy_kev']:g} keV" for lv in table["levels"]]
             ui.label("Matrix elements").classes("text-sm font-semibold")
             ui.label("Sizes come from ENSDF's transition strengths or half-lives; ENSDF gives no signs, so each "
@@ -1418,7 +2021,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                  f"B↑ = {s['b_up_e2fm']:.4g} e²fm^{2 * int(s['multipolarity'][1])}): ξ = {g['xi']:.2f}, "
                  f"η = {g['eta']:.1f}, total {g['total_mb']:.3g} mb; safe up to "
                  f"{g['max_safe_angle']:.0f}° CM.").classes("text-sm")
-        plot(figure_excitation(P()), "gamma")
+        plot(shown("gamma"), "gamma")
         ui.table(columns=columns((("detector", "Particle detector"), ("rate", "Excitation events (1/s)"))),
                  rows=[{"detector": k, "rate": _fmt(v)} for k, v in g["rates"].items()]).props("dense flat")
         if g["particles"]:
@@ -1442,7 +2045,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                      "the collision, so its γ rays favour some directions; they are also thrown forward by its "
                      "motion. The coincidence rates use these factors.").classes("text-xs ps-muted")
             ui.toggle({"correlated": "Correlated with the particle", "isotropic": "Isotropic"}, value=g["emission"],
-                      on_change=lambda e: edit("reaction", "emission", e.value)).props("dense no-caps unelevated")
+                      on_change=lambda e: direct(lambda planner: planner.set("reaction", "emission", e.value))
+                      ).props("dense no-caps unelevated")
             names = list(dict.fromkeys((r["gamma_detector"], r["crystal"]) for r in g["correlation"]))
             cols = [("p", "Particle detector")] + [(f"c{i}", f"{n} {c}".strip()) for i, (n, c) in enumerate(names)]
             by = {}
@@ -1644,7 +2248,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             for i, gd in enumerate(gds):
                 with ui.column().classes("ps-plate gap-0").style("flex: 1 1 360px; min-width: 0"):
                     ui.label(gd.name or f"γ{i + 1}").classes("text-sm font-medium")
-                    ui.plotly(themed(figure_efficiency(P(), f"gamma:{i}"), state["theme"])).classes("w-full")
+                    ui.plotly(shown("efficiency", f"gamma:{i}")).classes("w-full")
 
     @ui.refreshable
     def plan_answers() -> None:
@@ -1655,9 +2259,26 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
               "gamma": gamma_panel, "report": report_panel, "efficiency": efficiency_panel,
               "plan": plan_answers}
 
-    #: The container of each stage's content, and the stages whose content is stale (emptied, rebuilt when shown).
+    #: The container of each stage's content; the stages whose content is stale (rebuilt when shown, or by the
+    #: pass that follows a change); and the stages built at least once since the tabs were laid out.
     stage_boxes: dict = {}
     dirty: set = set()
+    built: set = set()
+    #: How many times each stage was built (a build ahead of time gives way to a later one).
+    builds: dict = {}
+    #: After the stage on screen, the others in the order one is likely to look at them.
+    look_order = ("plan", "setup", "run", "data", "analysis", "report", "physics")
+
+    def stage_parts(key: str) -> list:
+        """A stage as the steps that build it (a module may give several, see ``tab_physics.parts``)."""
+        module = stage_modules[key]
+        return module.parts(ctx) if hasattr(module, "parts") else [lambda: module.render(ctx)]
+
+    def build_part(part) -> None:
+        try:
+            part()
+        except Exception as err:  # noqa: BLE001 -- say why instead of an empty tab
+            ui.label(f"This tab could not be shown: {err}").classes("text-sm ps-warn")
 
     def render_stage(key: str) -> None:
         """Build a stage's content into its container (emptying what was there)."""
@@ -1665,76 +2286,181 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         if box is None:
             return
         box.clear()
+        builds[key] = builds.get(key, 0) + 1
         with box:
-            try:
-                stage_modules[key].render(ctx)
-            except Exception as err:  # noqa: BLE001 -- say why instead of an empty tab
-                ui.label(f"This tab could not be shown: {err}").classes("text-sm ps-warn")
+            for part in stage_parts(key):
+                build_part(part)
         dirty.discard(key)
+        built.add(key)
 
-    def show_stage(key: str) -> None:
-        """A tab was chosen: build it if its content is stale (or was never built)."""
-        state["stage"] = key
-        if key in dirty:
-            render_stage(key)
+    async def render_stage_ahead(key: str, superseded) -> None:
+        """Build a stage that is not on screen, a part per turn of the event loop, so a click on the page is
+        answered between the parts. It gives way if the stage is built in one go meanwhile (its tab was chosen)
+        or the setup changed."""
+        box = stage_boxes.get(key)
+        if box is None:
+            return
+        box.clear()
+        builds[key] = n = builds.get(key, 0) + 1
+        for part in stage_parts(key):
+            if superseded() or builds[key] != n or box.is_deleted:
+                return
+            with box:
+                build_part(part)
+            await asyncio.sleep(0.02)
+        if builds[key] == n and not superseded():
+            dirty.discard(key)
+            built.add(key)
 
-    def warm() -> None:
-        """The numbers every tab starts from, computed once (in a worker thread) so the page does not wait."""
-        p = P()
-        p.rates()
-        p.warnings()
-        if p.experiment.excitation is not None:
-            p.gamma()
+    def waiting(key: str) -> None:
+        """A stage's container while its numbers are computed."""
+        box = stage_boxes.get(key)
+        if box is None:
+            return
+        box.clear()
+        with box:
+            with ui.row().classes("items-center gap-2 ps-muted"):
+                ui.spinner(size="md")
+                ui.label("Computing…").classes("text-sm")
 
-    def refresh_current() -> None:
-        key = state["stage"]
-        if key == "setup":
-            if not scene_current():  # the scene is redrawn in place, so the camera stays where it is
-                geometry_panel.refresh()
-            reading_box.refresh()
+    async def build_stage(key: str) -> None:
+        """Bring a stale stage up to date: its numbers on the worker (a spinner in the tab if that takes more than
+        a moment), then its content from what is kept. Nothing is computed on the event loop, so the page keeps
+        answering. A change of the setup meanwhile supersedes this: its own refresh rebuilds the stage."""
+        token = state.get("generation", 0)
+        task = asyncio.ensure_future(run.io_bound(prepare, key, P().snapshot()))
+        done, _ = await asyncio.wait({task}, timeout=0.15)
+        if not done:
+            if key in dirty:
+                waiting(key)
+            await task
+        if gone() or state.get("generation", 0) != token or key not in dirty:
             return
         render_stage(key)
 
+    async def show_stage(key: str) -> None:
+        """A tab was chosen: it is shown as it is if it was built for the current setup, and built now if not."""
+        state["stage"] = key
+        if key in dirty:
+            await build_stage(key)
+
+    def working(on: bool) -> None:
+        """The spinner in the header: on while anything asked for is being computed."""
+        state["working"] = max(0, state.get("working", 0) + (1 if on else -1))
+        if state.get("busy") is not None:
+            state["busy"].set_visibility(state["working"] > 0)
+
+    def refresh_current() -> None:
+        """Rebuild the stage on screen from what is kept (the scene in place, so the camera stays where it is)."""
+        key = state["stage"]
+        if key == "setup" and "setup" in built:
+            if not scene_current():
+                geometry_panel.refresh()
+            reading_box.refresh()
+            dirty.discard("setup")
+            return
+        render_stage(key)
+
+    async def build_ahead(p: Planner, superseded) -> None:
+        """The stages not on screen, one by one in the order one is likely to look at them: the numbers on the
+        worker, then the content, so each is there when its tab is chosen. Then what the Plan tab shows only when
+        a check is opened, and last a run's events (seconds, and memory, for a long run)."""
+        last = ["data"] if p.run is not None else []
+        for key in [k for k in look_order if k not in last] + ["plan+"] + last:
+            if key != "plan+" and key not in dirty:
+                continue
+            await asyncio.sleep(0.05)  # the page's own events go first
+            await run.io_bound(prepare, key.rstrip("+"), p, key == "plan+")
+            if superseded():
+                return
+            if key in dirty:
+                await render_stage_ahead(key, superseded)
+
     def refresh_results() -> None:
-        """After the setup (or the run) changed. The tabs not on screen are emptied and marked, to be rebuilt when
-        they are shown; the heavy numbers are computed off the event loop; then the strip, the setup panel and the
-        tab on screen are rebuilt. Another change in the meantime supersedes this one."""
+        """After the setup, the run or the theme changed. Every stage is now stale, and those not on screen are
+        emptied. The numbers are computed on the worker (a spinner in the header while they are); then the strip,
+        the setup panel and the stage on screen are rebuilt from them, and after that the other stages one by
+        one, so each is there when its tab is chosen. Another change in the meantime supersedes this one."""
         state["generation"] = token = state.get("generation", 0) + 1
         current = state["stage"]
         for key, box in stage_boxes.items():
+            dirty.add(key)
             if key != current:
                 box.clear()
-                dirty.add(key)
-        busy = state.get("busy")
-        if busy is not None:
-            busy.set_visibility(True)
+        working(True)
+
+        def superseded() -> bool:
+            return gone() or state.get("generation") != token
+
+        async def numbers(p: Planner) -> None:
+            await run.io_bound(with_work, warm, p)
+            if superseded():
+                return
+            state["ready"] = True
+            typing = False
+            if client.has_socket_connection:
+                try:  # the cards are not rebuilt under a field being typed in; the next blur brings them up to date
+                    typing = await ui.run_javascript(
+                        "!!document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)",
+                        timeout=1.0)
+                except Exception:  # noqa: BLE001
+                    typing = False
+                if superseded():
+                    return
+            if state.pop("panel_due", False) or not typing:
+                setup_panel.refresh()
+            else:
+                sync_cards()
+            pending_bar.refresh()
+            pending_note.refresh()
+            status_strip.refresh()
+            while True:  # the stage on screen (the user may choose another tab while its numbers are computed)
+                key = state["stage"]
+                await run.io_bound(prepare, key, p)
+                if superseded():
+                    return
+                if key == state["stage"]:
+                    break
+            if key in dirty:
+                refresh_current()
 
         async def go() -> None:
+            p = P().snapshot()
             try:
-                await run.io_bound(warm)
-            except Exception:  # noqa: BLE001 -- the panels say what is wrong
-                pass
-            if state.get("generation") != token:
-                return
-            if busy is not None:
-                busy.set_visibility(False)
-            try:  # the cards are not rebuilt under a field being typed in; the next blur brings them up to date
-                typing = await ui.run_javascript(
-                    "!!document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)",
-                    timeout=1.0)
-            except Exception:  # noqa: BLE001
-                typing = False
-            if not typing:
-                setup_panel.refresh()
-            status_strip.refresh()
-            refresh_current()
+                await numbers(p)
+            finally:
+                working(False)
+            if not superseded():
+                await build_ahead(p, superseded)
 
-        ui.timer(0.01, go, once=True)
+        later(go)
+
+    def refresh_data() -> None:
+        """A choice on the Data tab changed: what it changes is computed on the worker (the spinner in the header
+        if that takes more than a moment), then the view is rebuilt from what is kept."""
+        state["data_choice"] = n = state.get("data_choice", 0) + 1
+        token = state.get("generation", 0)
+
+        async def go() -> None:
+            if P().run is not None:
+                task = asyncio.ensure_future(run.io_bound(prepare, "data", P().snapshot()))
+                done, _ = await asyncio.wait({task}, timeout=0.15)
+                if not done:
+                    working(True)
+                    try:
+                        await task
+                    finally:
+                        working(False)
+                if gone() or state.get("data_choice") != n or state.get("generation", 0) != token:
+                    return
+            data_view.refresh()
+
+        later(go)
 
     @ui.refreshable
     def reading_box(tab: str) -> None:
         try:
-            lines = guide.reading(P(), tab)
+            lines = reading(tab)
         except Exception:  # noqa: BLE001 -- a reading must never break the page
             lines = []
         if not lines:
@@ -1756,8 +2482,11 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         """Open the Physics tab at a section (:data:`physim.nuclear.workbench.PHYSICS`)."""
         if state.get("tabs") is not None:
             state["tabs"].set_value("physics")
-        ui.run_javascript(f"setTimeout(() => document.querySelector('.physics-{section}')"
-                          "?.scrollIntoView({behavior: 'smooth', block: 'start'}), 400)")
+        # The section may still be on its way (the tab is built when first shown): look for it for a few seconds.
+        ui.run_javascript(
+            "(() => { let n = 0; const go = () => { const el = document.querySelector('.physics-%s'); "
+            "if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'}); "
+            "else if (n++ < 60) setTimeout(go, 100); }; setTimeout(go, 300); })()" % section)
 
     def block(tab: str, title: Optional[str] = None) -> None:
         """One of the planner's results: its heading, how to read it, the panel, and its explanation."""
@@ -1822,6 +2551,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         refresh_results()
 
     def start_run(f: dict) -> None:
+        if pending():
+            ui.notify("Changes of the setup are not applied yet: Apply or Discard them, then start the run.",
+                      type="warning", multi_line=True)
+            return
         kind = f["kind"]
         options = {}
         if kind == "source":
@@ -1938,7 +2671,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     @ui.refreshable
     def status_strip() -> None:
-        _strip.render(ctx)
+        if state["ready"]:
+            _strip.render(ctx)
 
     @ui.refreshable
     def main_area() -> None:
@@ -1947,16 +2681,19 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             for key, label in wb.STAGES:
                 ui.tab(key, label=label)
         state["tabs"] = tabs
-        # Only the tab on screen is built now; the others are built when first shown, and rebuilt when shown
-        # after a change (refresh_results).
+        # The stages are built by refresh_results, once their numbers are computed on the worker: the one on
+        # screen first, then the others. ``prebuild`` builds every stage now (the served-page test).
         with ui.tab_panels(tabs, value=state["stage"]).classes("w-full"):
             for key, _ in wb.STAGES:
                 with ui.tab_panel(key):
                     stage_boxes[key] = ui.column().classes("w-full gap-2")
                     dirty.add(key)
+        built.clear()
+        if prebuild:
             for key, _ in wb.STAGES:
-                if key == state["stage"] or prebuild:  # prebuild: every tab now (the served-page test)
-                    render_stage(key)
+                render_stage(key)
+        else:
+            waiting(state["stage"])
 
     def set_theme(name: str) -> None:
         if name == state["theme"]:
@@ -1970,11 +2707,15 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         """The theme this browser used last (the system's light or dark setting the first time), unless the
         address gives it (?theme=...)."""
         try:
-            saved_theme, system_dark = await ui.run_javascript(
-                "(() => { let t = null; try { t = localStorage.getItem('physim-planner-theme') } catch (e) {} "
-                "return [t, window.matchMedia('(prefers-color-scheme: dark)').matches] })()", timeout=3)
+            saved_theme, system_dark, auto = await ui.run_javascript(
+                "(() => { let t = null, a = null; try { t = localStorage.getItem('physim-planner-theme'); "
+                "a = localStorage.getItem('physim-planner-auto-apply') } catch (e) {} "
+                "return [t, window.matchMedia('(prefers-color-scheme: dark)').matches, a] })()", timeout=3)
         except Exception:  # noqa: BLE001 -- no answer from the browser: keep the defaults
             return
+        if auto == "on" and not state["auto_apply"]:
+            state["auto_apply"] = True
+            pending_bar.refresh()
         if theme is None:
             wanted = saved_theme if saved_theme in THEMES else ("dark" if system_dark else "light")
             if wanted != state["theme"]:
@@ -1983,19 +2724,23 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     ctx = SimpleNamespace(
         ui=ui, P=P, state=state, edit=edit, section=section, help_icon=help_icon, bind=bind,
         reaction_section=reaction_section, clover_switches=clover_switches, add_detector=add_detector,
+        D=D, cards=cards, checks=checks, checks_box=checks_box, card_parts=card_parts,
+        mark=mark,
         duplicate_detector=duplicate_detector, remove_detector=remove_detector,
         add_gamma_detector=add_gamma_detector, duplicate_gamma_detector=duplicate_gamma_detector,
         remove_gamma_detector=remove_gamma_detector, open_card=open_card, block=block, readouts=readouts, analysis_block=analysis_block, alignment_block=alignment_block,
         multistep_block=multistep_block, open_explanation=open_explanation, efficiency_panel=efficiency_panel,
         plan_answers=plan_answers, run_view=run_panel, run_form=run_form, refresh_run_form=run_panel.refresh,
         start_run=start_run, stop_run=stop_run, extend_run=extend_run, load_run=load_run, watch_events=watch_events,
-        columns=columns, data_view=data_view, refresh_data=data_view.refresh, data_options=data_options,
+        columns=columns, data_view=data_view, refresh_data=refresh_data, data_options=data_options,
+        keep=keep, in_theme=in_theme, when_opened=when_opened,
         gate_form=gate_form, fmt=_fmt, time_text=_time,
         analysis_view=analysis_view, report_view=report_view, show_physics=show_physics, levels_block=levels_block,
         geometry_tables=geometry_tables, explain=explain, reading_box=reading_box, gamma_panel=gamma_panel)
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)
+    ui.add_css(PENDING_STYLE)
     ui.add_css(record_css(".ps-record"))
     dark = ui.dark_mode(state["theme"] == "dark")
     with ui.header(elevated=False).classes("items-center ps-header py-1"):
@@ -2026,14 +2771,23 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             preview_box = ui.column().classes("items-center gap-2")
     export_dialog.on("show", render_preview)
     with ui.left_drawer(value=True).classes("ps-rail").props("width=440 bordered behavior=desktop") as drawer:
+        pending_bar()
         setup_panel()
     state["drawer"] = drawer
     with ui.column().classes("w-full gap-2"):
         with ui.element("div").classes("w-full") as strip_box:
             status_strip()
+            pending_note()
         state["strip_box"] = strip_box
         main_area()
     if offer_list:
         experiments_dialog.open()
+    if not prebuild:
+        refresh_results()  # the numbers on the worker, then the panel, the strip and the stages
+    # Ctrl+Enter applies the changes from anywhere on the page, a field being typed in included (its own Enter
+    # reaches the server first and puts its text in the draft).
+    ui.on("physim_apply", lambda: apply_changes())
+    ui.add_head_html("<script>document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && "
+                     "(e.ctrlKey || e.metaKey) && !e.repeat) emitEvent('physim_apply'); });</script>")
     ui.timer(0.2, restore_choices, once=True)
     ui.timer(0.5, tick)

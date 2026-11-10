@@ -144,11 +144,13 @@ def render(ctx) -> None:
     ctx.ui.label("Open each in turn: what the kinematics, the target and the detectors do to the numbers above. "
                  "The same panels are on the Physics tab.").classes("text-xs ps-muted")
     coulex = p.experiment.excitation is not None and bool(p.experiment.gamma_detectors)
+    # A check is built when it is first opened (its figure is computed by then, or a spinner says it is on its
+    # way); the ones left open stay open when the tab is rebuilt after an edit.
+    opened = ctx.state.setdefault("checks_open", set())
     for tab, title, coulex_only in CHECKS:
         if coulex_only and not coulex:
             continue
-        with ctx.ui.expansion(title).classes("w-full ps-card"):
-            if tab == "efficiency":
-                ctx.efficiency_panel()
-            else:
-                ctx.block(tab)
+        check = ctx.ui.expansion(title, value=tab in opened).classes("w-full ps-card")
+        check.on_value_change(lambda e, tab=tab: (opened.add if e.value else opened.discard)(tab))
+        ctx.when_opened(check, (lambda tab=tab: ctx.efficiency_panel() if tab == "efficiency" else ctx.block(tab)),
+                        tab)
