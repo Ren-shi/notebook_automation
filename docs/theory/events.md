@@ -96,14 +96,15 @@ below it. Each crossing then adds a Gaussian of that width. The tables and `Stop
 
 Each event is one reaction. The per-event loop is written in Rust (`physim::nuclear`) and runs on all cores:
 
-1. Pick a channel (nuclide and layer) with probability proportional to its rate.
+1. Pick a channel (nuclide and layer) and one of the ranges of CM angle its detectors see (see "Sharing out the
+   events" below).
 2. Draw the beam energy (Gaussian, the setup's FWHM spread) and the spot position. The spot is Gaussian in x and y
    with the setup's FWHM, on the tilted target plane.
 3. Draw the depth uniformly through the layer. Carry the beam to it with straggling, along paths $\Delta z/\cos t$
    for target tilt $t$.
-4. Draw the CM angle $\theta^*$ through $u = \sin^2(\theta^*/2)$, over the range where the ejectile or the recoil
-   can reach a detector with at least the cut energy. That range is found for the highest and lowest beam energies
-   in the layer, widened by the spot size.
+4. Draw the CM angle $\theta^*$ through $u = \sin^2(\theta^*/2)$, over the picked range: one in which the ejectile
+   or the recoil can reach a detector with at least the cut energy. The ranges are found for the highest and lowest
+   beam energies in the layer, with each detector's band of lab angles widened by the spot size.
 5. Do the two-body kinematics (the Rust port of item 35, equal to the Python version to $10^{-11}$) for the
    ejectile at $(\theta^*, \phi)$ and the recoil at $(180° - \theta^*, \phi + 180°)$.
 6. Carry each particle out of the target and backing with straggling. Find the first detector face its straight
@@ -118,9 +119,26 @@ w = \frac{R_k(E)}{N\, P_k} \cdot \frac{f(u)}{p(u)},
 $$
 
 where $R_k(E)$ is the rate of channel $k$ into the sampled range at that event's beam energy, $P_k$ the
-probability of picking channel $k$, $f$ the normalised Rutherford density and $N$ the number of events. The sum of
-weights is an unbiased estimate of the rate, so spectra are absolute: counts per bin in the planned beam time. Its
-statistical error is $\sqrt{\sum w^2}$.
+probability of picking that range of channel $k$, $f$ the normalised Rutherford density and $N$ the number of
+events. The sum of weights is an unbiased estimate of the rate whatever the $P_k$, so spectra are absolute: counts
+per bin in the planned beam time. Its statistical error is $\sqrt{\sum w^2}$.
+
+**Sharing out the events.** Detectors on both sides of 90°, or one reaching just forward of it, see separate
+ranges of $\theta^*$ (`rates.cm_ranges`): the scattered beam in one, and in another the slow recoils of distant
+collisions, which leave near 90° at a $\theta^*$ of a few degrees. One range from the smallest to the largest
+angle would hold everything between, where no detector is and $1/u^2$ is largest. Each range is therefore sampled
+on its own, and $P_k$ is set as follows (`events.share_out`):
+
+- A channel is picked in proportion to its Rutherford rate into its ranges, and its ranges half in proportion to
+  their Rutherford rates and half to their widths in $\ln u$, as $u$ is drawn inside a range.
+- When some channel has more than one range, a pilot run (4000 events per range, always the same seed) first
+  finds the fraction $c$ of each range's particles reaching a face that are counted. Every rate and width is
+  multiplied by its $c$: the events follow the rate *counted* from a range, not the rate into it. The recoils'
+  range can carry hundreds of times the backscattered beam's rate with $c = 0$, because none of them gets through
+  the target and the detector's dead layer.
+- 5% of a channel's events stay spread over its ranges by width, and no channel is picked less than 5% of the
+  average. So a range where nothing is counted is still sampled, and its rate (`Events.rate(counted=False)`)
+  agrees with the analytic one, with a larger statistical error.
 
 **Randomness.** Every number is drawn from the counter-based generator of {doc}`integrators` with key
 (seed, $2^{61}$ + event number, draw number). The output therefore depends only on the seed: it is bit-identical for

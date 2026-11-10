@@ -11,6 +11,24 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Fixed
+- The event generator no longer spends nearly all its events where no detector counts anything. With ⁶²Ni on
+  ¹⁹⁴Pt, strip detectors just behind 90° and the target 2 mm upstream, 100,000 events gave 1,400 counted particles
+  and 60 excited ones, against 32,000 and 16,000 with the target in place; now about 37,000 and 19,000 wherever
+  the target is.
+  - The CM angle was drawn over one range, from the smallest to the largest lab angle of any detector. With
+    detectors on both sides of 90°, or one reaching just forward of it, that range held the slow recoils of
+    distant collisions near 90°, where Rutherford's cross section is hundreds of times larger. Each channel is
+    now sampled over the separate ranges its detectors see (`rates.cm_ranges`), without the angles between them.
+  - When a channel has more than one range, a short pilot run finds the fraction of each range's particles that
+    are counted, and the events are shared out by the rate counted from each range (`events.share_out`). A range
+    in which nothing is counted keeps a few percent of its channel's events, so no rate is dropped: the ¹⁹⁴Pt
+    recoils on that strip detector's edge are still in `Events.rate(counted=False)`, as in `Rates`, as a few
+    rows of large weight.
+  - The rates and spectra are the same within their statistical errors, which are smaller: the three examples
+    give 1.7 to 2.7 times as many counted particles per event. A seed gives other events than before.
+  - `generator_config` lists one entry per range, with `channel_of` naming the channel of each
+    (`events.channel_index`); an unweighted run (`runs.BeamRunner`) that is extended after this change makes its
+    pilot run again.
 - "Check the alignment" with the fit no longer runs out of memory on a run: the reference simulation was asked
   for as many events as the run had reactions (63 million for an hour of ⁶²Ni on ¹⁹⁴Pt, over 14 GB). It is now
   made of simulations of at most 400,000 events each (`alignment.REFERENCE_EVENTS`), one after the other and four

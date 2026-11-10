@@ -57,7 +57,7 @@ import numpy as np
 
 from .._core import nuclear_events
 from .detectors import Array
-from .events import Events, generator_config
+from .events import Events, channel_index, generator_config
 from .experiment import Experiment
 from .quantity import Quantity
 from .rates import Rates
@@ -216,33 +216,46 @@ def physics_changes(taken: dict, current: dict) -> list:
 class BeamRunner:
     """Unweighted particle events from the weighted generator, chunk by chunk.
 
-    A pilot run (:data:`PILOT_EVENTS`, its own seed) sets how often each reaction channel is picked, so that the
-    events of every channel carry similar weights, and the largest weight q (its 99.9 % quantile). A chunk of N
+    A pilot run (:data:`PILOT_EVENTS`, its own seed) sets how often each reaction channel is picked (each range of
+    CM angle it is sampled over, see :func:`~physim.nuclear.events.generator_config`), so that the events of
+    every one carry similar weights, and the largest weight q (its 99.9 % quantile). A chunk of N
     reactions then covers t = N / (q × N_pilot) seconds of beam: each event, of weight w (per second), occurs
     w × t times on average, and is kept that many times — the whole part of w × t, and once more with
     probability its fraction. The kept events are exactly as frequent as in a beam of that duration; one of
     weight above q may appear twice. The reactions continue one seed stream (``first`` counts on), so a run that
-    is extended carries on where it stopped."""
+    is extended carries on where it stopped; if the generator samples other ranges than when the run was taken
+    (a run of an earlier version), the pilot run is made again, and the extension is as good as any other
+    events."""
 
     def __init__(self, experiment: Experiment, seed: int, state: Optional[dict] = None):
         self.experiment = experiment
         self.seed = int(seed)
-        self.config, used = generator_config(experiment)
+        self.config, used = generator_config(experiment, pilot=False)  # the pilot run below shares the events out
         self.config["skip_misses"] = True
         self.channels = [ch.label for ch in used]
         self.detectors = [g.name for g in Array.from_experiment(experiment)]
-        if state:
+        ranges = self._ranges()
+        same = bool(state) and np.shape(state.get("ranges")) == np.shape(ranges) and np.allclose(
+            state["ranges"], ranges, rtol=1e-9, atol=0.0)
+        if same:
             for c, p in zip(self.config["channels"], state["probabilities"]):
                 c["probability"] = p
-            self.q, self.cursor, self.chunk, self.real_s = state["q"], state["cursor"], state["chunk"], state["real_s"]
-            self.generated = state["generated"]
+            self.q = state["q"]
         else:
             self._pilot()
+        if state:
+            self.cursor, self.chunk, self.real_s = state["cursor"], state["chunk"], state["real_s"]
+            self.generated = state["generated"]
+        else:
             self.cursor, self.chunk, self.real_s, self.generated = 0, 0, 0.0, 0
 
+    def _ranges(self) -> list:
+        return [[c["u_min"], c["u_max"]] for c in self.config["channels"]]
+
     def state(self) -> dict:
-        return {"probabilities": [c["probability"] for c in self.config["channels"]], "q": self.q,
-                "cursor": self.cursor, "chunk": self.chunk, "real_s": self.real_s, "generated": self.generated}
+        return {"probabilities": [c["probability"] for c in self.config["channels"]], "ranges": self._ranges(),
+                "q": self.q, "cursor": self.cursor, "chunk": self.chunk, "real_s": self.real_s,
+                "generated": self.generated}
 
     def _pilot(self) -> None:
         cols = nuclear_events(self.config, PILOT_EVENTS, self.seed + 0x9E3779B9, PILOT_EVENTS, 0)
@@ -272,6 +285,7 @@ class BeamRunner:
         n = int(min(MAX_CHUNK, math.ceil(seconds_left / per)))
         t = min(n * per, seconds_left)
         cols = {k: np.asarray(v) for k, v in nuclear_events(self.config, n, self.seed, n, self.cursor).items()}
+        cols["channel"] = channel_index(self.config, cols["channel"])
         self.cursor += n
         self.generated += n
         rng = np.random.default_rng([self.seed, self.chunk])

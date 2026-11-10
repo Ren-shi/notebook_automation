@@ -295,16 +295,19 @@ def energy_cut(experiment) -> float:
     return max(min(thresholds, default=0.0), ENERGY_FLOOR)
 
 
-def cm_acceptance(experiment, layers: list, channel: Channel, array: Optional[Array] = None,
-                  theta_floor: float = THETA_FLOOR) -> Optional[tuple]:
-    """(smallest, largest) CM angle of the ejectile, degrees, for which the ejectile or the recoil can reach a
-    detector with at least :func:`energy_cut`, over the energies the beam has in the channel's layer; ``None`` if
-    neither can."""
+def cm_ranges(experiment, layers: list, channel: Channel, array: Optional[Array] = None,
+              theta_floor: float = THETA_FLOOR) -> list:
+    """The separate ranges of the ejectile's CM angle, [(smallest, largest), ...] in degrees and in rising order,
+    for which the ejectile or the recoil can reach a detector with at least :func:`energy_cut`, over the energies
+    the beam has in the channel's layer; empty if neither can.
+
+    Each detector covers its own band of lab angles, so detectors on both sides of 90° leave a gap between their
+    ranges. The recoils of distant collisions fill the lab angles just below 90°, where the cross section is
+    largest; a range that held the gap would spend nearly every event there, on recoils that meet no detector."""
     array = array or Array.from_experiment(experiment)
-    ranges = [g.theta_range() for g in array]
-    if not ranges:
-        return None
-    lo, hi = min(r[0] for r in ranges), max(r[1] for r in ranges)
+    bands = [g.theta_range() for g in array]
+    if not bands:
+        return []
     spot = spot_sigma_mm(experiment)
     halo = experiment.beam
     # The beam reaches 3σ of its spot from the axis, or the halo's radius if it has one (backlog item 74).
@@ -312,7 +315,7 @@ def cm_acceptance(experiment, layers: list, channel: Channel, array: Optional[Ar
                 is not None and _q(halo.halo_fraction).value > 0 else 0.0)
     d_min = min(float(np.linalg.norm(g.centre)) for g in array)
     widen = math.degrees(reach / d_min) + 0.2
-    lo, hi = max(lo - widen, theta_floor), min(hi + widen, 180.0)
+    bands = [(max(lo - widen, theta_floor), min(hi + widen, 180.0)) for lo, hi in bands]
     lay = layers[channel.layer]
     e_front, e_back = beam_energy_at(experiment, channel.layer, [0.0, lay.thickness], layers)
     de = 3 * energy_sigma(experiment)
@@ -327,11 +330,31 @@ def cm_acceptance(experiment, layers: list, channel: Channel, array: Optional[Ar
         except ValueError:
             continue
         for pt in (tb.at_cm(grid), tb.recoil_for(grid)):
-            mask |= (pt.theta_lab >= lo) & (pt.theta_lab <= hi) & (pt.energy >= cut)
+            seen = np.zeros(grid.shape, dtype=bool)
+            for lo, hi in bands:
+                seen |= (pt.theta_lab >= lo) & (pt.theta_lab <= hi)
+            mask |= seen & (pt.energy >= cut)
     if not mask.any():
-        return None
+        return []
     step = grid[1] - grid[0]
-    return max(float(grid[mask].min()) - step, 0.01), min(float(grid[mask].max()) + step, 180.0)
+    edges = np.flatnonzero(np.diff(np.r_[False, mask, False].astype(np.int8)))
+    out: list = []
+    for first, after in zip(edges[::2], edges[1::2]):
+        lo, hi = max(float(grid[first] - step), 0.01), min(float(grid[after - 1] + step), 180.0)
+        if out and lo <= out[-1][1] + step:  # one grid point apart: the same range
+            out[-1] = (out[-1][0], hi)
+        else:
+            out.append((lo, hi))
+    return out
+
+
+def cm_acceptance(experiment, layers: list, channel: Channel, array: Optional[Array] = None,
+                  theta_floor: float = THETA_FLOOR) -> Optional[tuple]:
+    """(smallest, largest) CM angle of the ejectile, degrees, for which the ejectile or the recoil can reach a
+    detector with at least :func:`energy_cut`, over the energies the beam has in the channel's layer; ``None`` if
+    neither can. The detectors may cover only parts of it: see :func:`cm_ranges`."""
+    ranges = cm_ranges(experiment, layers, channel, array, theta_floor)
+    return (ranges[0][0], ranges[-1][1]) if ranges else None
 
 
 # ---------------------------------------------------------------------------------------------------------------

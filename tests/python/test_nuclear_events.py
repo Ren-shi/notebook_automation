@@ -8,9 +8,9 @@ import pytest
 from physim import _core
 from physim.nuclear import Experiment, data
 from physim.nuclear.detectors import Array
-from physim.nuclear.events import COLUMNS, generator_config, simulate
+from physim.nuclear.events import COLUMNS, FLOOR_SHARE, channel_index, generator_config, share_out, simulate
 from physim.nuclear.kinematics import TwoBody
-from physim.nuclear.rates import MB_CM2, Rates, stack
+from physim.nuclear.rates import MB_CM2, Rates, channels, cm_acceptance, cm_ranges, stack
 from physim.nuclear.rutherford import Rutherford
 from physim.nuclear.stopping import Stopping
 
@@ -229,7 +229,8 @@ def test_same_seed_same_events_and_pieces_add_up():
     first = _core.nuclear_events(config, 20_000, 4, total=50_000)
     rest = _core.nuclear_events(config, 30_000, 4, total=50_000, first=20_000)
     for k in a.columns:
-        assert np.array_equal(np.concatenate([first[k], rest[k]]), a[k]), k
+        whole = np.concatenate([first[k], rest[k]])
+        assert np.array_equal(channel_index(config, whole) if k == "channel" else whole, a[k]), k
 
 
 def test_columns_and_spectra():
@@ -284,3 +285,125 @@ def test_species_and_masses_in_the_config():
     assert len(config["tables"]) == 4 * config["materials"]
     assert [ch.label for ch in used] == ["208Pb (target)", "12C (backing)", "13C (backing)"]
     assert len(config["faces"]) == len(Array.from_experiment(exp).geometries)
+
+
+# -- how the events are shared out among the ranges the detectors see ---------------------------------------------
+
+
+def backward_coulex(offset_mm=0.0):
+    """⁶²Ni on ¹⁹⁴Pt with the strip detectors just behind 90°, and the target moved along the beam: from 2 mm
+    upstream, the slow ¹⁹⁴Pt recoils of distant collisions clear a strip detector's forward edge."""
+    d = Experiment.example("coulex_ni58").to_dict()
+    d["beam"] = {"nuclide": "62Ni", "energy": "237 MeV", "current": "1 pnA"}
+    d["target"] = {"material": "194Pt", "thickness": "0.5 mg/cm2"}
+    if offset_mm:
+        d["target"]["position"] = f"{offset_mm:g} mm"
+    d["reaction"] = {"type": "coulex", "excite": "projectile", "energy": "1172.91 keV", "multipolarity": "E2",
+                     "b_up": "884.105 e2fm4"}
+    for det in d["detectors"]:
+        if det["name"] == "DSSD-L":
+            det.update(theta="102.4 deg", phi="-11.9 deg")
+        elif det["name"] == "DSSD-R":
+            det.update(theta="103.8 deg", phi="172 deg")
+    return Experiment.from_dict(d)
+
+
+def test_the_cm_ranges_leave_out_the_angles_no_detector_sees():
+    exp = Experiment.example("coulex_ni58")
+    layers = stack(exp)
+    elastic = channels(layers, exp)[0]
+    ranges = cm_ranges(exp, layers, elastic)
+    # The strip detectors at 45° (scattered beam and recoils) and, apart from them, the annular one upstream.
+    assert len(ranges) == 2 and ranges[0][1] < 125 < 135 < ranges[1][0]
+    assert cm_acceptance(exp, layers, elastic) == (ranges[0][0], ranges[1][1])
+    # With the target 2 mm upstream a strip detector reaches forward of 90°, where the recoils of distant
+    # collisions go: a narrow range at a few degrees, far from the backscattered beam's.
+    at_rest, upstream = (cm_ranges(e, stack(e), channels(stack(e), e)[0])
+                         for e in (backward_coulex(), backward_coulex(-2.0)))
+    assert at_rest[0][0] > 100
+    assert upstream[0][0] < 7 and upstream[0][1] < 10 and upstream[1][0] > 100
+    assert len(upstream) == len(at_rest) + 1
+    assert np.allclose(upstream[1:], at_rest, atol=2.0)
+
+
+def test_a_range_where_nothing_is_counted_does_not_take_the_events():
+    """Rutherford's cross section into the recoils' range is hundreds of times that into the backscattered
+    beam's, and nothing from it is counted: it keeps a few percent of the events, and its rate stays right."""
+    counted, excited = {}, {}
+    for z in (0.0, -2.0, -5.0):
+        exp = backward_coulex(z)
+        ev = simulate(exp, 100_000, seed=2)
+        c = ev.columns
+        counted[z] = int(c["counted"].sum())
+        excited[z] = int((c["counted"] & np.isin(c["channel"], [i for i, lab in enumerate(ev.channels)
+                                                                if "excited" in lab])).sum())
+        if z == 0.0:
+            assert not np.any(c["recoil"])
+            continue
+        r = Rates(exp)
+        for det in ev.detectors:
+            for flag in (True, False):
+                rate, err = ev.rate(det, counted=flag)
+                assert abs(rate - r.rate(det, counted=flag)) < 4 * err, (z, det, flag)
+        # The recoils on the strip detector's edge: still there, a few rows of large weight, and none counted.
+        grazing = ev.select("DSSD-L", counted=False, particle="recoil")
+        assert 0 < grazing.sum() < 0.01 * len(ev)
+        assert not np.any(c["counted"][grazing]) and np.all(c["theta_cm"][grazing] < 12)
+        want = sum(v for (_, p), v in r.by_channel("DSSD-L").items() if p == "recoil")
+        rate, err = ev.rate("DSSD-L", counted=False, particle="recoil")
+        assert want > 5 * r.rate("DSSD-L") and abs(rate - want) < 4 * err
+        if z == -5.0:  # 3 mm further the edge sees 40 times as many: enough rows for a rate to 15%
+            assert grazing.sum() > 50 and err < 0.15 * want
+    # The statistics do not depend on where the target is (before, 1,400 counted particles and 60 excited ones
+    # of 100,000 events with the target 2 mm upstream, against 32,000 and 16,000 with it in place).
+    for z in (-2.0, -5.0):
+        assert counted[z] > 0.9 * counted[0.0] > 30_000
+        assert 0.45 * counted[z] < excited[z] < 0.55 * counted[z]
+
+
+def test_sharing_out_the_events():
+    exp = backward_coulex(-2.0)
+    config, used = generator_config(exp)
+    owner = np.array(config["channel_of"])
+    assert len(used) == 2 and list(owner) == sorted(owner) and len(owner) > 2
+    lo = np.array([c["u_min"] for c in config["channels"]])
+    p = np.array([c["probability"] for c in config["channels"]])
+    grazing = lo < math.sin(math.radians(5)) ** 2
+    assert grazing.sum() == 1 and grazing[0] and 0 < p[0] < 0.03 * p.sum()
+    # Elastic scattering and the excitation get the same number of events.
+    assert p[owner == 0].sum() == pytest.approx(p[owner == 1].sum(), rel=0.1)
+    # Without the pilot run the shares follow Rutherford's cross section: the recoils' range takes most of the
+    # events, and the excitation, which has no such range, next to none.
+    plain, _ = generator_config(exp, pilot=False)
+    q = np.array([c["probability"] for c in plain["channels"]])
+    assert q[0] > 0.6 * q.sum() and q[owner == 1].sum() < 0.01 * q.sum()
+    # A range in which nothing is counted keeps its part of the floor, by its width in ln u.
+    share_out(config, [0.0] + [1.0] * (len(owner) - 1))
+    p = np.array([c["probability"] for c in config["channels"]])
+    width = np.array([math.log(c["u_max"] / c["u_min"]) for c in config["channels"]])
+    assert p[0] / p[owner == 0].sum() == pytest.approx(FLOOR_SHARE * width[0] / width[owner == 0].sum())
+    # Nothing counted anywhere: as without a pilot run.
+    share_out(config, [0.0] * len(owner))
+    assert [c["probability"] for c in config["channels"]] == pytest.approx(list(q))
+
+
+def test_unweighted_runs_with_several_ranges():
+    from physim.nuclear.runs import BeamRunner
+
+    exp = backward_coulex(-2.0)
+    runner = BeamRunner(exp, seed=5)
+    assert len(runner.config["channels"]) > len(runner.channels) == 2
+    cols, seconds = runner.next_chunk(0.02)
+    assert seconds > 0 and len(cols["event"]) > 100
+    assert set(np.unique(cols["channel"])) == {0, 1}
+    # An extension carries on with the same shares; a state without the ranges (an earlier version's run, sampled
+    # over other angles) makes the pilot run again.
+    state = runner.state()
+    again = BeamRunner(exp, seed=5, state=state)
+    assert again.state() == state
+    old = {k: v for k, v in state.items() if k != "ranges"}
+    old["probabilities"] = old["probabilities"][:2]
+    redone = BeamRunner(exp, seed=5, state=old)
+    assert redone.state()["probabilities"] == pytest.approx(state["probabilities"])
+    assert (redone.cursor, redone.generated) == (state["cursor"], state["generated"])
+
