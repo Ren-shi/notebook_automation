@@ -25,7 +25,7 @@ def compare_block(ctx) -> None:
     c = p.compare()
     ui.label("Predicted against measured").classes("text-lg font-semibold")
     if c["run"] is None:
-        ui.label("Take a beam run on the Run tab: the Plan's numbers are kept with it, and set here beside what it "
+        ui.label("Take a beam run on the Run step: the Plan's numbers are kept with it, and set here beside what it "
                  "measured.").classes("text-sm ps-muted")
         return
     if not c["rows"]:
@@ -44,7 +44,7 @@ def compare_block(ctx) -> None:
                                   ("a", ""))), rows=rows).props("dense flat")
     note = (f"Run {c['run']}, its real part; agreement within three standard deviations of the run's statistics. "
             "The efficiency is measured by a source run")
-    note += f" (run {c['source_run']})." if c["source_run"] else ": take one on the Run tab to measure it."
+    note += f" (run {c['source_run']})." if c["source_run"] else ": take one on the Run step to measure it."
     ui.label(note).classes("text-xs ps-muted")
 
 
@@ -52,14 +52,44 @@ def render(ctx) -> None:
     ctx.analysis_view()
 
 
+#: The parts of the step, in order: (class of its anchor, name in the list at the top).
+PARTS = (("compare", "Predicted against measured"), ("b-e2", "B(E2) from the peak"),
+         ("alignment", "Target alignment"), ("all-orders", "All orders"))
+
+
+def _jump(ctx, anchor: str) -> None:
+    ctx.ui.run_javascript("(() => { const el = document.querySelector('.analysis-%s'); "
+                          "if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'}); })()" % anchor)
+
+
 def render_view(ctx) -> None:
-    """Everything on the tab (rebuilt when the current run or the setup changes)."""
-    compare_block(ctx)
-    exp = ctx.P()._data_experiment()
-    if exp.excitation is None or not exp.gamma_detectors:
-        ctx.ui.markdown("The analysis needs Coulomb excitation with γ-ray detectors: set the reaction in the "
-                        "**Target and reaction** card and add γ-ray detectors.")
+    """Everything on the step (rebuilt when the current run or the setup changes): a list of its parts, then
+    each part in turn."""
+    ui = ctx.ui
+    p = ctx.P()
+    exp = p._data_experiment()
+    coulex = exp.excitation is not None and bool(exp.gamma_detectors)
+    shown = [(a, t) for a, t in PARTS if coulex or a in ("compare", "all-orders")]
+    with ui.row().classes("w-full items-center gap-1"):
+        ui.label("On this step").classes("text-xs ps-muted")
+        for anchor, title in shown:
+            ui.button(title, on_click=lambda a=anchor: _jump(ctx, a)).props("dense outline no-caps").classes("px-2")
+    if p.run is None:
+        ui.label("No run yet: the analysis and the alignment check below work on a fresh simulated sample of the "
+                 "setup. Take a run to analyse what it recorded; the result is then kept with the run and goes "
+                 "into the report.").classes("text-sm ps-note rounded p-2")
+    elif p.run.kind == "source":
+        ui.label(f"Run {p.run.number} is a source run: it measures the γ-ray efficiency. Choose a beam run on the "
+                 "Run step to analyse it.").classes("text-sm ps-note rounded p-2")
+    with ui.column().classes("w-full gap-2 analysis-compare"):
+        compare_block(ctx)
+    if not coulex:
+        ui.markdown("The analysis needs Coulomb excitation with γ-ray detectors: set the reaction in the "
+                    "**Target and reaction** card and add γ-ray detectors.")
     else:
-        ctx.analysis_block()
-        ctx.alignment_block()
-    ctx.multistep_block()
+        with ui.column().classes("w-full gap-2 analysis-b-e2"):
+            ctx.analysis_block()
+        with ui.column().classes("w-full gap-2 analysis-alignment"):
+            ctx.alignment_block()
+    with ui.column().classes("w-full gap-2 analysis-all-orders"):
+        ctx.multistep_block()

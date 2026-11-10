@@ -84,7 +84,7 @@ def form(ctx) -> None:
     elif f["kind"] == "alignment":
         ui.number("Target assumed off along the beam (mm)", value=f["offset_mm"], step=0.5,
                   on_change=lambda e: f.update(offset_mm=e.value)).props("dense outlined").classes("w-72")
-        ui.label("A beam run analysed as if the target stood elsewhere: the Analysis tab shows what the Doppler "
+        ui.label("A beam run analysed as if the target stood elsewhere: the Analysis step shows what the Doppler "
                  "correction then does, and fits the offset back.").classes("text-xs ps-muted")
     if f["kind"] != "source" and not running:
         try:

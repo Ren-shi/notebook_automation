@@ -132,8 +132,70 @@ def test_checks_say_when_the_setup_changed_since_the_run(tmp_path):
     assert strip["Last run"].startswith("Beam run, 5s") and "changed since" in strip["Last run"]
 
 
+def test_the_steps_follow_the_experiment(tmp_path):
+    """The step bar: six steps in order, each with its state and a line of status, and a foot that leads on."""
+    p = Planner.example("alpha_on_gold")
+    steps = {s["key"]: s for s in wb.steps(p)}
+    assert list(steps) == ["setup", "plan", "run", "data", "analysis", "report"]
+    assert [s["number"] for s in steps.values()] == [1, 2, 3, 4, 5, 6]
+    assert steps["setup"]["state"] == "done" and steps["setup"]["status"] == "6 particle · 1 warning" and steps["setup"]["warn"]
+    # Nothing is run yet: the data wait for a run, and the foot of Run and Data say so.
+    assert (steps["run"]["state"], steps["run"]["status"]) == ("ready", "no run yet")
+    assert (steps["data"]["state"], steps["data"]["status"]) == ("waiting", "needs a run")
+    assert steps["analysis"]["state"] == "waiting"  # elastic scattering has nothing to analyse
+    assert steps["report"]["status"] == "the plan only"
+    assert wb.next_step(p, "setup") == {"hint": "The setup is applied.", "label": "Next: check the plan", "to": "plan"}
+    assert "2 changes wait for Apply" in wb.next_step(p, "setup", pending=2)["hint"]
+    assert wb.next_step(p, "plan")["to"] == "run" and wb.next_step(p, "run")["label"] is None
+    assert (wb.next_step(p, "data")["label"], wb.next_step(p, "data")["to"]) == ("Take a run", "run")
+    assert wb.next_step(p, "report")["label"] is None and wb.next_step(p, "physics") is None
+
+    # A beam time too short for the counts wanted shows under Plan.
+    assert steps["plan"]["status"].endswith("needed") or "planned" in steps["plan"]["status"]
+    short = Planner.example("alpha_on_gold")
+    short.set("run", "beam_time", "1 s")
+    short.set("run", "counts_wanted", "1000000")
+    plan = {s["key"]: s for s in wb.steps(short)}["plan"]
+    assert plan["state"] == "ready" and plan["warn"] and "needed, 1 s planned" in plan["status"]
+
+    # A run: Run and Data are done, their feet lead on, and the report holds the run.
+    p.create_experiment(root=tmp_path)
+    p.start_run("beam", duration="5 s")
+    steps = {s["key"]: s for s in wb.steps(p)}
+    assert steps["run"]["state"] == "done" and steps["run"]["status"] == "1 run · beam run, 5s"
+    assert (steps["data"]["state"], steps["data"]["status"]) == ("done", "run 1")
+    assert steps["report"]["status"] == "the plan and 1 run"
+    assert wb.next_step(p, "run") == {"hint": "Run 1 is the current run.", "label": "Next: look at run 1's data",
+                                      "to": "data"}
+    assert wb.next_step(p, "data")["label"] == "Next: analyse run 1"
+    # The setup changes after the run: the step bar says whose data these are.
+    p.set("beam", "energy", "6 MeV")
+    run = {s["key"]: s for s in wb.steps(p)}["run"]
+    assert run["warn"] and run["status"] == "run 1: setup changed since"
+    # A setup with a problem is not done, and its foot does not lead on.
+    assert not p.set("beam", "energy", "nonsense")
+    bad = Planner.example("alpha_on_gold")
+    bad.problems.append("the beam energy is not a quantity")
+    assert {s["key"]: s for s in wb.steps(bad)}["setup"]["state"] == "ready"
+    assert wb.next_step(bad, "setup")["label"] is None
+
+
+def test_the_analysis_step_names_the_run_and_its_result(tmp_path):
+    p = Planner.example("coulex_ni58")
+    steps = {s["key"]: s for s in wb.steps(p)}
+    assert (steps["analysis"]["state"], steps["analysis"]["status"]) == ("ready", "no run: on a sample")
+    p.create_experiment(root=tmp_path)
+    p.start_run("source", duration="10 min", source="152Eu")
+    steps = {s["key"]: s for s in wb.steps(p)}
+    assert steps["analysis"]["status"] == "the current run is a source run"
+    assert wb.next_step(p, "data")["label"] == "Take a beam run"
+    p.start_run("beam", duration="1 min")
+    assert {s["key"]: s for s in wb.steps(p)}["analysis"]["status"] == "run 2 not analysed yet"
+
+
 def test_stages_and_templates():
     assert [label for _, label in wb.STAGES] == ["Setup", "Plan", "Run", "Data", "Analysis", "Report", "Physics"]
+    assert wb.STEPS == wb.STAGES[:6]  # the Physics reference is a stage without a step
     for key, label, example in wb.TEMPLATES:
         exp = wb.template(key)
         exp.validate()

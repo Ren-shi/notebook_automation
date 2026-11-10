@@ -34,7 +34,7 @@ def parts(ctx) -> list:
 def head(ctx) -> None:
     ui = ctx.ui
     ui.label("The physics behind the numbers, in the order of the physics register. Each section says where it "
-             "is validated; the ? beside a number on the other tabs opens the section that shows its physics.").classes(
+             "is validated; the ? beside a number on a step opens the section that shows its physics.").classes(
         "text-sm ps-muted")
     with ui.row().classes("gap-1"):
         for key, title, _, _ in wb.PHYSICS:

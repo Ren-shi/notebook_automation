@@ -80,7 +80,7 @@ def test_the_app_serves_every_example(tmp_path):
                     out = proc.stdout.read().decode(errors="replace") if proc.poll() is not None else ""
                     pytest.fail(f"the app did not start: {out}")
                 time.sleep(0.5)
-        stages = [label for _, label in workbench.STAGES]
+        steps = [label for _, label in workbench.STEPS]
         pages = [f"?example={name}" for name in Planner.examples()]
         pages += [f"?template={key}" for key, _, _ in workbench.TEMPLATES] + [""]
         for query in pages:
@@ -91,12 +91,20 @@ def test_the_app_serves_every_example(tmp_path):
                 assert r.status == 200
                 body = r.read().decode()
             assert "physim" in body and "Count rates and beam time" in body, query
-            # One mode: the seven stages, in order; no guided steps, no mode switch, no example drop-down.
-            at = [body.find(f'"label":"{label}"') for label in stages]
+            # One mode: the six steps, in order, and the Physics reference (its button in the header comes
+            # first in the page); no guided steps, no mode switch, no example drop-down.
+            at = [body.find(f'"label":"{label}"') for label in steps]
             assert all(i >= 0 for i in at) and at == sorted(at), (query, at)
+            assert '"label":"Physics"' in body, query
             for gone in ("What do you want to measure?", "Expert view", "Start from example"):
                 assert gone not in body, (query, gone)
             assert "New experiment" in body and "Run conditions" in body
+            # The stages are a step bar; each step has a foot that leads on, and Physics is in the header.
+            assert "ps-steps" in body and "ps-step-status" in body and "ps-step-hidden" in body, query
+            assert "Next: check the plan" in body and "Next: take a run" in body, query
+            assert "Open an experiment" in body and "menu_book" in body, query
+            # The predicted spectra are a check of the Plan; the Data step without a run says what it needs.
+            assert "Predicted spectra: what each detector will record" in body and "No run yet" in body, query
             # The Plan tab answers without a button pressed, and its checks are there (backlog 65).
             assert "Beam time needed" in body and "Kinematics: where the particles go" in body, query
             # The Run tab: the button, the real part, and what is not simulated (backlog 66).

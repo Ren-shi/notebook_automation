@@ -844,6 +844,15 @@ class Rates:
 
     # -- warnings -------------------------------------------------------------------------------------------------
 
+    def _all_orders(self) -> bool:
+        """Whether the excitation follows a level scheme to all orders (then the events and these rates do)."""
+        from .gamma import cascade_excitation, excitation_order
+
+        try:
+            return cascade_excitation(self.experiment) is not None and excitation_order(self.experiment) == "all"
+        except Exception:  # noqa: BLE001 - a warning's wording must not stop the warnings
+            return False
+
     def warnings(self, max_rate: float = MAX_RATE) -> list:
         """Plain-language warnings: detectors counting faster than ``max_rate`` per second, too few counts in the
         planned run, Rutherford's formula not applying, the beam stopping in the target, and layout problems."""
@@ -857,7 +866,8 @@ class Rates:
             if acc is None:
                 continue
             if ch.excitation is not None:
-                found = coulex_for(self.experiment, ch, self.layers).warnings(theta_cm_max=acc[1])
+                found = coulex_for(self.experiment, ch, self.layers).warnings(
+                    theta_cm_max=acc[1], all_orders=self._all_orders())
             else:
                 found = Rutherford(self.beam, ch.nuclide.name, self.experiment.beam.energy_mev).warnings(
                     theta_cm_max=acc[1])

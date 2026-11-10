@@ -72,10 +72,6 @@ body.body--dark { --ps-ground: #0F1214; --ps-surface: #171B1E; --ps-sunk: #1D222
 .ps-paper { background: #FFFFFF; padding: 12px; max-width: 100%%;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), 0 8px 28px rgba(0, 0, 0, 0.18); }
 .ps-paper img { display: block; max-width: 100%%; }
-.ps-strip { background: var(--ps-surface); border: 1px solid var(--ps-line); border-radius: 10px; }
-.ps-strip-cell { padding: 6px 14px; border-right: 1px solid var(--ps-line); white-space: nowrap; }
-.ps-strip-cell:last-child { border-right: none; }
-.ps-strip-cell.cursor-pointer:hover { background: var(--ps-sunk); }
 """ % {"font": FONT, "mono": MONO}
 
 

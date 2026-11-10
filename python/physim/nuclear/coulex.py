@@ -305,7 +305,10 @@ class Coulex:
             return 180.0
         return math.degrees(2 * math.asin(1 / x))
 
-    def warnings(self, theta_cm_max: Optional[float] = None) -> list:
+    def warnings(self, theta_cm_max: Optional[float] = None, all_orders: bool = False) -> list:
+        """Where first-order Coulomb excitation stops being reliable up to ``theta_cm_max``. ``all_orders``: the
+        rates and events that go with this take the level scheme to all orders, so a large excitation probability
+        is a remark on the analysis, not on them."""
         out = []
         limit = 180.0 if theta_cm_max is None else theta_cm_max
         safe = self.max_safe_angle()
@@ -318,8 +321,16 @@ class Coulex:
                        f"rough.")
         p = self.probability(min(limit, 179.0))
         if p > 0.1:
-            out.append(f"Coulomb excitation: the excitation probability reaches {p:.2f}; first order is not enough "
-                       f"(multi-step excitation and reorientation matter: use GOSIA).")
+            if all_orders:
+                out.append(f"Coulomb excitation: the excitation probability reaches {p:.2f} in first order, so "
+                           f"multi-step excitation and reorientation matter. The rates and the simulated events "
+                           f"take them from the level scheme, to all orders; the analysis still extracts B(E2) "
+                           f"with first-order theory.")
+            else:
+                out.append(f"Coulomb excitation: the excitation probability reaches {p:.2f}; first order is not "
+                           f"enough (multi-step excitation and reorientation matter: give the excited nucleus a "
+                           f"level scheme, which the rates and the events then follow to all orders, or use "
+                           f"GOSIA).")
         return out
 
     def __repr__(self) -> str:
