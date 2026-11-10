@@ -130,10 +130,11 @@ EXPLAIN = {
                   "includes multi-step excitation and reorientation for the level scheme.",
     },
     "report": {
-        "title": "Beam-time report",
-        "formula": "Collects the setup, rates, beam time, peaks and warnings.",
+        "title": "The report",
+        "formula": "One document: the setup, the plan, every run with its spectra, the gates, the Doppler "
+                   "correction, the analysis, and every number with its explanation.",
         "assumptions": "As for each tab.",
-        "limits": "Only what the tabs compute; check the warnings first.",
+        "limits": "Only what the tabs compute and what the runs recorded; check the warnings first.",
     },
 }
 
@@ -1067,13 +1068,18 @@ class Planner:
         exp = self._data_experiment()
         if exp.excitation is None or not exp.gamma_detectors:
             return {"available": False, "reason": "Coulomb excitation with γ-ray detectors is needed."}
+        from .gamma_events import spectrum_top
+
         g = self.gamma_events(events, seed)
         emitter = "recoil" if exp.excitation.excite == "target" else "projectile"
+        # To the top of the level scheme, at the bin width ``bins`` gives over 1.3 × the transition energy.
+        top = max(spectrum_top(exp), 1.3 * g.energy_mev)
+        n_bins = int(round(bins * top / (1.3 * g.energy_mev)))
 
         def spectrum_set(gg, name: str) -> dict:
             out = {}
             for key in (None, "projectile", "recoil"):
-                parts = [gg.spectrum(name, d, corrected=key, bins=bins, range=(0.0, 1.3 * gg.energy_mev))
+                parts = [gg.spectrum(name, d, corrected=key, bins=n_bins, range=(0.0, top))
                          for d in gg.events.detectors]
                 out[key or "measured"] = np.sum([h for h, _ in parts], axis=0)
                 out["edges"] = parts[0][1]

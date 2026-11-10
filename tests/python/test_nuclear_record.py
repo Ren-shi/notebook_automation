@@ -105,12 +105,14 @@ def test_provenance_names_every_source():
     assert any(q == "Efficiency of Ge90" and s == "user" for q, _, s in rows)
 
 
-def test_the_report_zip_includes_the_record(tmp_path):
+def test_the_written_report_holds_the_record(tmp_path):
+    """The record is a section of the report, not a page beside it."""
     from physim.nuclear.report import build
 
     rep = build(Experiment.example("coulex_ni58"), seed=1, events=20_000, validation=False)
     paths = rep.write(tmp_path, figures=False, root=False)
     names = {p.name for p in paths}
-    assert "record.html" in names and "report.html" in names
-    text = (tmp_path / "record.html").read_text(encoding="utf-8")
+    assert "report.html" in names and "record.html" not in names
+    text = (tmp_path / "report.html").read_text(encoding="utf-8")
     assert "Every number, explained" in text and 'id="coincidences"' in text
+    assert "The method, step by step" in text and "What the simulation leaves out" in text

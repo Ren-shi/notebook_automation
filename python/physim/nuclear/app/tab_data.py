@@ -76,7 +76,7 @@ def panels(ctx, p) -> list:
             add(n, ("gamma", n, correction, _gate_key(gate), mode, randoms, addback, bins, scaled),
                 lambda n=n: dict(dv.gamma_spectrum(run, n, correction=correction, gate=gate, mode=mode,
                                                    randoms=randoms, addback=addback, bins=bins,
-                                                   range=dv.gamma_range(g), scaled=scaled),
+                                                   range=dv.gamma_range(g, run.experiment), scaled=scaled),
                                  scale=1e3, xlabel="γ-ray energy (keV)"), view)
     return out
 

@@ -2,7 +2,7 @@
 
 The planner app lets you describe an experiment by pointing and clicking. It then shows what you will measure:
 geometry, kinematics, count rates and beam time, energy loss, simulated spectra and Coulomb orbits. It also writes
-the beam-time report. You don't need to write any code.
+the report. You don't need to write any code.
 
 It runs on your own computer, in your web browser. There are no accounts, and nothing is uploaded.
 
@@ -273,13 +273,14 @@ The tabs are the stages of an experiment, left to right:
   Data tab if you pick one. It says the statistical uncertainty comes from the run's own events, and what the
   whole run would give. The alignment check reads an alignment run's offset. The multi-step solution can fit the
   matrix element to the run's yields, and writes the GOSIA input file.
-- **Report:** **the record of the experiment**: the setup and how it changed between runs, the Plan, every run
-  with its summary and its spectra (each particle detector; each γ-ray detector as measured and Doppler-corrected
-  for the emitting nucleus, with the gate the analysis used; a source run's crystals), predicted against
-  measured, the gates, and the analysis of the current run. Show it on the
-  page, or download it as a zip with the run record, the setup, the beam-time report and every run's data; or
-  download the whole experiment folder. Below it, the beam-time report of the current setup and the run record,
-  which now explains the run's counters and gates as well as the plan's numbers.
+- **Report:** **the report**, one document. The setup with its level schemes and warnings; the plan (rates, beam
+  time, kinematics, expected peaks, predicted spectra); every run with its spectra (each particle detector, the
+  energy against ring with your gates drawn on it, each γ-ray detector as measured and Doppler-corrected to the
+  top of the level scheme); what each gate does to the γ-ray spectrum; the Doppler correction and its
+  parameters; the analysis of every analysed run; every number explained; and the method. **Show the report**
+  puts it on the page; **Save as PDF** and **Save as HTML** save it; **Save everything** adds the setup file, the
+  plan's tables and figures and every run's data in a zip. The PDF is printed by Edge, Chrome or Chromium; if
+  none is installed the app says so, and the HTML page prints to the same PDF from any browser.
 - **Physics:** the physics behind the numbers, as a reference, in the order of the physics register: nuclear
   data and level schemes, kinematics, energy loss, the Rutherford orbit, the detectors and the γ-ray response,
   rates and events, and Coulomb excitation. Each section links to its register page and names the tests behind it.
@@ -361,9 +362,9 @@ The example *coulex_ni58* is a complete one. To build your own:
     corrected peak with each geometry, the diagnostic plot of centroid against ring (flat when the geometry is
     right), and the offset the fit gives back. The scene shows the assumed target as a faint outline.
 12. The **?** beside a number in the scene's side panel, or in the analysis, opens its explanation: the formula,
-    the formula with this run's numbers, what it means and what it assumes. **Show the run record** on the
-    Report tab puts all of them on one page with the setup, the data's provenance, the method and what is left
-    out; the report's zip holds the same page as `record.html`, to print to PDF.
+    the formula with this run's numbers, what it means and what it assumes. The report on the Report tab holds all
+    of them in its section "Every number, explained", with the data's provenance, the method and what is left
+    out.
 
 ## Experiments and runs (from Python)
 

@@ -340,7 +340,8 @@ STEPS = (
          "What the measured energy spectra will look like: which peaks, how wide, and whether they separate.", (),
          ("spectra",)),
     Step("report", "Report",
-         "Download the beam-time report: every number above, ready for a proposal or the logbook.", (),
+         "Save the report: every number above, the runs' spectra and their analysis in one document, as PDF or "
+         "HTML, ready for a proposal or the logbook.", (),
          ("report",)),
 )
 

@@ -467,8 +467,9 @@ assumed, user), the method step by step from scattering to the Doppler-corrected
 the chain from the peak area to B(E2) and the shape, the uncertainty budget, and what the simulation leaves out.
 It is written for a reader who knows nuclear physics and is new to Coulomb excitation.
 
-In the app, the **?** beside a number in the scene's side panel and in the analysis opens its explanation, and
-**Show the run record** on the Report tab shows the page; the report's zip holds the same page as `record.html`.
+In the app, the **?** beside a number in the scene's side panel and in the analysis opens its explanation. The
+explanations, the data's provenance, the method and what is left out are sections of the report (below); the
+record on its own is `record_html`, for use from Python.
 
 ## Multi-step excitation and reorientation
 
@@ -709,20 +710,48 @@ current sets the absolute scale. `energy_spread` and `spot_size` (both FWHM) ent
 widths. The same `seed` always gives the same events. {doc}`theory/events` explains the method and
 {doc}`physics-register/rates-and-events` how it is checked.
 
-## The beam-time report and data files
+## The report and data files
 
-One command writes the report and every table:
+There is one report. It is a single page with nine sections:
 
-```bash
-python -m physim.nuclear.report my_setup.toml -o my-report --seed 1
+1. **Summary**: the reaction, the runs, and the result of each analysed run.
+2. **The setup**: the beam, target and detectors, the scene and the coverage, the warnings, the level schemes,
+   and how the setup changed between runs.
+3. **The plan**: what the setup should give. Rates and beam time, kinematics, expected peaks, Coulomb excitation,
+   energy loss and predicted spectra. This is what the beam-time report held.
+4. **The runs and their spectra**: for each beam run the energy in each particle detector, the energy against
+   ring with the gates drawn on it, and every γ-ray detector as measured and Doppler-corrected, to the top of
+   the level scheme with its γ rays marked; for a source run its crystals; and predicted against measured.
+5. **The gates**: each gate, and the corrected γ-ray spectrum under each with the counts that pass.
+6. **The Doppler correction**: which nucleus is corrected for, the formula, where β and the angle come from, the
+   crystals as the correction sees them, the speed and shift for every pair of detectors, and each run's settings
+   and corrected line widths.
+7. **The analysis**: every analysed run from the peak area to B(E2), the alignment, the multi-step solution.
+8. **Every number, explained**: what the run record held.
+9. **The data, the method and what is left out**, with the models' validation and the references.
+
+```python
+from physim.nuclear import logbook
+
+page = logbook.experiment_html(planner)        # the report as one self-contained HTML page
+pdf = logbook.experiment_pdf(planner)          # the same as a PDF; None if no browser is found to print it
+data = logbook.experiment_zip(planner)         # report.html, report.pdf, setup, tables, the experiment folder
 ```
 
-From Python, `physim.nuclear.report.build(exp, seed=1).write("my-report")` does the same. The folder then holds:
+The PDF is printed by Edge, Chrome or Chromium without a window (`logbook.pdf_browser()` says which is found;
+`$PHYSIM_PDF_BROWSER` names another). Without one, open `report.html` and print it: it has the same print styles.
 
-- **`report.html`**: the whole report on one page, with figures embedded. It covers the setup, every warning, the
-  detector table, kinematics, expected peaks, energy loss, simulated spectra, the validation status of each model,
-  data sources and references to cite. Print it from the browser ("Save as PDF") for the PDF version; the page has
-  print styles.
+For a setup file alone, without an experiment, one command writes the report and every table:
+
+```bash
+python -m physim.nuclear.report my_setup.toml -o my-report --seed 1 --pdf
+```
+
+From Python, `physim.nuclear.report.build(exp, seed=1).write("my-report", pdf=True)` does the same. The folder then
+holds:
+
+- **`report.html`** (and **`report.pdf`** with `--pdf`): the report, with figures embedded. Without runs its
+  sections on the runs, the gates and the analysis say so. `build(exp).to_html()` gives the plan alone as a page.
 - **`figures/`**: the geometry, coverage, kinematics and spectra figures, as PNG (600 dpi) and PDF. They are
   drawn in a journal's style at its column width: Physical Review, one column, unless you say otherwise with
   `--journal nature --width double` (or `build(exp, journal="nature", width="double")`). The styles are

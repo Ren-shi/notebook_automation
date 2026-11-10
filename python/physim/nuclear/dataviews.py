@@ -275,12 +275,17 @@ def particle_spectrum(run, detector: str, gate: Optional[Gate] = None, bins: int
     return {"counts": counts, "edges": edges, "label": detector + (f" · {gate.name}" if gate else "")}
 
 
-def gamma_range(g) -> tuple:
+def gamma_range(g, experiment=None) -> tuple:
     """The energies (MeV) a γ-ray spectrum is histogrammed over unless a range is given: from 0 to the highest of
-    1.3 × the transition energy, the top of the singles spectrum (which holds the room-background and extra lines)
-    and the highest energy any crystal recorded in the run, so no line of the run is cut off. A view may zoom in;
-    the histogram keeps the whole range."""
+    1.3 × the transition energy, the top of the singles spectrum (which holds the room-background and extra lines),
+    the highest energy any crystal recorded in the run, and, with the ``experiment``, the top of its level scheme
+    (:func:`~physim.nuclear.gamma_events.spectrum_top`), so no line of the run or of the scheme is cut off. A view
+    may zoom in; the histogram keeps the whole range."""
     top = 1.3 * g.energy_mev
+    if experiment is not None:
+        from .gamma_events import spectrum_top
+
+        top = max(top, spectrum_top(experiment))
     if len(g.singles_edges):
         top = max(top, float(g.singles_edges[-1]))
     if len(g):
@@ -303,7 +308,7 @@ def gamma_spectrum(run, name: str, correction: str = "off", gate: Optional[Gate]
     if g is None:
         raise ValueError("this run has no γ rays")
     if range is None:
-        range = gamma_range(g)
+        range = gamma_range(g, exp)
     edges = _edges(range[0], range[1], bins)
     t = g.events.beam_time_s * g.live_fraction
     rng = np.random.default_rng(int(run.summary["seed"]) + 7919)

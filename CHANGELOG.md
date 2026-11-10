@@ -11,6 +11,10 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Fixed
+- γ-ray spectra reach the top of the level scheme. The predicted spectra and the singles stopped at 1.3 × the
+  transition energy (1525 keV for ⁶²Ni's 1173 keV), short of the 2302 keV γ ray of its second 2⁺ state. They now
+  go to 1.1 × the highest γ-ray energy of the scheme (2532 keV there) at the same width of bin
+  (`gamma_events.spectrum_top`); the Data tab and the report use the same top.
 - The event generator no longer spends nearly all its events where no detector counts anything. With ⁶²Ni on
   ¹⁹⁴Pt, strip detectors just behind 90° and the target 2 mm upstream, 100,000 events gave 1,400 counted particles
   and 60 excited ones, against 32,000 and 16,000 with the target in place; now about 37,000 and 19,000 wherever
@@ -81,6 +85,27 @@ workflow builds the wheels, tests them and publishes to PyPI.
   marked stale by a change, the one on screen too.
 
 ### Changed
+- There is one report. The Report tab showed three (the record of the experiment, the beam-time report of the
+  setup and the run record), and the spectra of the runs were small panels in one of them. They are now the nine
+  sections of a single document (`logbook.experiment_html`): summary; setup; plan; runs and their spectra; gates;
+  the Doppler correction; analysis; every number explained; data, method and what is left out.
+  - Each beam run is drawn in full: the energy in each particle detector (with the analysis's gate filled in),
+    the energy against ring with every gate's window drawn on it (`logbook.run_rings_png`), and every γ-ray
+    detector, and all of them summed, as measured and Doppler-corrected with the γ rays of the level scheme
+    marked (`run_gamma_png`).
+  - The gates have their own section: the corrected γ-ray spectrum under each gate, and a table of the particles
+    that pass and the γ rays in coincidence (`run_gates_png`).
+  - The Doppler correction has its own section (`doppler_html`): the nucleus corrected for and why, the formula,
+    where β and the angle come from event by event, the crystals as the correction sees them, the speed and
+    shift for every pair of particle and γ-ray detector, and each run's settings and corrected line widths.
+  - The report is saved as a PDF as well as HTML (`logbook.experiment_pdf`, `html_to_pdf`): Edge, Chrome or
+    Chromium prints it without a window. Without one of them the app says so; the HTML prints to the same pages.
+  - The zip holds `report.html`, `report.pdf`, the setup, the plan's tables under `tables/` and figures under
+    `figures/`, and the experiment folder. `experiment.html` and `record.html` are gone from it, and
+    `Report.write` writes the one report as `report.html` (`--pdf` adds the PDF). `Report.to_html()` and
+    `record_html()` still give the plan and the record alone, from Python.
+  - Where the level scheme has levels the simulated events never start in (they excite each level in one step
+    from the ground state), the report names them: for ⁶²Ni the 0⁺ at 2049 keV and the 4⁺ at 2336 keV.
 - The app opens on Coulomb excitation of the beam at backward angles when there is no experiment yet: ⁶²Ni (6⁺,
   237 MeV) on ¹⁹⁴Pt, the first template (`coulex-beam-backward`, example `coulex_ni62_pt194`). Before, it opened
   on ¹⁶O on ⁵⁸Ni, which is still the second template.

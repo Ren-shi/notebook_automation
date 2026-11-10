@@ -611,6 +611,21 @@ def crystals_of(experiment, plain: bool = False) -> tuple:
     return crystals, bare
 
 
+def spectrum_top(experiment) -> float:
+    """The highest energy (MeV) a γ-ray spectrum of the setup has to show: 1.3 × the energy of the state the
+    reaction excites, and, when the excited nucleus has a level scheme, 1.1 × its highest γ-ray energy. The
+    second matters as soon as the scheme holds more than the first state: 62Ni's second 2⁺ state decays to the
+    ground state with 2302 keV, well above 1.3 × 1173 keV, and a spectrum that stopped there showed none of it."""
+    exc = experiment.excitation
+    if exc is None:
+        return 0.0
+    top = 1.3 * exc.energy_mev
+    scheme = experiment.levels.get("target" if exc.excite == "target" else "beam")
+    if scheme is not None and scheme.transitions:
+        top = max(top, 1.1e-3 * max(float(t.energy.value) for t in scheme.transitions))
+    return float(top)
+
+
 def backgrounds(experiment, crystals: list, rates: Optional[Rates] = None, bin_kev: float = 1.0) -> dict:
     """What sets the random coincidences and the dead time, from the rates rather than the events: the
     coincidence window and dead time (s), the particle singles rate per detector, the γ-ray singles rate and
@@ -633,7 +648,7 @@ def backgrounds(experiment, crystals: list, rates: Optional[Rates] = None, bin_k
     pps = experiment.beam.particles_per_second
     atoms = sum(ch.atoms_per_cm2 for ch in chans if ch.excitation is not None)
     all_excitations = pps * atoms * cx.total() * 1e-27
-    top = max(1.3 * e0, max(x[0] for x in ROOM_LINES) * 1e-3 * 1.05 if room > 0 else 0.0,
+    top = max(spectrum_top(experiment), max(x[0] for x in ROOM_LINES) * 1e-3 * 1.05 if room > 0 else 0.0,
               max((_q(e).to("MeV") for e, _ in extra), default=0.0) * 1.1) + 0.05
     edges = np.arange(0.0, top, bin_kev * 1e-3)
     singles_rate, singles_spectrum = {}, {}
@@ -980,4 +995,5 @@ def _deposit(r: Response, energy: np.ndarray, rng) -> tuple:
 
 
 __all__ = ["Crystal", "GAMMA_COLUMNS", "GammaEvents", "ROOM_LINES", "backgrounds", "crystals_of", "doppler_correct",
+           "spectrum_top",
            "recorrect", "simulate_gammas"]
