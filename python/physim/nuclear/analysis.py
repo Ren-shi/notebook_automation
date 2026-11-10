@@ -37,8 +37,9 @@ The result also holds the comparison with the value that was put in, and the bea
 
 from __future__ import annotations
 
+import json
 import math
-from dataclasses import dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields
 from typing import Optional
 
 import numpy as np
@@ -108,6 +109,18 @@ class PeakFit:
     randoms: float = 0.0
     #: The area of the fitted Gaussian alone, for comparison with the summed area.
     gauss_area: float = 0.0
+    #: The fitted curve, for drawing it: height × exp(−(E − centroid)²/2σ²) + level + slope × (E − origin),
+    #: in counts per bin with E in MeV.
+    height: float = 0.0
+    level: float = 0.0
+    slope: float = 0.0
+    origin: float = 0.0
+
+    def curve(self, energy) -> np.ndarray:
+        """The fitted Gaussian on its line at ``energy`` (MeV), counts per bin."""
+        e = np.asarray(energy, dtype=float)
+        return (self.height * np.exp(-0.5 * ((e - self.centroid) / self.sigma) ** 2) + self.level
+                + self.slope * (e - self.origin))
 
     @property
     def fwhm_kev(self) -> float:
@@ -170,7 +183,8 @@ def fit_peak(counts: np.ndarray, edges: np.ndarray, energy: float, sigma0: float
     bg_var = under * under / max(float(y[outside].sum()), 1.0) if outside.any() else under
     area_unc = math.sqrt(max(float(y[inside].sum()), 0.0) + bg_var)
     return PeakFit(float(area), float(area_unc), float(energy + p[1]), float(p[2]), under, chi2, int(m.sum()),
-                   gauss_area=float(gauss_area))
+                   gauss_area=float(gauss_area), height=float(p[0]), level=float(p[3]), slope=float(p[4]),
+                   origin=float(energy))
 
 
 def _half_maximum_sigma(counts: np.ndarray, edges: np.ndarray, energy: float) -> float:
@@ -243,10 +257,63 @@ class Result:
     #: events"), and what it would be for the whole run, scaled beyond the real part.
     statistics_from: str = "the Monte Carlo sample"
     whole_run_statistical: Optional[float] = None
+    #: The gated, Doppler-corrected spectrum the peak was fitted to, for drawing it: {"edges" (MeV), "counts",
+    #: "randoms" (expected per bin), "correction" ("projectile" or "recoil"), "energy" (the transition, MeV)}.
+    spectrum: Optional[dict] = None
 
     @property
     def total_unc(self) -> float:
         return math.hypot(self.statistical, self.systematic)
+
+    def to_dict(self) -> dict:
+        """The result as plain data, to keep with a run (:func:`save_result`)."""
+        return json.loads(json.dumps(asdict(self), default=_plain))
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Result:
+        d = {k: v for k, v in d.items() if k in {f.name for f in fields(cls)}}
+        fit = d.get("fit") or {}
+        d["fit"] = PeakFit(**{k: v for k, v in fit.items() if k in {f.name for f in fields(PeakFit)}})
+        return cls(**d)
+
+
+#: The file in a run's folder that keeps its last analysis.
+RESULT_FILE = "analysis.json"
+
+
+def _plain(x):
+    if isinstance(x, np.integer):
+        return int(x)
+    if isinstance(x, np.floating):
+        return float(x)
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    if isinstance(x, (set, tuple)):
+        return list(x)
+    return str(x)
+
+
+def save_result(folder, result: Result) -> None:
+    """Keep ``result`` in a run's folder, so that the reports find it after the setup changes or the app closes."""
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    d = result.to_dict()
+    d["saved"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    (Path(folder) / RESULT_FILE).write_text(json.dumps(d, indent=1), encoding="utf-8")
+
+
+def load_result(folder) -> Optional[Result]:
+    """The analysis kept in a run's folder (:func:`save_result`), or None if there is none or it cannot be read."""
+    from pathlib import Path
+
+    p = Path(folder) / RESULT_FILE
+    if not p.is_file():
+        return None
+    try:
+        return Result.from_dict(json.loads(p.read_text(encoding="utf-8")))
+    except (ValueError, TypeError, KeyError):
+        return None
 
 
 class Analysis:
@@ -526,7 +593,9 @@ class Analysis:
                             if scale > 1 else ""))
         result = Result(s.as_dict(), steps, fit, area, eff, corr, branch, s.normalisation, norm_counts, b,
                         statistical, systematic, mc, b * 1e-4, b / wu, budget, truth, pull, shape, per_shift, hours,
-                        notes, source, whole)
+                        notes, source, whole,
+                        {"edges": edges.tolist(), "counts": np.asarray(counts, dtype=float).tolist(),
+                         "randoms": rnd.tolist(), "correction": which, "energy": float(self.e0)})
         if self.history:
             changed = {k: v for k, v in s.as_dict().items() if v != self.history[-1].settings.get(k)}
             if changed:
@@ -664,4 +733,5 @@ def ex_nuclide(experiment) -> str:
     return data.nuclide(max(layers[0].nuclides.items(), key=lambda kv: kv[1])[0]).name
 
 
-__all__ = ["Analysis", "PeakFit", "Result", "SHIFT_H", "Settings", "ex_nuclide", "fit_peak"]
+__all__ = ["Analysis", "PeakFit", "RESULT_FILE", "Result", "SHIFT_H", "Settings", "ex_nuclide", "fit_peak",
+           "load_result", "save_result"]

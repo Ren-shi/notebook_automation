@@ -557,7 +557,13 @@ fit_offset(gammas, assumed)                      # the offset that flattens it, 
 - `gamma_events.recorrect(gammas, experiment)` makes the Doppler correction again with another geometry.
 - The diagnostic's centroids are judged against the pattern of a simulation made with the assumed geometry and
   corrected with it, because large crystals and the energy loss leave the corrected centroids a little
-  ring-dependent even when the geometry is right.
+  ring-dependent even when the geometry is right. The reference holds as many γ rays as the data, where that
+  takes at most four simulations of 400 000 events, and its errors are in the fitted offset's uncertainty. When
+  the fit finds the target more than two uncertainties from where it was assumed, the reference is made again
+  with the target where the fit put it (`refine`, twice at most).
+- Each centroid is taken in a window of ±2.5σ of the corrected peak as it stands in that crystal
+  (`peak_widths`): a fast emitter seen by a large crystal leaves a peak many times wider than the detector's
+  resolution.
 - `Settings.target_offset_mm` in the analysis makes it assume the offset; the budget's "detector positions" entry
   includes the change of the peak area when the target moves by `position_unc_mm`.
 - In the app, **Check the alignment** on the Spectra tab shows the overlay, the diagnostic plot and the fitted

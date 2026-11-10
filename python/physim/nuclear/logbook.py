@@ -258,7 +258,7 @@ def _run_figure_html(planner, s: dict, result) -> str:
     try:
         run = planner.run if planner.run is not None and planner.run.number == s["number"] \
             else planner.folder.load_run(s["number"])
-        png, caption = run_spectra_png(planner, run, result if planner.run is run else None)
+        png, caption = run_spectra_png(planner, run, result)
     except ImportError:
         return "<p>The spectra are not drawn: matplotlib is not installed.</p>"
     except Exception as err:  # noqa: BLE001 - the record stands without the figure
@@ -268,6 +268,267 @@ def _run_figure_html(planner, s: dict, result) -> str:
     return (f'<figure><img alt="Spectra of run {s["number"]}" style="max-width:100%" '
             f'src="data:image/png;base64,{base64.b64encode(png).decode("ascii")}"><figcaption>'
             f"{html.escape(caption, quote=False)}</figcaption></figure>")
+
+
+def _img(png: bytes, alt: str, caption: str) -> str:
+    return (f'<figure><img alt="{html.escape(alt)}" style="max-width:100%" '
+            f'src="data:image/png;base64,{base64.b64encode(png).decode("ascii")}"><figcaption>'
+            f"{html.escape(caption, quote=False)}</figcaption></figure>")
+
+
+def level_schemes(planner) -> list:
+    """The level schemes the report draws: [{"role", "table", "source"}], the setup's own (from ENSDF or the
+    user, :meth:`~physim.nuclear.planner.Planner.levels`) and, when the nucleus that is excited has none, the
+    two levels the reaction is set up with (the ground state and the excited state)."""
+    info = planner.levels()
+    out = [{"role": role, "table": info[role], "source": "setup"} for role in ("target", "beam") if info.get(role)]
+    exc = planner.experiment.excitation
+    if exc is not None:
+        role = "target" if exc.excite == "target" else "beam"
+        if not info.get(role):
+            from .analysis import ex_nuclide
+
+            e = 1e3 * exc.energy_mev
+            out.insert(0, {"role": role, "source": "reaction", "table": {
+                "nuclide": ex_nuclide(planner.experiment), "reference": "", "notes": [],
+                "levels": [{"n": 0, "energy_kev": 0.0, "jpi": "ground state"},
+                           {"n": 1, "energy_kev": e, "jpi": "excited state"}],
+                "transitions": [{"from": 1, "to": 0, "energy_kev": e, "multipolarity": exc.multipolarity,
+                                 "branching": 1.0}], "matrix_elements": []}})
+    return out
+
+
+def level_scheme_png(table: dict, mark_kev: Optional[float] = None, dpi: int = 130, most: int = 24) -> bytes:
+    """A level scheme as a PNG: a line per level with its spin and parity on the left and its energy on the
+    right, an arrow per γ-ray transition with its energy (the ``most`` strongest branches if there are more), and
+    the level at ``mark_kev`` (the state the reaction excites) drawn heavier. Needs matplotlib."""
+    from matplotlib.figure import Figure
+
+    levels, transitions = table["levels"], list(table["transitions"])
+    if len(transitions) > most:
+        transitions = sorted(transitions, key=lambda t: -(t["branching"] or 0.0))[:most]
+        transitions.sort(key=lambda t: (t["from"], t["to"]))
+    n = max(len(transitions), 1)
+    top = max((lv["energy_kev"] for lv in levels), default=1.0) or 1.0
+    fig = Figure(figsize=(min(max(3.6, 1.6 + 0.42 * n), 9.0), 3.8), dpi=dpi)
+    ax = fig.add_subplot()
+    pad = max(1.8, 0.25 * (n + 1))  # room beside the lines for the spins (left) and the energies (right)
+    last = None
+    for lv in levels:
+        e = lv["energy_kev"]
+        marked = mark_kev is not None and abs(e - mark_kev) < 0.5
+        ax.plot([0, n + 1], [e, e], color="#0072B2", lw=2.2 if marked else 1.1)
+        # Labels of levels closer than the text is high are moved apart.
+        y = e if last is None or e - last > 0.045 * top else last + 0.045 * top
+        last = y
+        ax.text(-0.04 * pad, y, lv["jpi"] or "", ha="right", va="center", fontsize=7)
+        ax.text(n + 1 + 0.04 * pad, y, f"{e:g} keV", ha="left", va="center", fontsize=7)
+    for k, t in enumerate(transitions, start=1):
+        e_top, e_bottom = levels[t["from"]]["energy_kev"], levels[t["to"]]["energy_kev"]
+        ax.annotate("", xy=(k, e_bottom), xytext=(k, e_top),
+                    arrowprops=dict(arrowstyle="-|>", color="#D55E00", lw=1.0, shrinkA=0, shrinkB=0))
+        ax.text(k, e_top + 0.012 * top, f"{t['energy_kev']:.0f}", rotation=90, ha="center", va="bottom", fontsize=6,
+                color="#D55E00")
+    ax.set_xlim(-0.55 * pad, n + 1 + 0.45 * pad)
+    ax.set_ylim(-0.04 * top, 1.16 * top)
+    ax.set_axis_off()  # every level carries its energy, so no axis
+    ax.set_title(table.get("nuclide") or "", fontsize=9)
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.92, bottom=0.03)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    return buf.getvalue()
+
+
+def level_schemes_html(planner) -> str:
+    """The level schemes as figures with their captions, for the reports; empty without any."""
+    exc = planner.experiment.excitation
+    parts = []
+    for sc in level_schemes(planner):
+        t = sc["table"]
+        mine = exc is not None and sc["role"] == ("target" if exc.excite == "target" else "beam")
+        mark = 1e3 * exc.energy_mev if mine else None
+        if sc["source"] == "reaction":
+            lam = exc.multipolarity
+            caption = (f"{t['nuclide']} (the {sc['role']}): the two levels the reaction is set up with, the ground "
+                       f"state and the state at {mark:g} keV that is excited ({lam}, B({lam}↑) = "
+                       f"{exc.b_up_e2fm:.4g} e²fm^{2 * int(lam[1])}). No level scheme has been looked up for this "
+                       "nucleus (Physics tab), so no other level is drawn.")
+        else:
+            shown = min(len(t["transitions"]), 24)
+            caption = (f"{t['nuclide']} (the {sc['role']}): {len(t['levels'])} levels and {shown} "
+                       + (f"of its {len(t['transitions'])} " if shown < len(t["transitions"]) else "")
+                       + "γ-ray transitions, labelled with their energies in keV"
+                       + (f"; the state at {mark:g} keV that the reaction excites is drawn heavier" if mine else "")
+                       + "." + (f" {t['reference']}" if t.get("reference") else ""))
+        try:
+            parts.append(_img(level_scheme_png(t, mark), f"Level scheme of {t['nuclide']}", caption))
+        except ImportError:
+            parts.append("<p>The level scheme is not drawn: matplotlib is not installed.</p>")
+            break
+        except Exception as err:  # noqa: BLE001 - the report stands without the figure
+            parts.append(f"<p>The level scheme could not be drawn: {html.escape(str(err), quote=False)}.</p>")
+    return "".join(parts)
+
+
+def analysis_png(result, dpi: int = 130) -> bytes:
+    """The spectrum an analysis fitted, with the fit: the gated, Doppler-corrected counts, the Gaussian on its
+    line within the fit window, the ±3σ band the area is counted in, and the random coincidences expected.
+    Empty for a result without its spectrum (one made before spectra were kept). Needs matplotlib."""
+    sp = getattr(result, "spectrum", None)
+    if not sp:
+        return b""
+    from matplotlib.figure import Figure
+
+    from .response import FWHM_PER_SIGMA
+
+    edges, counts = 1e3 * np.asarray(sp["edges"], dtype=float), np.asarray(sp["counts"], dtype=float)
+    rnd = np.asarray(sp.get("randoms") or [], dtype=float)
+    # The fit works on bins a quarter of the resolution wide; drawn four to a bin, a peak of few counts shows.
+    k = 4 if len(counts) >= 40 else 1
+    m = len(counts) // k * k
+    counts, edges = counts[:m].reshape(-1, k).sum(axis=1), edges[:m + 1:k]
+    rnd = rnd[:m].reshape(-1, k).sum(axis=1) if rnd.size >= m else rnd[:0]
+    fit = result.fit
+    fig = Figure(figsize=(6.4, 3.2), dpi=dpi)
+    ax = fig.add_subplot()
+    ax.stairs(counts, edges, color="#0072B2", lw=0.9, label=f"corrected for the {sp.get('correction', 'emitter')}")
+    if rnd.size and rnd.any():
+        ax.stairs(rnd, edges, color="#888888", lw=0.8, ls="--", label="random coincidences expected")
+    if fit.sigma > 0 and math.isfinite(fit.centroid) and (fit.height > 0 or fit.level > 0):
+        half = float(result.settings.get("fit_half_width", 4.0)) * FWHM_PER_SIGMA * fit.sigma
+        x = np.linspace(fit.centroid - half, fit.centroid + half, 400)
+        ax.plot(1e3 * x, k * fit.curve(x), color="#D55E00", lw=1.3, label="fit: Gaussian on a line")
+        ax.axvspan(1e3 * (fit.centroid - 3 * fit.sigma), 1e3 * (fit.centroid + 3 * fit.sigma), color="#D55E00",
+                   alpha=0.10, lw=0, label="±3σ: the area")
+    if sp.get("energy"):
+        ax.axvline(1e3 * sp["energy"], color="#444444", lw=0.7, ls=":", label=f"{1e3 * sp['energy']:.1f} keV")
+    ax.set_xlabel("corrected γ-ray energy (keV)", fontsize=8)
+    ax.set_ylabel(f"counts per {edges[1] - edges[0]:.2g} keV in the run", fontsize=8)
+    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=7, frameon=False)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    return buf.getvalue()
+
+
+def analysis_html(result, heading: str = "") -> str:
+    """One analysis in full for the reports: the result, the fitted spectrum, the chain step by step, the
+    uncertainty budget, the shape, and the notes."""
+    def e(text) -> str:
+        return html.escape(str(text), quote=False)
+
+    parts = [heading]
+    if result.b_e2fm4 == result.b_e2fm4:
+        parts.append(f"<p>B(E2↑) = {result.b_e2fm4:.4g} e²fm⁴ ± {100 * result.total_unc:.1f}% "
+                     f"(statistical {100 * result.statistical:.1f}%, systematic {100 * result.systematic:.1f}%), "
+                     f"from {e(result.statistics_from)}; that is {result.b_e2b2:.4g} e²b² or {result.b_wu:.3g} "
+                     f"Weisskopf units. The value put in was {result.truth_e2fm4:.4g} e²fm⁴ "
+                     f"(pull {result.pull:+.2f}).</p>")
+    else:
+        parts.append("<p>B(E2↑) could not be determined: the analysis found no peak "
+                     f"(the value put in was {result.truth_e2fm4:.4g} e²fm⁴).</p>")
+    try:
+        png = analysis_png(result)
+    except ImportError:
+        png = b""
+    except Exception as err:  # noqa: BLE001 - the report stands without the figure
+        png = b""
+        parts.append(f"<p>The fitted spectrum could not be drawn: {e(err)}.</p>")
+    if png:
+        fit = result.fit
+        parts.append(_img(png, "The fitted peak", (
+            f"The γ-ray spectrum the analysis fitted: gated on the particles, Doppler-corrected for the "
+            f"{result.spectrum.get('correction', 'emitter')}, summed over the γ-ray detectors. Peak at "
+            f"{1e3 * fit.centroid:.1f} keV, FWHM {fit.fwhm_kev:.1f} keV, area {fit.area:.1f} ± {fit.area_unc:.1f} "
+            f"counts over the line, of which {fit.randoms:.1f} random coincidences are subtracted.")))
+    parts.append("<h4>The chain, step by step</h4><ol>"
+                 + "".join(f"<li><b>{e(st['step'])}</b>: {e(st['text'])}</li>" for st in result.steps) + "</ol>")
+    if result.b_e2fm4 == result.b_e2fm4:
+        parts.append("<h4>The uncertainty budget</h4><table><thead><tr><th>Source</th><th>Relative (%)</th></tr>"
+                     f"</thead><tbody><tr><td>statistical</td><td>{100 * result.statistical:.2f}</td></tr>"
+                     + "".join(f"<tr><td>{e(k)}</td><td>{100 * v:.2f}</td></tr>" for k, v in result.budget.items())
+                     + f"<tr><td><b>total</b></td><td><b>{100 * result.total_unc:.2f}</b></td></tr></tbody></table>")
+        if result.whole_run_statistical is not None:
+            parts.append(f"<p>The whole run, scaled from its real part, would give a statistical uncertainty of "
+                         f"{100 * result.whole_run_statistical:.1f}%.</p>")
+        sh = result.shape or {}
+        if sh:
+            rows = [("β₂", f"{sh['beta2']:.3f}"), ("B(E2↑)", f"{result.b_wu:.3g} W.u."),
+                    ("Q₀ of a rigid rotor", f"{sh['q0_efm2']:.3g} e fm²"),
+                    ("Q_s(2⁺) of that rotor", f"{sh['qs_2plus_efm2']:.3g} e fm²")]
+            if "e4_over_e2" in sh:
+                rows.append(("E(4⁺)/E(2⁺)", f"{sh['e4_over_e2']:.3f}"))
+            parts.append("<h4>The shape of the nucleus</h4><table><thead><tr><th>Quantity</th><th>Value</th></tr>"
+                         "</thead><tbody>" + "".join(f"<tr><td>{e(q)}</td><td>{e(v)}</td></tr>" for q, v in rows)
+                         + "</tbody></table>" + (f"<p>{e(sh['note'])}</p>" if sh.get("note") else ""))
+        parts.append(f"<p>Beam time: {result.counts_per_shift:.3g} counts in the peak per 8 h shift; "
+                     f"{result.hours_for_precision:.3g} h for a statistical precision of "
+                     f"{100 * float(result.settings.get('wanted_precision', 0.05)):.3g}%.</p>")
+    if result.notes:
+        parts.append("<ul>" + "".join(f"<li>{e(n)}</li>" for n in result.notes) + "</ul>")
+    return "".join(parts)
+
+
+def alignment_html(a: dict) -> str:
+    """The alignment check kept with a run, in a paragraph."""
+    o = a["overlay"]
+    text = (f"Alignment check: with the target assumed {a['offset_mm']:+g} mm along the beam from its place, the "
+            f"corrected peak shifts by {o['shift_kev']:+.2f} keV and its FWHM goes from {o['fwhm_true_kev']:.1f} to "
+            f"{o['fwhm_assumed_kev']:.1f} keV.")
+    f = a.get("fit")
+    if f:
+        text += (f" The fit of the centroids against ring puts the target {f['offset_mm']:+.2f} ± "
+                 f"{f['uncertainty_mm']:.2f} mm from where the analysis assumed it (truth {f['truth_mm']:+g} mm).")
+    return f"<p>{html.escape(text, quote=False)}</p>"
+
+
+def multistep_html(m: dict) -> str:
+    """The multi-step solution (:meth:`~physim.nuclear.planner.Planner.multistep`) as tables: the γ rays in the
+    run with all orders and with first order, and the prolate–oblate comparison."""
+    def e(text) -> str:
+        return html.escape(str(text), quote=False)
+
+    t, dets = m["beam_time_s"], list(m["detectors"])
+    parts = [f"<p>{e(m['nuclide'])}: the coupled equations on its level scheme, so excitation in several steps, "
+             "the reorientation effect and interference between paths are included. Counts in the planned beam "
+             f"time ({_time(t)}), with all orders / with first order.</p>"
+             "<table><thead><tr><th>γ ray</th><th>keV</th>" + "".join(f"<th>{e(d)}</th>" for d in dets)
+             + "</tr></thead><tbody>"
+             + "".join(f"<tr><td>{e(x['label'])}</td><td>{x['energy_kev']:.1f}</td>"
+                       + "".join(f"<td>{_g(x['all_orders'][d] * t)} / {_g(x['first_order'][d] * t)}</td>"
+                                 for d in dets) + "</tr>" for x in m["transitions"]) + "</tbody></table>"]
+    sh = m.get("shapes")
+    if sh:
+        q = sh["q_efm2"]
+        parts.append(f"<p>Prolate or oblate: the 2⁺ state with Q(2⁺) = {q['prolate']:+.1f} (prolate rotor), 0 and "
+                     f"{q['oblate']:+.1f} e fm² (oblate). The planned run "
+                     + ("can" if sh["separable"] else "cannot") + " tell prolate from oblate: over all rings the "
+                     f"two differ by {sh['total_difference_sigma']:.1f} standard deviations of the counts.</p>")
+    if m.get("notes"):
+        parts.append("<ul>" + "".join(f"<li>{e(n)}</li>" for n in m["notes"][:4]) + "</ul>")
+    return "".join(parts)
+
+
+def run_analyses(planner, result=None) -> dict:
+    """{run number: Result} for every beam run of the experiment that has been analysed: ``result`` for the
+    current run if given, else what :meth:`~physim.nuclear.planner.Planner.run_analysis` finds (this session's,
+    or the one kept in the run's folder)."""
+    out = {}
+    for s in planner.runs():
+        if s["kind"] == "source":
+            continue
+        current = planner.run is not None and planner.run.number == s["number"]
+        if current and result is not None:
+            out[s["number"]] = result
+            continue
+        try:
+            r = planner.run_analysis(planner.run if current else planner.folder.load_run(s["number"]))
+        except Exception:  # noqa: BLE001 - a run that cannot be read has no analysis to show
+            r = None
+        if r is not None:
+            out[s["number"]] = r
+    return out
 
 
 def experiment_html(planner, result=None, scene_png: Optional[str] = None) -> str:
@@ -293,6 +554,10 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None) -> st
                  f"<li>Beam time planned: {e(str(exp.run.beam_time))}.</li></ul>")
     if scene_png:
         parts.append(f'<p><img src="data:image/png;base64,{scene_png}" alt="the scene" style="max-width:100%"></p>')
+    schemes = level_schemes_html(planner)
+    if schemes:
+        parts.append("<h3>The level schemes</h3>" + schemes)
+    analyses = run_analyses(planner, result)
     history = setup_history(planner)
     if history:
         parts.append("<h3>How the setup changed between runs</h3><ul>")
@@ -344,7 +609,7 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None) -> st
                 parts.append(f"<li>Alignment run: the target assumed {s['assumed_offset_mm']:+g} mm off.</li>")
         parts.append(f"<li>{'Taken with another setup than the current one.' if s['stale'] else 'Taken with the current setup.'}"
                      "</li></ul>")
-        parts.append(_run_figure_html(planner, s, result))
+        parts.append(_run_figure_html(planner, s, analyses.get(s["number"])))
     if planner.run is not None and planner.run.kind != "source":
         c = planner.compare()
         if c["rows"]:
@@ -359,14 +624,27 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None) -> st
     parts.append("<ul>" + "".join(f"<li><b>{e(g.name)}</b>: {e(g.describe())}.</li>" for g in gates) + "</ul>"
                  if gates else "<p>No gates: the spectra take every counted particle.</p>")
     parts.append("<h2>5. The analysis</h2>")
-    if result is not None:
-        parts.append(f"<p>B(E2↑) = {result.b_e2fm4:.4g} e²fm⁴ ± {100 * result.total_unc:.1f}% "
-                     f"(statistical {100 * result.statistical:.1f}%, systematic {100 * result.systematic:.1f}%), "
-                     f"from {e(result.statistics_from)}; the value put in was {result.truth_e2fm4:.4g} e²fm⁴ "
-                     f"(pull {result.pull:+.2f}).</p><ol>"
-                     + "".join(f"<li><b>{e(st['step'])}</b>: {e(st['text'])}</li>" for st in result.steps) + "</ol>")
-    else:
-        parts.append("<p>No analysis has been run on the current run.</p>")
+    for s in runs:
+        r = analyses.get(s["number"])
+        if r is not None:
+            parts.append(analysis_html(r, f"<h3>Run {s['number']}: from the peak area to B(E2)</h3>"))
+        if s["kind"] != "source":
+            try:
+                al = planner.kept_alignment(planner.run if planner.run is not None
+                                            and planner.run.number == s["number"]
+                                            else planner.folder.load_run(s["number"]))
+            except Exception:  # noqa: BLE001 - the report stands without it
+                al = None
+            if al:
+                parts.append((f"<h3>Run {s['number']}: the alignment</h3>" if r is None else "") + alignment_html(al))
+    if not analyses and result is not None:  # the analysis of a simulated sample, without a run
+        parts.append(analysis_html(result, "<h3>The simulated sample</h3>"))
+    elif not analyses:
+        parts.append("<p>No run has been analysed yet: take a beam run and press Analyse on the Analysis tab. "
+                     "The analysis is then kept with the run and appears here.</p>")
+    m = planner.kept_multistep()
+    if m and m.get("available"):
+        parts.append("<h3>All orders: multi-step excitation and reorientation</h3>" + multistep_html(m))
     xs = run_explanations(planner)
     if xs:
         parts.append("<h2>6. The run's numbers, explained</h2>")
@@ -406,5 +684,6 @@ def experiment_zip(planner, result=None, beam_time_report: bool = True, folder: 
     return buf.getvalue()
 
 
-__all__ = ["experiment_html", "experiment_zip", "run_explanations", "run_spectra_png", "run_views",
-           "setup_history"]
+__all__ = ["alignment_html", "analysis_html", "analysis_png", "experiment_html", "experiment_zip",
+           "level_scheme_png", "level_schemes", "level_schemes_html", "multistep_html", "run_analyses",
+           "run_explanations", "run_spectra_png", "run_views", "setup_history"]
