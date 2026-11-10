@@ -393,7 +393,13 @@ def provenance(experiment) -> list:
 
 
 LEFT_OUT = (
-    "Excitation in more than one step and the reorientation effect (first-order theory only).",
+    "Excitation in more than one step and the reorientation effect where the setup has no level scheme of the "
+    "excited nucleus, or says order = \"first\": the events are then first-order theory. With a level scheme its "
+    "levels are populated, and oriented, as the coupled equations give them to all orders. The analysis extracts "
+    "B(E2) with first-order theory in either case.",
+    "With a level scheme: every excitation has the kinematics of the [reaction] state, whichever level it reached; "
+    "elastic scattering is not reduced by the excitation probability; the E1 polarisation and the excitation of "
+    "both nuclei in one collision are not in the coupled equations.",
     "Deorientation; and lifetimes only where the level scheme gives a half-life (the nucleus then slows down along "
     "its path and decays on the way, with its orientation unchanged; no angular straggling).",
     "Cascades: followed through the level scheme when the setup has one (one γ ray per excitation otherwise); the "

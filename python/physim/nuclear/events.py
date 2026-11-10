@@ -48,9 +48,9 @@ from .rates import (
     beam_energy_at,
     channels,
     cm_ranges,
-    coulex_for,
     energy_cut,
     energy_sigma,
+    excitation_probability,
     spot_sigma_mm,
     stack,
     stopping,
@@ -213,18 +213,10 @@ def generator_config(experiment, theta_floor: float = 0.5, pilot: bool = True) -
         cfg = {"layer": ch.layer, "target": species.index(ch.nuclide.name), "atoms_per_cm2": ch.atoms_per_cm2,
                "k": k, "amplitude": pps * ch.atoms_per_cm2 * 4 * math.pi * (k / (4 * e_cm)) ** 2 * 1e-26}
         if ch.excitation is not None:
-            # Excitation probability every 0.25° (from the Coulex at mid-layer, as for the analytic rates); with a
-            # level scheme that decays by cascades, of every level the scheme excites (backlog item 71).
-            p = np.asarray(coulex_for(experiment, ch, layers).probability(np.linspace(0.0, 180.0, 721)))
-            from .gamma import cascade_excitation
-
-            cex = cascade_excitation(experiment)
-            if cex is not None:
-                grid, states = cex.table()
-                total = np.array([sum(s.direct.values()) for s in states])
-                fine = np.linspace(0.0, 180.0, 721)
-                p = np.where(fine < grid[0], np.interp(fine, [0.0, grid[0]], [0.0, total[0]]),
-                             np.interp(fine, grid, total))
+            # Excitation probability every 0.25°, at mid-layer, the one the analytic rates use: of the
+            # [reaction] state in first order, or with a level scheme that decays by cascades, of every level
+            # its solution populates (to all orders unless the setup says first; backlog item 71).
+            p = np.asarray(excitation_probability(experiment, ch, layers).probability(np.linspace(0.0, 180.0, 721)))
             # Picked as often as elastic scattering on the same nuclei (the weights carry P), so the rare
             # inelastic events get as many samples as the elastic ones.
             cfg.update(excitation=ch.excitation.energy_mev, excite_recoil=ch.excitation.excite == "target",

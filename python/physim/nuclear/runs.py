@@ -661,7 +661,13 @@ class RunTaker:
                     parent = [c.rsplit(" ", 1)[0] if g.crystals[k].element is not None else c
                               for c, k in zip(gdet, g["crystal"])]
                     pdet = cols["detector"][rows]
-                    full = np.abs(np.asarray(g["deposited"]) - np.asarray(g["energy_lab"])) < 1e-6
+                    # The peak the plan predicts: the full energy of the [reaction] state's own γ ray (a level
+                    # scheme's other transitions have peaks of their own).
+                    from .gamma import state_transition
+
+                    own = state_transition(self.experiment)
+                    full = ((np.abs(np.asarray(g["deposited"]) - np.asarray(g["energy_lab"])) < 1e-6)
+                            & (np.asarray(g["initial"]) == own[0]) & (np.asarray(g["final"]) == own[1]))
                     peak = self.counters.setdefault("peak", {})
                     for gd, pd, ok, f in zip(parent, pdet, counted, full):
                         if ok:

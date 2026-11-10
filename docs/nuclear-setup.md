@@ -98,6 +98,7 @@ distance **d** from the target. θ = 0° is straight downstream and θ = 180° s
 | `energy` | for `coulex` | Energy of the excited state, e.g. `"1.454 MeV"`. |
 | `multipolarity` | no | `"E2"` (default), `"E1"` or `"E3"`: the transition from the 0⁺ ground state. |
 | `emission` | no | `"correlated"` (default): the γ rays follow the particle–γ angular correlation. `"isotropic"`: they leave evenly in all directions. |
+| `order` | no | With a level scheme of the excited nucleus (`[levels]`): `"all"` (default) populates its levels in the simulated events as the coupled equations give them, to all orders (a 4⁺ state reached through the 2⁺, the reorientation); `"first"` keeps first-order theory, each level in one step from the ground state. Without a level scheme the events are first order. |
 | `b_up` | for `coulex` | B(Eλ↑), the reduced transition probability up, with its unit: `"0.0695 e2b2"` or `"695 e2fm4"` for E2 (`e2b`/`e2fm2` for E1, `e2b3`/`e2fm6` for E3). Take it from ENSDF; physim does not look it up. |
 
 A Coulomb-excitation setup:
@@ -360,7 +361,8 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
   particle is in the backward ring, and those at 45° and 135° see 1.5 times.
 - **Not included:** excitation in two or more steps and reorientation (first order only, so the matrix elements
   enter through their size and not their sign), deorientation in vacuum, and lifetimes: every state decays in
-  flight with the orientation it was given.
+  flight with the orientation it was given. The simulated events of a setup with a level scheme do have the
+  further steps and the reorientation: see "Multi-step excitation and reorientation" below.
 
 ## Particle–γ events
 
@@ -518,6 +520,16 @@ ms.gosia_input(y)                   # a GOSIA input file for this setup, with th
 In the app, **Solve with all orders** in the "Excitation and γ rays" tab (once a level scheme is looked up) shows
 the yields with all orders and with first order, the prolate–zero–oblate comparison per ring, and offers the
 GOSIA input file.
+
+**In the simulated events.** With a level scheme of the excited nucleus whose decays follow more than one
+transition, the events and runs take this solution: each excitation starts in a level drawn from the populations
+the collision leaves at its angle, each γ ray has the angular distribution of its level's own orientation, and
+the excitation probability of the rates and of the event generator is the sum of the populations. A 4⁺ state,
+which only two steps reach, is then in the γ-ray spectra. `[reaction] order = "first"` gives first-order events
+instead. The table of angles is solved once per setup, all angles together (about 2 s for the six levels of
+⁶²Ni). {doc}`theory/coulex` has the numbers for the ⁶²Ni example and what is left out: every excitation keeps
+the kinematics of the `[reaction]` state, elastic scattering is not reduced by what is excited, and the analysis
+still extracts B(E2) with first-order theory.
 
 Not included: the E1 polarisation correction, deorientation, lifetimes, mutual excitation of both nuclei, and
 nuclear interference above the safe energy.

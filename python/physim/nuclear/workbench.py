@@ -128,6 +128,12 @@ def physics_for(key: str) -> str:
 NOT_SIMULATED = (
     (71, "Cascades in part", "without a level scheme each excitation emits one γ ray; with one, the cascade is "
                              "followed, but the angular correlation between its successive γ rays is not"),
+    (71, "Excitation in several steps in part", "with a level scheme its levels are populated to all orders (a 4⁺ "
+                                                "state through the 2⁺, the reorientation), each with its own "
+                                                "orientation; without one, or with order = \"first\", only what one "
+                                                "step from the ground state reaches. Every excitation keeps the "
+                                                "kinematics of the [reaction] state, and elastic scattering is not "
+                                                "reduced by what is excited"),
     (72, "Summing and pile-up in part", "γ rays of one cascade sum in a crystal, and pile-up follows the "
                                         "shaping time, but a summed or piled signal is one Gaussian, without the "
                                         "electronics' shapes; dead time is a simple correction"),

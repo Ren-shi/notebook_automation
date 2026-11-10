@@ -45,6 +45,12 @@ from .rutherford import E2_MEV_FM
 
 #: Reduced matrix elements the scheme keeps.
 ELECTRIC = ("E1", "E2", "E3")
+#: The most angles :meth:`CoupledChannels.solve_many` integrates in one group, and how short an angle's grid of
+#: steps may be, as a share of the group's longest, for the angle to join it.
+SOLVE_TOGETHER = 64
+SHORTER = 0.75
+#: An angle of :meth:`CoupledChannels.table` at which first order excites less than this is left in first order.
+WEAK = 1e-6
 
 
 class CoupledChannels(Excitation):
@@ -229,6 +235,107 @@ class CoupledChannels(Excitation):
             a = a + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
         return a
 
+    def solve_many(self, thetas) -> list:
+        """:meth:`solve` for several angles, with the steps of all of them taken together: each angle keeps its
+        own grid of w (so the amplitudes are those of :meth:`solve`), the shorter grids waiting at their last
+        point with steps of zero length. Most of the time of one solution goes into the bookkeeping of its few
+        thousand small steps, so a table of 90 angles costs about a tenth of 90 solutions."""
+        thetas = [float(t) for t in np.atleast_1d(thetas)]
+        n = len(self.basis)
+        g = self._level_slices[self.ground]
+        start = np.zeros((n, len(g)), dtype=complex)
+        for col, i in enumerate(g):
+            start[i, col] = 1.0
+        out = [start.copy() for _ in thetas]
+        if not self._couplings:
+            return out
+        todo = [(k, 1 / math.sin(math.radians(t) / 2)) for k, t in enumerate(thetas)
+                if math.sin(math.radians(t) / 2) > 0]
+        grids = {k: self._steps(eps) for k, eps in todo}
+        # Angles with grids of about the same length go together, so that few steps are spent waiting.
+        todo.sort(key=lambda ke: -len(grids[ke[0]]))
+        lam = np.array([lam for lam, _, _ in self._couplings])
+        mu = np.array([mu for _, mu, _ in self._couplings])
+        mats = self._mats.astype(complex)
+
+        def operator(w, eps, root):
+            ch, sh = np.cosh(w), np.sinh(w)
+            r = eps * ch + 1.0
+            e_iphi = ((ch + eps) + 1j * root * sh) / r
+            c = e_iphi[:, None] ** (-mu[None, :]) / r[:, None] ** lam[None, :]
+            return c, np.exp(1j * self.xi_state[None, :] * (eps * sh + w)[:, None])
+
+        def apply(op, a):
+            c, p = op
+            x = np.conj(p)[:, :, None] * a
+            y = np.einsum("ak,kaim->aim", c, mats[:, None] @ x[None])
+            return p[:, :, None] * y
+
+        batches: list = []
+        for item in todo:
+            first = len(grids[batches[-1][0][0]]) if batches else 0
+            if not batches or len(batches[-1]) >= SOLVE_TOGETHER or len(grids[item[0]]) < SHORTER * first:
+                batches.append([])
+            batches[-1].append(item)
+        for batch in batches:
+            eps = np.array([e for _, e in batch])
+            root = np.sqrt(np.maximum(eps * eps - 1.0, 0.0))
+            length = max(len(grids[k]) for k, _ in batch)
+            w = np.array([np.r_[grids[k], np.full(length - len(grids[k]), grids[k][-1])] for k, _ in batch])
+            a = np.repeat(start[None], len(batch), axis=0)
+            op_next = operator(w[:, 0], eps, root)
+            for k in range(length - 1):
+                h = (w[:, k + 1] - w[:, k])[:, None, None]
+                op0 = op_next
+                op1 = operator(0.5 * (w[:, k] + w[:, k + 1]), eps, root)
+                op_next = operator(w[:, k + 1], eps, root)
+                k1 = -1j * apply(op0, a)
+                k2 = -1j * apply(op1, a + 0.5 * h * k1)
+                k3 = -1j * apply(op1, a + 0.5 * h * k2)
+                k4 = -1j * apply(op_next, a + h * k3)
+                a = a + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+            for (k, _), sol in zip(batch, a):
+                out[k] = sol
+        return out
+
+    def _densities(self, a: np.ndarray) -> dict:
+        """{level: density matrix} of the excited levels from the amplitudes of :meth:`solve`."""
+        n0 = len(self._level_slices[self.ground])
+        return {n: a[idx, :] @ a[idx, :].conj().T / n0 for n, idx in self._level_slices.items() if n != self.ground}
+
+    def _first_order(self, theta_cm: float) -> dict:
+        """{level: density matrix} of first-order theory, for every excited level of the coupling (zero for those
+        no matrix element joins to the ground state)."""
+        levels = self.scheme.levels
+        out = {n: np.zeros((len(idx), len(idx)), dtype=complex) for n, idx in self._level_slices.items()
+               if n != self.ground}
+        for n, a in Excitation.amplitudes(self, theta_cm).items():
+            if n in out:
+                out[n] = a @ a.conj().T / (2 * float(levels[self.ground].spin) + 1)
+        return out
+
+    def table(self, step: float = 2.0) -> tuple:
+        """(angles, [Populated at each]) on a grid of CM angles from ``step`` to 180°, computed once, all angles
+        together (:meth:`solve_many`).
+
+        The forward angles at which first order excites less than :data:`WEAK` of the collisions are left in first
+        order: the coupled equations change a probability P by about P of itself, and their slow, distant orbits
+        are the longest to integrate (the first seven angles of a 2° grid take five sixths of the time, for
+        probabilities below a millionth)."""
+        if self._grid is None or self._grid[0][1] - self._grid[0][0] != step:
+            grid = np.arange(step, 180.0 + step / 2, step)
+            weak = {}
+            for t in grid:  # from the front, as far as the excitation stays weak
+                rho = self._first_order(float(t))
+                if sum(float(np.trace(m).real) for m in rho.values()) >= WEAK:
+                    break
+                weak[float(t)] = rho
+            rest = [float(t) for t in grid if float(t) not in weak]
+            solved = dict(zip(rest, (self._densities(a) for a in self.solve_many(rest))))
+            self._grid = (grid, [self._populated(float(t), weak.get(float(t), solved.get(float(t))))
+                                 for t in grid])
+        return self._grid
+
     def amplitudes(self, theta_cm: float) -> dict:
         """{level: a[M_f, M_i]} for every included level, from the coupled solution (the ground state too)."""
         a = self.solve(theta_cm)
@@ -250,9 +357,7 @@ class CoupledChannels(Excitation):
     def _direct(self, theta_cm: float) -> dict:
         """{level: density matrix} after the collision, excited levels only (the ground state's population is
         not a yield)."""
-        amps = self.amplitudes(theta_cm)
-        n0 = len(self._level_slices[self.ground])
-        return {n: a @ a.conj().T / n0 for n, a in amps.items() if n != self.ground}
+        return self._densities(self.solve(theta_cm))
 
     def second_order_check(self, level: int, theta_cm: float) -> tuple:
         """For the tests: the first- and second-order perturbation amplitudes of ``level`` from the ground state,
@@ -279,4 +384,4 @@ class CoupledChannels(Excitation):
         return first[idx], second[idx]
 
 
-__all__ = ["CoupledChannels", "ELECTRIC"]
+__all__ = ["CoupledChannels", "ELECTRIC", "SOLVE_TOGETHER", "WEAK"]

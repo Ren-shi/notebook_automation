@@ -178,6 +178,11 @@ HELP = {
     ("reaction", "emission"): _h("How the γ rays leave the excited nucleus: correlated with the direction of the "
                                  "scattered particle, as in nature, or evenly in all directions.", "correlated",
                                  "—"),
+    ("reaction", "order"): _h("How the levels of the level scheme are populated in the simulated events: to all "
+                              "orders (the coupled equations: levels reached in two steps, reorientation), or in "
+                              "first order (each level in one step from the ground state).", "all",
+                              "first order leaves out the levels no matrix element joins to the ground state, "
+                              "such as a 4⁺ state."),
     ("gamma", "material"): _h("What the crystal is made of: Ge or LaBr3.", "Ge",
                               "LaBr3 is faster and more efficient per volume, with about ten times worse resolution."),
     ("gamma", "absorbers"): _h("Material between the target and the detector, such as a lead or copper sheet "

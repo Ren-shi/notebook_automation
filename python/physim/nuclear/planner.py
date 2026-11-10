@@ -127,7 +127,9 @@ EXPLAIN = {
                        "(or isotropic, by the switch).",
         "limits": "Closer than Cline's safe distance nuclear forces interfere; lifetimes and deorientation are not "
                   "modelled. The rates and the table of all levels are first order; 'Solve with all orders' "
-                  "includes multi-step excitation and reorientation for the level scheme.",
+                  "includes multi-step excitation and reorientation for the level scheme. With a level scheme "
+                  "the simulated events, and the excitation probability of the rates, take the populations of "
+                  "all orders too (unless the setup says order = \"first\").",
     },
     "report": {
         "title": "Beam-time report",
