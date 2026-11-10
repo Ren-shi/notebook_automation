@@ -353,11 +353,18 @@ setup file and seed reproduce every number.</p>
                       f"<td>{r['mean_kev']:.2f}</td><td>{r['shift_kev']:+.2f}</td><td>{r['fwhm_kev']:.2f}</td></tr>"
                       for r in x["doppler"])
         safe = ("all angles" if x["max_safe_angle"] >= 180 else f"CM angles up to {x['max_safe_angle']:.0f}°")
+        try:
+            from .logbook import level_schemes_html
+
+            schemes = level_schemes_html(self.planner)
+        except Exception:  # noqa: BLE001 - the report stands without the figure
+            schemes = ""
         return f"""<h2>Coulomb excitation</h2>
 <p>{e(s['excite'].capitalize())} excited to {s['energy_kev']:g} keV (B({e(s['multipolarity'])}↑) =
 {s['b_up_e2fm']:.4g} e² fm^{2 * int(s['multipolarity'][1])}), first-order semiclassical theory: adiabaticity
 ξ = {x['xi']:.2f}, Sommerfeld parameter η = {x['eta']:.1f}, total cross section {x['total_mb']:.3g} mb. Safe
 (Cline's criterion, closest approach ≥ {x['safe_distance_fm']:.1f} fm) at {safe}.</p>
+{schemes}
 <table><thead><tr><th>Detector</th><th>Excitation events (1/s)</th></tr></thead><tbody>{rows}</tbody></table>
 {('<h3>γ rays</h3><table><thead><tr><th>Particle detector</th><th>γ detector</th><th>E_γ (keV)</th>'
   '<th>Doppler shift (keV)</th><th>FWHM (keV)</th></tr></thead><tbody>' + dop + '</tbody></table>') if dop else ''}

@@ -29,6 +29,36 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - `generator_config` lists one entry per range, with `channel_of` naming the channel of each
     (`events.channel_index`); an unweighted run (`runs.BeamRunner`) that is extended after this change makes its
     pilot run again.
+- "Check the alignment" with the fit no longer runs out of memory on a run: the reference simulation was asked
+  for as many events as the run had reactions (63 million for an hour of ⁶²Ni on ¹⁹⁴Pt, over 14 GB). It is now
+  made of simulations of at most 400,000 events each (`alignment.REFERENCE_EVENTS`), one after the other and four
+  at most, until it holds as many γ rays as the run, and the check peaks at the 3 GB the run itself takes.
+- The fitted target offset is right for a fast emitter (on that run: −2.4 ± 0.3 mm where −2 was put in; before,
+  −3.2 ± 0.2 from a jagged scan with χ² six times the number of points).
+  - Each centroid's window follows the corrected peak as it stands in the crystal (`alignment.peak_widths`).
+    The window was three times the detector's resolution, which suits ⁵⁸Ni recoiling at 3% of c; ⁶²Ni at 9% of c
+    leaves a corrected peak of 20 keV FWHM in a crystal of 35 mm radius at 120 mm, and the window cut through
+    it. A point needs ten γ rays inside the window, not ten in all.
+  - When the fit finds the target more than two uncertainties from where it was assumed, the reference is made
+    again with the target where the fit put it (twice at most): left at a geometry 5 mm off, the fit overshot
+    by about 1 mm. The uncertainty is scaled by √(χ²/ν) when the centroids scatter by more than their errors.
+  - A reference simulation that gives too few γ rays for a pattern is no longer taken for one in silence: the
+    fit says it judged against flat lines (`"against"`), and a parabola whose minimum lies outside its own
+    points is not used.
+  - The overlay's widths and range follow the peak too (it reported a FWHM of 4 keV for that 17 keV peak).
+  - The fit takes about 15 s on a planning sample as before, and two minutes on that run.
+- The analysis now reaches the reports. Before, it lived only in the app's memory, so the record of the experiment
+  said "no analysis" after any edit of the setup, after reopening the experiment, or once a source run was the
+  current run.
+  - Each analysis is kept in its run's folder (`analysis.json`; `Planner.run_analysis`), with the spectrum it
+    fitted; the alignment check is kept with the run (`alignment.json`) and the multi-step solution with the
+    experiment (`multistep.json`, used while the setup's physics is unchanged).
+  - The record of the experiment shows, for every analysed run: the fitted peak drawn on the Doppler-corrected
+    spectrum, the chain step by step, the uncertainty budget, the shape (β₂, Q₀, Weisskopf units), the alignment
+    check and, once solved, the multi-step table and the prolate–oblate comparison (`logbook.analysis_html`).
+  - Level schemes are drawn in the record and in the beam-time report (`logbook.level_scheme_png`): the setup's
+    schemes from ENSDF, or the ground state and the excited state when none has been looked up.
+  - The beam-time report's zip also holds `experiment.html` once the experiment has runs.
 - The experiment's report now carries every run's spectra: a panel per particle detector and, per γ-ray detector,
   the spectrum as measured and Doppler-corrected for the emitting nucleus (the correction and the gate the
   analysis used), and a source run's crystals; before, no γ-ray spectrum reached any report

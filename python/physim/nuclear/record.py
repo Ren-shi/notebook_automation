@@ -483,6 +483,7 @@ def record_css(scope: str = "body") -> str:
     s = scope
     return (f"{s}{{font-family:Georgia,serif;max-width:900px;margin:0 auto;line-height:1.45}}"
             f"{s} h1{{font-size:1.6em}}{s} h2{{font-size:1.25em;margin-top:1.2em}}{s} h3{{font-size:1.05em}}"
+            f"{s} h4{{font-size:1em;font-weight:600;line-height:1.3;margin:0.9em 0 0.2em}}"
             f"{s} table{{border-collapse:collapse;margin:0.5em 0}}{s} td,{s} th{{border:1px solid #ccc;"
             f"padding:3px 8px;text-align:left}}{s} .x{{border:1px solid #D5D9D6;border-radius:8px;"
             f"padding:8px 14px;margin:10px 0}}{s} .x h3{{margin:0 0 4px}}{s} .x .v{{font-family:monospace;"
