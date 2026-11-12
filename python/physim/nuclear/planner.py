@@ -346,7 +346,8 @@ class Planner:
         current = self.experiment.to_dict()
         for s in self.folder.runs():
             r = _runs.RunData(Path(s["_folder"]), s, _runs.Experiment.load(Path(s["_folder"]) / "setup.toml").to_dict())
-            s = dict(s, describe=r.describe(), stale=bool(r.changes(current)), label=s["_label"])
+            s = dict(s, describe=r.describe(), stale=bool(r.changes(current)), label=s["_label"],
+                     one_nucleus=r.one_nucleus)
             out.append(s)
         return out
 
@@ -426,6 +427,24 @@ class Planner:
         if self.running:
             raise _runs.RunInProgress("a run is already being taken")
         return self._take(_runs.extend(self.run, more), background, progress)
+
+    def retake_run(self, number: Optional[int] = None, background: bool = False, progress=None):
+        """Take run ``number`` (the current run by default) again as a new run: its own setup, seed, duration and
+        real part, with today's events. A run taken before the events held both nuclei
+        (:attr:`~physim.nuclear.runs.RunData.one_nucleus`) comes back with the γ rays of both; the old run
+        stays. The new run becomes current."""
+        if self.folder is None:
+            raise ValueError("there is no experiment folder")
+        if self.running:
+            raise _runs.RunInProgress("a run is already being taken")
+        run = self.run if number is None else self.folder.load_run(number)
+        if run is None:
+            raise ValueError("there is no run to take again")
+        try:  # the plan of that run's own setup, for predicted against measured
+            plan = Planner(run.experiment).plan()
+        except Exception:  # noqa: BLE001 - as for any run, a plan that fails leaves it without predictions
+            plan = {}
+        return self._take(_runs.retake(self.folder, run, plan), background, progress)
 
     def load_run(self, number: int) -> _runs.RunData:
         """Make run ``number`` current (its events are loaded when a view asks for them; one run at a time)."""
@@ -944,11 +963,13 @@ class Planner:
         all_exc = sum(excitations.values())
         unsafe = self.safety()
         detectors = []
+        other = r.other_peak()
         for row, g in zip(t["rows"], r.array):
             rings = sorted({seg[0] for seg in g.segments})
             bad = sorted(unsafe.get(g.name, ()))
             busy = row["rate_per_s"] * dead
             detectors.append({
+                "other_coincidence_per_s": other["coincidence_per_s"].get(g.name) if other else None,
                 "detector": row["detector"], "theta_range": [float(x) for x in row["theta_range"]],
                 "solid_angle_msr": row["solid_angle_msr"], "rate_per_s": row["rate_per_s"],
                 "dead_time_fraction": busy / (1 + busy), "excitation_per_s": excitations[row["detector"]],
@@ -976,7 +997,10 @@ class Planner:
                 "enough": (needed["beam_time_s"] <= t["beam_time_s"]) if needed else None,
                 "particles_per_second": t["particles_per_second"], "dead_time_s": dead,
                 "live_fraction": 1 / (1 + dead * total_rate), "detectors": detectors, "gamma_detectors": gammas,
-                "coincidences": matrix, "gamma_efficiency": t["gamma_efficiency"]}
+                "coincidences": matrix, "gamma_efficiency": t["gamma_efficiency"],
+                # The other nucleus's peak, which the events hold when the setup has its level scheme.
+                "other_peak": ({"label": other["label"], "nuclide": other["nuclide"],
+                                "energy_kev": other["energy_kev"]} if other else None)}
 
     def energy_loss(self) -> dict:
         """The beam through each layer (energy in and out, loss, straggling), the beam energy through the target,
@@ -1223,10 +1247,12 @@ class Planner:
         real = run.real_s
         rows = []
 
-        def row(quantity, what, predicted, measured, unc, unit):
+        def row(quantity, what, predicted, measured, unc, unit, model=0.0):
             agree = None
             if predicted is not None and measured is not None and unc is not None:
-                agree = abs(measured - predicted) <= 3 * max(unc, 1e-300) or (measured == predicted)
+                # ``model``: how well the plan itself knows the number, relative, beside the run's statistics.
+                agree = (abs(measured - predicted) <= math.hypot(3 * max(unc, 1e-300), model * abs(predicted))
+                         or (measured == predicted))
             rows.append({"quantity": quantity, "what": what, "predicted": predicted, "measured": measured,
                          "uncertainty": unc, "unit": unit, "agree": agree})
 
@@ -1241,6 +1267,16 @@ class Planner:
             k = sum(v for key, v in peak.items() if key.split("|")[0] == d["detector"])
             row("Coincidences in the peak", d["detector"], d["coincidence_per_s"], k / real,
                 math.sqrt(max(k, 1)) / real, "1/s")
+        other, other_peak = plan.get("other_peak"), run.summary.get("other_peak_coincidences")
+        if other and other_peak is not None:
+            for d in plan.get("detectors", []):
+                if d.get("other_coincidence_per_s") is None:
+                    continue
+                k = sum(v for key, v in other_peak.items() if key.split("|")[0] == d["detector"])
+                # The plan leaves out the summing of this nucleus's cascade in a crystal and the Doppler shift
+                # of the efficiency: a few percent, more than the statistics of so strong a peak.
+                row(f"Coincidences in the {other['label']} peak", d["detector"], d["other_coincidence_per_s"],
+                    k / real, math.sqrt(max(k, 1)) / real, "1/s", model=0.05)
         limiting = plan.get("limiting_detector")
         if limiting and plan.get("counts_wanted"):
             what = plan.get("measured", "all")

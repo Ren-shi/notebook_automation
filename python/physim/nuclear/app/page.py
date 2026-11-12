@@ -1,5 +1,5 @@
-"""The planner page: the header, the step bar and the stages, with the setup panel beside the Setup step, assembled
-for one browser client."""
+"""The planner page: the rail on the left (the experiment, the steps, the Physics reference and the theme), the
+stages, and the setup panel on the right of the Setup step, assembled for one browser client."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from ..quantity import Quantity
 
 from .. import dataviews as dv
 from .figures import (CLOVER_FIELDS, REACTION_FIELDS, REACTION_TYPES, STYLE, THEMES, _shown, _value,
-                      figure_alignment, figure_gamma_crystal, figure_detector_spectrum, figure_efficiency, figure_energy_loss,
+                      figure_alignment, figure_gamma_crystal, figure_peak, figure_search, figure_detector_spectrum, figure_efficiency, figure_energy_loss,
                       figure_excitation, figure_gamma_spectra, figure_kinematics, figure_levels, figure_overlay,
                       figure_source_spectrum, figure_spectra, figure_strips, figure_sweep, figure_trajectories,
                       themed)
@@ -37,23 +37,37 @@ PENDING_STYLE = """
   font-size: 11px; line-height: 16px; white-space: nowrap; }
 """
 
-#: The step bar (the stages as numbered steps, each with its state and a line of status) and the foot of a step.
+#: The rail on the left (the experiment, then the stages as numbered steps, each with its state and a line of
+#: status) and the foot of a step.
 STEP_STYLE = """
-.ps-steps { background: var(--ps-surface); border: 1px solid var(--ps-line); border-radius: 10px;
-  counter-reset: ps-step; position: sticky; top: 50px; z-index: 5; }
-.ps-steps .q-tab { counter-increment: ps-step; flex: 1 1 0; min-width: 118px; min-height: 54px; padding: 6px 14px;
-  border-right: 1px solid var(--ps-line); overflow: hidden; }
-.ps-steps .q-tab__content { align-items: flex-start; width: 100%; min-width: 0; }
+.ps-nav-col { min-height: calc(100vh - 32px); padding: 4px 2px; }
+.ps-wordmark { font-family: var(--ps-mono); font-size: 16px; font-weight: 600; padding-left: 6px; }
+.ps-experiment { border: 1px solid var(--ps-line); background: var(--ps-surface); color: var(--ps-ink);
+  min-height: 40px; }
+.ps-experiment .q-btn__content { justify-content: space-between; flex-wrap: nowrap; text-align: left; }
+.ps-steps { counter-reset: ps-step; width: 100%; }
+.ps-steps .q-tab { counter-increment: ps-step; justify-content: flex-start; min-height: 54px; padding: 6px 8px;
+  margin: 1px 0; border-radius: 6px; overflow: hidden; }
+.ps-steps .q-tab__content { align-items: flex-start; width: 100%; min-width: 0; padding: 0 0 0 36px;
+  position: relative; }
+.ps-steps .q-tab__content::before { content: counter(ps-step); position: absolute; left: 0; top: 50%;
+  transform: translateY(-50%); width: 26px; height: 26px; border-radius: 4px; background: var(--ps-raise);
+  color: var(--ps-ink); font-family: var(--ps-mono); font-size: 12px; font-weight: 600; line-height: 26px;
+  text-align: center; }
+.ps-steps .ps-step-done .q-tab__content::before { content: "\\2713"; color: var(--ps-ok);
+  background: color-mix(in srgb, var(--ps-ok) 18%, transparent); }
+.ps-steps .q-tab--active { background: var(--ps-raise); }
+.ps-steps .q-tab--active .q-tab__content::before { content: counter(ps-step); background: var(--ps-fill);
+  color: var(--ps-on-fill); }
 .ps-steps .q-tab__label { font-size: 14px; font-weight: 600; line-height: 1.35; }
-.ps-steps .q-tab__label::before { content: counter(ps-step); display: inline-block; margin-right: 8px;
-  color: var(--ps-muted); font-weight: 500; }
-.ps-steps .ps-step-done .q-tab__label::after { content: "\\2713"; margin-left: 6px; color: var(--ps-ok); }
 .ps-steps .ps-step-waiting .q-tab__label { color: var(--ps-muted); }
-.ps-steps .q-tab--active { background: var(--ps-note); }
-.ps-step-status { font-size: 12px; font-weight: 400; color: var(--ps-muted); width: 100%; text-align: left;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-steps .q-tab__indicator { display: none; }
+.ps-step-status { font-family: var(--ps-mono); font-size: 11px; font-weight: 400; color: var(--ps-muted);
+  width: 100%; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ps-step-status.ps-warn { color: var(--ps-warn); }
 .ps-step-hidden { display: none !important; }
+.q-tab-panels { background: transparent !important; }
+.q-tab-panel { padding: 0; }
 .ps-foot { border-top: 1px solid var(--ps-line); margin-top: 18px; padding: 10px 2px 4px; }
 """
 
@@ -285,6 +299,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         for section, field, element in field_marks:
             mark(element, section, field, register=False)
         checks_box.refresh()
+        checks_line.refresh()
 
     def draft_views() -> None:
         """What follows the draft without any number being worked out: the scene, the quick numbers beside it and
@@ -417,8 +432,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     def open_card(key: Optional[str]) -> None:
         state["open"] = key if key != "checks" else None
-        go_to("setup")  # the setup panel stands beside the Setup step
-        drawer.show()
+        go_to("setup")  # the setup is edited from the Setup step
+        setup_dialog.open()
         if numbers_kept():
             setup_panel.refresh()
         else:  # the numbers of a change are on their way: the panel is rebuilt when they are there
@@ -664,6 +679,48 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     @ui.refreshable
     def checks_box() -> None:
         _panel.render_checks(ctx)
+
+    def edit_setup() -> None:
+        """Open the window the setup is edited in."""
+        setup_dialog.open()
+
+    def done_editing() -> None:
+        """The window's main button: apply what was changed, if anything, and close. It stays open when the
+        changes cannot be applied (a value is wrong, or a run is being taken), and says why."""
+        d, p = D(), P()
+        if d._draft != p._draft:
+            if p.running or d.problems:
+                apply_changes()  # says why not
+                return
+            apply_changes()
+        setup_dialog.close()
+
+    def cancel_editing() -> None:
+        """Close the window without the changes made in it."""
+        if pending():
+            discard_changes()
+        setup_dialog.close()
+
+    @ui.refreshable
+    def checks_line() -> None:
+        """On the Setup step: errors and warnings in full, since they need something done; the notes as a count
+        that opens the window, where all the checks are."""
+        found = checks()
+        loud = [c for c in found if c["level"] in ("error", "warning")]
+        notes = len(found) - len(loud)
+        with ui.row().classes("items-center gap-2"):
+            if not loud and (prebuild or numbers_kept()):
+                ui.icon("check_circle").classes("ps-ok")
+                ui.label("No warnings").classes("text-sm ps-ok")
+            if notes:
+                ui.button(f"{notes} note{'s' * (notes != 1)} on the setup", color=None, on_click=edit_setup).props(
+                    "dense flat no-caps").classes("ps-muted")
+        if loud:
+            with ui.card().classes("w-full ps-warnbox p-2 gap-1"):
+                for c in loud:
+                    with ui.row().classes("items-start no-wrap gap-2"):
+                        ui.icon(_panel.LEVEL_ICON[c["level"]]).classes(_panel.LEVEL_STYLE[c["level"]])
+                        ui.label(c["text"]).classes(_panel.LEVEL_STYLE[c["level"]] + " text-sm")
 
     def changes_and_buttons(found: list, lines: int) -> None:
         for text in found[:lines]:
@@ -1089,6 +1146,30 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     ui.label(value).classes("ps-readout-value " + colour)
                     ui.label(sub).classes("text-xs ps-muted")
 
+    @ui.refreshable
+    def setup_strip() -> None:
+        """Above the scene: the whole setup in a few numbers (those of the selection panel with nothing
+        selected)."""
+        if not numbers_kept():
+            return
+        try:
+            s = P().selection()
+        except Exception:  # noqa: BLE001 -- the strip must never break the page
+            return
+        cells = [("Particles counted", _fmt(s["rate_per_s"]), "/s", "")]
+        if s["measured"] != "all":
+            cells.append((f"Of these, {s['measured']}", _fmt(s["measured_rate_per_s"]), "/s", "ps-ok"))
+        cells.append(("Solid angle, particle detectors", _fmt(s["solid_angle_msr"]), "msr", ""))
+        if s["gamma_efficiency"] is not None:
+            cells.append(("γ-ray efficiency, all detectors", f"{100 * s['gamma_efficiency']:.2f}", "%", ""))
+        with ui.element("div").classes("ps-readouts"):
+            for title, value, unit, colour in cells:
+                with ui.element("div").classes("ps-readout"):
+                    ui.label(title).classes("text-xs ps-muted")
+                    with ui.row().classes("items-baseline gap-1 no-wrap"):
+                        ui.label(value).classes("ps-readout-value " + colour)
+                        ui.label(unit).classes("text-xs ps-muted ps-num")
+
     # -- result tabs ------------------------------------------------------------------------------------------
     def columns(spec):
         return [{"name": k, "label": lab, "field": k, "align": "left"} for k, lab in spec]
@@ -1279,12 +1360,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 ui.label(s["title"]).classes("text-base font-medium")
                 row("Particle detectors", str(s["detectors"]))
                 row("γ-ray detectors", str(s["gamma_detectors"]))
-                row("Solid angle, all particle detectors", f"{_fmt(s['solid_angle_msr'])} msr")
-                row("Particles counted", f"{_fmt(s['rate_per_s'])} /s")
-                if s["measured"] != "all":
-                    row(f"Of these, {s['measured']}", f"{_fmt(s['measured_rate_per_s'])} /s")
-                if s["gamma_efficiency"] is not None:
-                    row("γ-ray efficiency, all detectors", f"{100 * s['gamma_efficiency']:.2f} %")
+                # (The rates, the solid angle and the γ-ray efficiency are in the strip above the scene.)
                 t = s["target"]
                 row("Target", f"{t['material']}, {_fmt(t['thickness_um'], 3)} µm"
                     + (f", tilted {t['tilt_deg']:g}°" if t["tilt_deg"] else ""))
@@ -1531,16 +1607,16 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         """The scene on the whole screen: the setup panel, the status strip, the tabs and the panels beside and
         below the scene are hidden, and the scene fills the window; off brings them back."""
         scene_state["full"] = on
-        drawer = state.get("drawer")
-        if drawer is not None:
-            (drawer.hide if on else drawer.show)()
-        for el in (state.get("strip_box"), state.get("tabs"), footer_boxes.get("setup"),
+        nav = state.get("nav")
+        if nav is not None:
+            (nav.hide if on else nav.show)()
+        for el in (state.get("strip_box"), footer_boxes.get("setup"),
                    *scene_state.get("extras", [])):
             if el is not None:
                 el.set_visibility(not on)
         geometry_panel.refresh()
         # The scene follows its element's size once the window says it changed: once right away, and once more
-        # after the drawer has slid out of the way.
+        # after the rail has slid out of the way.
         for delay in (0.15, 0.6):
             ui.timer(delay, lambda: ui.run_javascript("window.dispatchEvent(new Event('resize'))"), once=True)
 
@@ -1583,12 +1659,12 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                          "turn the view, scroll to zoom.").classes(
                     "text-xs ps-muted")
             if not full:
-                with ui.column().classes("gap-2").style("flex: 0 1 360px; min-width: 300px"):
+                # Beside the scene: what is selected, then the tables of angles, in the height the scene has.
+                with ui.column().classes("gap-2").style("flex: 0 1 460px; min-width: 320px"):
                     selection_panel()
+                    geometry_tables()
         if full:
             ui.keyboard(on_key=lambda e: scene_full(False) if e.key.escape and e.action.keydown else None)
-        else:
-            geometry_tables()
 
     @ui.refreshable
     def geometry_tables():
@@ -1598,13 +1674,14 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                  "phi": f"{d['phi_range'][0]:.1f}–{d['phi_range'][1]:.1f}", "segments": d["segments"]}
                 for d in D().geometry()["detectors"]]
         ui.table(columns=columns((("detector", "Particle detector"), ("omega", "Ω (msr)"), ("theta", "θ (deg)"),
-                                  ("phi", "φ (deg)"), ("segments", "Segments"))), rows=rows).props("dense flat")
+                                  ("phi", "φ (deg)"), ("segments", "Segments"))), rows=rows).props("dense flat").classes(
+            "w-full")
         gammas = D().geometry()["gamma_detectors"]
         if gammas:
             ui.table(columns=columns((("detector", "γ-ray detector"), ("theta", "θ (deg)"),
                                       ("distance", "Distance (mm)"), ("half", "Half-angle (deg)"))),
                      rows=[{"detector": g["name"], "theta": f"{g['theta']:.1f}", "distance": f"{g['distance_mm']:g}",
-                            "half": f"{g['half_angle_deg']:.1f}"} for g in gammas]).props("dense flat")
+                            "half": f"{g['half_angle_deg']:.1f}"} for g in gammas]).props("dense flat").classes("w-full")
 
     @ui.refreshable
     def kinematics_panel():
@@ -1754,18 +1831,29 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
         ui.button("Simulate the γ rays", icon="play_arrow", on_click=build).props("dense flat no-caps")
 
-    def analysis_block() -> None:
+    def panel(title: str, sub: str = ""):
+        """A bordered panel with a head line (its name, and after a dot what it shows); its body is returned to
+        build in."""
+        with ui.element("div").classes("ps-panel"):
+            with ui.element("div").classes("ps-panel-head"):
+                ui.label(title)
+                if sub:
+                    ui.label("· " + sub).classes("ps-muted")
+            return ui.element("div").classes("ps-panel-body")
+
+    def analysis_block(results=None) -> None:
         """From the γ-ray peak to B(E2): the steps, each adjustable, and what the beam time determines."""
         ui.label("Analysis: from the peak area to B(E2)").classes("font-semibold mt-3")
-        ui.label("The simulated events are analysed as an experimentalist would: a gate on the inelastic particle "
-                 "group, the Doppler correction, a peak fit over a line with the random coincidences subtracted, "
-                 "the yield over the efficiency and the angular correlation, a normalisation, and B(E2) from the "
-                 "first-order proportionality. Each systematic is found by changing its input by one standard "
-                 "deviation and running again.").classes("text-xs ps-muted")
+        ui.label("The events are analysed as an experimentalist would: a gate on the particles in the silicon, the "
+                 "Doppler correction for each nucleus, a search for the peaks in each corrected spectrum, a fit of "
+                 "each peak over a line and the area under it with the random coincidences subtracted, the yield "
+                 "over the efficiency and the angular correlation, a normalisation, and B(E2) from the first-order "
+                 "proportionality. Each systematic is found by changing its input by one standard deviation and "
+                 "running again.").classes("text-xs ps-muted")
         with ui.row().classes("w-full items-end gap-2"):
-            norm = ui.select({"rutherford": "to the elastic particles in the same rings",
-                              "target": "to a known transition"}, value="rutherford",
-                             label="Normalisation").props("dense outlined").classes("w-72")
+            norm = ui.select({"rutherford": "to the particles in the same rings",
+                              "target": "to the other nucleus's peak (a known transition)"}, value="rutherford",
+                             label="Normalisation").props("dense outlined").classes("w-80")
             gate = ui.select({"inelastic": "inelastic group", "all": "every particle"}, value="inelastic",
                              label="Particle gate").props("dense outlined").classes("w-44")
             corr = ui.select({"emitter": "the excited nucleus", "projectile": "the projectile",
@@ -1778,7 +1866,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                               label="Gate from the Data step").props("dense outlined").classes("w-56").tooltip(
                 "A named gate replaces the detectors, rings and particle gate here")
         with ui.row().classes("w-full items-end gap-2"):
-            ref_e = ui.input("Reference transition", placeholder="328 keV").props("dense outlined").classes("w-40")
+            ref_e = ui.input("Reference transition", placeholder="328 keV").props("dense outlined").classes(
+                "w-40").tooltip("Only without a level scheme of the other nucleus: with one, its peak in the run "
+                                "is the reference, and these two fields stay empty")
             ref_b = ui.input("Its B(E2↑)", placeholder="1.65 e2b2").props("dense outlined").classes("w-40")
             ref_u = ui.number("Its uncertainty (%)", value=3.0, min=0, max=100).props("dense outlined").classes(
                 "w-40")
@@ -1786,7 +1876,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 "w-40")
             prec = ui.number("Wanted precision (%)", value=5.0, min=0.1, max=100).props("dense outlined").classes(
                 "w-40")
-        out_box = ui.column().classes("w-full")
+        ui.button("Analyse", icon="functions", on_click=lambda: analyse()).props("dense unelevated no-caps")
+        # The result goes where the caller says (the Analysis step shows it across the page, under the choices).
+        out_box = results if results is not None else ui.column().classes("w-full")
 
         def parse_rings(text: str):
             text = (text or "").strip()
@@ -1807,9 +1899,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             except ValueError:
                 ui.notify("Rings: write 'all', a number, or a range such as 4-15", type="warning")
                 return
-            if norm.value == "target":
+            if norm.value == "target" and (ref_e.value or ref_b.value):
                 if not ref_e.value or not ref_b.value:
-                    ui.notify("Give the reference transition's energy and B(E2↑)", type="warning")
+                    ui.notify("Give the reference transition's energy and B(E2↑), or leave both empty to use the "
+                              "other nucleus's peak in the run", type="warning")
                     return
                 settings["reference"] = {"energy": ref_e.value, "b_up": ref_b.value, "unc": float(ref_u.value) / 100}
             out_box.clear()
@@ -1818,69 +1911,267 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             r = await run.io_bound(P().snapshot().analyse, settings, max(state["events"], 400_000), 1, named.value or None)
             out_box.clear()
             with out_box:
-                show(r)
+                show(r, P().analysis(max(state["events"], 400_000), 1).history[-1] if r["available"] else None)
             sync_steps()
 
-        def show(r: dict) -> None:
-            if not r["available"]:
-                ui.label(r["reason"]).classes("text-sm ps-warn")
+        def part(number: int, title: str, text: str) -> None:
+            ui.label(f"{number} · {title}").classes("font-semibold mt-2")
+            ui.label(text).classes("text-xs ps-muted")
+
+        def sci(x: float) -> str:
+            """A large number as a mantissa and a power of ten."""
+            if not x or abs(x) < 1e4:
+                return f"{x:,.4g}"
+            e = int(math.floor(math.log10(abs(x))))
+            return f"{x / 10 ** e:.3f} × 10" + str(e).translate(str.maketrans("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹"))
+
+        def facts(rows) -> None:
+            """Quiet lines of (what, value)."""
+            for what, value in rows:
+                with ui.element("div").classes("ps-fact"):
+                    ui.label(what)
+                    ui.label(value)
+
+        def show_search(r: dict) -> None:
+            """The peaks the search found in each corrected spectrum, drawn and listed."""
+            search = r.get("search")
+            if not search:
                 return
-            for step in r["steps"]:
-                with ui.row().classes("items-start no-wrap gap-2"):
-                    ui.label(step["step"]).classes("text-xs ps-section w-40")
-                    ui.label(step["text"]).classes("text-sm")
+            part(1, "Find the peaks", "Each Doppler-corrected spectrum is searched over its whole range. A nucleus's "
+                 "lines are sharp in the spectrum corrected for it and smeared in the other, so each nucleus shows "
+                 "its peaks in its own spectrum. Every peak found is fitted; one that sits on a transition of the "
+                 "level scheme is named.")
+            with ui.element("div").classes("w-full grid gap-3").style(
+                    "grid-template-columns: repeat(auto-fit, minmax(360px, 1fr))"):
+                for which in ("projectile", "recoil"):
+                    sp = search[which]
+                    with panel(f"Corrected for the {which}", f"the lines of {sp['nuclide']}" if sp.get("nuclide")
+                               else ""):
+                        ui.label(f"In coincidence with {sp['gate']}; random coincidences subtracted.").classes(
+                            "text-xs ps-muted")
+                        ui.plotly(themed(figure_search(sp, which), state["theme"])).classes("w-full")
+                        if not sp["peaks"]:
+                            ui.label("No peak found.").classes("text-sm ps-muted")
+            found = [(which, search[which], pk) for which in ("projectile", "recoil") for pk in search[which]["peaks"]]
+            if found:
+                counts = ", ".join(f"{len(search[which]['peaks'])} corrected for the {which}"
+                                   for which in ("projectile", "recoil"))
+                with panel("Peaks found", counts):
+                    ui.table(columns=columns((("n", "Corrected for"), ("e", "Peak at (keV)"), ("f", "FWHM (keV)"),
+                                              ("a", "Area (counts)"), ("s", "Significance"), ("t", "Transition"))),
+                             rows=[{"n": f"the {which}" + (f" ({sp['nuclide']})" if sp.get("nuclide") else ""),
+                                    "e": f"{pk['energy_kev']:.1f}", "f": f"{pk['fwhm_kev']:.1f}",
+                                    "a": f"{pk['area']:,.0f} ± {pk['area_unc']:,.0f}",
+                                    "s": f"{pk['significance']:.0f} σ",
+                                    "t": (f"{pk['label']} ({pk['line_kev']:.1f} keV)" if pk["label"] else
+                                          (f"none (smeared {pk['near']})" if pk.get("near") else "none"))}
+                                   for which, sp, pk in found]).props("dense flat").classes("w-full")
+                    if any(pk.get("near") for _, _, pk in found):
+                        ui.label("Smeared: a line of the other nucleus, which this correction shifts and "
+                                 "broadens.").classes("text-xs ps-muted")
+
+        def show_lines(r: dict, beside=None) -> None:
+            """Each integrated peak: the fit drawn over the spectrum, its four numbers that matter, and behind a
+            fold every number from the area to the yield."""
+            lines = r.get("lines")
+            if not lines:
+                return
+            part(2, "Integrate the peaks", "The peak of each nucleus in its own corrected spectrum: a Gaussian on a "
+                 "straight line is fitted, and the area is the counts within ±3σ of its centre over that line, "
+                 "less the random coincidences expected there. The area over the efficiency and the angular "
+                 "correlation is the number of γ rays emitted.")
+            with ui.element("div").classes("w-full grid gap-3").style(
+                    "grid-template-columns: repeat(auto-fit, minmax(360px, 1fr))"):
+                for ln in lines:
+                    fit = ln["fit"]
+                    with panel(ln["label"], f"{ln['energy_kev']:.1f} keV"):
+                        ui.label(f"Corrected for the {ln['correction']}; in coincidence with {ln['gate']}.").classes(
+                            "text-xs ps-muted")
+                        ui.plotly(themed(figure_peak(ln, float(r["settings"].get("fit_half_width", 4.0))),
+                                         state["theme"])).classes("w-full")
+                        with ui.element("div").classes("ps-readouts").style(
+                                "grid-template-columns: repeat(2, minmax(0, 1fr))"):
+                            for title, value in (("Area", f"{ln['area']:,.0f} ± {ln['area_unc']:,.0f}"),
+                                                 ("FWHM", f"{1e3 * 2.3548 * fit['sigma']:.1f} keV"),
+                                                 ("Efficiency", f"{100 * ln['efficiency']:.3f} %"),
+                                                 ("Per particle", f"{ln['per_particle']:.4g}")):
+                                with ui.element("div").classes("ps-readout").style("padding: 8px 12px"):
+                                    ui.label(title).classes("text-xs ps-muted")
+                                    ui.label(value).classes("ps-num")
+                        found = ln.get("found")
+                        rows = [
+                            ("Found by the search", f"at {found['energy_kev']:.1f} keV, {found['significance']:.0f} σ"
+                             if found else "no: fitted at the transition energy"),
+                            ("Fitted centre and width", f"{1e3 * fit['centroid']:.1f} keV, FWHM "
+                                                        f"{1e3 * 2.3548 * fit['sigma']:.1f} keV"),
+                            ("Counts over the line, ±3σ", f"{fit['area']:,.1f} ± {fit['area_unc']:,.1f}"),
+                            ("Random coincidences in the window", f"{ln['randoms']:,.1f}, subtracted"),
+                            ("Area", f"{ln['area']:,.1f} ± {ln['area_unc']:,.1f} counts"),
+                            ("Full-energy efficiency", f"{100 * ln['efficiency']:.3f} %"),
+                            ("Angular correlation", f"{ln['correlation']:.3f}")]
+                        if ln["gate_efficiency"] != 1.0:
+                            rows.append(("Share of the excitations the gate keeps", f"{100 * ln['gate_efficiency']:.1f} %"))
+                        rows.append(("γ rays emitted (the yield)", f"{ln['yield']:,.4g}"))
+                        rows.append(("Per particle in the same rings", f"{ln['per_particle']:.4g}"))
+                        if ln.get("expected_per_particle") is not None:
+                            rows.append(("Expected from its level scheme, all orders",
+                                         f"{ln['expected_per_particle']:.4g} (measured / expected {ln['ratio']:.3f})"))
+                        if ln.get("blends"):
+                            rows.append(("Also inside the window", ", ".join(ln["blends"])))
+                        with ui.expansion("Every number of this peak").props("dense").classes("w-full"):
+                            ui.table(columns=columns((("q", "Quantity"), ("v", "Value"))),
+                                     rows=[{"q": q, "v": v} for q, v in rows]).props("dense flat")
+                if beside is not None:  # what stands beside the fitted peaks, in the same row
+                    with ui.column().classes("gap-3").style("min-width: 0"):
+                        beside()
+
+        def show_result(r: dict, last=None) -> None:
+            """The strip at the top: B(E2), its uncertainty, how it compares with what was put in, the beam time."""
             b = r["b_e2fm4"]
-            if b != b:
-                ui.label("No result: " + "; ".join(r["notes"])).classes("text-sm ps-warn")
-                return
-            last = P().analysis(max(state["events"], 400_000), 1).history[-1]
-            with ui.element("div").classes("ps-readouts mt-2"):
-                for title, value, sub, key in (
-                        ("B(E2↑)", f"{r['b_e2b2']:.4g} e²b²", f"{b:.4g} e²fm⁴ · {r['b_wu']:.3g} W.u.", "b_e2"),
+            with ui.element("div").classes("ps-readouts"):
+                for title, value, sub, key, main in (
+                        ("B(E2↑)", f"{b:.4g} e²fm⁴", f"{r['b_e2b2']:.4g} e²b² · {r['b_wu']:.3g} W.u.", "b_e2", True),
                         ("Uncertainty", f"± {100 * r['total_unc']:.1f} %",
                          f"statistical {100 * r['statistical']:.1f} %, systematic {100 * r['systematic']:.1f} %; "
                          + (f"the Monte Carlo sample itself adds {100 * r['monte_carlo']:.1f} %"
                             if r.get("whole_run_statistical") is None else
                             f"statistics from {r['statistics_from']}; the whole run: "
-                            f"{100 * r['whole_run_statistical']:.1f} %"), "uncertainty"),
-                        ("Put in", f"{1e-4 * r['truth_e2fm4']:.4g} e²b²", f"pull {r['pull']:+.2f} σ", None),
+                            f"{100 * r['whole_run_statistical']:.1f} %"), "uncertainty", False),
+                        ("Put in", f"{r['truth_e2fm4']:.4g} e²fm⁴", f"pull {r['pull']:+.2f} σ", None, False),
                         ("Beam time", f"{r['hours_for_precision']:.3g} h",
                          f"for {100 * r['settings']['wanted_precision']:.3g} % statistics; "
-                         f"{r['counts_per_shift']:.3g} counts in the peak per {SHIFT_H:g} h shift", None)):
-                    with ui.element("div").classes("ps-readout"):
+                         f"{r['counts_per_shift']:.3g} counts in the peak per {SHIFT_H:g} h shift", None, False)):
+                    with ui.element("div").classes("ps-readout" + (" ps-readout-main" if main else "")):
                         with ui.row().classes("items-center no-wrap gap-1"):
                             ui.label(title).classes("text-xs ps-muted")
                             if key:
-                                ui.button(icon="help_outline", on_click=lambda k=key: open_explanation(
-                                    k, result=last)).props("dense flat round size=xs").tooltip(
+                                ui.button(icon="help_outline", color=None, on_click=lambda k=key: open_explanation(
+                                    k, result=last)).props("dense flat round size=xs").classes("ps-muted").tooltip(
                                     "How this number is obtained")
                         ui.label(value).classes("ps-readout-value")
                         ui.label(sub).classes("text-xs ps-muted")
-            with ui.row().classes("gap-1 mt-1 items-center"):
-                ui.label("The chain, step by step:").classes("text-xs ps-muted")
-                for key, label in (("area", "area"), ("yield", "yield"), ("mean_probability", "⟨P⟩"),
-                                   ("b_e2", "B(E2)"), ("weisskopf", "W.u."), ("beta2", "β₂"), ("q0", "Q₀"),
-                                   ("lifetime", "lifetime")):
-                    ui.button(label, on_click=lambda k=key: open_explanation(k, result=last)).props(
-                        "dense flat no-caps size=sm")
-            with ui.row().classes("items-start gap-4 mt-2"):
-                ui.table(columns=columns((("source", "Systematic"), ("value", "Relative (%)"))),
-                         rows=[{"source": k, "value": f"{100 * v:.2f}"} for k, v in r["budget"].items()]).props(
-                    "dense flat")
-                sh = r["shape"]
-                if sh:
-                    rows = [{"q": "β₂", "v": f"{sh['beta2']:.3f}"}, {"q": "B(E2↑) in W.u.", "v": f"{r['b_wu']:.3g}"},
-                            {"q": "Q₀ of a rigid rotor", "v": f"{sh['q0_efm2']:.3g} e fm²"},
-                            {"q": "Q_s(2⁺) of that rotor", "v": f"{sh['qs_2plus_efm2']:.3g} e fm²"}]
-                    if "e4_over_e2" in sh:
-                        rows.append({"q": "E(4⁺)/E(2⁺)", "v": f"{sh['e4_over_e2']:.3f}"})
-                    ui.table(columns=columns((("q", "Shape"), ("v", "Value"))), rows=rows).props("dense flat")
-            if r["shape"]:
-                ui.label(r["shape"]["note"]).classes("text-xs ps-muted")
+
+        def show_chain(r: dict, last=None) -> None:
+            """From the area to B(E2): the few numbers of the chain, large, with what is done between them; the
+            smaller facts under them; every step in words behind a fold."""
+            lines = r.get("lines") or []
+            own = next((ln for ln in lines if ln.get("nucleus", 0) == 0), None)
+            all_orders = any(step["step"] == "all orders" for step in r["steps"])
+            box = ui.element("div").classes("ps-panel")
+            with box:
+                with ui.element("div").classes("ps-panel-head"):
+                    ui.label("3 · From the area to B(E2)")
+                if own is not None:
+                    by = "÷ efficiency %.4g %% ÷ correlation %.3f" % (100 * own["efficiency"], own["correlation"])
+                    if own["gate_efficiency"] != 1.0:
+                        by += " ÷ gate %.3f" % own["gate_efficiency"]
+                    norm = ("normalised to the other nucleus's peak" if r["settings"].get("normalisation") == "target"
+                            else "normalised to the particles")
+                    chain = [("Area of the peak", f"{own['area']:,.0f} ± {own['area_unc']:,.0f}", "counts", by),
+                             ("γ rays emitted", sci(own["yield"]), "",
+                              "÷ %s particles in the same rings" % sci(own["yield"] / own["per_particle"])
+                              if own["per_particle"] else ""),
+                             ("γ rays per particle", f"{own['per_particle']:.4g}", "",
+                              norm + ("; coupled equations of the level scheme" if all_orders
+                                      else "; first-order proportionality")),
+                             ("B(E2↑)", f"{r['b_e2fm4']:.4g}", f"e²fm⁴ ± {100 * r['total_unc']:.1f} %", "")]
+                    with ui.element("div").classes("ps-chain"):
+                        for k, (title, value, unit, op) in enumerate(chain):
+                            last_one = k == len(chain) - 1
+                            with ui.element("div").classes("ps-chain-step" + (" ps-chain-last" if last_one else "")):
+                                ui.label(title).classes("text-xs ps-muted")
+                                with ui.row().classes("items-baseline gap-2"):
+                                    ui.label(value).classes("ps-chain-value")
+                                    if unit:
+                                        ui.label(unit).classes("text-xs ps-muted ps-num")
+                            if op:
+                                ui.label(op).classes("ps-chain-op")
+                    fit = own["fit"]
+                    rows = [("Fitted at", f"{1e3 * fit['centroid']:.1f} keV, FWHM {1e3 * 2.3548 * fit['sigma']:.1f} keV"),
+                            ("Randoms subtracted", f"{own['randoms']:,.1f} counts")]
+                    first = r.get("b_first_order")
+                    if all_orders and first and first == first:
+                        rows.append(("First order would read", f"{first:.4g} e²fm⁴"))
+                        rows.append(("All orders against first order", f"{100 * (r['b_e2fm4'] / first - 1):+.1f} %"))
+                    if own.get("blends"):
+                        rows.append(("Also inside the window", ", ".join(own["blends"])))
+                    with ui.element("div").classes("ps-facts"):
+                        ui.label("Behind the numbers").classes("text-xs ps-muted")
+                        facts(rows)
+                with ui.expansion("Every step in words").props("dense").classes("w-full"):
+                    for step in r["steps"]:
+                        with ui.column().classes("gap-0 mb-2"):
+                            ui.label(step["step"]).classes("text-xs ps-section")
+                            ui.label(step["text"]).classes("text-sm")
+                with ui.row().classes("gap-1 items-center").style("padding: 4px 10px 8px"):
+                    ui.label("How each is obtained:").classes("text-xs ps-muted")
+                    for key, label in (("area", "area"), ("yield", "yield"), ("mean_probability", "⟨P⟩"),
+                                       ("b_e2", "B(E2)"), ("weisskopf", "W.u."), ("beta2", "β₂"), ("q0", "Q₀"),
+                                       ("lifetime", "lifetime")):
+                        ui.button(label, color=None, on_click=lambda k=key: open_explanation(k, result=last)).props(
+                            "dense flat no-caps size=sm").classes("ps-accent")
+
+        def show_budget(r: dict) -> None:
+            """The systematic uncertainties as bars, the largest first, and the shape the B(E2) stands for."""
+            budget = sorted(r["budget"].items(), key=lambda kv: -kv[1])
+            top = max([v for _, v in budget] + [1e-12])
+            with panel("Systematics", f"{100 * r['systematic']:.1f} % in all"):
+                for name, value in budget:
+                    with ui.element("div").style("padding: 4px 0"):
+                        with ui.element("div").classes("ps-fact").style("padding: 0"):
+                            ui.label(name)
+                            ui.label(f"{100 * value:.2f} %")
+                        with ui.element("div").classes("ps-bar"):
+                            ui.element("div").style(f"width: {100 * value / top:.0f}%")
+            sh = r["shape"]
+            if sh:
+                rows = [("β₂", f"{sh['beta2']:.3f}"), ("B(E2↑) in W.u.", f"{r['b_wu']:.3g}"),
+                        ("Q₀ of a rigid rotor", f"{sh['q0_efm2']:.3g} e fm²"),
+                        ("Q_s(2⁺) of that rotor", f"{sh['qs_2plus_efm2']:.3g} e fm²")]
+                if "e4_over_e2" in sh:
+                    rows.append(("E(4⁺)/E(2⁺)", f"{sh['e4_over_e2']:.3f}"))
+                with panel("Shape"):
+                    facts(rows)
+                    ui.label(sh["note"]).classes("text-xs ps-muted")
+
+        def show(r: dict, last=None) -> None:
+            if not r["available"]:
+                ui.label(r["reason"]).classes("text-sm ps-warn")
+                return
+            b = r["b_e2fm4"]
+            if b != b:
+                show_search(r)
+                show_lines(r)
+                for step in r["steps"]:
+                    with ui.row().classes("items-start no-wrap gap-2"):
+                        ui.label(step["step"]).classes("text-xs ps-section w-40")
+                        ui.label(step["text"]).classes("text-sm")
+                ui.label("No result: " + "; ".join(r["notes"])).classes("text-sm ps-warn")
+                return
+            show_result(r, last)
+            with ui.row().classes("w-full items-start gap-3").style("flex-wrap: wrap"):
+                with ui.column().classes("gap-2").style("flex: 3 1 560px; min-width: 0"):
+                    show_search(r)
+                with ui.column().classes("gap-3 mt-2").style("flex: 1 1 320px; min-width: 280px"):
+                    show_chain(r, last)
+            if r.get("lines"):
+                show_lines(r, lambda: show_budget(r))
+            else:
+                show_budget(r)
             for note in r["notes"]:
                 ui.label(note).classes("text-xs ps-muted")
 
-        ui.button("Analyse", icon="functions", on_click=analyse).props("dense flat no-caps")
+        # The analysis kept with the current run is shown at once: the result that the step bar and the report give.
+        kept = P().run_analysis() if P().run is not None else None
+        if kept is not None:
+            from dataclasses import asdict
+
+            shown = dict(asdict(kept), available=True, total_unc=kept.total_unc)
+            with out_box:
+                ui.label(f"The analysis kept with run {P().run.number}"
+                         + ("" if kept.lines else " (made before the peaks were searched for: press Analyse to see "
+                                                  "them found and integrated)") + ":").classes("text-xs ps-muted")
+                show(shown, kept)
 
     def alignment_block() -> None:
         """A misplaced target: what the analysis sees, and how it finds the offset."""
@@ -2314,7 +2605,6 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     async def show_stage(key: str) -> None:
         """A tab was chosen: it is shown as it is if it was built for the current setup, and built now if not."""
         state["stage"] = key
-        place_drawer()
         if key in dirty:
             await build_stage(key)
 
@@ -2328,15 +2618,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         go_to(key)
         ui.run_javascript("window.scrollTo({top: 0})")
 
-    def place_drawer() -> None:
-        """The setup panel stands beside the Setup step only: the other steps have the whole width."""
-        drawer = state.get("drawer")
-        if drawer is None or scene_state.get("full"):
-            return
-        (drawer.show if state["stage"] == "setup" else drawer.hide)()
-
     def working(on: bool) -> None:
-        """The spinner in the header: on while anything asked for is being computed."""
+        """The spinner at the top of the rail: on while anything asked for is being computed."""
         state["working"] = max(0, state.get("working", 0) + (1 if on else -1))
         if state.get("busy") is not None:
             state["busy"].set_visibility(state["working"] > 0)
@@ -2348,6 +2631,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             if not scene_current():
                 geometry_panel.refresh()
             reading_box.refresh()
+            setup_strip.refresh()
+            checks_line.refresh()
             dirty.discard("setup")
             return
         render_stage(key)
@@ -2461,7 +2746,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         with ui.row().classes("w-full items-start no-wrap gap-2 ps-note rounded p-2"):
             ui.icon("lightbulb").classes("ps-accent mt-0.5")
             with ui.column().classes("gap-1"):
-                ui.label("How to read this").classes("text-xs font-semibold ps-accent uppercase")
+                ui.label("How to read this").classes("text-xs font-semibold ps-muted")
                 ui.label(" ".join(lines)).classes("text-sm")
 
     def explain(tab: str):
@@ -2486,7 +2771,14 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         if title:
             ui.label(title).classes("text-lg font-semibold mt-2")
         if tab == "geometry":  # the scene's full-screen mode hides what stands above and below it
-            with ui.element("div").classes("w-full") as above:
+            with ui.element("div").classes("w-full flex flex-col gap-2") as above:
+                with ui.row().classes("w-full items-stretch gap-2").style("flex-wrap: wrap"):
+                    with ui.element("div").style("flex: 1 1 420px; min-width: 0"):
+                        setup_strip()
+                    ui.button("Edit the setup", icon="tune", on_click=edit_setup).props(
+                        "unelevated no-caps").tooltip("The beam, the target and reaction, the detectors and the "
+                                                      "run conditions, in a window of their own")
+                checks_line()
                 reading_box(tab)
             panels[tab]()
             with ui.element("div").classes("w-full") as below:
@@ -2578,6 +2870,14 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     def extend_run(more: str) -> None:
         try:
             out = P().extend_run(more, background=True)
+        except (ValueError, _runs.RunInProgress) as err:
+            ui.notify(str(err), type="negative", multi_line=True)
+            return
+        after_start(out)
+
+    def retake_run() -> None:
+        try:
+            out = P().retake_run(background=True)
         except (ValueError, _runs.RunInProgress) as err:
             ui.notify(str(err), type="negative", multi_line=True)
             return
@@ -2713,17 +3013,21 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     def main_area() -> None:
         step_els.clear()
         footer_boxes.clear()
-        # The steps of the experiment, in order, each with its state and a line of status; the Physics reference
-        # is a stage without a step (the header's button and the ? beside a number show it).
-        with ui.tabs(value=state["stage"], on_change=lambda e: show_stage(e.value)).classes("w-full ps-steps").props(
-                "dense no-caps align=justify") as tabs:
-            for key, label in wb.STAGES:
-                tab = ui.tab(key, label=label)
-                if key not in dict(wb.STEPS):
-                    tab.classes("ps-step-hidden")
-                    continue
-                with tab:
-                    step_els[key] = (tab, ui.label("").classes("ps-step-status"))
+        # The steps of the experiment, in order down the rail on the left, each with its state and a line of
+        # status; the Physics reference is a stage without a step (the rail's button and the ? beside a number
+        # show it).
+        rail = state["steps_box"]
+        rail.clear()
+        with rail:
+            with ui.tabs(value=state["stage"], on_change=lambda e: show_stage(e.value)).classes("ps-steps").props(
+                    "vertical dense no-caps") as tabs:
+                for key, label in wb.STAGES:
+                    tab = ui.tab(key, label=label)
+                    if key not in dict(wb.STEPS):
+                        tab.classes("ps-step-hidden")
+                        continue
+                    with tab:
+                        step_els[key] = (tab, ui.label("").classes("ps-step-status"))
         state["tabs"] = tabs
         # The stages are built by refresh_results, once their numbers are computed on the worker: the one on
         # screen first, then the others. ``prebuild`` builds every stage now (the served-page test).
@@ -2739,7 +3043,6 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 render_stage(key)
         else:
             waiting(state["stage"])
-        place_drawer()
         sync_steps()
 
     def set_theme(name: str) -> None:
@@ -2775,10 +3078,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         mark=mark,
         duplicate_detector=duplicate_detector, remove_detector=remove_detector,
         add_gamma_detector=add_gamma_detector, duplicate_gamma_detector=duplicate_gamma_detector,
-        remove_gamma_detector=remove_gamma_detector, open_card=open_card, block=block, readouts=readouts, analysis_block=analysis_block, alignment_block=alignment_block,
+        remove_gamma_detector=remove_gamma_detector, open_card=open_card, block=block, readouts=readouts, panel=panel, analysis_block=analysis_block, alignment_block=alignment_block,
         multistep_block=multistep_block, open_explanation=open_explanation, efficiency_panel=efficiency_panel,
         plan_answers=plan_answers, run_view=run_panel, run_form=run_form, refresh_run_form=run_panel.refresh,
-        start_run=start_run, stop_run=stop_run, extend_run=extend_run, load_run=load_run, watch_events=watch_events,
+        start_run=start_run, stop_run=stop_run, extend_run=extend_run, retake_run=retake_run, load_run=load_run, watch_events=watch_events,
         columns=columns, data_view=data_view, refresh_data=refresh_data, data_options=data_options,
         keep=keep, in_theme=in_theme, when_opened=when_opened,
         gate_form=gate_form, fmt=_fmt, time_text=_time,
@@ -2788,12 +3091,13 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     @ui.refreshable
     def experiment_button() -> None:
-        """In the header: the experiment's name, with what is done to an experiment as its menu, and beside it
-        the beam and the target."""
+        """At the top of the rail: the experiment's name, with what is done to an experiment as its menu, and
+        under it the beam and the target."""
         p = P()
         d = p.draft
-        with ui.row().classes("items-center gap-2 no-wrap"):
-            with ui.button(p.name, icon="science").props("flat no-caps icon-right=expand_more"):
+        with ui.column().classes("w-full gap-1"):
+            with ui.button(p.name, color=None).props("flat no-caps icon-right=expand_more").classes(
+                    "w-full ps-experiment"):
                 with ui.menu():
                     ui.menu_item("Open an experiment…",
                                  on_click=lambda: (experiments_list.refresh(), experiments_dialog.open()))
@@ -2803,7 +3107,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     ui.menu_item("Export the setup…", on_click=export_setup)
             ui.label(f"{d['beam'].get('nuclide', '?')} at {d['beam'].get('energy', '?')} on "
                      f"{d['target'].get('material', '?')} {d['target'].get('thickness', '')}".strip()).classes(
-                "text-sm ps-muted gt-sm")
+                "text-xs ps-muted").style("padding-left: 6px")
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)
@@ -2811,16 +3115,24 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     ui.add_css(STEP_STYLE)
     ui.add_css(record_css(".ps-record"))
     dark = ui.dark_mode(state["theme"] == "dark")
-    with ui.header(elevated=False).classes("items-center ps-header py-1"):
-        ui.label("physim").classes("text-lg font-semibold")
-        experiment_button()
-        state["busy"] = ui.spinner("dots", size="sm").classes("ps-muted").tooltip("Computing the numbers")
-        state["busy"].set_visibility(False)
-        ui.space()
-        ui.button("Physics", icon="menu_book", on_click=lambda: go_to("physics")).props("flat no-caps").tooltip(
-            "The physics behind the numbers, and where each part is validated")
-        theme_toggle = ui.toggle({"light": "Light", "dark": "Dark"}, value=state["theme"],
-                                 on_change=lambda e: set_theme(e.value)).props("dense no-caps unelevated")
+    # The rail on the left: the experiment, the steps (built by main_area), and at its foot the Physics reference
+    # and the theme.
+    with ui.left_drawer(value=True).classes("ps-nav").props("width=232 bordered behavior=desktop") as nav:
+        with ui.column().classes("w-full gap-3 ps-nav-col"):
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.label("physim").classes("ps-wordmark")
+                state["busy"] = ui.spinner("dots", size="sm").classes("ps-muted").tooltip("Computing the numbers")
+                state["busy"].set_visibility(False)
+            experiment_button()
+            state["steps_box"] = ui.element("div").classes("w-full")
+            ui.space()
+            with ui.row().classes("w-full items-center justify-between gap-1 no-wrap"):
+                ui.button("Physics", icon="menu_book", color=None, on_click=lambda: go_to("physics")).props(
+                    "flat no-caps dense").classes("ps-muted").tooltip(
+                    "The physics behind the numbers, and where each part is validated")
+                theme_toggle = ui.toggle({"light": "Light", "dark": "Dark"}, value=state["theme"],
+                                         on_change=lambda e: set_theme(e.value)).props("dense no-caps unelevated")
+    state["nav"] = nav
     with ui.dialog() as upload_dialog, ui.card():
         ui.label("Import a setup file (.toml) as this experiment's setup")
         ui.upload(auto_upload=True, on_upload=import_file).props("accept=.toml max-files=1")
@@ -2834,10 +3146,24 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 export_controls()
             preview_box = ui.column().classes("items-center gap-2")
     export_dialog.on("show", render_preview)
-    with ui.left_drawer(value=True).classes("ps-rail").props("width=440 bordered behavior=desktop") as drawer:
-        pending_bar()
-        setup_panel()
-    state["drawer"] = drawer
+    # The setup is edited in a window of its own, at the right of the page so the scene stays in view beside it:
+    # "Edit the setup" on the Setup step opens it, "Done editing" applies what was changed and closes it.
+    with ui.dialog().props("position=right full-height") as setup_dialog:
+        with ui.card().classes("ps-setup-window"):
+            with ui.row().classes("w-full items-center no-wrap ps-panel-head"):
+                ui.label("Edit the setup")
+                ui.space()
+                ui.button(icon="close", color=None, on_click=setup_dialog.close).props(
+                    "flat round dense").classes("ps-muted").tooltip("Close. Changes not applied wait: the page "
+                                                                    "says so, with Apply and Discard.")
+            with ui.element("div").classes("ps-setup-body"):
+                pending_bar()
+                setup_panel()
+            with ui.row().classes("w-full items-center gap-2 ps-setup-foot"):
+                ui.button("Done editing", icon="check", on_click=done_editing).props("unelevated no-caps").tooltip(
+                    "Apply what was changed and close (Ctrl+Enter applies without closing)")
+                ui.button("Cancel", color=None, on_click=cancel_editing).props("flat no-caps").classes(
+                    "ps-muted").tooltip("Close without the changes made here")
     with ui.column().classes("w-full gap-2"):
         with ui.element("div").classes("w-full") as strip_box:
             pending_note()

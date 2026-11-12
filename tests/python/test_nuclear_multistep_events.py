@@ -11,7 +11,8 @@ from physim.nuclear import Experiment
 from physim.nuclear import dataviews as dv
 from physim.nuclear.coupled import CoupledChannels
 from physim.nuclear.events import generator_config, simulate
-from physim.nuclear.gamma import cascade_excitation, start_levels, unreached_levels
+from physim.nuclear.gamma import (_correlation_rows, cascade_excitation, correlation_table, start_levels,
+                                  state_transition, unreached_levels)
 from physim.nuclear.gamma_events import simulate_gammas
 from physim.nuclear.multistep import Multistep
 from physim.nuclear.orientation import Excitation
@@ -73,7 +74,8 @@ def test_all_orders_reach_the_levels_first_order_cannot_and_first_order_is_a_swi
     assert type(one) is Excitation and start_levels(one) == [1, 3]
     assert unreached_levels(first) == [2, 4, 5]
     g = simulate_gammas(first, 60_000, seed=4)
-    assert set(np.unique(g["initial"]).tolist()) == {1, 3}
+    # The nickel's own γ rays (the platinum, excited too, counts levels in its own scheme).
+    assert set(np.unique(g["initial"][g["nucleus"] == 0]).tolist()) == {1, 3}
     p = ni62()
     assert not p.set("reaction", "order", "second") and p.set("reaction", "order", "first")
 
@@ -189,6 +191,46 @@ def test_a_run_of_62ni_on_194pt_shows_the_4plus_and_0plus_lines_of_the_multistep
     for row in p.compare()["rows"]:
         if row["quantity"] in ("Rate", "Coincidences in the peak"):
             assert row["agree"], row
+
+
+def test_the_plans_angular_correlation_is_the_level_schemes():
+    """The γ rays the plan expects in each crystal with each particle detector follow the level scheme as the
+    events do, and the table does not depend on how finely the detectors are sampled."""
+    def factors(rows):
+        return {(r["particle_detector"], r["gamma_detector"]): r["detector_factor"] for r in rows}
+
+    exp = ni62().experiment
+    assert state_transition(exp) == (TWO, 0)
+    plan = factors(correlation_table(exp))
+    assert len(plan) == 12
+    # Many more points over the particle detectors and the crystal faces give the same.
+    fine = factors(correlation_table(exp, order=16, crystal_points=8))
+    assert all(plan[k] == pytest.approx(fine[k], rel=2e-3) for k in plan)
+    # The strip detectors are mirror images of each other.
+    for g in ("Ge90", "Ge45", "Ge135", "Ge0"):
+        assert plan[("DSSD-L", g)] == pytest.approx(plan[("DSSD-R", g)], rel=1e-3)
+    # The 2⁺ state alone, in first order, is more sharply aligned than the collision leaves it to all orders: it
+    # sends fewer γ rays to 90° (where the pattern has its minimum) and more to 45° and 135°. The plan took its
+    # factor from the state alone: 14% too few γ rays at 90° with the CD, 3% too many at 45° and 135°.
+    alone = factors(_correlation_rows(exp, None, 8, 6))
+    assert plan[("CD", "Ge90")] / alone[("CD", "Ge90")] == pytest.approx(1.144, abs=0.02)
+    assert plan[("DSSD-L", "Ge90")] / alone[("DSSD-L", "Ge90")] == pytest.approx(1.20, abs=0.03)
+    for g in ("Ge45", "Ge135"):
+        assert plan[("CD", g)] / alone[("CD", g)] == pytest.approx(0.970, abs=0.005)
+    # With the scheme in first order the two are the same (the second 2⁺ state feeds the first a little).
+    first = factors(correlation_table(ni62(order="first").experiment))
+    assert all(first[k] == pytest.approx(alone[k], rel=0.01) for k in plan)
+    # The rates use it: the coincidences of each particle detector are its excitations × the efficiency of the
+    # γ-ray detectors, each with its factor.
+    rates = Rates(exp)
+    e0 = exp.excitation.energy_mev
+    effs = {gd.name: gd.peak_efficiency(e0, exp) for gd in exp.gamma_detectors}
+    for det in ("CD", "DSSD-L", "DSSD-R"):
+        assert rates.gamma_efficiency(det)[0] == pytest.approx(sum(effs[g] * plan[(det, g)] for g in effs))
+    # Without γ rays that follow the correlation only the forward throw is left, for the scheme as for a state.
+    even = ni62(emission="isotropic").experiment
+    flat, flat_alone = factors(correlation_table(even)), factors(_correlation_rows(even, None, 8, 6))
+    assert all(abs(v - 1) < 0.08 and v == pytest.approx(flat_alone[k], rel=1e-3) for k, v in flat.items())
 
 
 def test_a_setup_without_a_scheme_is_as_before():

@@ -11,6 +11,31 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Fixed
+- The plan's particle–γ coincidences took the angular correlation of the `[reaction]` state alone, in first
+  order, while the simulated events follow the whole level scheme to all orders; and the table was sampled too
+  coarsely (4 points each way over a particle detector, 9 over a crystal face: single factors up to 9% off).
+  `gamma.correlation_table` now takes the state from the level scheme's solution when the events follow one, as
+  the table of the other nucleus does, and uses 8 points each way and 36 per face (within 0.1% of four times as
+  many; a quarter of a second, kept with the solution). On the ⁶²Ni on ¹⁹⁴Pt template the state alone sent 14%
+  too few γ rays to the crystal at 90° with the CD and 3% too many to those at 45° and 135°: the four crystals
+  together happened to cancel, the four clovers near 45° and 135° did not. The plan's nickel coincidences go
+  down by 1.7% (CD) and 2.7% (strip detectors) for the four-clover template, and by 0.4% (CD), 0.7% and 2.0%
+  (the two strip detectors, mirror images that now agree) for the single crystals. Runs against the plan: nickel
+  0.994 ± 0.004 with clovers over an hour of beam (0.973 ± 0.006 before) and 0.999 ± 0.006 with single
+  crystals. The plan still counts one γ ray of the state per excitation; in the scheme 0.5% of the excitations
+  decay past it. A setup without a level scheme changes only by the finer sampling (⁵⁸Ni template: 0.4% at most
+  in a particle detector's coincidences), and so does the platinum table (0.6% at most).
+- A run with clovers counted 3% fewer γ rays than the plan and the clover's efficiency say. The faces of a
+  clover's four crystals overlap in the model (discs 50 mm across, 45 mm apart), the plan counts each crystal's
+  whole face with the data sheet's efficiency, and the simulated events gave a γ ray through the overlap to one
+  crystal only. The events now keep the data sheet's efficiency: a crystal's efficiency belongs to the part of
+  its face that is its own, 96.9% of it (`gamma_events._own_shares`). The platinum peak of the four-clover
+  template is 0.995 ± 0.001 of the plan over an hour of beam (0.97 before). The plan, the response and
+  single crystals are unchanged.
+- Without a run, B(E2) read up to 23% high on the ⁶²Ni on ¹⁹⁴Pt template (963 to 1090 e²fm⁴ for 884). The
+  simulated sample is a few thousand weighted entries scaled to the counts of the beam time, and the peak fit took
+  those counts for Poisson counts: it trusted every bin a hundred times too much and ran to its widest peak
+  (83 keV for a peak 16 keV wide). The fit now takes the variance of the entries (`analysis.fit_peak(variance=)`).
 - The note on a large excitation probability said "first order is not enough … use GOSIA" for a setup whose
   rates and events already follow its level scheme to all orders. It now says that they do, and that the analysis
   still extracts B(E2) with first-order theory; without a level scheme it says to give one, or to use GOSIA.
@@ -88,6 +113,42 @@ workflow builds the wheels, tests them and publishes to PyPI.
   marked stale by a change, the one on screen too.
 
 ### Changed
+- The planner app has a new look and layout ("control room").
+  - The steps stand in a rail on the left, from the top down, with the experiment's name above them and
+    **Physics** and the theme at its foot. There is no header any more. The step on screen has its number on the
+    accent colour; a step with its result has a green tick in place of the number.
+  - The setup is edited in a window of its own. **Edit the setup** on the Setup step opens it at the right of
+    the page, with the scene in view beside it; **Done editing** applies what was changed and closes it, and
+    **Cancel** closes it without the changes. The page shows the rail and the step only.
+  - Above the scene a strip gives the setup in a few numbers: particles counted, how many with a γ ray, the
+    solid angle and the γ-ray efficiency. Errors and warnings of the setup are written out under it; notes
+    are a count that opens the window.
+  - The Analysis step leads with the result (B(E2), its uncertainty, the value put in, the beam time). The
+    spectra and the fitted peaks are panels on the left, with one table of all the peaks found. On the right, the
+    chain from the area to B(E2) is four large numbers with what is done between them; the smaller facts are a
+    quiet list below, and every step in words is behind a fold. The systematic uncertainties are bars, the largest
+    first.
+  - Each step uses the width of the window; what was stacked stands side by side where there is room. Setup: the
+    tables of angles are beside the scene, under the selection. Plan: the three tables are panels in one row. Run:
+    taking a run and the current run's counts on the left, the runs taken on the right. Data: the particle
+    spectra share one row and the γ-ray spectra the next, and the two 2D views are side by side. Analysis: the
+    comparison beside the choices, the systematics and the shape beside the fitted peaks, the alignment check
+    beside the all-orders solution.
+  - Colours and controls: a dark page of near-black panels with thin borders and corners of 6 px, numbers in the
+    monospace face, an amber accent with dark text on filled buttons, and a light theme of the same design. On
+    the dark page the curves of the figures are recoloured to read on it (`figures.DARK_COLORS`).
+- One particle per collision. A collision either excites the `[reaction]` nucleus or leaves it as it was, so
+  elastic scattering is the Rutherford cross section times 1 − P(θ), in the rates (`rates.reaction_at`) and in
+  the events. Elastic and excited particles together are Rutherford scattering; before, the excited particles
+  were counted on top of all of it.
+  - The particle rates of a Coulomb-excitation setup are lower where the excitation is strong: the CD of the
+    ⁶²Ni on ¹⁹⁴Pt template counts 2741 particles per second, not 3292. The excitations, the coincidences and the
+    beam time needed are unchanged.
+  - The analysis normalises to the particles in the same rings, as a detector counts them. A run taken before
+    (no `one_particle` in its summary) is still normalised to its elastic particles, as it was taken.
+- Only the γ rays that reach a crystal are drawn (`simulate_gammas(aimed=)`), by a thinning that leaves their
+  number and directions as the distribution has them: the γ rays of a setup and seed are other γ rays than
+  before, with the same statistics, in under half the time.
 - The app is laid out as a workflow. The seven equal tabs are a numbered step bar, **1 Setup → 2 Plan → 3 Run →
   4 Data → 5 Analysis → 6 Report**, that stays at the top of the window (`workbench.STEPS`, `workbench.steps`).
   - Each step has a line of status under its name (the detectors, the beam time needed, the runs, the current
@@ -254,6 +315,56 @@ workflow builds the wheels, tests them and publishes to PyPI.
   reachable from the network and triggers no firewall prompt; `--host 0.0.0.0` restores the old behaviour.
 
 ### Added
+- A template with clovers: `coulex_ni62_pt194_clovers` (in the app, *Coulomb excitation of the beam (62Ni on
+  194Pt) with silicon at backward angles and four clovers*). It is the ⁶²Ni on ¹⁹⁴Pt template with four germanium
+  clovers in place of its four single crystals: above and below the beam at 45° and 135°, 150 mm from the target,
+  with add-back and BGO shields. The γ-ray efficiency at 1173 keV is 1.71% against 0.83%, and the beam time for
+  the counts wanted 3.7 min against 9.8 min.
+- Both nuclei of the collision are in the simulated events. The `[reaction]` names one; with a level scheme of
+  the other in `[levels]` (¹⁹⁴Pt in the ⁶²Ni on ¹⁹⁴Pt template), that nucleus is excited too and its γ rays are
+  in the same events and runs.
+  - It is excited on the orbits of the scattered particles with the probability its coupled equations give
+    (`gamma.other_excitation`), independently of the first nucleus (a collision can excite both), and decays
+    by its scheme's cascade. The γ rays carry a `nucleus`
+    column (0 the `[reaction]` nucleus, 1 the other), which runs store. The γ rays of the `[reaction]` nucleus
+    are unchanged, one for one.
+  - Each nucleus's lines are sharp with its own Doppler correction and smeared by the other: ¹⁹⁴Pt at 328.5,
+    293.6, 482.8 and 622.0 keV with the recoil correction, ⁶²Ni at 1172.9 keV with the projectile correction.
+  - Its γ rays count in the singles, the random coincidences and the dead time (`gamma_events.other_lines`).
+  - The plan gives its first peak's coincidences per particle detector (`Rates.other_peak`, 59 per second in
+    the CD of the template against 5 for the nickel peak), and predicted against measured has a row for it.
+    The counts wanted and the beam time stay those of the `[reaction]` nucleus.
+  - The template's ¹⁹⁴Pt scheme holds the seven positive-parity levels up to the 6⁺ state at 1412 keV (it
+    stopped at the 4⁺ state at 811 keV, where the excitation piled up).
+  - Five minutes of beam on the template take 13 s (7 s without the platinum).
+  - Runs taken before hold the `[reaction]` nucleus only and are marked *one nucleus only* in the run list.
+    **Take again with both nuclei** (`Planner.retake_run`, `runs.retake`) makes a new run with the old run's
+    setup, seed and beam time; the old run stays, and an extension of it stays a run of one nucleus.
+- The analysis searches for the peaks (`analysis.find_peaks`, `analysis.identify`). Each Doppler-corrected
+  spectrum is searched over its whole range, every peak found is fitted, and one on a transition of the nucleus
+  that correction is right for is named. It is a step of the chain ("peak search") and `Result.search` holds
+  the spectra and the peaks.
+- The analysis integrates the peak of each nucleus and shows it (`Result.lines`): the fit, the area with the
+  random coincidences subtracted, the efficiency, the angular correlation, the γ rays emitted and the yield
+  per particle. For the other nucleus the yield is compared with what its level scheme gives to all
+  orders (0.993 measured over expected on a test run of the template).
+- B(E2) can be normalised to the other nucleus's measured peak (`Settings(normalisation="target")` without a
+  `reference`): the yield over the number of particles that peak stands for, so the beam current, the
+  target thickness, the dead time and the particle count cancel. `Settings.reference` keeps the analytic
+  reference for a setup without that scheme.
+- B(E2) to all orders (`Settings.order`, `Result.b_first_order`, the "all orders" step). When the events follow
+  a level scheme to all orders, the analysis solves the scheme's coupled equations for the B(E2) that gives the
+  measured γ rays per particle in the peak's window, with the feeding of the state and every line inside the
+  window counted (the 4⁺ → 2⁺ line of ⁶²Ni is 3% of it). First order read 4 to 8% high on the template. The
+  excitation saturates (the yield grows as B(E2) to the power 0.67 there), so the statistical uncertainty and
+  the budget are multiplied by 1.5. Simulated samples of the template give 859 and 910 e²fm⁴ for 884 put in
+  (two seeds), a five-minute test run 947 ± 3.5% (statistical).
+- The Analysis step shows the analysis in three parts: the peaks found in each corrected spectrum (figure and
+  table), each integrated peak with its fit and its numbers, and the chain to B(E2). The analysis kept with a
+  run is shown when the step opens. The report has the same figures and tables.
+- The correlation table for the other nucleus (`gamma.correlation_table(nucleus="other")`), the list of γ-ray
+  lines of both nuclei (`gamma.transition_lines`) and names of levels with their order (`gamma.level_names`:
+  2+₁, 2+₂).
 - The scene on the whole screen: a ⛶ button on the Setup tab's scene toolbar hides the setup panel, the status
   strip, the tabs and the panels beside and below the scene, and the scene fills the window (Esc or the button
   brings the page back). `SceneView(..., height=)` sets the scene's height.

@@ -83,6 +83,8 @@ GROUPS = ("Beam", "Target and reaction", "Particle detectors", "γ-ray detectors
 TEMPLATES = (
     ("coulex-beam-backward", "Coulomb excitation of the beam (62Ni on 194Pt) with silicon at backward angles",
      "coulex_ni62_pt194"),
+    ("coulex-beam-clovers", "Coulomb excitation of the beam (62Ni on 194Pt) with silicon at backward angles and "
+     "four clovers", "coulex_ni62_pt194_clovers"),
     ("coulex-cd-clovers", "Coulomb excitation of a target nucleus with a CD and clovers", "coulex_ni58"),
     ("elastic-dssd", "Elastic scattering with silicon pads", "alpha_on_gold"),
     ("elastic-array", "Elastic scattering with an array of strip detectors", "oxygen_on_lead_array"),

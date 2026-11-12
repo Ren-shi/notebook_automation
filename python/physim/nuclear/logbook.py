@@ -727,6 +727,172 @@ def analysis_png(result, dpi: int = 130) -> bytes:
     return buf.getvalue()
 
 
+def search_png(result, dpi: int = 130) -> bytes:
+    """The peak search of an analysis: the spectrum corrected for the projectile and the one corrected for the
+    recoil, each over its whole range, with the peaks found marked and those on a transition named. Empty for a
+    result without a search (one made before the peaks were searched for). Needs matplotlib."""
+    search = getattr(result, "search", None)
+    if not search:
+        return b""
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(6.6, 5.4), dpi=dpi)
+    for k, which in enumerate(("projectile", "recoil")):
+        sp = search[which]
+        ax = fig.add_subplot(2, 1, k + 1)
+        edges, counts = 1e3 * np.asarray(sp["edges"], dtype=float), np.asarray(sp["counts"], dtype=float)
+        m = len(counts) // 2 * 2
+        counts, edges = counts[:m].reshape(-1, 2).sum(axis=1), edges[:m + 1:2]
+        ax.stairs(np.where(counts > 0, counts, np.nan), edges, color="#0072B2", lw=0.7)
+        centres = (edges[:-1] + edges[1:]) / 2
+        top = max(float(np.nanmax(counts)) if len(counts) else 1.0, 1.0)
+        for pk in sp["peaks"]:
+            near = np.abs(centres - pk["energy_kev"]) <= max(pk["fwhm_kev"], edges[1] - edges[0])
+            y = max(float(np.nanmax(counts[near])) if near.any() else 1.0, 1.0)
+            ax.plot([pk["energy_kev"]], [1.7 * y], marker="v", ms=4, color="#D55E00" if pk["label"] else "#888888",
+                    ls="none")
+            if pk["label"]:
+                name = pk["label"].split(" ", 1)[1] if pk.get("nuclide") and " " in pk["label"] else pk["label"]
+                ax.annotate(name, (pk["energy_kev"], 2.4 * y), rotation=55, fontsize=6.5, ha="left", va="bottom")
+        ax.set_yscale("log")
+        ax.set_ylim(0.6, 60 * top)
+        ax.set_xlim(0, edges[-1])
+        ax.set_title(f"corrected for the {which}" + (f": the lines of {sp['nuclide']}" if sp.get("nuclide") else ""),
+                     fontsize=8, loc="left")
+        ax.set_ylabel("counts per bin", fontsize=8)
+        ax.tick_params(labelsize=7)
+        if k == 1:
+            ax.set_xlabel("corrected γ-ray energy (keV)", fontsize=8)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    return buf.getvalue()
+
+
+def line_png(line: dict, fit_half_width: float = 4.0, dpi: int = 130) -> bytes:
+    """One integrated peak (an entry of an analysis result's ``lines``), as :func:`analysis_png` draws the first:
+    the gated, corrected counts, the Gaussian on its line, the ±3σ band of the area and the random coincidences
+    expected. Needs matplotlib."""
+    from matplotlib.figure import Figure
+
+    from .response import FWHM_PER_SIGMA
+
+    sp, fit = line["spectrum"], line["fit"]
+    edges, counts = 1e3 * np.asarray(sp["edges"], dtype=float), np.asarray(sp["counts"], dtype=float)
+    rnd = np.asarray(sp.get("randoms") or [], dtype=float)
+    k = 4 if len(counts) >= 40 else 1
+    m = len(counts) // k * k
+    counts, edges = counts[:m].reshape(-1, k).sum(axis=1), edges[:m + 1:k]
+    rnd = rnd[:m].reshape(-1, k).sum(axis=1) if rnd.size >= m else rnd[:0]
+    fig = Figure(figsize=(6.4, 3.2), dpi=dpi)
+    ax = fig.add_subplot()
+    ax.stairs(counts, edges, color="#0072B2", lw=0.9, label=f"corrected for the {line['correction']}")
+    if rnd.size and rnd.any():
+        ax.stairs(rnd, edges, color="#888888", lw=0.8, ls="--", label="random coincidences expected")
+    sigma, centre = float(fit.get("sigma") or 0.0), float(fit.get("centroid") or 0.0)
+    if sigma > 0 and math.isfinite(centre) and (fit.get("height", 0) > 0 or fit.get("level", 0) > 0):
+        half = fit_half_width * FWHM_PER_SIGMA * sigma
+        x = np.linspace(centre - half, centre + half, 400)
+        curve = fit["height"] * np.exp(-0.5 * ((x - centre) / sigma) ** 2) + fit["level"] + fit["slope"] * (
+            x - fit["origin"])
+        ax.plot(1e3 * x, k * curve, color="#D55E00", lw=1.3, label="fit: Gaussian on a line")
+        ax.axvspan(1e3 * (centre - 3 * sigma), 1e3 * (centre + 3 * sigma), color="#D55E00", alpha=0.10, lw=0,
+                   label="±3σ: the area")
+    ax.axvline(line["energy_kev"], color="#444444", lw=0.7, ls=":", label=f"{line['energy_kev']:.1f} keV")
+    ax.set_xlabel("corrected γ-ray energy (keV)", fontsize=8)
+    ax.set_ylabel(f"counts per {edges[1] - edges[0]:.2g} keV in the run", fontsize=8)
+    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=7, frameon=False)
+    fig.tight_layout()
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    return buf.getvalue()
+
+
+def _search_html(result, e) -> str:
+    """The peaks the search found, as a figure and one table per corrected spectrum."""
+    search = getattr(result, "search", None)
+    if not search:
+        return ""
+    parts = ["<h4>The peaks found</h4><p>Each Doppler-corrected spectrum is searched over its whole range. A "
+             "nucleus's lines are sharp in the spectrum corrected for it and smeared in the other, so each nucleus "
+             "shows its peaks in its own spectrum. Every peak found is fitted; one that sits on a transition of "
+             "the level scheme is named.</p>"]
+    try:
+        png = search_png(result)
+    except Exception:  # noqa: BLE001 - the tables stand without the figure
+        png = b""
+    if png:
+        parts.append(_img(png, "The peaks found", "The spectrum corrected for the projectile (top) and for the "
+                          "recoil (bottom), random coincidences subtracted, with the peaks the search found: "
+                          "orange on a transition of the level scheme, grey on none."))
+    for which in ("projectile", "recoil"):
+        sp = search[which]
+        parts.append(f"<p><b>Corrected for the {which}</b>" + (f" (the lines of {e(sp['nuclide'])})"
+                                                                 if sp.get("nuclide") else "")
+                     + f", in coincidence with {e(sp['gate'])}: "
+                     + (f"{len(sp['peaks'])} peak{'s' if len(sp['peaks']) != 1 else ''} found.</p>"
+                        if sp["peaks"] else "no peak found.</p>"))
+        if sp["peaks"]:
+            parts.append("<table><thead><tr><th>Peak at (keV)</th><th>FWHM (keV)</th><th>Area (counts)</th>"
+                         "<th>Significance</th><th>Transition</th></tr></thead><tbody>" + "".join(
+                             f"<tr><td>{pk['energy_kev']:.1f}</td><td>{pk['fwhm_kev']:.1f}</td>"
+                             f"<td>{pk['area']:,.0f} ± {pk['area_unc']:,.0f}</td><td>{pk['significance']:.0f} σ</td>"
+                             "<td>" + (e(f"{pk['label']} ({pk['line_kev']:.1f} keV)") if pk["label"] else
+                                       (e(f"none (smeared {pk['near']})") if pk.get("near") else "none"))
+                             + "</td></tr>" for pk in sp["peaks"]) + "</tbody></table>")
+    return "".join(parts)
+
+
+def _lines_html(result, e) -> str:
+    """The integrated peaks side by side, from the counts to the yield, and the figure of each peak after the
+    first (which :func:`analysis_html` draws)."""
+    lines = getattr(result, "lines", None)
+    if not lines:
+        return ""
+    rows = [("Corrected for", lambda ln: f"the {ln['correction']}"),
+            ("In coincidence with", lambda ln: ln["gate"]),
+            ("Found by the search", lambda ln: (f"at {ln['found']['energy_kev']:.1f} keV, "
+                                                f"{ln['found']['significance']:.0f} σ") if ln.get("found")
+             else "no: fitted at the transition energy"),
+            ("Fitted centre and FWHM", lambda ln: f"{1e3 * ln['fit']['centroid']:.1f} keV, "
+                                                  f"{1e3 * 2.3548 * ln['fit']['sigma']:.1f} keV"),
+            ("Counts over the line, ±3σ", lambda ln: f"{ln['fit']['area']:,.1f} ± {ln['fit']['area_unc']:,.1f}"),
+            ("Random coincidences in the window", lambda ln: f"{ln['randoms']:,.1f}"),
+            ("Area", lambda ln: f"{ln['area']:,.1f} ± {ln['area_unc']:,.1f}"),
+            ("Full-energy efficiency", lambda ln: f"{100 * ln['efficiency']:.3f}%"),
+            ("Angular correlation", lambda ln: f"{ln['correlation']:.3f}"),
+            ("Share of the excitations the gate keeps", lambda ln: f"{100 * ln['gate_efficiency']:.1f}%"),
+            ("γ rays emitted (the yield)", lambda ln: f"{ln['yield']:,.4g}"),
+            ("Per particle in the same rings", lambda ln: f"{ln['per_particle']:.4g}"),
+            ("Expected from the level scheme, all orders", lambda ln: "" if ln.get("expected_per_particle") is None
+             else f"{ln['expected_per_particle']:.4g} (measured / expected {ln['ratio']:.3f})"),
+            ("Also inside the window", lambda ln: ", ".join(ln.get("blends") or []))]
+    parts = ["<h4>The peaks integrated</h4><p>The peak of each nucleus in its own corrected spectrum: a Gaussian "
+             "on a straight line is fitted, and the area is the counts within ±3σ of its centre over that line, "
+             "less the random coincidences expected there. The area over the efficiency and the angular "
+             "correlation is the number of γ rays emitted.</p>"]
+    for ln in lines[1:]:
+        try:
+            png = line_png(ln, float(result.settings.get("fit_half_width", 4.0)))
+        except Exception:  # noqa: BLE001
+            png = b""
+        if png:
+            parts.append(_img(png, f"The fitted peak of {ln['nuclide']}", (
+                f"The {ln['label']} peak at {ln['energy_kev']:.1f} keV: in coincidence with {ln['gate']}, "
+                f"Doppler-corrected for the {ln['correction']}, summed over the γ-ray detectors. Area "
+                f"{ln['area']:.1f} ± {ln['area_unc']:.1f} counts after {ln['randoms']:.1f} random coincidences "
+                "are subtracted.")))
+    parts.append("<table><thead><tr><th>Quantity</th>" + "".join(f"<th>{e(ln['label'])}, {ln['energy_kev']:.1f} keV"
+                                                                  "</th>" for ln in lines) + "</tr></thead><tbody>")
+    for name, value in rows:
+        cells = [value(ln) for ln in lines]
+        if any(cells):
+            parts.append(f"<tr><td>{e(name)}</td>" + "".join(f"<td>{e(c)}</td>" for c in cells) + "</tr>")
+    parts.append("</tbody></table>")
+    return "".join(parts)
+
+
 def analysis_html(result, heading: str = "") -> str:
     """One analysis in full for the reports: the result, the fitted spectrum, the chain step by step, the
     uncertainty budget, the shape, and the notes."""
@@ -743,6 +909,7 @@ def analysis_html(result, heading: str = "") -> str:
     else:
         parts.append("<p>B(E2↑) could not be determined: the analysis found no peak "
                      f"(the value put in was {result.truth_e2fm4:.4g} e²fm⁴).</p>")
+    parts.append(_search_html(result, e))
     try:
         png = analysis_png(result)
     except ImportError:
@@ -757,6 +924,7 @@ def analysis_html(result, heading: str = "") -> str:
             f"{result.spectrum.get('correction', 'emitter')}, summed over the γ-ray detectors. Peak at "
             f"{1e3 * fit.centroid:.1f} keV, FWHM {fit.fwhm_kev:.1f} keV, area {fit.area:.1f} ± {fit.area_unc:.1f} "
             f"counts over the line, of which {fit.randoms:.1f} random coincidences are subtracted.")))
+    parts.append(_lines_html(result, e))
     parts.append("<h4>The chain, step by step</h4><ol>"
                  + "".join(f"<li><b>{e(st['step'])}</b>: {e(st['text'])}</li>" for st in result.steps) + "</ol>")
     if result.b_e2fm4 == result.b_e2fm4:
@@ -1161,6 +1329,14 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
                                      f"<td>{100 * d['dead_time_fraction']:.2g}%</td><td>{_g(d['coincidence_per_s'])}</td>"
                                      f"<td>{len(d['safe_rings'])} of {d['rings']}</td></tr>" for d in pl["detectors"])
                            + "</tbody></table>")
+        if pl.get("other_peak"):
+            op = pl["other_peak"]
+            sec["plan"].append(
+                f"<p>{e(op['nuclide'])} is excited too (its level scheme is in the setup). Its {e(op['label'])} peak "
+                f"at {op['energy_kev']:.1f} keV, in coincidence: "
+                + "; ".join(f"{e(d['detector'])} {_g(d['other_coincidence_per_s'])} /s" for d in pl["detectors"]
+                            if d.get("other_coincidence_per_s") is not None)
+                + ". The counts wanted and the beam time are for the nucleus of the reaction.</p>")
     if pp:
         sec["plan"] += ["<h3>Detectors: coverage, cross sections, rates and beam time</h3>", pp["detectors"],
                         "<h3>Kinematics</h3>", pp["kinematics"], "<h3>Expected peaks</h3>", pp["peaks"],
@@ -1363,7 +1539,7 @@ def experiment_zip(planner, result=None, folder: bool = True, pdf: bool = True, 
     return buf.getvalue()
 
 
-__all__ = ["GAMMA_BIN_KEV", "SECTIONS", "alignment_html", "analysis_html", "analysis_png", "doppler_html",
+__all__ = ["GAMMA_BIN_KEV", "SECTIONS", "alignment_html", "analysis_html", "analysis_png", "line_png", "search_png", "doppler_html",
            "experiment_html", "experiment_pdf", "experiment_zip", "gamma_lines", "html_to_pdf",
            "level_scheme_png", "level_schemes", "level_schemes_html", "multistep_html", "pdf_browser",
            "run_analyses", "run_explanations", "run_gamma_png", "run_gates_png", "run_rings_png",

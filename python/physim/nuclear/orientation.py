@@ -459,11 +459,15 @@ class Excitation:
     def coefficient_table(self, initial: int, final: int, step: float = 2.0) -> tuple:
         """(grid of CM angles, {(k, q): a_kq on the grid}, γ yield on the grid) for a transition: the
         distribution coefficients of :meth:`Populated.coefficients` at every grid angle, for interpolating over
-        many events at once."""
-        grid, states = self.table(step)
-        keys = sorted({key for s in states for key in s.coefficients(initial, final)})
-        table = {key: np.array([s.coefficients(initial, final).get(key, 0.0) for s in states]) for key in keys}
-        return grid, table, np.array([s.gamma_yield(initial, final) for s in states])
+        many events at once. Kept once worked out: every chunk of a run asks for the same tables."""
+        kept = self.__dict__.setdefault("_coefficient_tables", {})
+        if (initial, final, step) not in kept:
+            grid, states = self.table(step)
+            each = [s.coefficients(initial, final) for s in states]
+            keys = sorted({key for c in each for key in c})
+            table = {key: np.array([c.get(key, 0.0) for c in each]) for key in keys}
+            kept[(initial, final, step)] = (grid, table, np.array([s.gamma_yield(initial, final) for s in states]))
+        return kept[(initial, final, step)]
 
     def probability(self, level: int, theta_cm: float) -> float:
         """Probability of exciting ``level`` directly at CM angle ``theta_cm``: the amplitudes squared, summed

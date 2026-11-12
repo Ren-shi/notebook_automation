@@ -394,7 +394,7 @@ def test_unweighted_runs_with_several_ranges():
     runner = BeamRunner(exp, seed=5)
     assert len(runner.config["channels"]) > len(runner.channels) == 2
     cols, seconds = runner.next_chunk(0.02)
-    assert seconds > 0 and len(cols["event"]) > 100
+    assert seconds > 0 and len(cols["event"]) > 50  # fewer than before: elastic scattering is what is not excited
     assert set(np.unique(cols["channel"])) == {0, 1}
     # An extension carries on with the same shares; a state without the ranges (an earlier version's run, sampled
     # over other angles) makes the pilot run again.

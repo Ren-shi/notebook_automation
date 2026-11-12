@@ -32,8 +32,13 @@ COLORS = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#7F
           "#DDCC77"]
 
 #: Figure colours of each page theme.
-THEMES = {"light": {"paper": "#FFFFFF", "ink": "#16191C", "grid": "#E4E7E4"},
-          "dark": {"paper": "#171B1E", "ink": "#E9EBE9", "grid": "#2A3035"}}
+THEMES = {"light": {"paper": "#FFFFFF", "ink": "#12171C", "grid": "#E7EBEE"},
+          "dark": {"paper": "#12171C", "ink": "#E6EAED", "grid": "#1D242B"}}
+
+#: The curve colours on the dark page, in the order of :data:`COLORS`: the same roles, light enough to read on
+#: the dark panels (the first is the data's cyan, the second the accent's amber).
+DARK_COLORS = ["#5CC8F0", "#F2A33A", "#5BD08A", "#E28BC0", "#F0D060", "#8FA8FF", "#A7B1BA", "#D77A9B", "#6FD6C4",
+               "#E8DC9A"]
 
 FONT = '"IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif'
 MONO = '"IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace'
@@ -41,34 +46,92 @@ MONO = '"IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace'
 #: The page's style sheet. Colours are variables, set once for the light page and once for the dark one
 #: (``body--dark`` is Quasar's dark-mode class). No fonts or scripts are fetched: the app works offline.
 STYLE = """
-body { --ps-ground: #F1F2F0; --ps-surface: #FFFFFF; --ps-sunk: #F7F8F6; --ps-ink: #16191C; --ps-muted: #555C63;
-  --ps-line: #D5D9D6; --ps-accent: #0B5FA5; --ps-ok: #1E6B45; --ps-warn: #8A4B00; --ps-bad: #B3261E;
-  --ps-warnbox: #FBF3E4; --ps-note: #EAF2FA; --q-primary: #0B5FA5 !important;
-  background: var(--ps-ground) !important; color: var(--ps-ink); font-family: %(font)s; }
-body.body--dark { --ps-ground: #0F1214; --ps-surface: #171B1E; --ps-sunk: #1D2226; --ps-ink: #E9EBE9;
-  --ps-muted: #A0A8AE; --ps-line: #2C3338; --ps-accent: #7CBDF2; --ps-ok: #7FD0A4; --ps-warn: #F0B45A;
-  --ps-bad: #FF8A80; --ps-warnbox: #2A2316; --ps-note: #16222E; --q-primary: #3A8AD0 !important; }
+body { --ps-ground: #EEF1F3; --ps-surface: #FFFFFF; --ps-sunk: #F6F8F9; --ps-raise: #E7EBEE; --ps-ink: #12171C;
+  --ps-muted: #56616C; --ps-line: #D5DBE0; --ps-hair: #E7EBEE; --ps-accent: #8F5400; --ps-fill: #F2A33A;
+  --ps-on-fill: #1A1204; --ps-data: #0072B2; --ps-ok: #17663A; --ps-warn: #B5470B; --ps-bad: #B3261E;
+  --ps-warnbox: #FBEFE6; --ps-note: #F6F8F9; --q-primary: #8F5400 !important;
+  --ps-mono: %(mono)s;
+  background: var(--ps-ground) !important; color: var(--ps-ink); font-family: %(font)s; font-size: 14px; }
+body.body--dark { --ps-ground: #0B0E11; --ps-surface: #12171C; --ps-sunk: #0F1317; --ps-raise: #1D242B;
+  --ps-ink: #E6EAED; --ps-muted: #9AA6B1; --ps-line: #242C34; --ps-hair: #1A2026; --ps-accent: #F2A33A;
+  --ps-fill: #F2A33A; --ps-on-fill: #1A1204; --ps-data: #5CC8F0; --ps-ok: #5BD08A; --ps-warn: #FF8F5A;
+  --ps-bad: #FF7B7B; --ps-warnbox: #2A1A12; --ps-note: #171D23; --q-primary: #F2A33A !important; }
 .ps-header { background: var(--ps-surface) !important; color: var(--ps-ink) !important;
   border-bottom: 1px solid var(--ps-line); }
-.ps-rail { background: var(--ps-sunk) !important; }
+.ps-rail, .ps-nav { background: var(--ps-sunk) !important; color: var(--ps-ink); }
+.q-drawer { background: var(--ps-sunk) !important; }
+.q-drawer--bordered { border-color: var(--ps-line) !important; }
 .ps-card, .ps-plate, .q-table__card { background: var(--ps-surface) !important; border: 1px solid var(--ps-line);
   box-shadow: none !important; }
-.ps-card { border-radius: 8px; }
-.ps-plate { border-radius: 10px; padding: 6px 12px 10px; }
+.ps-card, .q-table__card { border-radius: 6px; }
+.ps-plate { border-radius: 6px; padding: 6px 12px 10px; }
 .ps-sunk { background: var(--ps-sunk); }
-.ps-muted { color: var(--ps-muted); } .ps-accent { color: var(--ps-accent); } .ps-ok { color: var(--ps-ok); }
+.ps-muted { color: var(--ps-muted) !important; } .ps-accent { color: var(--ps-data) !important; }
+.ps-ok { color: var(--ps-ok); }
 .ps-warn { color: var(--ps-warn); } .ps-bad { color: var(--ps-bad); }
 .ps-warnbox { background: var(--ps-warnbox) !important; border: 1px solid var(--ps-line);
   box-shadow: none !important; }
-.ps-note { background: var(--ps-note); }
-.ps-section { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--ps-muted); }
+.ps-note { background: var(--ps-note); border: 1px solid var(--ps-line); border-radius: 6px; }
+.ps-section { font-size: 13px; font-weight: 600; color: var(--ps-muted); }
+/* Controls: square corners of 6 px, filled buttons in the accent with dark text, quiet menus and dialogs. */
+.q-btn { border-radius: 6px; font-weight: 500; text-transform: none; }
+.q-btn--round, .q-btn--fab { border-radius: 50%%; }
+/* (Quasar's own !important rules live in a cascade layer, where they beat any !important from outside it: these two
+   are put in that layer, and win there by their selectors.) */
+@layer quasar_importants {
+  body .bg-primary { background: var(--ps-fill) !important; }
+  body .q-btn.bg-primary, body .q-btn.bg-primary .q-icon, body .bg-primary.text-white {
+    color: var(--ps-on-fill) !important; }
+}
+.q-btn--outline { color: var(--ps-ink) !important; }
+.q-btn--outline::before { border-color: var(--ps-line) !important; }
+.q-btn-group { border-radius: 6px; box-shadow: none; border: 1px solid var(--ps-line); }
+.q-btn-group > .q-btn-item { border-radius: 5px !important; }
+.q-field--outlined .q-field__control { border-radius: 6px; }
+.q-field--outlined .q-field__control:before { border-color: var(--ps-line); }
+.q-menu, .q-dialog .q-card { background: var(--ps-surface); color: var(--ps-ink); border: 1px solid var(--ps-line);
+  border-radius: 6px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35) !important; }
+.q-expansion-item { border-radius: 6px; }
+.q-separator { background: var(--ps-line); }
 .q-table th { color: var(--ps-muted); font-weight: 500; }
 .q-table td, .ps-num { font-family: %(mono)s; font-variant-numeric: tabular-nums; }
-.ps-readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; width: 100%%;
-  background: var(--ps-line); border: 1px solid var(--ps-line); border-radius: 10px; overflow: hidden; }
+.q-table tbody td { border-color: var(--ps-hair); }
+.q-table thead th { border-color: var(--ps-line); }
+/* The window the setup is edited in: the whole height at the right of the page, its cards scrolling between
+   its head and its foot. */
+.ps-setup-window { width: min(560px, 96vw); max-width: 96vw !important; height: 100vh;
+  max-height: 100vh !important; padding: 0; gap: 0; display: flex; flex-direction: column; flex-wrap: nowrap;
+  border-radius: 0 !important; background: var(--ps-sunk) !important; border-width: 0 0 0 1px !important; }
+.q-dialog__inner:has(> .ps-setup-window) { padding: 0 !important; }
+.ps-setup-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 10px 14px; width: 100%%; }
+.ps-setup-foot { border-top: 1px solid var(--ps-line); padding: 10px 14px; }
+/* A panel: a bordered surface with a head line (its name and what it shows) over its content. */
+.ps-panel { background: var(--ps-surface); border: 1px solid var(--ps-line); border-radius: 6px; width: 100%%;
+  min-width: 0; }
+.ps-panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 9px 14px;
+  border-bottom: 1px solid var(--ps-line); font-weight: 600; }
+.ps-panel-head .ps-muted { font-weight: 400; }
+.ps-panel-body { padding: 10px 14px 12px; }
+.ps-readouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1px; width: 100%%;
+  background: var(--ps-line); border: 1px solid var(--ps-line); border-radius: 6px; overflow: hidden; }
 .ps-readout { background: var(--ps-surface); padding: 12px 16px; }
-.ps-readout-value { font-family: %(mono)s; font-size: 22px; font-weight: 500; line-height: 1.3; }
+.ps-readout-value { font-family: %(mono)s; font-size: 24px; font-weight: 500; line-height: 1.3; }
+.ps-readout-main .ps-readout-value { font-size: 40px; line-height: 1.15; color: var(--ps-accent); }
+.ps-readout-main { grid-column: span 2; }
+/* The chain of an analysis: a few large numbers, what is done between them, the last one in the accent. */
+.ps-chain { display: flex; flex-direction: column; gap: 8px; padding: 14px; }
+.ps-chain-step { border: 1px solid var(--ps-line); border-radius: 6px; padding: 10px 14px; }
+.ps-chain-step .ps-chain-value { font-family: %(mono)s; font-size: 20px; font-weight: 500; }
+.ps-chain-step.ps-chain-last { background: var(--ps-raise); border-color: var(--ps-accent); }
+.ps-chain-step.ps-chain-last .ps-chain-value { font-size: 30px; color: var(--ps-accent); }
+.ps-chain-op { font-family: %(mono)s; font-size: 12px; color: var(--ps-muted); padding: 0 14px; }
+.ps-chain-op::before { content: "\\2193"; margin-right: 8px; }
+.ps-facts { padding: 6px 14px 10px; border-top: 1px solid var(--ps-line); }
+.ps-fact { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 13px; }
+.ps-fact > :first-child { color: var(--ps-muted); }
+.ps-fact > :last-child { font-family: %(mono)s; text-align: right; }
+.ps-bar { height: 4px; margin-top: 6px; background: var(--ps-raise); }
+.ps-bar > div { height: 4px; background: var(--ps-fill); }
 .ps-paper { background: #FFFFFF; padding: 12px; max-width: 100%%;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), 0 8px 28px rgba(0, 0, 0, 0.18); }
 .ps-paper img { display: block; max-width: 100%%; }
@@ -146,7 +209,39 @@ def themed(fig, theme: str = "light"):
     fig.update_yaxes(**axis)
     wall = dict(backgroundcolor=t["paper"], gridcolor=t["grid"], color=t["ink"], showbackground=True)
     fig.update_scenes(xaxis=wall, yaxis=wall, zaxis=wall)
+    if theme == "dark":
+        _recolour(fig, dict(zip(COLORS, DARK_COLORS)))
+        fig.update_layout(colorway=DARK_COLORS)
     return fig
+
+
+def _recolour(fig, to: dict) -> None:
+    """Replace the curve colours of a figure by their counterparts in ``to`` ({colour: colour}): the lines, markers
+    and fills of its traces, and its shapes and annotations. A colour that is not a key stays."""
+    def swap(obj, *names) -> None:
+        for name in names:
+            try:
+                value = getattr(obj, name, None)
+                if isinstance(value, str) and value.upper() in to:
+                    setattr(obj, name, to[value.upper()])
+            except Exception:  # noqa: BLE001 -- a trace type without this property
+                pass
+
+    for trace in fig.data:
+        swap(trace, "fillcolor")
+        for part in ("line", "marker", "textfont", "error_y", "error_x"):
+            child = getattr(trace, part, None)
+            if child is not None:
+                swap(child, "color")
+                inner = getattr(child, "line", None)
+                if inner is not None:
+                    swap(inner, "color")
+    for shape in fig.layout.shapes or ():
+        swap(shape, "fillcolor")
+        swap(shape.line, "color")
+    for note in fig.layout.annotations or ():
+        swap(note, "arrowcolor", "bordercolor")
+        swap(note.font, "color")
 
 
 def figure_geometry(planner: Planner):
@@ -472,6 +567,92 @@ def figure_histogram(spectra: list, height: int = 200, log: bool = False, title:
     view = next((s["view"] for s in spectra if s.get("view")), None)
     if view is not None:
         fig.update_xaxes(range=[float(view[0]), float(view[1])])
+    return fig
+
+
+def figure_search(spectrum: dict, correction: str, height: int = 300):
+    """A whole Doppler-corrected spectrum with the peaks the search found (``spectrum`` is one entry of an
+    analysis result's ``search``): a named peak carries its transition, one that is not named a grey mark."""
+    go = _go()
+    fig = go.Figure()
+    edges = 1e3 * np.asarray(spectrum["edges"], dtype=float)
+    counts = np.asarray(spectrum["counts"], dtype=float)
+    # Two bins to one: the search works on bins a quarter of the resolution wide, finer than the eye needs.
+    m = len(counts) // 2 * 2
+    counts, edges = counts[:m].reshape(-1, 2).sum(axis=1), edges[:m + 1:2]
+    y = np.repeat(counts, 2)
+    fig.add_trace(go.Scatter(x=np.repeat(edges, 2)[1:-1], y=np.where(y > 0, y, np.nan), mode="lines",
+                             name=f"corrected for the {correction}", line=dict(color=COLORS[0], width=1)))
+    centres = (edges[:-1] + edges[1:]) / 2
+    for named, color, label in ((True, COLORS[1], "peak found, on a transition"),
+                                (False, "#888888", "peak found, not on a transition")):
+        peaks = [pk for pk in spectrum["peaks"] if bool(pk["label"]) == named]
+        if not peaks:
+            continue
+        tops = []
+        for pk in peaks:
+            near = np.abs(centres - pk["energy_kev"]) <= max(pk["fwhm_kev"], edges[1] - edges[0])
+            tops.append(float(np.nanmax(counts[near])) if near.any() else 1.0)
+        fig.add_trace(go.Scatter(
+            x=[pk["energy_kev"] for pk in peaks], y=[max(t, 1.0) * 1.6 for t in tops], mode="markers",
+            name=label, marker=dict(symbol="triangle-down", size=9, color=color),
+            hovertext=[(pk["label"] + ": " if pk["label"] else "") + f"{pk['energy_kev']:.1f} keV, FWHM "
+                       f"{pk['fwhm_kev']:.1f} keV, area {pk['area']:.0f} ± {pk['area_unc']:.0f}"
+                       + (f"; near {pk['near']}" if pk.get("near") else "") for pk in peaks], hoverinfo="text"))
+        for pk, t in zip(peaks, tops):
+            if pk["label"]:  # slanted, so the names of neighbouring lines do not run into each other
+                name = pk["label"].split(" ", 1)[1] if pk.get("nuclide") and " " in pk["label"] else pk["label"]
+                fig.add_annotation(x=pk["energy_kev"], y=math.log10(max(t, 1.0) * 2.2), text=name, showarrow=False,
+                                   textangle=-50, xanchor="left", yanchor="bottom", font=dict(size=10))
+    top = float(np.nanmax(counts)) if len(counts) and np.nanmax(counts) > 0 else 1.0
+    fig.update_layout(height=height, margin=dict(l=55, r=10, t=10, b=40),
+                      xaxis=dict(title=f"γ-ray energy corrected for the {correction} (keV)"),
+                      yaxis=dict(title="counts / bin", type="log", range=[-0.3, math.log10(top) + 1.7]),
+                      legend=dict(orientation="h", y=-0.28, x=0))
+    return fig
+
+
+def figure_peak(line: dict, fit_half_width: float = 4.0, height: int = 300):
+    """One integrated peak (an entry of an analysis result's ``lines``): the gated, corrected spectrum round the
+    transition, the random coincidences expected, the fitted Gaussian on its line, and the ±3σ window whose
+    counts over the line are the area."""
+    from ..response import FWHM_PER_SIGMA
+
+    go = _go()
+    fig = go.Figure()
+    sp, fit = line["spectrum"], line["fit"]
+    edges = 1e3 * np.asarray(sp["edges"], dtype=float)
+    counts = np.asarray(sp["counts"], dtype=float)
+    rnd = np.asarray(sp.get("randoms") or [], dtype=float)
+    k = 4 if len(counts) >= 40 else 1   # the fit's bins are a quarter of the resolution: four to one for the eye
+    m = len(counts) // k * k
+    counts, edges = counts[:m].reshape(-1, k).sum(axis=1), edges[:m + 1:k]
+    x = np.repeat(edges, 2)[1:-1]
+    fig.add_trace(go.Scatter(x=x, y=np.repeat(counts, 2), mode="lines", name=f"corrected for the {line['correction']}",
+                             line=dict(color=COLORS[0], width=1.2)))
+    if rnd.size >= m and rnd.any():
+        fig.add_trace(go.Scatter(x=x, y=np.repeat(rnd[:m].reshape(-1, k).sum(axis=1), 2), mode="lines",
+                                 name="random coincidences expected", line=dict(color="#888888", width=1, dash="dash")))
+    sigma, centre = float(fit.get("sigma") or 0.0), float(fit.get("centroid") or 0.0)
+    if sigma > 0 and (fit.get("height", 0) > 0 or fit.get("level", 0) > 0):
+        half = fit_half_width * FWHM_PER_SIGMA * sigma
+        e = np.linspace(centre - half, centre + half, 300)
+        curve = (fit["height"] * np.exp(-0.5 * ((e - centre) / sigma) ** 2) + fit["level"]
+                 + fit["slope"] * (e - fit["origin"]))
+        base = fit["level"] + fit["slope"] * (e - fit["origin"])
+        fig.add_trace(go.Scatter(x=1e3 * e, y=k * base, mode="lines", name="the line under the peak",
+                                 line=dict(color=COLORS[1], width=1, dash="dot")))
+        fig.add_trace(go.Scatter(x=1e3 * e, y=k * curve, mode="lines", name="fit: Gaussian on a line",
+                                 line=dict(color=COLORS[1], width=1.6)))
+        fig.add_vrect(x0=1e3 * (centre - 3 * sigma), x1=1e3 * (centre + 3 * sigma), fillcolor=COLORS[1], opacity=0.10,
+                      line_width=0, annotation_text=f"area {line['area']:.0f} ± {line['area_unc']:.0f}",
+                      annotation_position="top left", annotation_font_size=11)
+    fig.add_vline(x=line["energy_kev"], line=dict(color="#888", width=1, dash="dot"))
+    # The legend stands above the plot: below it, it ran into the axis title when it wrapped to several lines.
+    fig.update_layout(height=height, margin=dict(l=55, r=10, t=10, b=40),
+                      xaxis=dict(title=f"γ-ray energy corrected for the {line['correction']} (keV)"),
+                      yaxis=dict(title=f"counts / {edges[1] - edges[0]:.2g} keV"),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=11)))
     return fig
 
 

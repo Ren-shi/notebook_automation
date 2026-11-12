@@ -204,12 +204,59 @@ def excitation_probability(experiment, channel: Channel, layers: Optional[list] 
     return kept
 
 
+class _ElasticReaction:
+    """Elastic scattering beside Coulomb excitation, shaped like :class:`~physim.nuclear.rutherford.Rutherford`:
+    a collision either excites the nucleus or leaves it as it was, so elastic scattering is the Rutherford cross
+    section times 1 − P(θ), P being the excitation probability of the channel that excites it (``coulex``, at the
+    middle of the layer). Elastic and excited together are Rutherford scattering: one particle per collision."""
+
+    def __init__(self, beam: str, channel: Channel, energy: float, coulex):
+        self._ruth = Rutherford(beam, channel.nuclide.name, energy)
+        self.kinematics = self._ruth.kinematics
+        self._coulex = coulex
+
+    def cross_section_cm(self, theta_cm):
+        p = np.clip(np.asarray(self._coulex.probability(theta_cm), dtype=float), 0.0, 1.0)
+        return np.asarray(self._ruth.cross_section_cm(theta_cm)) * (1.0 - p)
+
+
+def excited_partner(experiment, channel: Channel, layers: Optional[list] = None) -> Optional[Channel]:
+    """The Coulomb-excitation channel on the same nuclide in the same layer as an elastic ``channel``: the one
+    whose excitation takes its collisions away from elastic scattering. None when the reaction excites nothing
+    there."""
+    if channel.excitation is not None or getattr(experiment, "excitation", None) is None:
+        return None
+    for ch in channels(layers or stack(experiment), experiment):
+        if ch.excitation is not None and ch.layer == channel.layer and ch.nuclide.name == channel.nuclide.name:
+            return ch
+    return None
+
+
 def reaction_at(experiment, channel: Channel, energy: float, layers: Optional[list] = None):
     """The reaction of a channel at one beam energy: an object with ``kinematics`` and ``cross_section_cm``."""
     beam = beam_ion(experiment)
     if channel.excitation is None:
-        return Rutherford(beam, channel.nuclide.name, energy)
+        partner = excited_partner(experiment, channel, layers)
+        if partner is None:
+            return Rutherford(beam, channel.nuclide.name, energy)
+        return _ElasticReaction(beam, channel, energy, excitation_probability(experiment, partner, layers))
     return _CoulexReaction(beam, channel, energy, excitation_probability(experiment, channel, layers))
+
+
+class _YieldReaction:
+    """Scattering on a nuclide weighted by the γ rays of one transition per collision, shaped like
+    :class:`~physim.nuclear.rutherford.Rutherford`: the Rutherford cross section at this energy times the yield
+    at each CM angle (``grid``, ``per_collision``: from a level scheme's solution at the middle of the layer).
+    The particle keeps the kinematics of elastic scattering."""
+
+    def __init__(self, beam: str, nuclide: str, energy: float, grid, per_collision):
+        self._ruth = Rutherford(beam, nuclide, energy)
+        self.kinematics = self._ruth.kinematics
+        self._grid, self._y = np.asarray(grid, dtype=float), np.asarray(per_collision, dtype=float)
+
+    def cross_section_cm(self, theta_cm):
+        return np.asarray(self._ruth.cross_section_cm(theta_cm)) * np.interp(np.asarray(theta_cm, dtype=float),
+                                                                           self._grid, self._y)
 
 
 def beam_ion(experiment) -> str:
@@ -644,6 +691,67 @@ class Rates:
                     out.setdefault(row["particle_detector"], {})[row["gamma_detector"]] = row["detector_factor"]
             self._correlation = out
         return self._correlation
+
+    def other_peak(self) -> Optional[dict]:
+        """The peak of the other nucleus of the collision that the events hold when the setup has its level
+        scheme (:func:`physim.nuclear.gamma.other_excitation`): its first transition to the ground state.
+        {"label", "nuclide", "energy_kev", "emitted_per_s": {particle detector: those γ rays emitted per second
+        with a counted particle in it}, "efficiency": {particle detector: the full-energy efficiency of all γ-ray
+        detectors together at that energy, with the angular correlation}, "coincidence_per_s": {particle
+        detector: counts per second in the full-energy peak}}. None without that scheme or without γ-ray
+        detectors. Computed once: the Rutherford cross section times the transition's yield per collision, over
+        each detector's face and the depth of the target."""
+        if "_other_peak" in self.__dict__:
+            return self._other_peak
+        from .gamma import correlation_table, other_excitation, transition_lines
+
+        self._other_peak = None
+        exp = self.experiment
+        sol = other_excitation(exp) if exp.excitation is not None and exp.gamma_detectors else None
+        if sol is None:
+            return None
+        levels = sol.scheme.levels
+        lev_f = sol.ground
+        lev_i = min((n for n in range(len(levels)) if n != lev_f), key=lambda n: levels[n].energy.value)
+        line = next((ln for ln in transition_lines(exp) if ln["nucleus"] == 1 and (ln["initial"], ln["final"])
+                     == (lev_i, lev_f)), None)
+        if line is None:
+            return None
+        grid, states = sol.table()
+        grid, per_collision = np.r_[0.0, grid], np.r_[0.0, [st.gamma_yield(lev_i, lev_f) for st in states]]
+        ch = next(c for c in self.channels if c.excitation is None and c.layer == 0
+                  and c.nuclide.name == sol.target)
+        zs, wz = self._depth_nodes(0)
+        es = beam_energy_at(exp, 0, zs, self.layers)
+        reacs = [_YieldReaction(self.beam, ch.nuclide.name, float(e), grid, per_collision) for e in es if e > 0]
+        ws = np.array([w for e, w in zip(es, wz) if e > 0])[:, None]
+        factors: dict = {}
+        for row in correlation_table(exp, nucleus="other"):
+            factors.setdefault(row["particle_detector"], {})[row["gamma_detector"]] = row["detector_factor"]
+        e_line = 1e-3 * line["energy_kev"]
+        effs = {(gd.name or f"G{i + 1}"): gd.peak_efficiency(e_line, exp) for i, gd in enumerate(exp.gamma_detectors)}
+        emitted, efficiency, seen = {}, {}, {}
+        for g in self.array:
+            parts = [g.directions(seg, self._order_for(g)) for seg in g.segments]
+            dirs = np.concatenate([p[0] for p in parts])
+            dom = np.concatenate([p[1] for p in parts])
+            theta = angles(dirs)[0]
+            dom = np.where((theta >= self.theta_floor) & self.array.visible(g.name, dirs), dom, 0.0)
+            total = 0.0
+            for p in PARTICLES:
+                per_dir = np.zeros(len(dirs))
+                if reacs:
+                    for sigma, _ in self._branches_many(reacs, theta, p):
+                        per_dir += (ws * sigma).sum(axis=0)
+                rate = self.particles_per_second * ch.atoms_per_cm2 * float(np.sum(per_dir * dom)) * MB_CM2
+                total += rate * self._counted_fraction(g.name, ch.label, p)
+            emitted[g.name] = total
+            efficiency[g.name] = min(sum(e * factors.get(g.name, {}).get(n, 1.0) for n, e in effs.items()), 1.0)
+            seen[g.name] = total * efficiency[g.name]
+        self._other_peak = {"label": line["label"], "nuclide": line["nuclide"], "energy_kev": line["energy_kev"],
+                            "initial": lev_i, "final": lev_f, "emitted_per_s": emitted, "efficiency": efficiency,
+                            "coincidence_per_s": seen}
+        return self._other_peak
 
     def rate(self, detector: str, segment: Optional[tuple] = None, counted: bool = True, what: str = "all") -> float:
         """Counts per second in a detector (or one segment). With ``counted``, each channel's rate is scaled by the
