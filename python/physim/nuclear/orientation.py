@@ -153,6 +153,9 @@ class Populated:
     #: Statistical tensors with feeding: by level, then by the pair (rank, component).
     tensors: dict
     isotropic: bool = False
+    #: Density matrices the collision leaves each level in, before any decay (M ascending from −I, in the orbit's
+    #: frame), for the correlation between the γ rays of one cascade (:mod:`physim.nuclear.correlation`).
+    density: dict = field(default_factory=dict)
 
     def population(self, level: int) -> float:
         """Probability that the level is populated, directly or by feeding."""
@@ -408,7 +411,7 @@ class Excitation:
         rho = self._cascade(direct)
         tensors = {n: tensors_of(m, float(self.scheme.levels[n].spin)) for n, m in rho.items()}
         return Populated(self, float(theta_cm), {n: float(np.trace(m).real) for n, m in direct.items()}, tensors,
-                         self.isotropic)
+                         self.isotropic, dict(direct))
 
     def table(self, step: float = 2.0) -> tuple:
         """(angles, [Populated at each]) on a grid of CM angles from ``step`` to 180°, computed once. With a whole
@@ -468,6 +471,18 @@ class Excitation:
             table = {key: np.array([c.get(key, 0.0) for c in each]) for key in keys}
             kept[(initial, final, step)] = (grid, table, np.array([s.gamma_yield(initial, final) for s in states]))
         return kept[(initial, final, step)]
+
+    def density_table(self, level: int, step: float = 2.0) -> tuple:
+        """(grid of CM angles, density matrices on the grid: grid × (2I + 1)²) of the level as the collision
+        leaves it, before any decay and without the feeding from above (zero where it is not excited directly).
+        Kept once worked out."""
+        kept = self.__dict__.setdefault("_density_tables", {})
+        if (level, step) not in kept:
+            grid, states = self.table(step)
+            d = int(round(2 * float(self.scheme.levels[level].spin) + 1))
+            blank = np.zeros((d, d), dtype=complex)
+            kept[(level, step)] = (grid, np.array([s.density.get(level, blank) for s in states]))
+        return kept[(level, step)]
 
     def probability(self, level: int, theta_cm: float) -> float:
         """Probability of exciting ``level`` directly at CM angle ``theta_cm``: the amplitudes squared, summed

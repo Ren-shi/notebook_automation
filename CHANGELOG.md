@@ -10,6 +10,26 @@ workflow builds the wheels, tests them and publishes to PyPI.
 
 ## Unreleased
 
+### Added
+- The angular correlation between the γ rays of one cascade (backlog 71). Each excitation carries the density
+  matrix of its level down the cascade (`physim.nuclear.correlation`): a γ ray is drawn along a direction with
+  the probability its level's state gives, and leaves the next level in the state that direction selects, from
+  which the next γ ray is drawn. Before, every γ ray of a cascade was drawn on its own from its level's average
+  orientation, so the γ–γ coincidences between two crystals missed the correlation.
+  - The emission is exact for pure and mixed multipoles (helicity amplitudes, `Emission`), and it matches the
+    angular distributions of `Populated.w` and the unobserved feeding of `fed_density` to 1e-15: summed over
+    directions nothing changes, so the singles are those of before (63 line × crystal bins of the ⁶²Ni on ¹⁹⁴Pt
+    template agree with the previous version, mean pull −0.07, rms 0.92). An unoriented 4⁺ → 2⁺ → 0⁺ cascade
+    gives 1 + 0.1020 P₂ + 0.0091 P₄.
+  - A cascade's first level starts in the density matrix the collision leaves it in at the event's angle
+    (`Populated.density`, `Excitation.density_table`), not the average over the levels feeding it: a 2⁺₁ reached
+    directly and one reached through the 2⁺₂ are oriented differently, and each event now has its own.
+  - A converted transition hands its orientation on as an unobserved one. `emission = "isotropic"` keeps drawing
+    every γ ray on its own, without the correlation, and a setup with one excited state is unchanged bit for bit.
+  - Only the last γ ray of a cascade is aimed at the crystals; those before it are drawn over the whole sphere,
+    since the next one depends on their direction. The γ rays of a setup with cascades take about twice as long
+    (23 s for 300 000 reactions of the ⁶²Ni on ¹⁹⁴Pt template, against 12 s).
+
 ### Documentation
 - The README shows the application: what the experiment planner does, step by step, with screenshots
   (`docs/images/`), how to start it (Windows installer or `physim app`), the example setups and `physim report`.
