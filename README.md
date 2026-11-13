@@ -36,19 +36,19 @@ and nothing is uploaded. The full guide is [`docs/planner-app.md`](docs/planner-
 
 ### Six steps, from setup to report
 
-The step bar runs **1 Setup → 2 Plan → 3 Run → 4 Data → 5 Analysis → 6 Report**. Each step shows its status,
-ticks when it has its result, and ends with a button to the next one.
+The rail on the left runs **1 Setup → 2 Plan → 3 Run → 4 Data → 5 Analysis → 6 Report**. Each step shows its
+status, ticks when it has its result, and ends with a button to the next one.
 
 | Step | What you do and see |
 |---|---|
-| **Setup** | The chamber in 3D, to scale: beam, target, particle detectors (rings, strips) and γ-ray detectors (crystals). Turn, zoom, click a detector for its numbers and drag it to move it. Change the beam, target, reaction, level schemes and detectors in the panel on the left, then Apply. Draw sample particle tracks. |
+| **Setup** | The chamber in 3D, to scale: beam, target, particle detectors (rings, strips) and γ-ray detectors (crystals). A strip of the setup's key numbers sits above the scene. Turn, zoom, click a detector for its numbers and drag it to move it. **Edit the setup** opens the beam, target, reaction, level schemes and detectors in a side window, with the scene still in view. Draw sample particle tracks. |
 | **Plan** | The answers first: the beam time your counts need against the time planned, each detector's rate, busy fraction and safe rings, γ-ray efficiencies, and the particle × γ coincidence rates. Below them, the checks: kinematics, energy loss, the Rutherford orbit and safe distance, angular correlation and Doppler shifts, efficiency curves, and predicted spectra. |
 | **Run** | Simulate a beam run, a calibration source run or a target-alignment check. Counts, rates and the coincidence matrix fill in live; Stop or Extend at any time, and watch events as tracks in the scene. |
 | **Data** | Every spectrum of the run at once. Doppler correction, particle gates, singles or coincidences, random subtraction, add-back and Compton suppression, binning. Named gates, 2D views (energy against ring, γ-ray energy against crystal), comparing runs, and export to ROOT or `.npz`. |
-| **Analysis** | Predicted against measured, row by row, with agreement within the run's statistics. B(E2) from the γ-ray peak, with its statistical and systematic uncertainties. Finding a misplaced target, a multi-step (all orders) fit of the matrix element, and a GOSIA input file. |
+| **Analysis** | Predicted against measured, row by row, with agreement within the run's statistics. B(E2) from the γ-ray peaks of either nucleus, with its statistical and systematic uncertainties. Finding a misplaced target, a multi-step (all orders) fit of the matrix element, and a GOSIA input file. |
 | **Report** | One document: the setup and level schemes, the plan, every run's spectra and gates, the analysis, every number explained, and the method. Save as PDF or HTML, or save everything (setup, tables, figures, data) as a zip. |
 
-**Physics**, at the top right, is the reference behind every number: nuclear data, kinematics, energy loss, the
+**Physics**, at the foot of the rail, is the reference behind every number: nuclear data, kinematics, energy loss, the
 Rutherford orbit, detector response, rates and events, and Coulomb excitation, each linked to its tests. The **?**
 beside a number shows how it was worked out. Light and dark themes are built in, and figures can be exported in
 journal styles for a paper.
@@ -75,7 +75,7 @@ journal styles for a paper.
 ### Setups, examples and scripting
 
 An experiment is a plain-text TOML setup file that the app, scripts and notebooks all read and write, so you can
-save it, share it and attach it to a proposal (format: [`docs/nuclear-setup.md`](docs/nuclear-setup.md)). Four
+save it, share it and attach it to a proposal (format: [`docs/nuclear-setup.md`](docs/nuclear-setup.md)). Five
 examples come with it:
 
 | Example | What it is |
@@ -83,7 +83,8 @@ examples come with it:
 | `alpha_on_gold` | 5.5 MeV alpha particles on gold foil, with silicon detectors at six angles (Rutherford's distribution) |
 | `oxygen_on_lead_array` | 16O on 208Pb below the barrier, with strip detectors forward and backward |
 | `coulex_ni58` | Safe Coulomb excitation of 58Ni's first 2+ state with a 30 MeV 16O beam and four germanium detectors |
-| `coulex_ni62_pt194` | A 62Ni beam on 194Pt seen at backward angles, with ENSDF level schemes and multi-step excitation |
+| `coulex_ni62_pt194` | A 62Ni beam on 194Pt seen at backward angles, with ENSDF level schemes, multi-step excitation, and the γ rays of both nuclei |
+| `coulex_ni62_pt194_clovers` | The same experiment with four clover detectors, with add-back and BGO Compton-suppression shields |
 
 Without the app:
 
