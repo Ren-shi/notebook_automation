@@ -14,3 +14,5 @@ docs/jupyter_execute/
 # A local copy of ENSDF must not be committed: permission to redistribute it is not confirmed (backlog 50).
 /ensdf/
 ensdf_*.zip
+# Planning notes are kept on the machine, not in the repository.
+/planning/

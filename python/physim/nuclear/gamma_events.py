@@ -53,7 +53,7 @@ import numpy as np
 from . import angular, data
 from .detectors import Array
 from .events import Events, simulate
-from .gamma import cascade_excitation, excitation_of, excitation_order, start_levels
+from .gamma import cascade_excitation, excitation_of, excitation_order, other_excitation, start_levels
 from .kinematics import TwoBody
 from .quantity import Quantity
 from .rates import (Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels, exit_energy, stack, stopping,
@@ -76,6 +76,7 @@ GAMMA_COLUMNS = {
     "cascade": "which decay of the excited nucleus the γ ray belongs to (γ rays of one cascade share it)",
     "initial": "level the γ ray leaves (index in the level scheme; 1 without a scheme)",
     "final": "level the γ ray goes to",
+    "nucleus": "which nucleus emitted it: 0 the nucleus of the [reaction], 1 the other one of the collision",
     "crystal": "index into GammaEvents.crystals",
     "energy0": "γ-ray energy in the nucleus's rest frame, MeV",
     "energy_lab": "γ-ray energy in the laboratory (Doppler shifted), MeV",
@@ -375,49 +376,219 @@ def _room_spectrum(experiment, crystal: Crystal, edges: np.ndarray, rate: float,
     return s, total
 
 
-def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_events: Optional[Events] = None,
-                    bin_kev: float = 1.0, gammas_per_event: int = 10, plain: bool = False,
-                    rates: Optional[Rates] = None) -> GammaEvents:
-    """Generate the particle events (or take ``particle_events``) and follow the γ ray of every excited event to
-    the crystals. The same setup and seed give the same γ rays.
+@dataclass
+class _Emitter:
+    """One nucleus of the collision as a source of γ rays."""
 
-    Coincidences are rare, so each excited event emits its γ ray ``gammas_per_event`` times over, each with a
-    share of the event's weight: the rates are unchanged and the spectra are smoother.
+    #: 0 for the nucleus the ``[reaction]`` names, 1 for the other one.
+    nucleus: int
+    name: str
+    #: The target recoil emits (else the scattered beam).
+    recoil: bool
+    #: The excitation energy in the two-body kinematics and in the emitter's mass, MeV.
+    e_star: float
+    #: The :class:`~physim.nuclear.orientation.Excitation` of the one ``[reaction]`` state, when no scheme is followed.
+    single: object
+    #: The solution of the level scheme the γ rays follow, or None.
+    cascade: object
+    tb: TwoBody
+    #: Seeds of the emission, the lifetimes and the add-back.
+    seeds: tuple
 
-    ``plain`` switches off the add-back and the shields of every γ-ray detector (the geometry stays): the same
-    γ rays as the setup's own run up to the add-back and the rejections, for a comparison. ``rates`` is the
-    setup's :class:`~physim.nuclear.rates.Rates`, if already computed (it sets the singles and the randoms)."""
-    exc = experiment.excitation
-    if exc is None:
-        raise ValueError("the setup has no excited state ([reaction] type = \"coulex\")")
-    if not experiment.gamma_detectors:
-        raise ValueError("the setup has no γ-ray detectors")
-    ev = particle_events if particle_events is not None else simulate(experiment, events, seed)
-    rng = np.random.default_rng(seed + 1_000_003)
-    layers = stack(experiment)
-    chans = channels(layers, experiment)
-    excited_channels = [i for i, ch in enumerate(chans) if ch.excitation is not None]
-    ex = excitation_of(experiment)
-    e0 = exc.energy_mev
-    excite_recoil = exc.excite == "target"
-    emitter = ex.scheme.nuclide
-    e_mid = ex.beam_energy
-    tb = TwoBody(ex.beam, ex.target, e_mid, excitation_mev=e0, excite="recoil" if excite_recoil else "ejectile")
+
+def _first_crystal(origin: np.ndarray, lab: np.ndarray, centres: np.ndarray, normals: np.ndarray,
+                   radii: np.ndarray, block: int = 200_000) -> tuple:
+    """The crystal each γ ray meets first (its index) and whether it meets one at all, in blocks of rows so the
+    (rows × crystals × 3) intersection points never fill the memory."""
+    n = len(lab)
+    which = np.zeros(n, dtype=np.int64)
+    reached = np.zeros(n, dtype=bool)
+    dist = np.linalg.norm(centres, axis=1)
+    for a in range(0, n, block):
+        o, d = origin[a:a + block], lab[a:a + block]
+        along = d @ normals.T                                            # (rows, crystals)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = np.where(along > 1e-9, (dist[None, :] - o @ normals.T) / along, np.inf)
+        point = o[:, None, :] + d[:, None, :] * t[:, :, None]
+        inside = np.linalg.norm(point - centres[None, :, :], axis=2) <= radii[None, :]
+        t = np.where(inside, t, np.inf)
+        w = np.argmin(t, axis=1)
+        which[a:a + block] = w
+        reached[a:a + block] = np.isfinite(t[np.arange(len(w)), w])
+    return which, reached
+
+
+#: The shares of :func:`_own_shares`, kept by the crystals' places.
+_OWN_SHARES: dict = {}
+
+
+def _own_shares(crystals: list, rings: int = 60, spokes: int = 96) -> np.ndarray:
+    """Of each crystal's face, the share that is its own: the part no other crystal of the same detector covers
+    first, as the target sees it (1 for a crystal that stands alone).
+
+    The faces are discs, each turned to the target, and those of a clover overlap: crystals 50 mm across stand
+    45 mm apart, as the real ones do, which are cut flat where they meet. A γ ray through the overlap goes to the
+    crystal it meets first (:func:`_first_crystal`), so a crystal receives the γ rays of its own part only. Its
+    efficiency is the data sheet's, measured on the crystal as cut, and the response counts it over the whole
+    disc; the event chain therefore lets the γ rays of the own part interact 1 / share as often, and a run counts
+    what the response says. Only crystals of one detector share faces: a detector behind another is hidden by it."""
+    key = tuple((cr.detector, tuple(float(x) for x in cr.centre), float(cr.radius)) for cr in crystals)
+    if key not in _OWN_SHARES:
+        shares = np.ones(len(crystals))
+        phi = (np.arange(spokes) + 0.5) / spokes * 2 * math.pi
+        for det in sorted({cr.detector for cr in crystals}):
+            own = [k for k, cr in enumerate(crystals) if cr.detector == det]
+            if len(own) < 2:
+                continue
+            centres = np.array([crystals[k].centre for k in own], dtype=float)
+            radii = np.array([crystals[k].radius for k in own], dtype=float)
+            normals = _unit(centres)
+            for j, k in enumerate(own):
+                n = normals[j]
+                a = _unit(np.cross(n, [0.0, 0.0, 1.0] if abs(n[2]) < 0.9 else [1.0, 0.0, 0.0]))
+                b = np.cross(n, a)
+                rho = radii[j] * np.sqrt((np.arange(rings) + 0.5) / rings)       # cells of equal area
+                points = (centres[j] + rho[:, None, None] * (np.cos(phi)[None, :, None] * a
+                                                             + np.sin(phi)[None, :, None] * b)).reshape(-1, 3)
+                r2 = np.einsum("ij,ij->i", points, points)
+                line = points / np.sqrt(r2)[:, None]
+                solid = (line @ n) / r2                                          # the solid angle of each cell
+                # The cell's own crystal is met at its face; another one counts only if it is met sooner.
+                which, _ = _first_crystal(np.zeros_like(line), line, centres, normals, radii * (1 - 1e-9))
+                shares[k] = float(solid[which == j].sum() / solid.sum())
+        _OWN_SHARES[key] = shares
+    return _OWN_SHARES[key]
+
+
+def _distribution(a_kq: dict, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
+    """4π W / yield of a transition along (θ, φ) of the orbit's frame (radians), from its coefficients a_kq at
+    each event (arrays): Σ Re[a_kq √(4π/(2k+1)) Y_kq(θ, φ)]. The Legendre functions and the phases are worked out
+    once per (k, |q|) and per |q|, not once per term as :func:`physim.nuclear.angular.spherical_harmonic` would."""
+    x, sn = np.cos(theta), np.sin(theta)
+    phases: dict = {}
+    legendre: dict = {}
+    total = np.zeros(len(theta))
+    for (k, q), v in a_kq.items():
+        m = abs(q)
+        if m not in phases:
+            phases[m] = np.exp(1j * m * phi)
+        if (k, m) not in legendre:
+            pmm = (-1) ** m * angular._double_factorial(2 * m - 1) * sn**m
+            if k == m:
+                plm = pmm
+            else:
+                a, b = pmm, x * (2 * m + 1) * pmm
+                for n in range(m + 2, k + 1):
+                    a, b = b, ((2 * n - 1) * x * b - (n + m - 1) * a) / (n - m)
+                plm = b
+            legendre[(k, m)] = math.sqrt((2 * k + 1) / (4 * math.pi) * math.factorial(k - m)
+                                         / math.factorial(k + m)) * plm
+        y = legendre[(k, m)] * phases[m]
+        if q < 0:
+            y = (-1) ** m * np.conj(y)
+        total += (v * math.sqrt(4 * math.pi / (2 * k + 1)) * y).real
+    return total
+
+
+def _aimed(rng, tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: np.ndarray, phi_ej: np.ndarray,
+           velocity: np.ndarray, beta: np.ndarray, gam: np.ndarray, origin: np.ndarray, flip: bool,
+           centres: np.ndarray, normals: np.ndarray, radii: np.ndarray) -> Optional[tuple]:
+    """Which γ rays reach a crystal, and where: (indices of those γ rays, the crystal of each, its unit direction
+    in the laboratory). The same γ rays, in distribution, as drawing every direction over the whole sphere and
+    keeping those that meet a crystal, at a small part of the work:
+
+    - a γ ray is first kept with a probability q that no γ ray's chance of reaching a crystal exceeds: the
+      largest value of its distribution, times the forward throw of the fastest emitter, times the solid angle
+      of all the crystal faces from the nearest point;
+    - a kept one is aimed at a point drawn evenly over the crystal faces, and counts if that crystal is the
+      first its line meets, with probability (its distribution in the laboratory along that line) × (the solid
+      angle the faces stand for there) / q.
+
+    The chance that a γ ray counts, and the direction it then has, are those of its distribution; the others
+    miss every crystal and were never needed. None when q would reach 1 (crystals all round the target): the
+    caller then draws every direction."""
+    n = len(theta_cm)
+    areas = math.pi * radii**2
+    total_area = float(areas.sum())
+    dist = np.linalg.norm(centres, axis=1)
+    off = float(np.linalg.norm(origin, axis=1).max()) if n else 0.0
+    nearest = float(dist.min()) - off
+    if n == 0 or nearest <= 0:
+        return None
+    # No distribution exceeds the sum of the sizes of its coefficients, anywhere on the table of angles.
+    largest = max(float(np.max(sum(np.abs(v) for v in coeff.values()))) for _, coeff, _ in tables.values())
+    b_max = float(beta.max())
+    q = largest * (1 + b_max) / (1 - b_max) * total_area / (4 * math.pi * nearest**2)
+    if not q < 1.0:
+        return None
+    idx = np.flatnonzero(rng.uniform(0.0, 1.0, n) < q)
+    m = len(idx)
+    if not m:
+        return idx, np.zeros(0, dtype=np.int64), np.zeros((0, 3))
+    # A point drawn evenly over the faces: the crystal by its share of the area, then the point on its disc.
+    k = np.minimum(np.searchsorted(np.cumsum(areas) / total_area, rng.uniform(0.0, 1.0, m)), len(areas) - 1)
+    e1 = _unit(np.cross(normals, np.where(np.abs(normals[:, 1:2]) < 0.9, [0.0, 1.0, 0.0], [1.0, 0.0, 0.0])))
+    e2 = np.cross(normals, e1)
+    rho = radii[k] * np.sqrt(rng.uniform(0.0, 1.0, m))
+    psi = rng.uniform(0.0, 2 * math.pi, m)
+    point = centres[k] + rho[:, None] * (np.cos(psi)[:, None] * e1[k] + np.sin(psi)[:, None] * e2[k])
+    line = point - origin[idx]
+    r2 = np.einsum("ij,ij->i", line, line)
+    lab = line / np.sqrt(r2)[:, None]
+    cos_face = np.einsum("ij,ij->i", lab, normals[k])
+    which, reached = _first_crystal(origin[idx], lab, centres, normals, radii)
+    ok = reached & (which == k) & (cos_face > 0)   # behind another crystal: that one's own points cover the line
+    # The direction in the emitter's rest frame, and how much the motion gathers the γ rays along it.
+    be, ga = beta[idx], gam[idx]
+    nvel = _unit(velocity[idx])
+    cos_a = np.einsum("ij,ij->i", lab, nvel)
+    par = (cos_a - be) / (1 - be * cos_a)
+    perp = lab - cos_a[:, None] * nvel
+    rest = _unit(perp / (ga * (1 - be * cos_a))[:, None] + par[:, None] * nvel)
+    throw = (1 - be**2) / (1 - be * cos_a) ** 2
+    # The orbit's frame in the laboratory for each event (as Populated.axes, vectorised).
+    th, ph = np.radians(theta_cm[idx]), np.radians(phi_ej[idx])
+    out = _directions(theta_cm[idx], phi_ej[idx])
+    beam = np.array([0.0, 0.0, 1.0])
+    s_half, c_half = np.sin(th / 2), np.cos(th / 2)
+    side = np.c_[np.cos(ph), np.sin(ph), np.zeros(m)]
+    x = np.where(s_half[:, None] > 1e-9, (out - beam) / np.maximum(2 * s_half, 1e-12)[:, None], side)
+    y = np.where(c_half[:, None] > 1e-9, (out + beam) / np.maximum(2 * c_half, 1e-12)[:, None], side)
+    z = np.cross(x, y)
+    if flip:
+        x, y = -x, -y
+    theta = np.arccos(np.clip(np.einsum("ij,ij->i", rest, z), -1.0, 1.0))
+    phi = np.arctan2(np.einsum("ij,ij->i", rest, y), np.einsum("ij,ij->i", rest, x))
+    w = np.zeros(m)
+    for (i_lev, f_lev), (grid, coeff, _) in tables.items():
+        mine = ok & (initial[idx] == i_lev) & (final[idx] == f_lev)
+        if not mine.any():
+            continue
+        a_kq = {key: np.interp(theta_cm[idx][mine], grid, v.real) + 1j * np.interp(theta_cm[idx][mine], grid, v.imag)
+                for key, v in coeff.items()}
+        w[mine] = _distribution(a_kq, theta[mine], phi[mine])
+    chance = np.where(ok, w / (4 * math.pi) * throw * total_area * cos_face / r2, 0.0)
+    keep = rng.uniform(0.0, 1.0, m) * q < chance
+    return idx[keep], k[keep], lab[keep]
+
+
+def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em: _Emitter, rows: np.ndarray,
+           base: np.ndarray, k_rep: int, plain: bool, first_cascade: int = 0, aimed: bool = True) -> dict:
+    """The γ rays of one nucleus: from the particle rows ``rows`` of ``ev`` on whose orbits it was excited (each
+    standing for the rate ``base``) to what the crystals record. Returns the γ-ray columns before the Doppler
+    correction, and "info" for the notes."""
+    c = ev.columns
+    rng = np.random.default_rng(em.seeds[0])
+    excite_recoil = em.recoil
+    emitter, e0, tb, cex = em.name, em.e_star, em.tb, em.cascade
     m_emitter = data.nuclide(emitter).nuclear_mass_mev + e0
-
-    # -- the crystals and their responses ----------------------------------------------------------------------
-    # The chain starts from the bare crystals; add-back and suppression are applied to the deposits afterwards.
-    crystals, bare = crystals_of(experiment, plain)
-    centres = np.array([c.centre for c in crystals])
+    centres = np.array([cr.centre for cr in crystals])
     normals = _unit(centres)
-    radii = np.array([c.radius for c in crystals])
+    radii = np.array([cr.radius for cr in crystals])
 
     # -- one row per excited event: the detected particle and the emitter's path -------------------------------
-    c = ev.columns
-    excited = np.isin(c["channel"], excited_channels)
     # One γ-ray chain per detected particle: an event whose two particles both reached a detector is a
     # coincidence with each of them.
-    rows = np.flatnonzero(excited)
     n = len(rows)
     theta_cm = c["theta_cm"][rows]
     recoil_det = c["recoil"][rows]
@@ -441,15 +612,14 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     beta = np.sqrt(np.maximum(1 - 1 / gam**2, 0.0))
     velocity = dir_em * beta[:, None]
     # Every excited event emits several times over, each γ ray standing for a share of the event's rate.
-    k_rep = max(int(gammas_per_event), 1)
     rows, theta_cm, phi_ej = np.repeat(rows, k_rep), np.repeat(theta_cm, k_rep), np.repeat(phi_ej, k_rep)
+    base = np.repeat(base, k_rep)
     velocity, beta, gam = np.repeat(velocity, k_rep, axis=0), np.repeat(beta, k_rep), np.repeat(gam, k_rep)
     start = {k: np.repeat(v, k_rep, axis=0) for k, v in start.items()}
     n = len(rows)
 
     excited_rows = n // k_rep
     # -- the cascade: which levels each excitation passes through, and its γ rays (backlog item 71) -----------------
-    cex = cascade_excitation(experiment)
     cascade = np.arange(n)
     initial = np.ones(n, dtype=int)
     final = np.zeros(n, dtype=int)
@@ -457,7 +627,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     if cex is not None:
         src, initial, final, e0s = _cascade_steps(cex, theta_cm, rng)
         cascade = src
-        rows, theta_cm, phi_ej = rows[src], theta_cm[src], phi_ej[src]
+        rows, theta_cm, phi_ej, base = rows[src], theta_cm[src], phi_ej[src], base[src]
         velocity, beta, gam = velocity[src], beta[src], gam[src]
         start = {k: v[src] for k, v in start.items()}
         n = len(rows)
@@ -466,7 +636,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     taus = _mean_lives(experiment, cex, initial)
     stopped = np.zeros(n, dtype=bool)
     if taus is not None and np.any(taus > 0):
-        lrng = np.random.default_rng(seed + 4_000_003)
+        lrng = np.random.default_rng(em.seeds[1])
         draws = lrng.exponential(1.0, n) * taus
         # A level fed from above starts its own clock when the level above decays: the times add up the cascade.
         t_decay = _cumulative_by(cascade, draws)
@@ -476,62 +646,64 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
         beta = np.sqrt(np.maximum(1 - 1 / gam**2, 0.0))
         velocity = start["direction"] * beta[:, None]
 
-    # -- emission in the rest frame, with the correlation ----------------------------------------------------
-    if cex is None:
-        local = _rest_directions(ex.coefficient_table(1, 0), theta_cm, rng)
-    else:
-        # Each transition with its own orientation (with the feeding from above), at the event's CM angle.
-        local = np.zeros((n, 3))
-        for i_lev, f_lev in sorted(set(zip(initial.tolist(), final.tolist()))):
-            m = (initial == i_lev) & (final == f_lev)
-            local[m] = _rest_directions(cex.coefficient_table(i_lev, f_lev), theta_cm[m], rng)
-    # The orbit's frame in the laboratory for each event (as Populated.axes, vectorised).
-    th = np.radians(theta_cm)
-    ph = np.radians(phi_ej)
-    out = _directions(theta_cm, phi_ej)
-    beam = np.array([0.0, 0.0, 1.0])
-    s_half, c_half = np.sin(th / 2), np.cos(th / 2)
-    side = np.c_[np.cos(ph), np.sin(ph), np.zeros(n)]
-    x = np.where(s_half[:, None] > 1e-9, (out - beam) / np.maximum(2 * s_half, 1e-12)[:, None], side)
-    y = np.where(c_half[:, None] > 1e-9, (out + beam) / np.maximum(2 * c_half, 1e-12)[:, None], side)
-    z = np.cross(x, y)
-    if not excite_recoil:
-        x, y = -x, -y
-    rest = local[:, 0:1] * x + local[:, 1:2] * y + local[:, 2:3] * z
-    # To the laboratory: the photon's momentum boosted along the emitter's velocity.
-    nvel = _unit(velocity)
-    cos_r = np.einsum("ij,ij->i", rest, nvel)
-    par = (cos_r + beta) / (1 + beta * cos_r)
-    perp = rest - cos_r[:, None] * nvel
-    scale = 1 / (gam * (1 + beta * cos_r))
-    lab = _unit(perp * scale[:, None] + par[:, None] * nvel)
-    energy_lab = e0s * np.sqrt(1 - beta**2) / (1 - beta * np.einsum("ij,ij->i", lab, nvel))
-
-    # -- which crystal, and what it records ------------------------------------------------------------------
     # The γ ray leaves from where the reaction happened: the beam spot or halo moves it off the axis (item 74).
     origin = np.zeros((n, 3))
     if "x" in c:
         tilt = math.radians(tilt_deg(experiment))
         origin[:, 0], origin[:, 1] = c["x"][rows], c["y"][rows]
         origin[:, 2] = -origin[:, 0] * math.tan(tilt)
-    along = lab @ normals.T                                          # (n, crystals)
-    dist = np.linalg.norm(centres, axis=1)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        t = np.where(along > 1e-9, (dist[None, :] - origin @ normals.T) / along, np.inf)
-    point = origin[:, None, :] + lab[:, None, :] * t[:, :, None]
-    inside = np.linalg.norm(point - centres[None, :, :], axis=2) <= radii[None, :]
-    t = np.where(inside, t, np.inf)
-    which = np.argmin(t, axis=1)
-    reached = np.isfinite(t[np.arange(n), which])
-    rows, which, lab, energy_lab, beta = rows[reached], which[reached], lab[reached], energy_lab[reached], beta[reached]
+
+    # -- emission with the correlation, and which crystal ---------------------------------------------------------
+    # Each transition with its own orientation (with the feeding from above), at the event's CM angle.
+    pairs = [(1, 0)] if cex is None else sorted(set(zip(initial.tolist(), final.tolist())))
+    tables = {pair: (em.single if cex is None else cex).coefficient_table(*pair) for pair in pairs}
+    hit = _aimed(rng, tables, initial, final, theta_cm, phi_ej, velocity, beta, gam, origin, not excite_recoil,
+                 centres, normals, radii) if aimed and n else None
+    if hit is not None:
+        # Only the γ rays that reach a crystal are drawn, each with its direction (see _aimed).
+        reached, which, lab = hit
+        nvel = _unit(velocity[reached])
+        energy_lab = (e0s[reached] * np.sqrt(1 - beta[reached] ** 2)
+                      / (1 - beta[reached] * np.einsum("ij,ij->i", lab, nvel)))
+    else:
+        # Every direction over the whole sphere, in the rest frame, then the crystal it meets, if any.
+        local = np.zeros((n, 3))
+        for pair in pairs:
+            m = (initial == pair[0]) & (final == pair[1]) if cex is not None else np.ones(n, dtype=bool)
+            local[m] = _rest_directions(tables[pair], theta_cm[m], rng)
+        # The orbit's frame in the laboratory for each event (as Populated.axes, vectorised).
+        th = np.radians(theta_cm)
+        ph = np.radians(phi_ej)
+        out = _directions(theta_cm, phi_ej)
+        beam = np.array([0.0, 0.0, 1.0])
+        s_half, c_half = np.sin(th / 2), np.cos(th / 2)
+        side = np.c_[np.cos(ph), np.sin(ph), np.zeros(n)]
+        x = np.where(s_half[:, None] > 1e-9, (out - beam) / np.maximum(2 * s_half, 1e-12)[:, None], side)
+        y = np.where(c_half[:, None] > 1e-9, (out + beam) / np.maximum(2 * c_half, 1e-12)[:, None], side)
+        z = np.cross(x, y)
+        if not excite_recoil:
+            x, y = -x, -y
+        rest = local[:, 0:1] * x + local[:, 1:2] * y + local[:, 2:3] * z
+        # To the laboratory: the photon's momentum boosted along the emitter's velocity.
+        nvel = _unit(velocity)
+        cos_r = np.einsum("ij,ij->i", rest, nvel)
+        par = (cos_r + beta) / (1 + beta * cos_r)
+        perp = rest - cos_r[:, None] * nvel
+        scale = 1 / (gam * (1 + beta * cos_r))
+        lab = _unit(perp * scale[:, None] + par[:, None] * nvel)
+        energy_lab = e0s * np.sqrt(1 - beta**2) / (1 - beta * np.einsum("ij,ij->i", lab, nvel))
+        which, reached = _first_crystal(origin, lab, centres, normals, radii)
+        which, lab, energy_lab = which[reached], lab[reached], energy_lab[reached]
+    rows, beta = rows[reached], beta[reached]
     cascade, initial, final, e0s = cascade[reached], initial[reached], final[reached], e0s[reached]
     stopped = stopped[reached]
-    weight = c["weight"][rows] / k_rep
+    weight = base[reached] / k_rep
     deposited = np.zeros(len(rows))
     measured = np.zeros(len(rows))
     counted = np.zeros(len(rows), dtype=bool)
     keep = np.zeros(len(rows), dtype=bool)
     kind = np.zeros(len(rows), dtype=int)
+    own = _own_shares(crystals)
     for k, cr in enumerate(crystals):
         m = which == k
         if not m.any():
@@ -539,9 +711,9 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
         e = energy_lab[m]
         r = bare[k]
         element = cr.element
-        p_int = (r.transmission(e) * np.minimum(r.total_efficiency(e, element)
-                                                / (sum(r.coverage) if element is None else r.coverage[element])
-                                                / r.transmission(e), 1.0))
+        # The crystal's efficiency over the part of its face that is its own (see _own_shares).
+        cover = (sum(r.coverage) if element is None else r.coverage[element]) * own[k]
+        p_int = r.transmission(e) * np.minimum(r.total_efficiency(e, element) / cover / r.transmission(e), 1.0)
         interact = rng.uniform(0.0, 1.0, m.sum()) <= p_int
         dep, kd = _deposit(r, e, rng)
         meas = dep + rng.normal(0.0, 1.0, len(dep)) * r.fwhm(np.maximum(dep, 1e-3)) / FWHM_PER_SIGMA
@@ -554,19 +726,130 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
         if cex is not None else 0
     # Add-back and suppression draw their own numbers, so the chain above is the same with and without them.
     done = {} if plain else _addback_and_suppression(crystals, which, energy_lab, deposited, measured, counted, keep,
-                                                     kind, np.random.default_rng(seed + 2_000_003))
+                                                     kind, np.random.default_rng(em.seeds[2]))
     rows, which, lab, energy_lab, beta = rows[keep], which[keep], lab[keep], energy_lab[keep], beta[keep]
     weight, deposited, measured, counted = weight[keep], deposited[keep], measured[keep], counted[keep]
     cascade, initial, final, e0s = cascade[keep], initial[keep], final[keep], e0s[keep]
     stopped = stopped[keep]
+    return {"particle": rows, "cascade": cascade + first_cascade, "initial": initial, "final": final,
+            "nucleus": np.full(len(rows), em.nucleus, dtype=np.int64), "crystal": which, "energy0": e0s,
+            "energy_lab": energy_lab, "deposited": deposited, "measured": measured, "counted": counted,
+            "theta": np.degrees(np.arccos(np.clip(lab[:, 2], -1, 1))),
+            "phi": np.degrees(np.arctan2(lab[:, 1], lab[:, 0])), "beta": beta, "stopped": stopped, "weight": weight,
+            "info": {"excited_rows": excited_rows, "summed": summed, "done": done,
+                     "lifetimes": taus is not None and bool(np.any(taus > 0)), "chains": excited_rows * k_rep}}
+
+
+def other_rows(experiment, ev: Events, solution, count_once: bool, seed: int) -> tuple:
+    """The particle rows on whose orbits the other nucleus of the collision was excited, and the rate each stands
+    for: the particles scattered on the target's main nuclide, whether or not the collision also excited the
+    ``[reaction]`` nucleus, each with the probability that it excited the other nucleus at its CM angle (the
+    summed populations of ``solution``, :func:`physim.nuclear.gamma.other_excitation`). The two excitations are
+    taken as independent: a collision that excites both has the γ rays of both on one particle. The probability
+    goes into the weight; or, when every particle stands for one count (``count_once``, a run), the nucleus is
+    excited in a row with that probability and the row keeps its weight."""
+    from .rates import SchemeProbability
+
+    layers = stack(experiment)
+    key = max(layers[0].nuclides.items(), key=lambda kv: kv[1])[0]
+    label = f"{data.nuclide(key).name} ({layers[0].name})"
+    c = ev.columns
+    # Elastic scattering on that nuclide, and the collisions on it that excited the [reaction] nucleus.
+    on_it = [i for i, name in enumerate(ev.channels) if name == label or name.startswith(label + ",")]
+    if not on_it:
+        return np.zeros(0, dtype=np.int64), np.zeros(0)
+    rows = np.flatnonzero(np.isin(c["channel"], on_it))
+    kept = solution.__dict__.get("_scheme_probability")
+    if kept is None:
+        kept = solution.__dict__["_scheme_probability"] = SchemeProbability(solution)
+    p = np.clip(np.asarray(kept.probability(c["theta_cm"][rows]), dtype=float), 0.0, 1.0)
+    if count_once:
+        pick = np.random.default_rng(seed + 5_000_011).uniform(0.0, 1.0, len(rows)) < p
+        rows = rows[pick]
+        return rows, np.asarray(c["weight"][rows], dtype=float)
+    return rows, np.asarray(c["weight"][rows], dtype=float) * p
+
+
+def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_events: Optional[Events] = None,
+                    bin_kev: float = 1.0, gammas_per_event: int = 10, plain: bool = False,
+                    rates: Optional[Rates] = None, count_once: bool = False, aimed: bool = True,
+                    other: bool = True) -> GammaEvents:
+    """Generate the particle events (or take ``particle_events``) and follow the γ ray of every excited event to
+    the crystals. The same setup and seed give the same γ rays.
+
+    Coincidences are rare, so each excited event emits its γ ray ``gammas_per_event`` times over, each with a
+    share of the event's weight: the rates are unchanged and the spectra are smoother.
+
+    **Both nuclei.** The ``[reaction]`` names one nucleus; when the setup's ``[levels]`` also hold a level scheme
+    of the other one (the target's, for a beam that is excited), that nucleus is excited too, on the orbits of
+    the elastically scattered particles, with the probability its coupled equations give
+    (:func:`physim.nuclear.gamma.other_excitation`), and its γ rays are in the same events: the ``nucleus``
+    column is 0 for the ``[reaction]`` nucleus and 1 for the other, and ``initial`` and ``final`` count levels
+    in that nucleus's scheme. The γ rays of the ``[reaction]`` nucleus are the same with and without it.
+    ``count_once`` says that every particle stands for one count (a run): the other nucleus is then excited
+    in a row with its probability, instead of carrying the probability as weight. ``other=False`` leaves the
+    other nucleus out (the extension of a run that was taken without it).
+
+    ``plain`` switches off the add-back and the shields of every γ-ray detector (the geometry stays): the same
+    γ rays as the setup's own run up to the add-back and the rejections, for a comparison. ``rates`` is the
+    setup's :class:`~physim.nuclear.rates.Rates`, if already computed (it sets the singles and the randoms).
+
+    Only the γ rays that reach a crystal are drawn (a thinning that leaves their number and their directions
+    as their distribution has them, at a small part of the work); ``aimed=False`` draws every direction over
+    the whole sphere and keeps those that meet a crystal, the slow way to the same γ rays in distribution."""
+    exc = experiment.excitation
+    if exc is None:
+        raise ValueError("the setup has no excited state ([reaction] type = \"coulex\")")
+    if not experiment.gamma_detectors:
+        raise ValueError("the setup has no γ-ray detectors")
+    ev = particle_events if particle_events is not None else simulate(experiment, events, seed)
+    layers = stack(experiment)
+    chans = channels(layers, experiment)
+    excited_channels = [i for i, ch in enumerate(chans) if ch.excitation is not None]
+    ex = excitation_of(experiment)
+    e0 = exc.energy_mev
+    emitter = ex.scheme.nuclide
+    c = ev.columns
+    k_rep = max(int(gammas_per_event), 1)
+
+    # The chain starts from the bare crystals; add-back and suppression are applied to the deposits afterwards.
+    crystals, bare = crystals_of(experiment, plain)
+
+    cex = cascade_excitation(experiment)
+    main = _Emitter(0, emitter, exc.excite == "target", e0, ex, cex,
+                    TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=e0,
+                            excite="recoil" if exc.excite == "target" else "ejectile"),
+                    (seed + 1_000_003, seed + 4_000_003, seed + 2_000_003))
+    rows = np.flatnonzero(np.isin(c["channel"], excited_channels))
+    parts = [_chain(experiment, ev, layers, crystals, bare, main, rows, c["weight"][rows], k_rep, plain,
+                    aimed=aimed)]
+
+    # -- the other nucleus of the collision, when the setup has its level scheme -----------------------------------
+    other = other_excitation(experiment) if other else None
+    if other is not None:
+        o_rows, o_base = other_rows(experiment, ev, other, count_once, seed)
+        levels = other.scheme.levels
+        e_first = 1e-3 * min(lv.energy.value - levels[other.ground].energy.value
+                             for n, lv in enumerate(levels) if n != other.ground)
+        em = _Emitter(1, other.scheme.nuclide, other.excite == "target", e_first, None, other,
+                      TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=e_first,
+                              excite="recoil" if other.excite == "target" else "ejectile"),
+                      (seed + 6_000_011, seed + 7_000_003, seed + 8_000_009))
+        parts.append(_chain(experiment, ev, layers, crystals, bare, em, o_rows, o_base, k_rep, plain,
+                            first_cascade=parts[0]["info"]["chains"], aimed=aimed))
+    info = [p.pop("info") for p in parts]
+    cols = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
+    rows = cols["particle"]
 
     # -- the Doppler correction from what the detectors know -------------------------------------------------
-    corrected = doppler_correct(experiment, c, rows, which, measured)
+    corrected = doppler_correct(experiment, c, rows, cols["crystal"], cols["measured"])
 
     # -- singles, randoms, dead time ---------------------------------------------------------------------------
     bg = backgrounds(experiment, crystals, rates, bin_kev)
     excitation_rate, all_excitations = bg["excitation_rate"], bg["all_excitations"]
-    notes = [f"{len(rows)} γ rays from {excited_rows} excited events with a detected particle ({k_rep} emissions "
+    excited_rows, done, summed = info[0]["excited_rows"], info[0]["done"], info[0]["summed"]
+    notes = [f"{len(parts[0]['particle'])} γ rays from {excited_rows} excited events with a detected particle "
+             f"({k_rep} emissions "
              f"each); {ev.n_events} reactions "
              f"generated. The particle events stand for {excitation_rate:.3g} excitations/s with a detected "
              f"particle out of {all_excitations:.3g}/s in all."]
@@ -575,24 +858,26 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
                      f"rejected {done.get('suppressed', 0)}.")
     if summed:
         notes.append(f"{summed} pairs of γ rays of one cascade summed in a crystal.")
-    if taus is not None and np.any(taus > 0):
+    if info[0]["lifetimes"]:
+        stopped = parts[0]["stopped"]
         notes.append(f"Lifetimes: each emitter slows down in the target and backing and decays after its level's "
                      f"lifetime; {stopped.mean():.1%} of the γ rays kept come from nuclei that had stopped.")
+    how = ("in first order (each level in one step from the ground state)" if excitation_order(experiment)
+           == "first" else "to all orders (the coupled equations: levels reached in several steps, and the "
+           "reorientation)")
     if cex is not None:
-        how = ("in first order (each level in one step from the ground state)" if excitation_order(experiment)
-               == "first" else "to all orders (the coupled equations: levels reached in several steps, and the "
-               "reorientation)")
         notes.append(f"Each excitation starts in a level of the scheme, populated {how}, and decays by the level "
                      f"scheme's cascade: {len(cex.transitions())} transitions "
                      "followed, each with its own orientation; the angular correlation between successive γ rays of "
                      "one cascade is not included.")
-    cols = {"event": c["event"][rows], "particle": rows, "cascade": cascade, "initial": initial, "final": final,
-            "crystal": which, "energy0": e0s,
-            "energy_lab": energy_lab, "deposited": deposited, "measured": measured, "counted": counted,
-            "theta": np.degrees(np.arccos(np.clip(lab[:, 2], -1, 1))),
-            "phi": np.degrees(np.arctan2(lab[:, 1], lab[:, 0])), "beta": beta, "stopped": stopped,
-            "corrected_projectile": corrected["ejectile"], "corrected_recoil": corrected["recoil"],
-            "weight": weight}
+    if other is not None:
+        notes.append(f"{len(parts[1]['particle'])} γ rays of {other.scheme.nuclide}, the other nucleus of the "
+                     f"collision, from {info[1]['excited_rows']} scattered particles: it is excited on "
+                     f"their orbits with the probability its level scheme gives, {how}, and decays by its "
+                     f"{len(other.transitions())} transitions. The two nuclei are excited independently: a "
+                     "collision can excite both.")
+    cols["event"] = c["event"][rows]
+    cols["corrected_projectile"], cols["corrected_recoil"] = corrected["ejectile"], corrected["recoil"]
     shaping = _q(experiment.run.shaping_time).to("s") if experiment.run.shaping_time is not None else 0.0
     return GammaEvents(cols, ev, crystals, int(seed), e0, emitter, bg["window_s"], bg["dead_time_s"],
                        bg["live_fraction"], bg["singles_rate"], bg["singles_spectrum"], bg["singles_edges"],
@@ -617,16 +902,17 @@ def crystals_of(experiment, plain: bool = False) -> tuple:
 
 def spectrum_top(experiment) -> float:
     """The highest energy (MeV) a γ-ray spectrum of the setup has to show: 1.3 × the energy of the state the
-    reaction excites, and, when the excited nucleus has a level scheme, 1.1 × its highest γ-ray energy. The
+    reaction excites, and, when a nucleus of the collision has a level scheme, 1.1 × its highest γ-ray energy. The
     second matters as soon as the scheme holds more than the first state: 62Ni's second 2⁺ state decays to the
     ground state with 2302 keV, well above 1.3 × 1173 keV, and a spectrum that stopped there showed none of it."""
     exc = experiment.excitation
     if exc is None:
         return 0.0
     top = 1.3 * exc.energy_mev
-    scheme = experiment.levels.get("target" if exc.excite == "target" else "beam")
-    if scheme is not None and scheme.transitions:
-        top = max(top, 1.1e-3 * max(float(t.energy.value) for t in scheme.transitions))
+    # Both nuclei: the other one's lines are in the events when the setup has its scheme.
+    for scheme in (experiment.levels.get("target"), experiment.levels.get("beam")):
+        if scheme is not None and scheme.transitions:
+            top = max(top, 1.1e-3 * max(float(t.energy.value) for t in scheme.transitions))
     return float(top)
 
 
@@ -656,17 +942,55 @@ def backgrounds(experiment, crystals: list, rates: Optional[Rates] = None, bin_k
               max((_q(e).to("MeV") for e, _ in extra), default=0.0) * 1.1) + 0.05
     edges = np.arange(0.0, top, bin_kev * 1e-3)
     singles_rate, singles_spectrum = {}, {}
+    other = other_lines(experiment)
     for cr in crystals:
         r = cr.response
         gamma_rate = all_excitations * float(r.total_efficiency(e0, cr.element))
         s = gamma_rate * r.shape(e0, edges)
         bg, bg_rate = _room_spectrum(experiment, cr, edges, room, extra)
         singles_rate[cr.name] = {"reaction": gamma_rate, "background": bg_rate}
+        if other:  # the other nucleus's γ rays, line by line (unshifted, as the reaction's own)
+            o_rate = 0.0
+            for e_line, per_s in other:
+                seen = per_s * float(r.total_efficiency(e_line, cr.element))
+                s = s + seen * r.shape(e_line, edges)
+                o_rate += seen
+            singles_rate[cr.name]["other nucleus"] = o_rate
         singles_spectrum[cr.name] = s + bg
     total_rate = sum(particle_rate.values()) + sum(sum(v.values()) for v in singles_rate.values())
     return {"window_s": window, "dead_time_s": dead, "live_fraction": 1 / (1 + dead * total_rate),
             "particle_rate": particle_rate, "singles_rate": singles_rate, "singles_spectrum": singles_spectrum,
             "singles_edges": edges, "excitation_rate": excitation_rate, "all_excitations": all_excitations}
+
+
+def other_lines(experiment) -> list:
+    """The γ rays the other nucleus of the collision emits in all, whether or not a particle is detected:
+    [(energy in MeV, γ rays per second)] for each transition of its scheme, from the Rutherford cross section
+    times the transition's yield per collision, integrated over the scattering angle. Empty without a level
+    scheme for it (:func:`physim.nuclear.gamma.other_excitation`)."""
+    from .rutherford import Rutherford
+
+    sol = other_excitation(experiment)
+    if sol is None:
+        return []
+    kept = sol.__dict__.get("_other_lines")
+    layers = stack(experiment)
+    key, atoms = max(layers[0].nuclides.items(), key=lambda kv: kv[1])
+    pps = experiment.beam.particles_per_second
+    if kept is None:
+        grid, states = sol.table()
+        u = np.linspace(math.cos(math.radians(1.0)), -1.0, 400)
+        th = np.degrees(np.arccos(np.clip(u, -1, 1)))
+        ruth = np.asarray(Rutherford(sol.beam, sol.target, sol.beam_energy).cross_section_cm(th))  # mb/sr
+        levels = sol.scheme.levels
+        kept = []
+        for i, f in sol.transitions():
+            y = np.interp(th, np.r_[0.0, grid], np.r_[0.0, [st.gamma_yield(i, f) for st in states]]) * ruth
+            mb = float(2 * math.pi * abs(np.sum(0.5 * (y[1:] + y[:-1]) * np.diff(u))))
+            if mb > 0:
+                kept.append((1e-3 * float(levels[i].energy.value - levels[f].energy.value), mb))
+        sol.__dict__["_other_lines"] = kept
+    return [(e, pps * atoms * mb * 1e-27) for e, mb in kept]
 
 
 LN2 = math.log(2)
@@ -808,9 +1132,7 @@ def _rest_directions(table: tuple, theta_cm: np.ndarray, rng) -> np.ndarray:
         u = rng.uniform(-1.0, 1.0, len(idx))
         ph = rng.uniform(0.0, 2 * math.pi, len(idx))
         th = np.arccos(u)
-        w = np.zeros(len(idx))
-        for (k, q), v in a_kq.items():
-            w += (v[idx] * math.sqrt(4 * math.pi / (2 * k + 1)) * angular.spherical_harmonic(k, q, th, ph)).real
+        w = _distribution({key: v[idx] for key, v in a_kq.items()}, th, ph)
         accept = rng.uniform(0.0, 1.0, len(idx)) * bound[idx] <= w
         hit = idx[accept]
         local[hit] = np.c_[np.sin(th[accept]) * np.cos(ph[accept]), np.sin(th[accept]) * np.sin(ph[accept]),
@@ -991,7 +1313,12 @@ def _deposit(r: Response, energy: np.ndarray, rng) -> tuple:
         cdf = np.cumsum(kn, axis=0)
         cdf /= cdf[-1:]
         v = rng.uniform(0.0, 1.0, (~flat).sum())
-        pick = np.array([np.interp(v[i], cdf[:, i], s[:, i]) for i in range(len(v))])
+        # s at v on each γ ray's own cumulative curve: a straight line between the two points that hold v.
+        cols = np.arange(len(v))
+        j = np.clip((cdf <= v[None, :]).sum(axis=0) - 1, 0, len(cdf) - 2)
+        lo, hi = cdf[j, cols], cdf[j + 1, cols]
+        frac = np.where(hi > lo, (v - lo) / np.where(hi > lo, hi - lo, 1.0), 0.0)
+        pick = np.where(v <= cdf[0], s[0], s[j, cols] + np.clip(frac, 0.0, 1.0) * (s[j + 1, cols] - s[j, cols]))
         out_c[~flat] = pick * ec[~flat]
         out[compton] = out_c
     kind = np.zeros(len(e), dtype=int)
@@ -1000,5 +1327,5 @@ def _deposit(r: Response, energy: np.ndarray, rng) -> tuple:
 
 
 __all__ = ["Crystal", "GAMMA_COLUMNS", "GammaEvents", "ROOM_LINES", "backgrounds", "crystals_of", "doppler_correct",
-           "spectrum_top",
+           "other_lines", "other_rows", "spectrum_top",
            "recorrect", "simulate_gammas"]

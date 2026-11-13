@@ -103,7 +103,7 @@ def test_event_counts_agree_with_the_analytic_rates(ni):
             resp = g.crystals[i].response
             expected = exc * float(resp.total_efficiency(e0)) * factors[(det, gd.name)]
             rate, err = g.rate(gd.name, det)
-            # 5%: the analytic factor comes from a coarse quadrature at the mid-target energy.
+            # 5%: the analytic factor is for the beam energy at the middle of the target.
             pulls.append((rate - expected) / math.hypot(err, 0.05 * expected))
             assert abs(pulls[-1]) < 3, (det, gd.name, rate, expected)
     assert abs(np.mean(pulls)) < 1.0

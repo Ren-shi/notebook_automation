@@ -39,7 +39,9 @@ thickness = "300 um"
 
 Each `[[detectors]]` block adds one detector; repeat it for as many as you need. Complete examples are in
 physim (`physim.nuclear.example_names()` lists them), among them `coulex_ni62_pt194`: ⁶²Ni at 237 MeV on ¹⁹⁴Pt
-with the silicon detectors at backward angles and the level schemes of both nuclei.
+with the silicon detectors at backward angles and the level schemes of both nuclei, and
+`coulex_ni62_pt194_clovers`: the same experiment with four germanium clovers in place of the four single
+crystals (add-back and BGO shields on).
 
 From Python:
 
@@ -244,6 +246,12 @@ between crystal centres and the housing.
 apart, labelled A to D. Each crystal has its own row in the Doppler table, since each is corrected for the Doppler
 shift on its own. A γ-ray detector without a model is a single disc of the `radius` given, as before.
 
+The crystals of the `clover` model are 50 mm across and 45 mm apart, as the real ones are, which are cut flat where
+they meet. The model keeps them as discs, so neighbouring faces overlap (3.1% of each face). The efficiency is the
+data sheet's, counted over each crystal's whole face. In the simulated events a γ ray through the overlap goes to
+the crystal it meets first, and each crystal has the data sheet's efficiency over the part of its face that is its
+own, so a run counts what the plan predicts.
+
 **Dead material.** A model's circuit board, and the front of a γ-ray detector's housing (`housing_side`), stop
 particles. A detector behind them is hidden in the rates and in the simulated events alike, and the warnings name
 what hides it.
@@ -358,12 +366,15 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
 - **In the rates.** `correlation_table(experiment)` in `physim.nuclear.gamma` gives, for every particle detector
   and γ-ray crystal, the γ rays seen in coincidence relative to isotropic emission. The coincidence rates and beam
   times use these factors. For the ⁵⁸Ni example a detector at 90° sees 0.4 times the isotropic number when the
-  particle is in the backward ring, and those at 45° and 135° see 1.5 times.
+  particle is in the backward ring, and those at 45° and 135° see 1.5 times. With a level scheme that the events
+  follow, the table is for the `[reaction]` state in that scheme's solution (to all orders unless the setup
+  says first order), with its feeding from above: the plan and the events then share one angular correlation.
 - **Not included:** excitation in two or more steps and reorientation (first order only, so the matrix elements
   enter through their size and not their sign), deorientation in vacuum, and lifetimes: every state decays in
   flight with the orientation it was given. The simulated events of a setup with a level scheme do have the
   further steps and the reorientation: see "Multi-step excitation and reorientation" below.
 
+(particle-gamma-events)=
 ## Particle–γ events
 
 `physim.nuclear.gamma_events` follows the γ ray of every simulated Coulomb-excitation event whose particle
@@ -397,12 +408,42 @@ g["corrected_recoil"], g["weight"]            # per γ ray (see gamma_events.GAM
 - **Statistics.** Each excited event emits its γ ray ten times over (`gammas_per_event`), each with a share of
   its weight, since coincidences are rare. On the ⁵⁸Ni example 400 000 reactions take about 5 s and give about
   6 000 γ rays in coincidence.
+- **Both nuclei.** The `[reaction]` names the nucleus that is excited. When `[levels]` also holds a level scheme
+  of the other one (`[levels.target]` for a beam that is excited), that nucleus is excited too and its γ rays
+  are in the same events and runs:
+  - It is excited on the orbits of the particles scattered on the target's main nuclide, with the probability
+    its coupled equations give at each CM angle (`gamma.other_excitation`; first order with `[reaction] order =
+    "first"`), and decays by its scheme's cascade with its own lifetimes and orientation. The two nuclei are
+    excited independently: a collision can excite both, and its particle then has the γ rays of both.
+  - The `nucleus` column of the γ rays is 0 for the `[reaction]` nucleus and 1 for the other; `initial` and
+    `final` count levels in that nucleus's scheme. The γ rays of the `[reaction]` nucleus are the same with and
+    without the other scheme.
+  - Each nucleus's lines are sharp with its own Doppler correction (`corrected_projectile` for the beam,
+    `corrected_recoil` for the target) and smeared by the other.
+  - Its γ rays count in the singles, and so in the random coincidences and the dead time.
+  - With ⁶²Ni at 237 MeV on ¹⁹⁴Pt the platinum is excited in 96% of the backward collisions: its 328.5 keV peak
+    holds about ten times the counts of the nickel peak. The template's platinum scheme holds the seven
+    positive-parity levels up to the 6⁺ state at 1412 keV.
+  - The plan gives its first peak's coincidences per particle detector (`Rates.other_peak`), and predicted
+    against measured has a row for it. The counts wanted and the beam time stay those of the `[reaction]`
+    nucleus.
+  - Left out: the 0.3 MeV the particle loses to the other nucleus's excitation (its energy is that of the
+    collision without it), and the summing of the two nuclei's γ rays in one crystal.
+- **One particle per collision.** A collision either excites the `[reaction]` nucleus or leaves it as it was:
+  elastic scattering is the Rutherford cross section times 1 − P(θ), in the rates and in the events, so elastic
+  and excited particles together are Rutherford scattering. At backward angles on the ⁶²Ni example a fifth of the
+  particles are excited ones.
+- **Only the γ rays that reach a crystal are drawn.** A γ ray is kept with a probability that no γ ray's chance
+  of reaching a crystal exceeds, then aimed at a point drawn evenly over the crystal faces and counted with the
+  probability its distribution gives along that line. Their number and their directions are those of drawing
+  every direction over the whole sphere (`simulate_gammas(aimed=False)`), at a small part of the work.
 - **Not included:** cascades (one γ ray per excitation), summing, pile-up, lifetimes, contaminant reactions.
 
 In the app, **Simulate the γ rays** on the Spectra tab shows the particle × γ matrix and each detector's raw and
 corrected spectrum, and for a clover with add-back or a shield the spectrum without them too. `write_root(...,
 gammas=g)` adds a `gammas` tree and `gamma_<detector>` histograms to the ROOT file.
 
+(automatic-analysis)=
 ## Automatic analysis
 
 `physim.nuclear.analysis` analyses the simulated events as an experimentalist would, and says how precisely the
@@ -427,25 +468,55 @@ The steps, each adjustable through `Settings`:
    resolutions), in the chosen `detectors` and `rings`. The share of excitations the gate keeps is known from the
    simulation and divided out, as an experimentalist takes it from one.
 2. **Doppler correction** for the excited nucleus, or for the other one to see what that does.
-3. **Peak fit:** a Gaussian on a straight line within `fit_half_width` resolutions, then the counts within ±3σ
+3. **Peak search:** each corrected spectrum (for the projectile, and for the recoil) is searched for peaks over
+   its whole range (`analysis.find_peaks`): at every energy the counts in a window are compared with the level
+   beside it, and a peak is an excess of at least 5 standard deviations and 10% of that level. Each peak found is
+   fitted, and one that sits on a transition of the nucleus that correction is right for is named
+   (`analysis.identify`). A nucleus's lines are sharp in its own spectrum and smeared in the other, so each
+   nucleus shows its peaks in its own spectrum. `Result.search` holds both spectra and their peaks.
+4. **Peak fit:** a Gaussian on a straight line within `fit_half_width` resolutions, then the counts within ±3σ
    over the line, with the random coincidences expected in the window subtracted.
-4. **Yield:** the area over the full-energy-peak efficiency, the γ-ray branch and the angular-correlation factor.
-5. **Normalisation:** `"rutherford"`, to the elastic particles counted in the same rings (beam current and target
-   thickness cancel); or `"target"`, to a `reference` transition of known B(E2↑). Since the simulation excites one
-   state, the reference peak is its analytic expectation with Poisson noise.
-6. **B(E2↑)** from the first-order proportionality of the excitation probability to B(E2), in e²fm⁴, e²b² and
+5. **Yield:** the area over the full-energy-peak efficiency, the γ-ray branch and the angular-correlation factor.
+6. **Normalisation:** `"rutherford"`, to the particles counted in the same rings (beam current and target
+   thickness cancel); or `"target"`, to a transition of the other nucleus of the collision whose strength is
+   known.
+   - With a level scheme of that nucleus in the setup its γ rays are in the events (see *Both nuclei* under
+     {ref}`Particle–γ events <particle-gamma-events>`). Its first transition's peak is then found, fitted and
+     integrated in its own corrected spectrum, in coincidence with every particle counted in the same rings.
+     Its yield is compared with what its level scheme gives per particle, to all orders, and B(E2) is
+     the first yield over the number of particles the reference peak stands for. The beam current, the
+     target thickness, the dead time and the particle count cancel. Its matrix elements are taken as known to 3%.
+   - Without one, give `reference` (energy, B(E2↑), uncertainty): the reference peak is then its analytic
+     expectation with Poisson noise.
+   `Result.lines` holds each integrated peak: its spectrum and fit, the area, the efficiency, the correlation,
+   the yield, the yield per particle and, for the other nucleus, the expected one and their ratio.
+7. **B(E2↑)** from the first-order proportionality of the excitation probability to B(E2), in e²fm⁴, e²b² and
    Weisskopf units; the statistical uncertainty from the fit and the normalisation; a budget of systematics
    (efficiency, angular correlation, beam energy, detector positions, the reference's B(E2)), each found by
    changing its input by one standard deviation and running again; and the Monte Carlo sample's own uncertainty,
    quoted separately.
-7. **Shape:** β₂ from B(E2), the strength in Weisskopf units, E(4⁺)/E(2⁺) when a level scheme is there, and the
+   - **To all orders.** When the events follow a level scheme to all orders, first order is only the start (the
+     "all orders" step). The scheme's coupled equations are solved with B(E2↑) of the transition as the one
+     unknown, until they give the measured γ rays per particle in the peak's window, every transition inside
+     the window counted: the feeding of the state from above, and a line the peak blends with (the 4⁺ → 2⁺ line
+     of ⁶²Ni, 3% of its window). On the ⁶²Ni example this is 4 to 8% below the first-order reading
+     (`Result.b_first_order`). Every other matrix element is taken from the scheme. `Settings(order="first")`
+     keeps the first-order value.
+   - **Saturation.** A strong excitation grows more slowly than B(E2) (as B(E2) to the power 0.67 on the ⁶²Ni
+     example), so a 1% change of the yield is a 1.5% change of B(E2). The statistical uncertainty and every
+     entry of the budget are multiplied by that factor, and the step says so.
+   - **A sample without a run** is a spectrum of few weighted entries scaled to the counts of the beam time.
+     The fit is given the variance of the entries (`fit_peak(variance=)`); taken for Poisson counts, the bins
+     were trusted too much and the fit ran to its widest peak.
+8. **Shape:** β₂ from B(E2), the strength in Weisskopf units, E(4⁺)/E(2⁺) when a level scheme is there, and the
    quadrupole moment a rigid rotor would have, with the note that these readings depend on the rotor model.
 
 The result also compares the extracted value with the one put in (the pull), and gives the counts in the peak per
 8-hour shift and the beam time for the `wanted_precision`. Every run is kept in `Analysis.history`, and a changed
 setting is named in the result's notes with the previous value of B(E2).
 
-In the app, **Analyse** on the Spectra tab runs it with the choices made in the row above the button.
+In the app, **Analyse** on the Analysis step runs it with the choices made in the rows above the button, and
+shows the peaks found, each integrated peak with its fit, and the chain to B(E2).
 
 ## The run record
 
@@ -529,8 +600,8 @@ the excitation probability of the rates and of the event generator is the sum of
 which only two steps reach, is then in the γ-ray spectra. `[reaction] order = "first"` gives first-order events
 instead. The table of angles is solved once per setup, all angles together (about 2 s for the six levels of
 ⁶²Ni). {doc}`theory/coulex` has the numbers for the ⁶²Ni example and what is left out: every excitation keeps
-the kinematics of the `[reaction]` state, elastic scattering is not reduced by what is excited, and the analysis
-still extracts B(E2) with first-order theory.
+the kinematics of the `[reaction]` state. The analysis extracts B(E2) from such events to all orders (step 7
+under {ref}`Automatic analysis <automatic-analysis>` below).
 
 Not included: the E1 polarisation correction, deorientation, lifetimes, mutual excitation of both nuclei, and
 nuclear interference above the safe energy.

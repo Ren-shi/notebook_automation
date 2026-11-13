@@ -106,7 +106,10 @@ def test_a_short_lifetime_gives_item_55s_result():
     b = simulate_gammas(short, 300_000, 6, gammas_per_event=10)
     assert not b["stopped"].any()
     for name in ("Ge0", "Ge45"):
-        ma, mb = a.select(name), b.select(name)
+        # The full-energy peak (the two runs draw other γ rays, so the Compton deposits of each scatter by more
+        # than any shift of the line).
+        ma = a.select(name) & (np.abs(a["deposited"] - a["energy_lab"]) < 1e-6)
+        mb = b.select(name) & (np.abs(b["deposited"] - b["energy_lab"]) < 1e-6)
         ca = np.average(a["measured"][ma], weights=a["weight"][ma])
         cb = np.average(b["measured"][mb], weights=b["weight"][mb])
         assert cb == pytest.approx(ca, abs=0.002), name  # 2 keV on 1454

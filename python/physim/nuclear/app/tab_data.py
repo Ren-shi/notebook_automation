@@ -189,17 +189,23 @@ def controls(ctx, run) -> None:
 def grid(ctx, run) -> None:
     ui = ctx.ui
     o = options(ctx)
-    with ui.element("div").classes("w-full").style(
-            "display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px"):
-        for name, spec, fig in panels(ctx, ctx.P()):
-            with ui.column().classes("ps-plate gap-0").style("min-width: 0"):
-                with ui.row().classes("w-full items-center no-wrap"):
-                    ui.label(name).classes("text-sm font-medium")
-                    ui.label(f"{spec['counts'].sum():,.0f} counts").classes("text-xs ps-muted")
-                    ui.space()
-                    ui.button(icon="open_in_full", on_click=lambda n=name, s=spec: enlarge(ctx, run, n, s)).props(
-                        "dense flat round size=sm").tooltip("Enlarge, and download the spectrum")
-                ui.plotly(fig).classes("w-full")
+    # The particle detectors in one row and the γ-ray detectors in the next (they differ in their axis): each
+    # row is shared out among its spectra, so no place in it stays empty.
+    found = panels(ctx, ctx.P())
+    for kind in dict.fromkeys(spec.get("xlabel", "") for _, spec, _ in found):
+        with ui.element("div").classes("w-full").style("display: flex; flex-wrap: wrap; gap: 8px"):
+            for name, spec, fig in found:
+                if spec.get("xlabel", "") != kind:
+                    continue
+                with ui.column().classes("ps-plate gap-0").style("flex: 1 1 300px; min-width: 0"):
+                    with ui.row().classes("w-full items-center no-wrap"):
+                        ui.label(name).classes("text-sm font-medium")
+                        ui.label(f"{spec['counts'].sum():,.0f} counts").classes("text-xs ps-muted")
+                        ui.space()
+                        ui.button(icon="open_in_full",
+                                  on_click=lambda n=name, s=spec: enlarge(ctx, run, n, s)).props(
+                            "dense flat round size=sm").tooltip("Enlarge, and download the spectrum")
+                    ui.plotly(fig).classes("w-full")
     ui.label(("The whole run: the real part scaled, with the full run's Poisson fluctuations. " if o["scaled"]
               else f"The real part: {run.describe().split(';', 1)[-1].strip()}. ")
              + "Counts per bin.").classes("text-xs ps-muted")
@@ -292,12 +298,17 @@ def views_2d(ctx, run) -> None:
     o = options(ctx)
     ev = run.events()
     ui.label("2D views").classes("text-lg font-semibold mt-4")
-    with ui.row().classes("items-end gap-2"):
+    # The two views stand side by side where the window has the width.
+    both = ui.element("div").classes("w-full grid gap-3").style(
+        "grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); align-items: start")
+    with both:
+        left = ui.column().classes("w-full gap-1").style("min-width: 0")
+    with left:
         ui.select(list(ev.detectors), value=o["view_detector"] or ev.detectors[0], label="Energy against ring of",
                   on_change=lambda e: (o.update(view_detector=e.value), ctx.refresh_data())).props(
             "dense outlined").classes("w-48")
-    det, figure = ring_view(ctx, ctx.P())
-    plot = ui.plotly(figure).classes("w-full")
+        det, figure = ring_view(ctx, ctx.P())
+        plot = ui.plotly(figure).classes("w-full")
 
     def selected(e) -> None:
         r = (e.args or {}).get("range") or {}
@@ -309,16 +320,18 @@ def views_2d(ctx, run) -> None:
             ctx.refresh_data()
 
     plot.on("plotly_selected", selected)
-    ui.label("Each group of particles follows its kinematic line: the elastic one dotted, the excited one solid. "
-             "Drag a box with the mouse to fill in a gate below the spectra.").classes("text-xs ps-muted")
+    with left:
+        ui.label("Each group of particles follows its kinematic line: the elastic one dotted, the excited one "
+                 "solid. Drag a box with the mouse to fill in a gate below the spectra.").classes("text-xs ps-muted")
     if run.gammas() is not None:
         corr = o["view_correction"]
-        ui.select({k: k.capitalize() for k in dv.CORRECTIONS}, value=corr, label="γ-ray energy against crystal",
-                  on_change=lambda e: (o.update(view_correction=e.value), ctx.refresh_data())).props(
-            "dense outlined").classes("w-56 mt-2")
-        ui.plotly(crystal_view(ctx, ctx.P())).classes("w-full")
-        ui.label("With the right correction every crystal's line sits at the transition energy; a misplaced target "
-                 "moves each crystal's line by its own amount.").classes("text-xs ps-muted")
+        with both, ui.column().classes("w-full gap-1").style("min-width: 0"):
+            ui.select({k: k.capitalize() for k in dv.CORRECTIONS}, value=corr, label="γ-ray energy against crystal",
+                      on_change=lambda e: (o.update(view_correction=e.value), ctx.refresh_data())).props(
+                "dense outlined").classes("w-56")
+            ui.plotly(crystal_view(ctx, ctx.P())).classes("w-full")
+            ui.label("With the right correction every crystal's line sits at the transition energy; a misplaced "
+                     "target moves each crystal's line by its own amount.").classes("text-xs ps-muted")
 
 
 def compare(ctx, run) -> None:
@@ -404,8 +417,12 @@ def render_view(ctx) -> None:
     grid(ctx, run)
     gates_block(ctx, run)
     views_2d(ctx, run)
-    compare(ctx, run)
-    exports(ctx, run)
+    with ctx.ui.element("div").classes("w-full grid gap-3").style(
+            "grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); align-items: start"):
+        with ctx.ui.column().classes("w-full gap-1").style("min-width: 0"):
+            compare(ctx, run)
+        with ctx.ui.column().classes("w-full gap-1").style("min-width: 0"):
+            exports(ctx, run)
 
 
 def render(ctx) -> None:

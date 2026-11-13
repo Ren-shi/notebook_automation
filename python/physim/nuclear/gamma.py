@@ -177,7 +177,94 @@ def excitation_order(experiment) -> str:
     return (getattr(exc, "order", None) or "all") if exc is not None else "all"
 
 
-def cascade_excitation(experiment, isotropic=None, order=None, channel=None):
+def other_role(experiment) -> str:
+    """ "projectile" or "target": the nucleus of the collision that the ``[reaction]`` does not name."""
+    return "projectile" if experiment.excitation.excite == "target" else "target"
+
+
+def other_excitation(experiment, isotropic=None, order=None):
+    """The excitation of the other nucleus of the collision (the target when the ``[reaction]`` excites the beam,
+    the beam when it excites the target), from its level scheme in the setup's ``[levels]``: the solution of its
+    coupled equations (or first order, as ``[reaction] order`` says) for scattering on the target's main nuclide,
+    at the beam energy in the middle of the target. None when the setup has no level scheme for it, or one
+    without a matrix element from the ground state. With it, the simulated events hold that nucleus's γ rays too
+    (:func:`physim.nuclear.gamma_events.simulate_gammas`)."""
+    if experiment.excitation is None:
+        return None
+    return cascade_excitation(experiment, isotropic, order, nucleus="other")
+
+
+def emitters(experiment) -> list:
+    """The nuclei whose γ rays the events hold, the ``[reaction]`` nucleus first: dicts with "nucleus" (0 or 1,
+    as the γ-ray events' ``nucleus`` column), "nuclide", "role" ("projectile" or "target"), "correction" (the
+    Doppler correction that is right for it, "projectile" or "recoil"), "scheme" (the level scheme its γ rays
+    follow, or None for the one state of the ``[reaction]``) and "solution" (the excitation of that scheme, or
+    None)."""
+    from . import data
+
+    exc = experiment.excitation
+    if exc is None:
+        return []
+    lay = stack(experiment)[0]
+    names = {"projectile": beam_ion(experiment),
+             "target": data.nuclide(max(lay.nuclides.items(), key=lambda kv: kv[1])[0]).name}
+    out = []
+    for n, role in enumerate((exc.excite, other_role(experiment))):
+        solution = cascade_excitation(experiment) if n == 0 else other_excitation(experiment)
+        if n == 1 and solution is None:
+            break
+        out.append({"nucleus": n, "nuclide": names[role], "role": role,
+                    "correction": "recoil" if role == "target" else "projectile",
+                    "scheme": solution.scheme if solution is not None else None, "solution": solution})
+    return out
+
+
+def transition_lines(experiment) -> list:
+    """The γ-ray lines the events can hold, the ``[reaction]`` nucleus first: dicts with "nucleus", "nuclide",
+    "initial", "final" (level indices in that nucleus's scheme), "energy_kev", "label" (such as
+    "62Ni 2+ → 0+") and "correction" (the Doppler correction that sharpens it). For the ``[reaction]`` state
+    without a scheme, its one line."""
+    exc = experiment.excitation
+    out = []
+    for em in emitters(experiment):
+        if em["solution"] is None:
+            out.append({"nucleus": em["nucleus"], "nuclide": em["nuclide"], "initial": 1, "final": 0,
+                        "energy_kev": 1e3 * exc.energy_mev,
+                        "label": f"{em['nuclide']} {1e3 * exc.energy_mev:.1f} keV", "correction": em["correction"]})
+            continue
+        levels = em["solution"].scheme.levels
+        names = level_names(levels)
+        for i, f in em["solution"].transitions():
+            if em["solution"].decay(i, f).gamma <= 0:
+                continue
+            out.append({"nucleus": em["nucleus"], "nuclide": em["nuclide"], "initial": int(i), "final": int(f),
+                        "energy_kev": float(levels[i].energy.value - levels[f].energy.value),
+                        "label": f"{em['nuclide']} {names[i]} → {names[f]}", "correction": em["correction"]})
+    return out
+
+
+def level_names(levels: list) -> list:
+    """A name for each level of a scheme: its spin and parity, with its place among the levels of that spin and
+    parity as a subscript when there are several ("2+₁", "2+₂"; the only 4⁺ level is "4+")."""
+    def jpi(level) -> str:
+        text = getattr(level, "jpi", None)
+        if text:
+            return str(text)
+        spin = getattr(level, "spin", None)
+        return f"{spin:g}" if spin is not None else "?"
+
+    texts = [jpi(lv) for lv in levels]
+    order = sorted(range(len(levels)), key=lambda n: levels[n].energy.value)
+    seen: dict = {}
+    out = list(texts)
+    for n in order:
+        seen[texts[n]] = seen.get(texts[n], 0) + 1
+        if texts.count(texts[n]) > 1:
+            out[n] = texts[n] + str(seen[texts[n]]).translate(str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉"))
+    return out
+
+
+def cascade_excitation(experiment, isotropic=None, order=None, channel=None, nucleus: str = "reaction"):
     """The excitation of the excited nucleus's whole level scheme (the setup's ``[levels]`` of the target or the
     beam, whichever the reaction excites), when its decays follow more than one transition: then each excitation
     starts in a level drawn from this solution's populations and decays by a cascade (backlog item 71). None
@@ -191,7 +278,10 @@ def cascade_excitation(experiment, isotropic=None, order=None, channel=None):
     ``channel`` (a :class:`~physim.nuclear.rates.Channel` with an excitation) picks the nucleus the excited one
     scatters on and the layer; by default the target's main nuclide. The solution is at the beam energy in the
     middle of the layer, and is kept with its table of angles: the events, the rates and the γ rays of one setup
-    share it."""
+    share it.
+
+    ``nucleus`` "other" gives the same for the other nucleus of the collision (:func:`other_excitation`), whose
+    scheme may hold a single transition."""
     from . import data
     from .coupled import CoupledChannels
     from .orientation import Excitation
@@ -199,7 +289,10 @@ def cascade_excitation(experiment, isotropic=None, order=None, channel=None):
     exc = experiment.excitation
     if exc is None:
         return None
-    role = "target" if exc.excite == "target" else "beam"
+    if nucleus not in ("reaction", "other"):
+        raise ValueError("nucleus must be 'reaction' or 'other'")
+    excite = exc.excite if nucleus == "reaction" else other_role(experiment)
+    role = "target" if excite == "target" else "beam"
     scheme = experiment.levels.get(role)
     if scheme is None:
         return None
@@ -214,21 +307,23 @@ def cascade_excitation(experiment, isotropic=None, order=None, channel=None):
     if order not in ("all", "first"):
         raise ValueError("order must be 'all' or 'first'")
     beam = beam_ion(experiment)
-    key = (beam, target, e_mid, exc.excite, bool(flat), order, json.dumps(scheme.to_dict(), sort_keys=True,
-                                                                         default=str))
+    key = (beam, target, e_mid, excite, bool(flat), order, json.dumps(scheme.to_dict(), sort_keys=True,
+                                                                     default=str))
     with _SOLVING:  # one thread solves; the others then find the solution
         if key in _SOLVED:
             _SOLVED.move_to_end(key)
             return _SOLVED[key]
         try:
             if order == "first":
-                ex = Excitation(beam, target, e_mid, scheme, excite=exc.excite, isotropic=flat)
+                ex = Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=flat)
             else:
-                ex = CoupledChannels(beam, target, e_mid, scheme, excite=exc.excite, isotropic=flat,
+                ex = CoupledChannels(beam, target, e_mid, scheme, excite=excite, isotropic=flat,
                                      tolerance=EVENT_TOLERANCE)
         except ValueError:
             ex = None
-        if ex is not None and (not ex.paths or len(ex.transitions()) < 2):
+        # The [reaction] nucleus keeps its one-γ-ray chain for a single transition; the other nucleus has no
+        # such chain, so one transition is enough for it.
+        if ex is not None and (not ex.paths or len(ex.transitions()) < (2 if nucleus == "reaction" else 1)):
             ex = None
         if ex is not None:
             ex.table()
@@ -281,28 +376,80 @@ def _excitation(beam: str, target: str, e_mid: float, excite: str, e_star: float
     return Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=isotropic)
 
 
-def correlation_table(experiment, order: int = 4, crystal_points: int = 3) -> list:
+def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucleus: str = "reaction") -> list:
     """For every particle detector × γ-ray crystal: how many γ rays the crystal sees when the particle is seen in
     that detector, relative to isotropic emission (1 = isotropic).
 
-    The factor is 4π W / yield in the laboratory, averaged over the crystal's face and over the particle
-    detector, each point of which is weighted by the excitation cross section there. Both the scattered beam and
-    the recoil reaching the detector are counted, each with the orbit it belongs to. It holds the particle–γ
-    angular correlation and the forward throw of γ rays from a moving nucleus; with ``emission = "isotropic"``
-    only the second.
+    The factor is 4π W / yield in the laboratory, averaged over the crystal's face (``crystal_points``² points)
+    and over the particle detector (``order`` points each way), each point of which is weighted by the excitation
+    cross section there. Both the scattered beam and the recoil reaching the detector are counted, each with the
+    orbit it belongs to. It holds the particle–γ angular correlation and the forward throw of γ rays from a
+    moving nucleus; with ``emission = "isotropic"`` only the second.
+
+    The γ ray is that of the ``[reaction]`` state to the ground state. With a level scheme whose cascades the
+    events follow (:func:`cascade_excitation`) the factor is from that scheme's solution, as the events are: the
+    state with the orientation the other levels leave it, and the feeding from above. Without one it is from the
+    state alone, in first order (:func:`excitation_of`).
 
     Each row also gives "detector_factor" for the γ-ray detector as a whole (its crystals averaged by the solid
-    angle each covers). The kinematics are those at the middle of the target; shadowing is not applied."""
+    angle each covers). The kinematics are those at the middle of the target; shadowing is not applied.
+
+    ``nucleus`` "other" gives the table for the other nucleus of the collision
+    (:func:`other_excitation`; empty without its level scheme): for the transition from its first excited level
+    to the ground state, each point weighted by that level's population with the feeding from above."""
+    transition = None
+    if nucleus == "other":
+        ex = other_excitation(experiment)
+        if ex is None:
+            return []
+    else:
+        ex = cascade_excitation(experiment)
+        if ex is not None:
+            transition = state_transition(experiment)
+    solution = ex if ex is not None else excitation_of(experiment)
+    # Kept with the solution, by the detectors: the plan asks again at every change of anything else.
+    key = repr((order, crystal_points, transition, experiment.detectors, experiment.gamma_detectors,
+                experiment.chamber if hasattr(experiment, "chamber") else None))
+    kept = solution.__dict__.setdefault("_correlation_tables", {})
+    if key not in kept:
+        if len(kept) > 8:
+            kept.clear()
+        kept[key] = _correlation_rows(experiment, ex, order, crystal_points, transition)
+    return [dict(row) for row in kept[key]]
+
+
+def _correlation_rows(experiment, solution, order: int, crystal_points: int, transition=None) -> list:
+    """The rows of :func:`correlation_table`: for the ``transition`` (initial, final) of ``solution``, the
+    solution of a level scheme (by default from its first excited level to the ground state), or without a
+    solution for the ``[reaction]`` state alone."""
     from . import data
     from .kinematics import TwoBody
 
     exc = experiment.excitation
-    ex = excitation_of(experiment)
-    e0 = exc.energy_mev
-    excite = "recoil" if exc.excite == "target" else "ejectile"
+    if solution is not None:
+        ex = solution
+        levels = ex.scheme.levels
+        if transition is None:
+            lev_f = ex.ground
+            lev_i = min((n for n in range(len(levels)) if n != lev_f), key=lambda n: levels[n].energy.value)
+        else:
+            lev_i, lev_f = transition
+        e0 = 1e-3 * (levels[lev_i].energy.value - levels[lev_f].energy.value)
+        excite = "recoil" if ex.excite == "target" else "ejectile"
+
+        def weigh(state):
+            return state.population(lev_i)
+    else:
+        ex = excitation_of(experiment)
+        e0 = exc.energy_mev
+        excite = "recoil" if exc.excite == "target" else "ejectile"
+        lev_i, lev_f = 1, 0
+
+        def weigh(state):
+            return state.direct.get(1, 0.0)
     tb = TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=e0, excite=excite)
     m_emitter = data.nuclide(ex.scheme.nuclide).nuclear_mass_mev + e0
-    cx = ex.paths[1][0][2] if 1 in ex.paths else None
+    cx = ex.paths[lev_i][0][2] if lev_i in ex.paths else None
     crystals = []
     for i, gd in enumerate(experiment.gamma_detectors):
         for label, centre, radius in gd.elements():
@@ -334,7 +481,7 @@ def correlation_table(experiment, order: int = 4, crystal_points: int = 3) -> li
                         if not 0 < th_ej <= 180:
                             continue
                         state = ex.near(th_ej)
-                        w = state.direct.get(1, 0.0) * float(cx.rutherford_cm(th_ej)) * jac[k] * dom[k]
+                        w = weigh(state) * float(cx.rutherford_cm(th_ej)) * jac[k] * dom[k]
                         if w <= 0:
                             continue
                         em = tb.recoil_for(th_ej) if excite == "recoil" else tb.at_cm(th_ej)
@@ -344,10 +491,10 @@ def correlation_table(experiment, order: int = 4, crystal_points: int = 3) -> li
                         beta = math.sqrt(max(1 - 1 / gam**2, 0.0))
                         vel = beta * np.array([math.sin(th_em) * math.cos(ph_em), math.sin(th_em) * math.sin(ph_em),
                                                math.cos(th_em)])
-                        y = state.gamma_yield(1, 0)
+                        y = state.gamma_yield(lev_i, lev_f)
                         if y <= 0:
                             continue
-                        seen = state.w_lab(1, 0, all_dirs, ph_ej, vel).reshape(len(crystals), -1).mean(axis=1)
+                        seen = state.w_lab(lev_i, lev_f, all_dirs, ph_ej, vel).reshape(len(crystals), -1).mean(axis=1)
                         sums += w * seen * 4 * math.pi / y
                         weight += w
         factors = sums / weight if weight > 0 else np.ones(len(crystals))
@@ -359,5 +506,6 @@ def correlation_table(experiment, order: int = 4, crystal_points: int = 3) -> li
     return rows
 
 
-__all__ = ["cascade_excitation", "correlation_table", "doppler_energy", "doppler_table", "excitation_of",
-           "excitation_order", "start_levels", "state_transition", "unreached_levels"]
+__all__ = ["cascade_excitation", "correlation_table", "doppler_energy", "doppler_table", "emitters",
+           "excitation_of", "excitation_order", "level_names", "other_excitation", "other_role", "start_levels",
+           "state_transition", "transition_lines", "unreached_levels"]

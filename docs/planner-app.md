@@ -56,7 +56,7 @@ example to show the planner on a lab PC; anyone on that network can then open it
 
 ## Light and dark
 
-**Light** and **Dark** at the top switch the whole page, figures included. The first time, the planner follows your
+**Light** and **Dark** at the foot of the rail on the left switch the whole page, figures included. The first time, the planner follows your
 system's setting; after that it remembers your choice in this browser. `?theme=dark` (or `light`) in the address
 sets it for one visit.
 
@@ -74,7 +74,7 @@ transparent box around its crystals.
 beam** set the camera.
 
 **Full screen.** The ⛶ button at the right of the scene's toolbar gives the scene the whole window: the setup
-panel, the step bar and the numbers beside and below the scene are hidden, and the scene fills the
+panel, the rail with the steps and the numbers beside and below the scene are hidden, and the scene fills the
 height. Selecting, dragging, the camera buttons and the tracks work as before. Esc, or the same button, brings the
 page back.
 
@@ -98,7 +98,7 @@ right shows its numbers.
   [Change, then Apply](#change-then-apply)); the panel keeps the quick numbers until then.
 - A drag cannot put a detector in the beam, inside another detector or the target, or through the chamber wall. It
   stops at the limit, or turns red and returns to the last allowed place when you let go, and a message says why.
-- For an exact value, type it under **Exact values** in the panel, or in the setup panel on the left. Typed values
+- For an exact value, type it under **Exact values** in the panel, or in the setup window (**Edit the setup**). Typed values
   are not held back; once applied, the warnings report a detector in the beam and detectors that overlap.
 
 **Tracks.** **Show tracks** draws a sample of simulated events and animates them: the beam particle to the
@@ -166,10 +166,11 @@ lives in a folder under `~/.physim/experiments`, where the setup is saved every 
   them (for example *16O on 208Pb*) and puts one particle detector where the kinematics send the particles. For
   Coulomb excitation it takes the first 2⁺ state from your local ENSDF copy; without one it says what to enter.
 - **Detectors from** starts from a template instead: *Coulomb excitation of the beam (62Ni on 194Pt) with
-  silicon at backward angles*, *Coulomb excitation of a target nucleus with a CD and clovers*, *Elastic
+  silicon at backward angles*, the same *with four clovers*, *Coulomb excitation of a target nucleus with a
+  CD and clovers*, *Elastic
   scattering with silicon pads*, *Elastic scattering with an array of strip detectors*, or *Blank*. A template
   brings its own beam and target. The first of them is what the planner shows before there is any experiment.
-- The experiment's name at the top left is a menu:
+- The experiment's name at the top of the rail on the left is a menu:
   - **Open an experiment** lists your experiments, newest first; **Open** one to carry on where you left it.
   - **New experiment** makes another.
   - **Import a setup file** replaces the current setup with a `.toml` file; **Export the setup** downloads it
@@ -179,7 +180,10 @@ lives in a folder under `~/.physim/experiments`, where the setup is saved every 
 
 ## The setup as a list of decisions
 
-On the **Setup** step, the panel on the left is the setup, as the decisions you make in order: **Beam**, **Target and reaction**, **Particle
+**Edit the setup**, at the top right of the Setup step, opens the setup in a window of its own at the right of
+the page; the scene stays in view beside it and follows what you change. **Done editing** applies what you
+changed and closes the window; **Cancel** closes it without the changes. The window is the setup, as the
+decisions you make in order: **Beam**, **Target and reaction**, **Particle
 detectors**, **γ-ray detectors**, **Run conditions**. Each is a card with two lines:
 
 - what you chose, for example *CD: annular at 30 mm, behind the target (θ 180 deg)*;
@@ -199,10 +203,10 @@ together.
   *Not applied yet*, and a bar at the top of the panel lists the changes: *Beam: energy 30 MeV → 31 MeV*. Adding,
   copying, removing or dragging a detector waits in the same way.
 - **What follows at once**, because it needs no rates: the first line of each card, a problem with a value (in
-  red at the top; Apply waits until it is fixed), the scene, the tables of angles under it, and for a selected
+  red at the top; Apply waits until it is fixed), the scene, the tables of angles beside it, and for a selected
   detector its place, what it covers and a quick estimate of its rate.
-- **Everything else shows the setup as it is applied**: the step bar, every step, the warnings. A note above
-  the step bar says so while changes wait.
+- **Everything else shows the setup as it is applied**: the steps in the rail, every step's content, the
+  warnings. A note at the top of the step says so while changes wait.
 - **Apply** (in the bar, in the note, or Ctrl+Enter from anywhere, a field you are typing in included) works out
   the numbers and brings every step up to date. If you pause for a second or two first, they are worked out in the
   background meanwhile and Apply shows them at once. In an experiment, Apply also saves the setup; changes that
@@ -219,27 +223,30 @@ together.
 counting too fast, too few counts, angles where Rutherford's formula fails, detectors in the beam or behind
 another), and *The setup changed since run 3* once you change the physics after a run.
 
-The setup panel stands beside the Setup step only. The other steps have the whole width of the window; the
-experiment's name, beam and target stay in the header, and the line under **1 Setup** in the step bar says how
-many detectors there are and whether the setup has warnings.
+The page itself shows the rail and the step only. The experiment's name, beam and target stay at the top of the
+rail, and the line under **1 Setup** there says how many detectors there are and whether the setup has
+warnings. Above the scene, a strip gives the setup in a few numbers: the particles counted per second, how many
+of them come with a γ ray, the solid angle of the particle detectors and the γ-ray efficiency. Under it,
+errors and warnings of the setup are written out; notes are a count that opens the window, where every check
+is listed.
 
 ## The steps
 
-The step bar across the top is the experiment in the order it is done: **1 Setup → 2 Plan → 3 Run → 4 Data →
-5 Analysis → 6 Report**.
+The rail on the left is the experiment in the order it is done, from the top down: **1 Setup → 2 Plan → 3 Run →
+4 Data → 5 Analysis → 6 Report**. The step on screen has its number on the accent colour.
 
 - **Each step has a line of status under its name:** the detectors, the beam time the counts need, the runs
   taken, the current run and its gates, the B(E2) of the analysed run, what the report holds.
-- **A tick marks a step that has its result:** a setup without errors, a beam time that is enough, a run, a run's
+- **A green tick in place of the number marks a step that has its result:** a setup without errors, a beam time that is enough, a run, a run's
   data, an analysis of the current run. A step that needs a run first says *needs a run* and is greyed.
 - **A status in the warning colour needs attention:** warnings in the setup, a beam time too short, a run taken
   with a setup that has changed since.
 - **Each step ends with one button that leads on:** *Next: check the plan*, *Next: take a run*, *Next: look at
   run 2's data*, *Next: analyse run 2*, *Next: the report*. Where there is nothing to go on to yet, the line
   says what is missing.
-- The bar stays at the top of the window as you scroll, and you can choose any step at any time.
+- The rail stays in place as you scroll, and you can choose any step at any time.
 
-**Physics**, at the top right, is the reference behind the numbers; it is not a step.
+**Physics**, at the foot of the rail, is the reference behind the numbers; it is not a step.
 
 The steps:
 
@@ -267,7 +274,9 @@ The steps:
 
   **Stop** keeps what is accumulated and **Extend** adds beam time to the same run. **Watch events** draws a
   sample of the run's events as tracks in the scene. The run list sets which run is current for the Data and
-  Analysis steps. **Not simulated yet** lists what the runs leave out. See also
+  Analysis steps. A run taken before the other nucleus of the collision was simulated is marked *one
+  nucleus only*; **Take again with both nuclei** makes a new run with its setup, seed and beam time that holds
+  both, and keeps the old one. **Not simulated yet** lists what the runs leave out. See also
   [Experiments and runs](#experiments-and-runs-from-python).
 - **Data:** every spectrum of the current run at once, one panel per detector (per crystal on request). Without
   a run it says so and points to the Run step and to the Plan's predicted spectra. Click a
@@ -292,19 +301,35 @@ The steps:
   and the step says so. First, **predicted against measured**: what the Plan said before the run (kept with it) beside
   what the run measured. That covers the rates, the coincidences in the peak, the beam time for your counts, and
   the γ-ray efficiency (measured if the experiment has a source run). Each row says whether the two agree within
-  the run's statistics. Then the analysis of the current run: from the γ-ray peak to B(E2), with a gate from the
-  Data step if you pick one. It says the statistical uncertainty comes from the run's own events, and what the
+  the run's statistics. Then the analysis of the current run, from the γ-ray peaks to B(E2), with a gate from the
+  Data step if you pick one. **Analyse** shows it in three parts, and the analysis kept with a run is shown as
+  soon as you open the step:
+  1. *Find the peaks:* the spectrum corrected for the projectile and the one corrected for the recoil, each over
+     its whole range, with the peaks the search found marked and listed (energy, width, area, significance).
+     A peak on a transition of the level scheme is named. Each nucleus's lines are sharp in its own spectrum; in
+     the other they are smeared, and the table says so.
+  2. *Integrate the peaks:* the peak of each nucleus with its fitted Gaussian on a line and the ±3σ window
+     shaded, and under it the numbers: the counts over the line, the random coincidences subtracted, the area,
+     the efficiency, the angular correlation, the γ rays emitted, and the yield per particle. For the
+     other nucleus (¹⁹⁴Pt in the opening template) the yield its level scheme gives is beside the measured one.
+  3. *From the area to B(E2):* the chain in numbers and the result. **Normalisation** chooses between the
+     particles in the same rings and the other nucleus's peak. When the events follow a level scheme, the last
+     step solves its coupled equations for B(E2) (the feeding of the state and a line the peak blends with are
+     counted), and says what first order would have read and how much the excitation saturates.
+
+  It says the statistical uncertainty comes from the run's own events, and what the
   whole run would give. The alignment check reads an alignment run's offset. The multi-step solution can fit the
   matrix element to the run's yields, and writes the GOSIA input file.
 - **Report:** **the report**, one document. The setup with its level schemes and warnings; the plan (rates, beam
   time, kinematics, expected peaks, predicted spectra); every run with its spectra (each particle detector, the
   energy against ring with your gates drawn on it, each γ-ray detector as measured and Doppler-corrected to the
   top of the level scheme); what each gate does to the γ-ray spectrum; the Doppler correction and its
-  parameters; the analysis of every analysed run; every number explained; and the method. **Show the report**
+  parameters; the analysis of every analysed run, with the peaks found and each nucleus's fitted peak; every
+  number explained; and the method. **Show the report**
   puts it on the page; **Save as PDF** and **Save as HTML** save it; **Save everything** adds the setup file, the
   plan's tables and figures and every run's data in a zip. The PDF is printed by Edge, Chrome or Chromium; if
   none is installed the app says so, and the HTML page prints to the same PDF from any browser.
-**Physics** (the button at the top right) is the physics behind the numbers, as a reference, in the order of
+**Physics** (the button at the foot of the rail) is the physics behind the numbers, as a reference, in the order of
 the physics register: nuclear
 data and level schemes, kinematics, energy loss, the Rutherford orbit, the detectors and the γ-ray response,
 rates and events, and Coulomb excitation. Each section links to its register page and names the tests behind it.
@@ -319,9 +344,9 @@ The page keeps answering while numbers are worked out; nothing you click has to 
 
 - **Opening the page:** it is there at once, with a spinner in the setup panel and in the step for the second or so
   the count rates take.
-- **After Apply:** the dots in the header turn while the rates are worked out (about a second for the examples;
+- **After Apply:** the dots beside *physim* at the top of the rail turn while the rates are worked out (about a second for the examples;
   nothing if they were worked out while you paused; a fraction of a second if you changed only the beam current
-  or the run conditions, which reuse the rates). Then the checks, the cards, the step bar and the step on
+  or the run conditions, which reuse the rates). Then the checks, the cards, the rail and the step on
   screen follow, and after them the other steps, one by one, so the step you choose next is already built. If you
   choose one sooner, it shows a spinner and then its content.
 - **The checks on the Plan step and the cards of the setup panel** are filled when you open them. A check you left

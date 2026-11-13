@@ -41,7 +41,7 @@ def compare_block(ctx) -> None:
         rows.append({"q": r["quantity"], "w": r["what"], "p": _value(r["predicted"], r["unit"], ctx.time_text),
                      "m": measured, "a": mark})
     ui.table(columns=ctx.columns((("q", "Quantity"), ("w", ""), ("p", "Predicted"), ("m", "Measured in the run"),
-                                  ("a", ""))), rows=rows).props("dense flat")
+                                  ("a", ""))), rows=rows).props("dense flat").classes("w-full")
     note = (f"Run {c['run']}, its real part; agreement within three standard deviations of the run's statistics. "
             "The efficiency is measured by a source run")
     note += f" (run {c['source_run']})." if c["source_run"] else ": take one on the Run step to measure it."
@@ -81,15 +81,26 @@ def render_view(ctx) -> None:
     elif p.run.kind == "source":
         ui.label(f"Run {p.run.number} is a source run: it measures the γ-ray efficiency. Choose a beam run on the "
                  "Run step to analyse it.").classes("text-sm ps-note rounded p-2")
-    with ui.column().classes("w-full gap-2 analysis-compare"):
-        compare_block(ctx)
+    # Side by side where the window has the width: the comparison and the choices of the analysis, then the
+    # result across the page, then the alignment check and the all-orders solution.
+    grid = "grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); align-items: start"
+    pad = "padding: 10px 14px 12px"
+    with ui.column().classes("w-full gap-3"):
+        # (The comparison's table needs 640 px: under twice that, the two stand one over the other.)
+        top = ui.element("div").classes("w-full grid gap-3").style(grid.replace("480px", "640px"))
+        results = ui.column().classes("w-full gap-2")
+    with top:
+        with ui.column().classes("w-full gap-2 analysis-compare ps-panel").style(pad):
+            compare_block(ctx)
+        if coulex:
+            with ui.column().classes("w-full gap-2 analysis-b-e2 ps-panel").style(pad):
+                ctx.analysis_block(results)
     if not coulex:
         ui.markdown("The analysis needs Coulomb excitation with γ-ray detectors: set the reaction in the "
                     "**Target and reaction** card and add γ-ray detectors.")
-    else:
-        with ui.column().classes("w-full gap-2 analysis-b-e2"):
-            ctx.analysis_block()
-        with ui.column().classes("w-full gap-2 analysis-alignment"):
-            ctx.alignment_block()
-    with ui.column().classes("w-full gap-2 analysis-all-orders"):
-        ctx.multistep_block()
+    with ui.element("div").classes("w-full grid gap-3").style(grid):
+        if coulex:
+            with ui.column().classes("w-full gap-2 analysis-alignment ps-panel").style(pad):
+                ctx.alignment_block()
+        with ui.column().classes("w-full gap-2 analysis-all-orders ps-panel").style(pad):
+            ctx.multistep_block()

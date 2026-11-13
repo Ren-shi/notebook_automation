@@ -45,7 +45,8 @@ def describe_runs(planner) -> list:
     for s in planner.runs():
         rows.append({"n": s["number"], "label": s["label"], "what": s["describe"],
                      "when": str(s.get("finished", ""))[:16].replace("T", " "),
-                     "stale": "setup changed since" if s["stale"] else ""})
+                     "stale": "; ".join(x for x in ("setup changed since" if s["stale"] else "",
+                                                    "one nucleus only" if s.get("one_nucleus") else "") if x)})
     return rows
 
 
@@ -165,12 +166,11 @@ def runs_list(ctx) -> None:
     ui = ctx.ui
     p = ctx.P()
     rows = describe_runs(p)
-    ui.label("Runs").classes("ps-section mt-3")
     if not rows:
         ui.label("No run yet.").classes("text-sm ps-muted")
         return
     ui.table(columns=ctx.columns((("n", "#"), ("what", "Run"), ("when", "Finished (UTC)"), ("stale", ""))),
-             rows=rows).props("dense flat")
+             rows=rows).props("dense flat").classes("w-full")
     current = p.run.number if p.run is not None else None
     with ui.row().classes("items-end gap-2 w-full"):
         ui.select({r["n"]: f"{r['n']}: {r['what']}" for r in rows}, value=current, label="Current run",
@@ -180,12 +180,32 @@ def runs_list(ctx) -> None:
             ui.button("Extend", icon="update", on_click=lambda: ctx.extend_run(more.value)).props("flat no-caps")
             ui.button("Watch events", icon="timeline", on_click=ctx.watch_events).props("flat no-caps").tooltip(
                 "A sample of this run's events as tracks in the scene")
-    if p.run is not None:
-        s = p.run.summary
+    if p.run is not None and p.run.one_nucleus and not p.running:
+        with ui.row().classes("items-center gap-2 w-full ps-note rounded p-2"):
+            ui.label(f"Run {p.run.number} holds the γ rays of the nucleus of the reaction only: it was taken before "
+                     "the other nucleus of the collision was simulated. Taking it again makes a new run with the "
+                     "same setup, seed and beam time that holds both; this run stays.").classes("text-sm")
+            ui.button("Take again with both nuclei", icon="replay", on_click=ctx.retake_run).props(
+                "dense unelevated no-caps")
+
+
+def current_run(ctx) -> None:
+    """The current run in numbers: what it is, and what each particle detector counted, with its rate."""
+    ui = ctx.ui
+    p = ctx.P()
+    if p.run is None:
+        return
+    s = p.run.summary
+    with ctx.panel(f"Run {p.run.number}", "the current run"):
         ui.label(p.run.describe()).classes("text-sm")
-        if s.get("kind") != "source":
-            ui.label("Counts: " + ", ".join(f"{d} {_n(c)} ({_n(s['rates_per_s'].get(d))}/s)"
-                                            for d, c in s.get("counts", {}).items())).classes("text-xs ps-muted")
+        if s.get("kind") != "source" and s.get("counts"):
+            with ui.element("div").classes("ps-readouts mt-2").style(
+                    "grid-template-columns: repeat(auto-fit, minmax(130px, 1fr))"):
+                for d, c in s["counts"].items():
+                    with ui.element("div").classes("ps-readout"):
+                        ui.label(f"Counts in {d}").classes("text-xs ps-muted")
+                        ui.label(_n(c)).classes("ps-readout-value")
+                        ui.label(f"{_n(s['rates_per_s'].get(d))} /s").classes("text-xs ps-muted ps-num")
 
 
 def not_simulated(ctx) -> None:
@@ -202,10 +222,18 @@ def render(ctx) -> None:
 
 
 def render_view(ctx) -> None:
-    """Everything on the tab (refreshed while a run is taken)."""
-    form(ctx)
+    """Everything on the tab (refreshed while a run is taken): taking a run and the current run on the left, the
+    runs taken on the right; the counters of a run being taken across the page."""
+    ui = ctx.ui
+    with ui.row().classes("w-full items-start gap-3").style("flex-wrap: wrap"):
+        with ui.column().classes("gap-3").style("flex: 1 1 420px; min-width: 0"):
+            with ctx.panel("Take a run"):
+                form(ctx)
+            current_run(ctx)
+        with ui.element("div").style("flex: 1.3 1 520px; min-width: 0"):
+            with ctx.panel("Runs"):
+                runs_list(ctx)
     live(ctx)
-    runs_list(ctx)
     not_simulated(ctx)
 
 

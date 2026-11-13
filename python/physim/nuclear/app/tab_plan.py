@@ -74,10 +74,14 @@ def answers(ctx, pl: dict) -> None:
                 f" (dead time {1e6 * pl['dead_time_s']:.3g} µs per count)" if pl["dead_time_s"] else
                 " (no dead time set)")).classes("text-xs ps-muted")
 
-    ui.label("Particle detectors").classes("ps-section mt-3")
     excite = pl["measured"] != "all"
-    with ui.element("div").classes("w-full").style("overflow-x: auto"):
-        with ui.grid(columns=7 if excite else 5).classes("gap-x-4 gap-y-1 items-center ps-num text-sm"):
+    # The three tables stand side by side where the window has the width, each as wide as it needs.
+    tables = ui.row().classes("w-full items-start gap-3 mt-3").style("flex-wrap: wrap")
+    with tables:
+        first = ui.element("div").style("flex: 2 1 480px; min-width: 0")
+    with first, ctx.panel("Particle detectors"), ui.element("div").classes("w-full").style("overflow-x: auto"):
+        with ui.grid(columns=7 if excite else 5).classes("gap-x-6 gap-y-1 items-center ps-num text-sm").style(
+                f"grid-template-columns: repeat({7 if excite else 5}, auto); justify-content: space-between"):
             heads = ["Detector", "θ (deg)", "Rate (1/s)", "Busy", "Safe rings"]
             if excite:
                 heads[4:4] = ["Excitations", "With γ (1/s)"]
@@ -101,9 +105,22 @@ def answers(ctx, pl: dict) -> None:
                     f" (unsafe: {', '.join(str(k + 1) for k in bad[:6])}{'…' if len(bad) > 6 else ''})"
                     if bad else "")).classes("ps-bad" if bad else "")
 
+    other = pl.get("other_peak")
+    if other:
+        seen = [(d["detector"], d["other_coincidence_per_s"]) for d in pl["detectors"]
+                if d.get("other_coincidence_per_s") is not None]
+        with first:
+            ui.label(f"{other['nuclide']} is excited too (its level scheme is in the setup). Its {other['label']} peak at "
+                     f"{other['energy_kev']:.1f} keV, in coincidence: "
+                     + "; ".join(f"{name} {_fmt(v)} /s" for name, v in seen) + ". The counts wanted and the beam "
+                     "time above are for the nucleus of the reaction.").classes("text-sm ps-muted mt-2")
     if pl["gamma_detectors"]:
-        ui.label("γ-ray detectors").classes("ps-section mt-3")
-        with ui.grid(columns=3).classes("gap-x-4 gap-y-1 items-center ps-num text-sm"):
+        with tables:
+            second = ui.element("div").style("flex: 1 1 300px; min-width: 0")
+            third = ui.element("div").style("flex: 1 1 340px; min-width: 0")
+        with second, ctx.panel("γ-ray detectors"), ui.grid(columns=3).classes(
+                "gap-x-6 gap-y-1 items-center ps-num text-sm").style(
+                "grid-template-columns: repeat(3, auto); justify-content: space-between"):
             for h in ("Detector", f"Efficiency at {pl['gamma_detectors'][0]['energy_kev']:.0f} keV",
                       "Coincidences (1/s)"):
                 ui.label(h).classes("text-xs ps-muted")
@@ -113,10 +130,11 @@ def answers(ctx, pl: dict) -> None:
                     ui.label(f"{100 * g['efficiency']:.3g}%")
                     _help(ctx, "gamma_efficiency", None, g["detector"])
                 ui.label(_fmt(g["coincidence_per_s"]))
-        ui.label("Particle × γ coincidences per second").classes("ps-section mt-3")
         names = [g["detector"] for g in pl["gamma_detectors"]]
-        with ui.element("div").classes("w-full").style("overflow-x: auto"):
-            with ui.grid(columns=len(names) + 1).classes("gap-x-4 gap-y-1 ps-num text-sm"):
+        with third, ctx.panel("Particle × γ coincidences per second"), ui.element("div").classes("w-full").style(
+                "overflow-x: auto"):
+            with ui.grid(columns=len(names) + 1).classes("gap-x-6 gap-y-1 ps-num text-sm").style(
+                    f"grid-template-columns: repeat({len(names) + 1}, auto); justify-content: space-between"):
                 ui.label("")
                 for n in names:
                     ui.label(n).classes("text-xs ps-muted")
@@ -124,8 +142,9 @@ def answers(ctx, pl: dict) -> None:
                     ui.label(d).classes("font-medium")
                     for n in names:
                         ui.label(_fmt(row.get(n, 0.0)))
-        ui.label("Each number includes the particle–γ angular correlation; dead time and random coincidences are "
-                 "not taken off here (a run measures them).").classes("text-xs ps-muted")
+        with third:
+            ui.label("Each number includes the particle–γ angular correlation; dead time and random coincidences "
+                     "are not taken off here (a run measures them).").classes("text-xs ps-muted mt-1")
 
 
 def render_answers(ctx) -> None:
@@ -144,7 +163,7 @@ def render(ctx) -> None:
     ctx.plan_answers()
     ctx.ui.label("The checks").classes("text-lg font-semibold mt-4")
     ctx.ui.label("Open each in turn: what the kinematics, the target and the detectors do to the numbers above. "
-                 "The same panels are in Physics, at the top right.").classes("text-xs ps-muted")
+                 "The same panels are in Physics, at the foot of the rail on the left.").classes("text-xs ps-muted")
     coulex = p.experiment.excitation is not None and bool(p.experiment.gamma_detectors)
     # A check is built when it is first opened (its figure is computed by then, or a spinner says it is on its
     # way); the ones left open stay open when the tab is rebuilt after an edit.

@@ -60,7 +60,7 @@ def test_b_e2_agrees_with_the_input_with_the_rutherford_normalisation(ni):
         assert r.b_e2fm4 == pytest.approx(truth, rel=0.12)
         assert r.b_e2b2 == pytest.approx(r.b_e2fm4 * 1e-4) and r.b_wu == pytest.approx(r.b_e2fm4 / weisskopf_unit(2, 58))
         assert r.truth_e2fm4 == truth and r.normalisation == "rutherford"
-        assert [s["step"] for s in r.steps] == ["particle gate", "Doppler correction", "peak fit",
+        assert [s["step"] for s in r.steps] == ["particle gate", "Doppler correction", "peak search", "peak fit",
                                                 "random coincidences", "yield", "normalisation"]
         assert r.fit.randoms > 0 and r.area < r.fit.area
     assert a.history[-1].statistical < a.history[-2].statistical    # the gate costs counts
@@ -78,7 +78,7 @@ def test_b_e2_agrees_with_the_input_with_the_target_normalisation():
     assert any("reference peak" in n for n in both[0].notes)
     # The two normalisations agree with each other more closely than with the truth: the same peak area.
     assert both[0].b_e2fm4 == pytest.approx(both[1].b_e2fm4, rel=0.05)
-    with pytest.raises(ValueError, match="needs Settings.reference"):
+    with pytest.raises(ValueError, match="or Settings.reference"):
         a.run(Settings(normalisation="target"))
 
 

@@ -32,7 +32,10 @@ def test_a_ten_minute_run_gives_b_e2_back_with_a_data_tab_gate(tmp_path):
 def test_predicted_and_measured_rates_agree_for_every_template(key, tmp_path):
     p = Planner(wb.template(key))
     p.create_experiment(root=tmp_path)
-    p.start_run("beam", duration="1 min", budget="20 s")
+    # A minute event by event: with 20 s a row holds about 250 coincidences at most, and the first 20 s of the
+    # clover template's run are a rare draw (210 nickel coincidences with the CD for 277; the γ rays of the same
+    # particles drawn again thirty times give 270 with the scatter of counts). Over the minute the run agrees.
+    p.start_run("beam", duration="1 min", budget="1 min")
     rows = p.compare()["rows"]
     rates = [r for r in rows if r["quantity"] == "Rate"]
     assert len(rates) == len(p.experiment.detectors)

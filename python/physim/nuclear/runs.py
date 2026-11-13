@@ -113,6 +113,9 @@ def _load_particles(a: dict) -> dict:
 GAMMA_COLUMNS = {
     "particle": np.int32, "crystal": np.int16, "deposited": np.float32, "measured": np.float32,
     "theta": np.float32, "phi": np.float32, "cascade": np.int32, "initial": np.int8, "final": np.int8,
+    # Which nucleus emitted the γ ray: 0 the [reaction]'s, 1 the other one of the collision (runs taken before
+    # the events held both have no such column: all 0).
+    "nucleus": np.int8,
 }
 
 
@@ -369,6 +372,17 @@ class RunData:
         """Duration over the real part: what histograms of the real part are scaled by for the whole run."""
         return self.duration_s / self.real_s if self.real_s > 0 else 1.0
 
+    @property
+    def one_nucleus(self) -> bool:
+        """Whether the run holds the γ rays of the ``[reaction]`` nucleus only although its setup has a level
+        scheme of the other one: a run taken before the events held both nuclei. Such a run can be taken again
+        (:func:`retake`)."""
+        if self.kind == "source" or not self.summary.get("gammas") or self.summary.get("nuclei", 1) != 1:
+            return False
+        from .gamma import other_excitation
+
+        return other_excitation(self.experiment) is not None
+
     def describe(self) -> str:
         """One line: kind, duration, what was real."""
         s = self.summary
@@ -522,17 +536,23 @@ def _gamma_events(run: RunData, a: dict, plain: bool):
     thresholds = np.array([c.threshold for c in crystals])
     corrected = doppler_correct(exp, ev.columns, rows, which, measured)
     e0 = exp.excitation.energy_mev
-    levels = exp.levels.get("target" if exp.excitation.excite == "target" else "beam")
+    reaction = "target" if exp.excitation.excite == "target" else "beam"
     initial = a["initial"].astype(np.int64) if "initial" in a else np.ones(len(rows), dtype=np.int64)
     final = a["final"].astype(np.int64) if "final" in a else np.zeros(len(rows), dtype=np.int64)
-    if levels is not None and len(rows) and initial.max() < len(levels.levels):
-        e0s = np.array([levels.levels[i].energy.value - levels.levels[f].energy.value
-                        for i, f in zip(initial, final)]) * 1e-3
-    else:
-        e0s = np.full(len(rows), exp.excitation.energy_mev)
+    nucleus = a["nucleus"].astype(np.int64) if "nucleus" in a else np.zeros(len(rows), dtype=np.int64)
+    e0s = np.full(len(rows), exp.excitation.energy_mev)
+    # Each γ ray's energy in its nucleus's frame, from that nucleus's level scheme.
+    for n, role in enumerate((reaction, "beam" if reaction == "target" else "target")):
+        levels = exp.levels.get(role)
+        m = nucleus == n
+        if levels is None or not m.any() or initial[m].max() >= len(levels.levels):
+            continue
+        energy = np.array([lv.energy.value for lv in levels.levels]) * 1e-3
+        e0s[m] = energy[initial[m]] - energy[final[m]]
     cols = {"event": ev.columns["event"][rows], "particle": rows, "crystal": which,
             "cascade": a["cascade"].astype(np.int64) if "cascade" in a else rows, "initial": initial,
-            "final": final, "energy0": e0s, "deposited": a["deposited"].astype(float), "measured": measured,
+            "final": final, "nucleus": nucleus,
+            "energy0": e0s, "deposited": a["deposited"].astype(float), "measured": measured,
             "counted": measured >= thresholds[which] if len(rows) else np.zeros(0, dtype=bool),
             "theta": a["theta"].astype(float), "phi": a["phi"].astype(float),
             "corrected_projectile": corrected["ejectile"], "corrected_recoil": corrected["recoil"],
@@ -568,6 +588,13 @@ class RunTaker:
         self.created = _now()
         self.rates = Rates(experiment)
         self.gamma = experiment.excitation is not None and bool(experiment.gamma_detectors)
+        #: The γ rays of the other nucleus of the collision are taken too, when the setup has its level scheme;
+        #: not in the extension of a run that was taken without them (its two parts would not go together).
+        self.both = self.gamma and (previous is None or previous.summary.get("nuclei", 1) == 2)
+        if self.both:
+            from .gamma import other_excitation
+
+            self.both = other_excitation(experiment) is not None
         self.plain_too = self.gamma and any(gd.addback or gd.shield for gd in experiment.gamma_detectors)
         run = experiment.run
         #: Dead time per count (s), the counts wanted, and what they count ("all", "excitations", "coincidences").
@@ -593,6 +620,9 @@ class RunTaker:
             for k in self.gparts:
                 if k in a:
                     self.gparts[k].append(a[k])
+                elif k.endswith("_nucleus") and k[:-len("nucleus")] + "particle" in a:
+                    # A run taken before the events held both nuclei: all its γ rays are the [reaction]'s.
+                    self.gparts[k].append(np.zeros(len(a[k[:-len("nucleus")] + "particle"]), dtype=np.int8))
             self.n_rows = len(a["p_event_step"])
             self.last_event = int(np.sum(a["p_event_step"].astype(np.int64)))
             self.created = previous.summary.get("created", self.created)
@@ -645,11 +675,12 @@ class RunTaker:
                 from .gamma_events import simulate_gammas
 
                 g = simulate_gammas(self.experiment, seed=chunk_seed, particle_events=ev, gammas_per_event=1,
-                                    plain=plain, rates=self.rates)
+                                    plain=plain, rates=self.rates, count_once=True, other=self.both)
                 rows = g["particle"]
                 part = {"particle": rows + self.n_rows, "crystal": g["crystal"], "deposited": g["deposited"],
                         "measured": g["measured"], "theta": g["theta"], "phi": g["phi"],
-                        "cascade": g["cascade"] + self.n_rows, "initial": g["initial"], "final": g["final"]}
+                        "cascade": g["cascade"] + self.n_rows, "initial": g["initial"], "final": g["final"],
+                        "nucleus": g["nucleus"]}
                 for k, t in GAMMA_COLUMNS.items():
                     self.gparts[prefix + k].append(np.asarray(part[k]).astype(t))
                 if not plain:
@@ -667,14 +698,23 @@ class RunTaker:
 
                     own = state_transition(self.experiment)
                     full = ((np.abs(np.asarray(g["deposited"]) - np.asarray(g["energy_lab"])) < 1e-6)
+                            & (np.asarray(g["nucleus"]) == 0)
                             & (np.asarray(g["initial"]) == own[0]) & (np.asarray(g["final"]) == own[1]))
                     peak = self.counters.setdefault("peak", {})
-                    for gd, pd, ok, f in zip(parent, pdet, counted, full):
+                    # The other nucleus's peak, as the plan predicts it: its first transition, at full energy.
+                    other = self.rates.other_peak() if self.both else None
+                    theirs = (((np.abs(np.asarray(g["deposited"]) - np.asarray(g["energy_lab"])) < 1e-6)
+                               & (np.asarray(g["nucleus"]) == 1) & (np.asarray(g["initial"]) == other["initial"])
+                               & (np.asarray(g["final"]) == other["final"])) if other else np.zeros(len(rows), bool))
+                    other_peak = self.counters.setdefault("other_peak", {})
+                    for gd, pd, ok, f, o in zip(parent, pdet, counted, full, theirs):
                         if ok:
                             key = f"{names[int(pd)]}|{gd}"
                             self.counters["coincidences"][key] = self.counters["coincidences"].get(key, 0) + 1
                             if f:
                                 peak[key] = peak.get(key, 0) + 1
+                            if o:
+                                other_peak[key] = other_peak.get(key, 0) + 1
         self.n_rows += n
 
     def progress(self) -> dict:
@@ -751,6 +791,11 @@ class RunTaker:
             "segments": _segment_counts(arrays, self.runner.detectors),
             "gamma_counts": self.counters["gamma"], "coincidences": self.counters["coincidences"],
             "peak_coincidences": self.counters.get("peak", {}),
+            "other_peak_coincidences": self.counters.get("other_peak", {}) if self.both else None,
+            "nuclei": 2 if self.both else 1,
+            # One particle per collision: elastic scattering is what the excitation leaves (runs taken before
+            # counted the excited particles on top of all of Rutherford scattering, and say nothing here).
+            "one_particle": True,
             "live_fraction": live, "cpu_s": time.time() - self.started,
             "counters_raw": self.counters,
             "plan": self.plan,
@@ -900,6 +945,18 @@ def start(folder: ExperimentFolder, kind: str = "beam", duration=None, budget=DE
     extra = {"assumed_offset_mm": float(offset_mm)} if kind == "alignment" else {}
     path = folder.run_folder(number, kind, duration_s)
     return RunTaker(path, number, kind, exp, duration_s, budget_s, seed, extra, plan)
+
+
+def retake(folder: ExperimentFolder, run: RunData, plan: Optional[dict] = None) -> RunTaker:
+    """Begin a new run with the setup, the seed, the duration and the real part of ``run`` (a beam or alignment
+    run): what that run would be if taken today. For a run that holds one nucleus's γ rays although its setup
+    has a level scheme of the other (:attr:`RunData.one_nucleus`), the new run holds both. The old run stays."""
+    if run.kind == "source":
+        raise ValueError("a source run has nothing to take again")
+    taker = start(folder, run.kind, f"{run.duration_s!r} s", f"{run.real_s!r} s", int(run.summary["seed"]),
+                  run.experiment, plan, offset_mm=float(run.summary.get("assumed_offset_mm", 0.0)))
+    taker.extra["retake_of"] = run.number
+    return taker
 
 
 def estimate(experiment: Experiment, duration=None, budget=DEFAULT_BUDGET_S, rates: Optional[Rates] = None) -> dict:

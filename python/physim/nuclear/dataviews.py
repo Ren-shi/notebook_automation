@@ -49,11 +49,21 @@ def correction_reason(experiment, choice: str) -> str:
         return "No excited state: there is no γ ray to correct."
     emitter = "recoil" if exc.excite == "target" else "projectile"
     who = "the target nucleus" if emitter == "recoil" else "the beam nucleus"
+    # The other nucleus of the collision is in the events too when the setup has its level scheme: each
+    # correction is then right for one nucleus's lines and wrong for the other's.
+    other = experiment.levels.get("beam" if exc.excite == "target" else "target")
+    partner = "the beam nucleus" if emitter == "recoil" else "the target nucleus"
     if choice == "off":
         return f"The reaction excites {who}, which emits the γ ray in flight: uncorrected, the line is shifted " \
-               "by its velocity and spread over the crystals' angles."
+               "by its velocity and spread over the crystals' angles." \
+               + (f" The lines of {partner} are shifted and spread too." if other is not None else "")
     if choice == emitter:
-        return f"Right for this setup: the reaction excites {who}, and this corrects for its velocity."
+        return f"Right for this setup: the reaction excites {who}, and this corrects for its velocity." \
+               + (f" The lines of {partner}, which is excited too, are smeared by it: they are sharp with the "
+                  "other correction." if other is not None else "")
+    if other is not None:
+        return f"Right for the lines of {partner}, which is excited too (its level scheme is in the setup): this " \
+               f"corrects for its velocity. The line of {who} is smeared by it."
     return f"The reaction excites {who}, not the {choice}: this correction uses the wrong velocity and leaves " \
            "the line shifted and broad."
 

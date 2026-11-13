@@ -51,6 +51,7 @@ from .rates import (
     energy_cut,
     energy_sigma,
     excitation_probability,
+    excited_partner,
     spot_sigma_mm,
     stack,
     stopping,
@@ -212,6 +213,13 @@ def generator_config(experiment, theta_floor: float = 0.5, pilot: bool = True) -
         e_cm = max(e_mid * m2 / (m1 + m2), 1e-6)
         cfg = {"layer": ch.layer, "target": species.index(ch.nuclide.name), "atoms_per_cm2": ch.atoms_per_cm2,
                "k": k, "amplitude": pps * ch.atoms_per_cm2 * 4 * math.pi * (k / (4 * e_cm)) ** 2 * 1e-26}
+        partner = excited_partner(experiment, ch, layers)
+        if partner is not None:
+            # One particle per collision: elastic scattering is what the excitation on this nuclide leaves,
+            # 1 − P at each angle, so that elastic and excited together are Rutherford scattering.
+            p = np.asarray(excitation_probability(experiment, partner, layers).probability(
+                np.linspace(0.0, 180.0, 721)), dtype=float)
+            cfg.update(p_table=(1.0 - np.clip(p, 0.0, 1.0)).tolist())
         if ch.excitation is not None:
             # Excitation probability every 0.25°, at mid-layer, the one the analytic rates use: of the
             # [reaction] state in first order, or with a level scheme that decays by cascades, of every level

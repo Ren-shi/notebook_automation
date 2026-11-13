@@ -265,25 +265,43 @@ def analysis_explanations(planner, result) -> list:
         lambda area, efficiency, correlation, branch, gate: area / (efficiency * correlation * branch * gate)))
     p_mean = yield_ / result.norm_counts if result.norm_counts else float("nan")
     norm_text = next((s["text"] for s in result.steps if s["step"] == "normalisation"), "")
+    # To all orders (a step of its own when the events follow a level scheme), first order is only the start.
+    all_orders = next((s["text"] for s in result.steps if s["step"] == "all orders"), None)
+    first = getattr(result, "b_first_order", None) or result.b_e2fm4
     if result.normalisation == "rutherford":
-        p_per_b = p_mean / result.b_e2fm4 if result.b_e2fm4 else float("nan")
+        p_per_b = p_mean / first if first else float("nan")
         out.append(Explanation(
             "mean_probability", "Mean excitation probability in the gated rings", p_mean, "",
-            "⟨P⟩ = Y / N_elastic",
+            "⟨P⟩ = Y / N_particles",
             f"⟨P⟩ = {_g(yield_)} / {_g(result.norm_counts)} = {_g(p_mean, 4)}",
-            "The excitations per elastically scattered particle in the same rings. Normalising to the elastic "
-            "particles cancels the beam current and the target thickness, which are hard to know precisely.",
-            "The same rings see both; the elastic particles are counted above threshold.",
+            "The excitations per particle scattered into the same rings. Normalising to the particles "
+            "cancels the beam current and the target thickness, which are hard to know precisely.",
+            "The same rings see both; the particles are counted above threshold.",
             f"{DOCS}nuclear-setup.html#automatic-analysis",
-            {"yield_": yield_, "n_elastic": result.norm_counts}, lambda yield_, n_elastic: yield_ / n_elastic))
+            {"yield_": yield_, "n_particles": result.norm_counts}, lambda yield_, n_particles: yield_ / n_particles))
+    if all_orders is not None:
+        out.append(Explanation(
+            "b_e2", "B(E2↑) from the level scheme's coupled equations", result.b_e2fm4, "e²fm⁴",
+            "B(E2↑): the value for which the coupled equations of the level scheme give the measured γ rays per "
+            "particle in the peak's window",
+            all_orders[0].upper() + all_orders[1:] + f" That is {_g(result.b_e2b2)} e²b².",
+            "First order takes the excitation probability as proportional to B(E2↑). Here the state is also fed "
+            "from the levels above it, which the collision reaches in two steps, and the peak may hold another "
+            "transition: the coupled equations count both, with B(E2↑) of this transition as the one unknown. "
+            "B(E2↑) is the square of the matrix element ⟨2‖M(E2)‖0⟩: how strongly the electric quadrupole "
+            "operator connects the ground state to the 2⁺ state.",
+            "Every other matrix element of the scheme is taken as known; the matrix element enters through its "
+            "size, so no sign is obtained.",
+            f"{DOCS}physics-register/coulomb-excitation.html",
+            {"b": result.b_e2fm4}, lambda b: b))
+    elif result.normalisation == "rutherford":
         out.append(Explanation(
             "b_e2", "B(E2↑) from the mean probability", result.b_e2fm4, "e²fm⁴",
             "B(E2↑) = ⟨P⟩ / (⟨P⟩/B)_theory, since in first order P ∝ B(E2↑)",
             f"B(E2↑) = {_g(p_mean, 4)} / {_g(p_per_b, 4)} per e²fm⁴ = {_g(result.b_e2fm4)} e²fm⁴ "
             f"= {_g(result.b_e2b2)} e²b²",
             "The excitation probability measures the reduced transition probability directly: (⟨P⟩/B)_theory is "
-            "the first-order probability per unit B(E2), averaged over the same rings with the elastic "
-            "distribution. B(E2↑) is the square of the matrix element ⟨2‖M(E2)‖0⟩: how strongly the electric "
+            "the first-order probability per unit B(E2), averaged over the particles in the same rings. B(E2↑) is the square of the matrix element ⟨2‖M(E2)‖0⟩: how strongly the electric "
             "quadrupole operator connects the ground state to the 2⁺ state.",
             "First-order theory; the matrix element enters only through its size, so no sign is obtained.",
             f"{DOCS}physics-register/coulomb-excitation.html",

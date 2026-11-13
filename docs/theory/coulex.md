@@ -115,23 +115,33 @@ The 2⁺ state loses 4.5% to the levels above it and gets it back, with more, wh
 2⁺ → 0⁺ γ rays than first order gives, 4⁺ → 2⁺ γ rays (1163.5 keV) at 3% of them and 0⁺ → 2⁺ γ rays (875.6 keV)
 at 4%.
 
+**One particle per collision.** A collision either excites the nucleus or leaves it as it was, so elastic
+scattering is the Rutherford cross section times 1 − P(θ): 20% fewer elastic particles at backward angles in the
+⁶²Ni example, and elastic and excited particles together are Rutherford scattering.
+
 **What this leaves out.**
 
 - Every excitation has the kinematics of the `[reaction]` state (Q = −E* of that state), whichever level it
   reached: with ⁶²Ni left in its 4⁺ state the two nuclei share 1.2 MeV less kinetic energy than the events give
   them.
-- Elastic scattering is not reduced by the excitation probability (20% at backward angles in the ⁶²Ni example).
-- The analysis (`physim.nuclear.analysis`) still extracts B(E2) from the 2⁺ → 0⁺ peak with first-order theory. On
-  events with all orders the peak holds the feeding from above, and a line the Doppler-corrected peak does not
-  resolve from it (the 4⁺ → 2⁺ line of ⁶²Ni lies 9.4 keV below a peak 15 keV wide): for the ⁶²Ni example it
-  returns a B(E2) 5% above what it returns on first-order events (3% from the feeding, the rest from the
-  unresolved line). With the ENSDF scheme of ⁵⁸Ni added to `coulex_ni58` (¹⁶O at 30 MeV), all orders give 5% fewer
+- The other nucleus of the collision (¹⁹⁴Pt here) is excited as well when the setup has its level scheme, with
+  the summed populations of its own coupled equations (96% at backward angles here, 0.85 γ rays of 328.5 keV per
+  backward particle). The two excitations are treated as independent: a collision can excite both, and the
+  excitation of one does not change the probability of the other. The particle keeps the energy of the
+  collision without the other nucleus's excitation.
+- First-order theory reads B(E2) too high from events with all orders: the 2⁺ → 0⁺ peak holds the feeding from
+  above, and a line the Doppler-corrected peak does not resolve from it (the 4⁺ → 2⁺ line of ⁶²Ni lies 9.4 keV
+  below a peak 15 keV wide, and is 3% of its window). The analysis therefore solves the coupled equations of the
+  level scheme for the B(E2) that gives the measured yield, 4 to 8% below the first-order reading on the ⁶²Ni
+  example, with every other matrix element taken from the scheme. The excitation saturates: the yield grows as
+  B(E2) to the power 0.67 there, so the uncertainties of B(E2) are 1.5 times those of the yield. With the ENSDF scheme of ⁵⁸Ni added to `coulex_ni58` (¹⁶O at 30 MeV), all orders give 5% fewer
   2⁺ → 0⁺ γ rays in the CD and 2% fewer in the strip detectors than first order, mostly through the reorientation.
 - The coupled equations have no E1 polarisation (virtual excitation of the giant dipole resonance), no excitation
   of both nuclei in one collision, and no nuclear interference above the safe energy.
-- The plan's coincidence rate takes the angular correlation of the `[reaction]` state in first order; the events
-  use the solution's. In a 40 min run of the ⁶²Ni example the two agree within the run's statistics (1% in the
-  CD).
+- The plan's coincidence rate takes the angular correlation from the same solution as the events: with a level
+  scheme the 2⁺ state as the whole scheme leaves it, to all orders. The state alone in first order is more
+  sharply aligned: on the ⁶²Ni example it would send 14% fewer γ rays to the crystal at 90° with the CD, and 3%
+  more to those at 45° and 135°. Without a level scheme the plan and the events both take the state alone.
 
 ## γ rays and the Doppler shift
 
