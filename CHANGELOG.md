@@ -10,6 +10,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
 
 ## Unreleased
 
+### Documentation
+- The README shows the application: what the experiment planner does, step by step, with screenshots
+  (`docs/images/`), how to start it (Windows installer or `physim app`), the example setups and `physim report`.
+  The engine follows in a shorter summary; its full reference moved from the README into `docs/guide.md`, which
+  the documentation site shows unchanged.
+
 ### Fixed
 - The note on a large excitation probability said "first order is not enough … use GOSIA" for a setup whose
   rates and events already follow its level scheme to all orders. It now says that they do, and that the analysis
