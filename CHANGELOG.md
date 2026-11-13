@@ -15,6 +15,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
   (`docs/images/`), how to start it (Windows installer or `physim app`), the example setups and `physim report`.
   The engine follows in a shorter summary; its full reference moved from the README into `docs/guide.md`, which
   the documentation site shows unchanged.
+- The README's screenshots show the app's new look (the step rail, the dark theme), with a light-theme Setup step
+  in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
 - The plan's particle–γ coincidences took the angular correlation of the `[reaction]` state alone, in first
