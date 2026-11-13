@@ -420,8 +420,9 @@ LEFT_OUT = (
     "both nuclei in one collision are not in the coupled equations.",
     "Deorientation; and lifetimes only where the level scheme gives a half-life (the nucleus then slows down along "
     "its path and decays on the way, with its orientation unchanged; no angular straggling).",
-    "Cascades: followed through the level scheme when the setup has one (one γ ray per excitation otherwise); the "
-    "angular correlation between successive γ rays of a cascade is not included.",
+    "Cascades: followed through the level scheme when the setup has one (one γ ray per excitation otherwise), "
+    "with the angular correlation between successive γ rays; a converted transition hands its orientation on as "
+    "an unobserved one.",
     "Pile-up, summing, and reactions on contaminants of the target.",
     "Photon transport inside the crystals: the response is parametrised and typical unless measured.",
 )

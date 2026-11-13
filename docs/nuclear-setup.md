@@ -403,7 +403,8 @@ g["corrected_recoil"], g["weight"]            # per γ ray (see gamma_events.GAM
   Random coincidences follow from the singles rates and the window: 2τ × (particle rate) × (γ singles), the γ
   singles being all excitations (detected particle or not) times the crystal's total efficiency, plus the room
   background and the extra lines. True γ–γ coincidences need a cascade, which one excited state does not give;
-  random γ–γ rates are given.
+  random γ–γ rates are given. With a cascade, the γ rays of one excitation have their angular correlation: each
+  is drawn from the orientation the γ rays before it left ({doc}`theory/coulex`).
 - **Dead time** scales every count by the live fraction.
 - **Statistics.** Each excited event emits its γ ray ten times over (`gammas_per_event`), each with a share of
   its weight, since coincidences are rare. On the ⁵⁸Ni example 400 000 reactions take about 5 s and give about
@@ -436,8 +437,12 @@ g["corrected_recoil"], g["weight"]            # per γ ray (see gamma_events.GAM
 - **Only the γ rays that reach a crystal are drawn.** A γ ray is kept with a probability that no γ ray's chance
   of reaching a crystal exceeds, then aimed at a point drawn evenly over the crystal faces and counted with the
   probability its distribution gives along that line. Their number and their directions are those of drawing
-  every direction over the whole sphere (`simulate_gammas(aimed=False)`), at a small part of the work.
-- **Not included:** cascades (one γ ray per excitation), summing, pile-up, lifetimes, contaminant reactions.
+  every direction over the whole sphere (`simulate_gammas(aimed=False)`), at a small part of the work. In a
+  cascade, the γ rays before the last are drawn over the whole sphere, since the next one depends on their
+  direction; only the last is aimed.
+- Cascades (with the correlation between their γ rays), summing and pile-up, lifetimes and contaminant
+  reactions are simulated too (backlog items 71–74); the Run step's **Not simulated yet** says what each leaves
+  out, and the [changelog](changelog.md) how each works.
 
 In the app, **Simulate the γ rays** on the Spectra tab shows the particle × γ matrix and each detector's raw and
 corrected spectrum, and for a clover with add-back or a shield the spectrum without them too. `write_root(...,

@@ -490,7 +490,27 @@ def _distribution(a_kq: dict, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
     return total
 
 
-def _aimed(rng, tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: np.ndarray, phi_ej: np.ndarray,
+def _table_weights(tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: np.ndarray):
+    """(4π W of each γ ray along directions of the orbit's frame, from its transition's coefficient table at its
+    event's CM angle; the largest value any table reaches): the distribution :func:`_aimed` aims with."""
+    largest = max(float(np.max(sum(np.abs(v) for v in coeff.values()))) for _, coeff, _ in tables.values())
+
+    def weigh(sel: np.ndarray, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
+        w = np.zeros(len(sel))
+        for (i_lev, f_lev), (grid, coeff, _) in tables.items():
+            mine = (initial[sel] == i_lev) & (final[sel] == f_lev)
+            if not mine.any():
+                continue
+            a_kq = {key: np.interp(theta_cm[sel][mine], grid, v.real) + 1j * np.interp(theta_cm[sel][mine], grid,
+                                                                                         v.imag)
+                    for key, v in coeff.items()}
+            w[mine] = _distribution(a_kq, theta[mine], phi[mine])
+        return w
+
+    return weigh, largest
+
+
+def _aimed(rng, weigh, largest: float, theta_cm: np.ndarray, phi_ej: np.ndarray,
            velocity: np.ndarray, beta: np.ndarray, gam: np.ndarray, origin: np.ndarray, flip: bool,
            centres: np.ndarray, normals: np.ndarray, radii: np.ndarray) -> Optional[tuple]:
     """Which γ rays reach a crystal, and where: (indices of those γ rays, the crystal of each, its unit direction
@@ -506,7 +526,10 @@ def _aimed(rng, tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: 
 
     The chance that a γ ray counts, and the direction it then has, are those of its distribution; the others
     miss every crystal and were never needed. None when q would reach 1 (crystals all round the target): the
-    caller then draws every direction."""
+    caller then draws every direction.
+
+    ``weigh(rows, θ, φ)`` gives 4π W of those γ rays along directions of the orbit's frame (radians), and
+    ``largest`` a value no W × 4π exceeds."""
     n = len(theta_cm)
     areas = math.pi * radii**2
     total_area = float(areas.sum())
@@ -515,8 +538,6 @@ def _aimed(rng, tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: 
     nearest = float(dist.min()) - off
     if n == 0 or nearest <= 0:
         return None
-    # No distribution exceeds the sum of the sizes of its coefficients, anywhere on the table of angles.
-    largest = max(float(np.max(sum(np.abs(v) for v in coeff.values()))) for _, coeff, _ in tables.values())
     b_max = float(beta.max())
     q = largest * (1 + b_max) / (1 - b_max) * total_area / (4 * math.pi * nearest**2)
     if not q < 1.0:
@@ -560,13 +581,8 @@ def _aimed(rng, tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: 
     theta = np.arccos(np.clip(np.einsum("ij,ij->i", rest, z), -1.0, 1.0))
     phi = np.arctan2(np.einsum("ij,ij->i", rest, y), np.einsum("ij,ij->i", rest, x))
     w = np.zeros(m)
-    for (i_lev, f_lev), (grid, coeff, _) in tables.items():
-        mine = ok & (initial[idx] == i_lev) & (final[idx] == f_lev)
-        if not mine.any():
-            continue
-        a_kq = {key: np.interp(theta_cm[idx][mine], grid, v.real) + 1j * np.interp(theta_cm[idx][mine], grid, v.imag)
-                for key, v in coeff.items()}
-        w[mine] = _distribution(a_kq, theta[mine], phi[mine])
+    if ok.any():
+        w[ok] = weigh(idx[ok], theta[ok], phi[ok])
     chance = np.where(ok, w / (4 * math.pi) * throw * total_area * cos_face / r2, 0.0)
     keep = rng.uniform(0.0, 1.0, m) * q < chance
     return idx[keep], k[keep], lab[keep]
@@ -624,8 +640,12 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
     initial = np.ones(n, dtype=int)
     final = np.zeros(n, dtype=int)
     e0s = np.full(n, e0)
+    exc_theta, taken, first = theta_cm, None, None
     if cex is not None:
-        src, initial, final, e0s = _cascade_steps(cex, theta_cm, rng)
+        if cex.isotropic:
+            src, initial, final, e0s = _cascade_steps(cex, theta_cm, rng)
+        else:
+            src, initial, final, e0s, taken, first = _cascade_steps(cex, theta_cm, rng, steps=True)
         cascade = src
         rows, theta_cm, phi_ej, base = rows[src], theta_cm[src], phi_ej[src], base[src]
         velocity, beta, gam = velocity[src], beta[src], gam[src]
@@ -656,44 +676,61 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
     # -- emission with the correlation, and which crystal ---------------------------------------------------------
     # Each transition with its own orientation (with the feeding from above), at the event's CM angle.
     pairs = [(1, 0)] if cex is None else sorted(set(zip(initial.tolist(), final.tolist())))
-    tables = {pair: (em.single if cex is None else cex).coefficient_table(*pair) for pair in pairs}
-    hit = _aimed(rng, tables, initial, final, theta_cm, phi_ej, velocity, beta, gam, origin, not excite_recoil,
-                 centres, normals, radii) if aimed and n else None
-    if hit is not None:
-        # Only the γ rays that reach a crystal are drawn, each with its direction (see _aimed).
-        reached, which, lab = hit
+    flip = not excite_recoil
+    if cex is not None and not cex.isotropic:
+        # The γ rays of one cascade share their directions (the correlation between successive γ rays): each is
+        # drawn from the state the γ rays before it left, and only the last of a cascade is aimed.
+        known, deferred = _correlated(cex, exc_theta, taken, first, rng, aimed)
+        last = np.flatnonzero(np.isnan(known[:, 0]))
+        drawn = np.flatnonzero(~np.isnan(known[:, 0]))
+        which_d, reached_d, lab_d = _from_rest(known[drawn], theta_cm[drawn], phi_ej[drawn], velocity[drawn],
+                                               beta[drawn], gam[drawn], origin[drawn], flip, centres, normals, radii)
+        hit = None
+        if len(last):
+            weigh, largest = _deferred_weights(deferred, last, len(theta_cm))
+            hit = _aimed(rng, weigh, largest, theta_cm[last], phi_ej[last], velocity[last], beta[last], gam[last],
+                         origin[last], flip, centres, normals, radii)
+        if hit is not None:
+            pos, which_l, lab_l = hit
+            reached_l = last[pos]
+        else:
+            rest_l = _sample_deferred(deferred, last, len(theta_cm), rng)
+            which_l, ok_l, lab_l = _from_rest(rest_l, theta_cm[last], phi_ej[last], velocity[last], beta[last],
+                                              gam[last], origin[last], flip, centres, normals, radii)
+            reached_l, which_l, lab_l = last[ok_l], which_l[ok_l], lab_l[ok_l]
+        reached = np.concatenate([drawn[reached_d], reached_l])
+        which = np.concatenate([which_d[reached_d], which_l])
+        lab = np.concatenate([lab_d[reached_d], lab_l]) if len(reached) else np.zeros((0, 3))
+        order = np.argsort(reached, kind="stable")
+        reached, which, lab = reached[order], which[order], lab[order]
         nvel = _unit(velocity[reached])
         energy_lab = (e0s[reached] * np.sqrt(1 - beta[reached] ** 2)
                       / (1 - beta[reached] * np.einsum("ij,ij->i", lab, nvel)))
     else:
-        # Every direction over the whole sphere, in the rest frame, then the crystal it meets, if any.
-        local = np.zeros((n, 3))
-        for pair in pairs:
-            m = (initial == pair[0]) & (final == pair[1]) if cex is not None else np.ones(n, dtype=bool)
-            local[m] = _rest_directions(tables[pair], theta_cm[m], rng)
-        # The orbit's frame in the laboratory for each event (as Populated.axes, vectorised).
-        th = np.radians(theta_cm)
-        ph = np.radians(phi_ej)
-        out = _directions(theta_cm, phi_ej)
-        beam = np.array([0.0, 0.0, 1.0])
-        s_half, c_half = np.sin(th / 2), np.cos(th / 2)
-        side = np.c_[np.cos(ph), np.sin(ph), np.zeros(n)]
-        x = np.where(s_half[:, None] > 1e-9, (out - beam) / np.maximum(2 * s_half, 1e-12)[:, None], side)
-        y = np.where(c_half[:, None] > 1e-9, (out + beam) / np.maximum(2 * c_half, 1e-12)[:, None], side)
-        z = np.cross(x, y)
-        if not excite_recoil:
-            x, y = -x, -y
-        rest = local[:, 0:1] * x + local[:, 1:2] * y + local[:, 2:3] * z
-        # To the laboratory: the photon's momentum boosted along the emitter's velocity.
-        nvel = _unit(velocity)
-        cos_r = np.einsum("ij,ij->i", rest, nvel)
-        par = (cos_r + beta) / (1 + beta * cos_r)
-        perp = rest - cos_r[:, None] * nvel
-        scale = 1 / (gam * (1 + beta * cos_r))
-        lab = _unit(perp * scale[:, None] + par[:, None] * nvel)
-        energy_lab = e0s * np.sqrt(1 - beta**2) / (1 - beta * np.einsum("ij,ij->i", lab, nvel))
-        which, reached = _first_crystal(origin, lab, centres, normals, radii)
-        which, lab, energy_lab = which[reached], lab[reached], energy_lab[reached]
+        tables = {pair: (em.single if cex is None else cex).coefficient_table(*pair) for pair in pairs}
+        hit = None
+        if aimed and n:
+            weigh, largest = _table_weights(tables, initial, final, theta_cm)
+            hit = _aimed(rng, weigh, largest, theta_cm, phi_ej, velocity, beta, gam, origin, flip, centres,
+                         normals, radii)
+        if hit is not None:
+            # Only the γ rays that reach a crystal are drawn, each with its direction (see _aimed).
+            reached, which, lab = hit
+            nvel = _unit(velocity[reached])
+            energy_lab = (e0s[reached] * np.sqrt(1 - beta[reached] ** 2)
+                          / (1 - beta[reached] * np.einsum("ij,ij->i", lab, nvel)))
+        else:
+            # Every direction over the whole sphere, in the rest frame, then the crystal it meets, if any.
+            local = np.zeros((n, 3))
+            for pair in pairs:
+                m = (initial == pair[0]) & (final == pair[1]) if cex is not None else np.ones(n, dtype=bool)
+                local[m] = _rest_directions(tables[pair], theta_cm[m], rng)
+            which, reached, lab = _from_rest(local, theta_cm, phi_ej, velocity, beta, gam, origin, flip, centres,
+                                             normals, radii)
+            nvel = _unit(velocity)
+            energy_lab = e0s * np.sqrt(1 - beta**2) / (1 - beta * np.einsum("ij,ij->i", lab, nvel))
+            which, lab, energy_lab = which[reached], lab[reached], energy_lab[reached]
+            reached = np.flatnonzero(reached)
     rows, beta = rows[reached], beta[reached]
     cascade, initial, final, e0s = cascade[reached], initial[reached], final[reached], e0s[reached]
     stopped = stopped[reached]
@@ -868,8 +905,9 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     if cex is not None:
         notes.append(f"Each excitation starts in a level of the scheme, populated {how}, and decays by the level "
                      f"scheme's cascade: {len(cex.transitions())} transitions "
-                     "followed, each with its own orientation; the angular correlation between successive γ rays of "
-                     "one cascade is not included.")
+                     "followed, each with its own orientation" + ("." if cex.isotropic else
+                     "; each γ ray leaves the next level oriented by its direction, so the γ rays of one cascade "
+                     "have their angular correlation."))
     if other is not None:
         notes.append(f"{len(parts[1]['particle'])} γ rays of {other.scheme.nuclide}, the other nucleus of the "
                      f"collision, from {info[1]['excited_rows']} scattered particles: it is excited on "
@@ -1141,12 +1179,267 @@ def _rest_directions(table: tuple, theta_cm: np.ndarray, rng) -> np.ndarray:
     return local
 
 
-def _cascade_steps(cex, theta_cm: np.ndarray, rng) -> tuple:
+def _from_rest(local: np.ndarray, theta_cm: np.ndarray, phi_ej: np.ndarray, velocity: np.ndarray, beta: np.ndarray,
+               gam: np.ndarray, origin: np.ndarray, flip: bool, centres: np.ndarray, normals: np.ndarray,
+               radii: np.ndarray) -> tuple:
+    """(the crystal each γ ray meets, whether it meets one, its unit direction in the laboratory) for γ rays of
+    directions ``local`` in the orbit's frame of their event, in the emitter's rest frame."""
+    n = len(local)
+    if not n:
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=bool), np.zeros((0, 3))
+    # The orbit's frame in the laboratory for each event (as Populated.axes, vectorised).
+    th = np.radians(theta_cm)
+    ph = np.radians(phi_ej)
+    out = _directions(theta_cm, phi_ej)
+    beam = np.array([0.0, 0.0, 1.0])
+    s_half, c_half = np.sin(th / 2), np.cos(th / 2)
+    side = np.c_[np.cos(ph), np.sin(ph), np.zeros(n)]
+    x = np.where(s_half[:, None] > 1e-9, (out - beam) / np.maximum(2 * s_half, 1e-12)[:, None], side)
+    y = np.where(c_half[:, None] > 1e-9, (out + beam) / np.maximum(2 * c_half, 1e-12)[:, None], side)
+    z = np.cross(x, y)
+    if flip:
+        x, y = -x, -y
+    rest = local[:, 0:1] * x + local[:, 1:2] * y + local[:, 2:3] * z
+    # To the laboratory: the photon's momentum boosted along the emitter's velocity.
+    nvel = _unit(velocity)
+    cos_r = np.einsum("ij,ij->i", rest, nvel)
+    par = (cos_r + beta) / (1 + beta * cos_r)
+    perp = rest - cos_r[:, None] * nvel
+    scale = 1 / (gam * (1 + beta * cos_r))
+    lab = _unit(perp * scale[:, None] + par[:, None] * nvel)
+    which, reached = _first_crystal(origin, lab, centres, normals, radii)
+    return which, reached, lab
+
+
+def _interp_density(table: tuple, theta_cm: np.ndarray) -> np.ndarray:
+    """Density matrices of a :meth:`~physim.nuclear.orientation.Excitation.density_table` at each CM angle,
+    interpolated linearly between grid angles and normalised to trace 1 (unoriented where the trace vanishes)."""
+    from .correlation import isotropic
+
+    grid, rho = table
+    t = np.clip(theta_cm, grid[0], grid[-1])
+    i = np.clip(np.searchsorted(grid, t) - 1, 0, len(grid) - 2)
+    f = ((t - grid[i]) / (grid[i + 1] - grid[i]))[:, None, None]
+    out = (1 - f) * rho[i] + f * rho[i + 1]
+    trace = np.einsum("naa->n", out).real
+    good = trace > 0
+    out[good] /= trace[good][:, None, None]
+    if (~good).any():
+        out[~good] = isotropic((rho.shape[1] - 1) / 2)
+    return out
+
+
+class _FlatEmission:
+    """A transition whose spins or multipolarity are not known: isotropic, and the level it feeds unoriented."""
+
+    bound = 1.0
+
+    def __init__(self, jf: float):
+        self.jf = jf
+
+    def weights(self, rho, directions):
+        return np.ones(len(directions))
+
+    def after(self, rho, directions):
+        from .correlation import isotropic
+        return np.repeat(isotropic(self.jf)[None], len(directions), axis=0)
+
+    def sample(self, rho, rng):
+        u = rng.uniform(-1.0, 1.0, len(rho))
+        ph = rng.uniform(0.0, 2 * math.pi, len(rho))
+        s = np.sqrt(np.maximum(1 - u * u, 0.0))
+        return np.c_[s * np.cos(ph), s * np.sin(ph), u]
+
+
+def _emission_of(cex, initial: int, final: int):
+    """The :class:`~physim.nuclear.correlation.Emission` of a transition of the scheme, kept on the solution."""
+    from .correlation import Emission
+
+    kept = cex.__dict__.setdefault("_emissions", {})
+    if (initial, final) not in kept:
+        levels = cex.scheme.levels
+        ji, jf = levels[initial].spin, levels[final].spin
+        d = cex.decay(initial, final)
+        if ji is None or jf is None or not d.l1 or not angular_allowed(ji, jf, d.l1):
+            kept[(initial, final)] = _FlatEmission(0.0 if jf is None else float(jf))
+        else:
+            kept[(initial, final)] = Emission(ji, jf, d.l1, d.l2, d.mixing)
+    return kept[(initial, final)]
+
+
+def angular_allowed(ji: float, jf: float, lam: int) -> bool:
+    """Whether a multipole ``lam`` joins spins ``ji`` and ``jf``."""
+    from .angular import triangle
+    return triangle(float(ji), int(lam), float(jf))
+
+
+def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng, aimed: bool) -> tuple:
+    """The directions of the γ rays of each cascade, with the correlation between them (backlog item 71): each
+    excitation starts in the density matrix the collision leaves its first level in, at its CM angle; each γ ray
+    is drawn from the current state and leaves the next level oriented by its direction
+    (:class:`~physim.nuclear.correlation.Emission`); a converted transition feeds as an unobserved one.
+
+    Returns (directions in the orbit's frame, one row per γ ray in the order of :func:`_cascade_steps`, NaN for
+    the last γ ray of each cascade when ``aimed``; and for those, [(their γ-ray indices, emission, density
+    matrices)] to aim them with)."""
+    from .correlation import unobserved
+
+    src, ini, fin, emit = taken
+    order = np.argsort(src, kind="stable")
+    src, ini, fin, emit = src[order], ini[order], fin[order], emit[order]
+    n_gamma = int(emit.sum())
+    gamma_of = np.cumsum(emit) - 1               # the γ-ray index of each emitting step
+    rank = np.arange(len(src))
+    if len(src):
+        starts = np.r_[0, np.flatnonzero(np.diff(src)) + 1]
+        rank = rank - np.repeat(starts, np.diff(np.r_[starts, len(src)]))
+    # The last γ ray of each cascade: no emitting step of the same excitation comes after it.
+    emitting = np.flatnonzero(emit)
+    is_last = np.zeros(len(src), dtype=bool)
+    if len(emitting):
+        is_last[emitting[np.r_[src[emitting][1:] != src[emitting][:-1], True]]] = True
+
+    known = np.full((n_gamma, 3), np.nan)
+    deferred = []
+    # A cascade whose first step is its last γ ray needs no state carried: the γ ray is aimed with the state the
+    # collision left, worked out only for the γ rays the aiming looks at (most cascades are one γ ray).
+    alone = (rank == 0) & emit & is_last
+    if aimed and alone.any():
+        for (lev, f_lev) in sorted(set(zip(ini[alone].tolist(), fin[alone].tolist()))):
+            k = np.flatnonzero(alone & (ini == lev) & (fin == f_lev))
+            deferred.append((gamma_of[k], _emission_of(cex, lev, f_lev),
+                             _Lazy(cex.density_table(lev), theta_cm[src[k]])))
+    # The state of every other excitation still decaying: {level: (excitations, ascending; density matrices)}.
+    state = {}
+    need = np.zeros(len(first), dtype=bool)
+    need[src[(rank == 0) & ~(alone if aimed else np.zeros(len(src), dtype=bool))]] = True
+    for lev in np.unique(first):
+        exc = np.flatnonzero((first == lev) & need)
+        state[int(lev)] = (exc, _interp_density(cex.density_table(int(lev)), theta_cm[exc]))
+
+    def commit(nxt: dict) -> None:
+        """Excitations whose cascade has ended leave the state; the rest move to the level they reached."""
+        for lev, parts in nxt.items():
+            exc = np.concatenate([p[0] for p in parts])
+            rho = np.concatenate([p[1] for p in parts])
+            if lev in state:   # excitations already waiting in that level from another path
+                e0, r0 = state[lev]
+                exc, rho = np.concatenate([e0, exc]), np.concatenate([r0, rho])
+            o = np.argsort(exc, kind="stable")
+            state[lev] = (exc[o], rho[o])
+
+    # The steps in groups of one rank, one transition, and whether it gave a γ ray (γ rays first).
+    o = np.lexsort((~emit, fin, ini, rank))
+    keys = np.c_[rank[o], ini[o], fin[o], emit[o]]
+    cuts = np.r_[0, np.flatnonzero(np.any(keys[1:] != keys[:-1], axis=1)) + 1, len(o)]
+    nxt: dict = {}
+    current = (-1, -1)
+    exc, rho = np.zeros(0, dtype=int), None
+    for g0, g1 in zip(cuts[:-1], cuts[1:]):
+        r, lev, f_lev, gives = (int(x) for x in keys[g0])
+        if r != current[0]:
+            commit(nxt)
+            nxt = {}
+        if (r, lev) != current:
+            exc, rho = state.pop(lev, (np.zeros(0, dtype=int), None))
+            current = (r, lev)
+        k = o[g0:g1]
+        pos = np.searchsorted(exc, src[k])
+        if not gives or r == 0:
+            # Steps after the last γ ray of a cascade (a conversion), and the cascades of one γ ray left to aim
+            # above, have no state to carry.
+            there = (pos < len(exc)) & (exc[np.minimum(pos, max(len(exc) - 1, 0))] == src[k]) if len(exc) else \
+                np.zeros(len(k), dtype=bool)
+            k, pos = k[there], pos[there]
+            if not len(k):
+                continue
+        sub = rho[pos]
+        em_ = _emission_of(cex, lev, f_lev)
+        if gives:
+            final_ones = is_last[k]
+            if aimed and final_ones.any():
+                deferred.append((gamma_of[k[final_ones]], em_, sub[final_ones]))
+            draw = ~final_ones if aimed else np.ones(len(k), dtype=bool)
+            if draw.any():
+                known[gamma_of[k[draw]]] = em_.sample(sub[draw], rng)
+            # Only the excitations that go on need the state their γ ray leaves; a last γ ray may still be
+            # followed by converted steps, whose state is not needed.
+            go_on = ~final_ones
+            if go_on.any():
+                fed = em_.after(sub[go_on], known[gamma_of[k[go_on]]])
+                nxt.setdefault(f_lev, []).append((src[k[go_on]], fed))
+        else:
+            d = cex.decay(lev, f_lev)
+            levels = cex.scheme.levels
+            ji, jf = levels[lev].spin, levels[f_lev].spin
+            if ji is None or jf is None:
+                from .correlation import isotropic
+                fed = np.repeat(isotropic(0.0 if jf is None else float(jf))[None], len(k), axis=0)
+            else:
+                fed = unobserved(sub, float(ji), float(jf), d.l1, d.l2, d.mixing)
+            nxt.setdefault(f_lev, []).append((src[k], fed))
+    commit(nxt)
+    return known, deferred
+
+
+class _Lazy:
+    """Density matrices of a :meth:`~physim.nuclear.orientation.Excitation.density_table` at CM angles, worked
+    out only for the rows asked for (``lazy[rows]``)."""
+
+    def __init__(self, table: tuple, theta_cm: np.ndarray):
+        self.table, self.theta_cm = table, theta_cm
+
+    def __len__(self) -> int:
+        return len(self.theta_cm)
+
+    def __getitem__(self, rows) -> np.ndarray:
+        return _interp_density(self.table, self.theta_cm[rows])
+
+
+def _deferred_weights(deferred: list, last: np.ndarray, n: int) -> tuple:
+    """(4π W of the deferred γ rays along directions of the orbit's frame; a value none exceeds), for
+    :func:`_aimed` working on the γ rays ``last`` (indices among ``n``)."""
+    where = np.full(n, -1)
+    where[last] = np.arange(len(last))
+    groups = []
+    for g_idx, em_, rho in deferred:
+        mark = np.zeros(len(last), dtype=bool)
+        mark[where[g_idx]] = True
+        slot = np.full(len(last), -1)
+        slot[where[g_idx]] = np.arange(len(g_idx))
+        groups.append((mark, slot, em_, rho))
+    largest = max([g[2].bound for g in groups] or [1.0])
+
+    def weigh(sel: np.ndarray, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
+        w = np.zeros(len(sel))
+        dirs = np.c_[np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+        for mark, slot, em_, rho in groups:
+            mine = mark[sel]
+            if mine.any():
+                w[mine] = em_.weights(rho[slot[sel[mine]]], dirs[mine])
+        return w
+
+    return weigh, largest
+
+
+def _sample_deferred(deferred: list, last: np.ndarray, n: int, rng) -> np.ndarray:
+    """Directions over the whole sphere for the deferred γ rays, in the order of ``last``."""
+    where = np.full(n, -1)
+    where[last] = np.arange(len(last))
+    out = np.zeros((len(last), 3))
+    for g_idx, em_, rho in deferred:
+        out[where[g_idx]] = em_.sample(rho[np.arange(len(rho))] if isinstance(rho, _Lazy) else rho, rng)
+    return out
+
+
+def _cascade_steps(cex, theta_cm: np.ndarray, rng, steps: bool = False) -> tuple:
     """The decay of each excitation through the level scheme: the level it starts in, drawn from the populations
     the collision leaves at its CM angle (to all orders, or the one-step probabilities of first order: whichever
     solution ``cex`` is), then each step down by the scheme's branches (a converted transition gives no γ ray).
     Returns (index of the excitation each γ ray belongs to, initial level, final level, energy in the nucleus's
-    frame in MeV), one entry per γ ray emitted."""
+    frame in MeV), one entry per γ ray emitted. With ``steps``, also every step down, in the order taken, as
+    (excitation, initial level, final level, whether it gave a γ ray), and the level each excitation started in:
+    what the correlation between the γ rays of one cascade follows. The numbers drawn are the same."""
     grid, states = cex.table()
     starts = start_levels(cex)
     p = np.array([[s.direct.get(lev, 0.0) for s in states] for lev in starts])
@@ -1155,11 +1448,13 @@ def _cascade_steps(cex, theta_cm: np.ndarray, rng) -> tuple:
     u = rng.uniform(0.0, 1.0, len(theta_cm)) * cum[-1]
     pick = np.minimum((u[None, :] > cum).sum(axis=0), len(starts) - 1)
     current = np.array(starts)[pick]
+    first = current.copy()
     levels = cex.scheme.levels
     decays: dict = {}
     for (i, f) in cex.transitions():
         decays.setdefault(i, []).append(cex.decay(i, f))
     src, ini, fin = [], [], []
+    all_src, all_ini, all_fin, all_emit = [], [], [], []
     alive = np.ones(len(current), dtype=bool)
     for _ in range(4 * len(levels) + 4):
         idx = np.flatnonzero(alive)
@@ -1180,13 +1475,23 @@ def _cascade_steps(cex, theta_cm: np.ndarray, rng) -> tuple:
             src.append(here[emits])
             ini.append(np.full(emits.sum(), int(lev)))
             fin.append(finals[emits])
+            if steps:
+                all_src.append(here)
+                all_ini.append(np.full(len(here), int(lev)))
+                all_fin.append(finals)
+                all_emit.append(emits)
             current[here] = finals
+    if steps:
+        taken = ((np.concatenate(all_src), np.concatenate(all_ini), np.concatenate(all_fin), np.concatenate(all_emit))
+                 if all_src else (np.zeros(0, dtype=int),) * 3 + (np.zeros(0, dtype=bool),))
     if not src:
-        return (np.zeros(0, dtype=int), np.zeros(0, dtype=int), np.zeros(0, dtype=int), np.zeros(0))
+        empty = (np.zeros(0, dtype=int), np.zeros(0, dtype=int), np.zeros(0, dtype=int), np.zeros(0))
+        return empty + (taken, first) if steps else empty
     src, ini, fin = np.concatenate(src), np.concatenate(ini), np.concatenate(fin)
     energy = np.array([levels[i].energy.value - levels[f].energy.value for i, f in zip(ini, fin)]) * 1e-3
     order = np.argsort(src, kind="stable")
-    return src[order], ini[order], fin[order], energy[order]
+    out = (src[order], ini[order], fin[order], energy[order])
+    return out + (taken, first) if steps else out
 
 
 def doppler_correct(experiment, columns: dict, rows: np.ndarray, crystal: np.ndarray, measured: np.ndarray) -> dict:

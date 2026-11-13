@@ -90,6 +90,15 @@ transition, the simulated events take that solution (`gamma.cascade_excitation`)
   matrix of every level, in two steps or one, its statistical tensors follow, and the decay hands them down the
   cascade. The 4⁺ → 2⁺ γ rays of a 4⁺ state reached in two steps are emitted with that state's own alignment;
   nothing is taken as isotropic.
+- **The γ rays of one cascade are correlated** (`physim.nuclear.correlation`). Each excitation carries the
+  density matrix ρ of its level down the cascade. A γ ray from spin I to I_f by multipoles L, L′ (mixing ratio
+  δ) is drawn along n with the probability W(n) ∝ Σ_σ Tr[A_σ ρ_n A_σ†], where ρ_n is ρ quantised along n, σ = ±1
+  the photon's helicity and (A_σ)_{mM} = Σ_L c_L √(2L + 1) ⟨I_f m L σ | I M⟩ with c_L = 1, c_L′ = −σδ. The level
+  it feeds is left in Σ_σ A_σ ρ_n A_σ† rotated back and normalised, and the next γ ray starts from that. Summed
+  over directions this is the unobserved feeding above, so the singles are unchanged and only the γ–γ
+  coincidences between crystals change: for an unoriented 4⁺ → 2⁺ → 0⁺ cascade the two γ rays follow
+  1 + 0.1020 P₂ + 0.0091 P₄ of the angle between them. A converted transition hands its orientation on as an
+  unobserved one, and `emission = "isotropic"` draws every γ ray on its own, without the correlation.
 - **First order stays available:** `[reaction] order = "first"` gives the events of first-order theory (bit for
   bit those of earlier versions). A setup without a level scheme is first order in any case, since its one matrix
   element allows nothing else.

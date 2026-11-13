@@ -19,3 +19,11 @@ cascades there are no true γ–γ coincidences and the spectra miss the lines a
 ## Done when
 - For a scheme with two levels populated, the γ–γ coincidence counts between the two lines agree with the
   populations, branches and efficiencies within statistics; with one level the results equal item 55's.
+
+## Status
+- Cascades through the level scheme, true γ–γ coincidences and gates on one line: done.
+- The angular correlation between successive γ rays (each in the frame the previous one leaves): done, in
+  `physim.nuclear.correlation`, tested in `tests/python/test_nuclear_correlation.py` (the textbook 4⁺ → 2⁺ → 0⁺
+  correlation, mixed multipoles, singles unchanged).
+- Still left out: the conversion electrons' own correlation, and a level's own kinematics (every excitation keeps
+  the kinematics of the `[reaction]` state).

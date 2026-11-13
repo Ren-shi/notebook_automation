@@ -134,7 +134,8 @@ def physics_for(key: str) -> str:
 #: What the runs do not simulate yet, with the backlog item that adds it: the realism is claimed only where it holds.
 NOT_SIMULATED = (
     (71, "Cascades in part", "without a level scheme each excitation emits one γ ray; with one, the cascade is "
-                             "followed, but the angular correlation between its successive γ rays is not"),
+                             "followed with the angular correlation between its successive γ rays, but a "
+                             "conversion electron's own correlation is not"),
     (71, "Excitation in several steps in part", "with a level scheme its levels are populated to all orders (a 4⁺ "
                                                 "state through the 2⁺, the reorientation), each with its own "
                                                 "orientation; without one, or with order = \"first\", only what one "
