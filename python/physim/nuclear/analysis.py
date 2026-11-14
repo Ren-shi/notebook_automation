@@ -57,7 +57,7 @@ import numpy as np
 
 from . import data
 from .coulex import Coulex
-from .gamma import correlation_table, emitters, transition_lines
+from .gamma import correlation_table, e1_polarisation, emitters, transition_lines
 from .kinematics import TwoBody
 from .levels import weisskopf_unit
 from .quantity import Quantity
@@ -644,7 +644,8 @@ class Analysis:
         b = b_up if b_up is not None else exc.b_up_e2fm
         ion = beam_ion(self.experiment)
         target = data.nuclide(max(self._layers[0].nuclides.items(), key=lambda kv: kv[1])[0]).name
-        cx = Coulex(ion, target, e_beam, excite=exc.excite, energy=e_star, multipolarity=exc.multipolarity, b_up=b)
+        cx = Coulex(ion, target, e_beam, excite=exc.excite, energy=e_star, multipolarity=exc.multipolarity, b_up=b,
+                    e1_polarisation=e1_polarisation(self.experiment))
         # Averaged over the particles in the gate's rings, as the Rutherford normalisation divides by them.
         elastic = self._elastic_rows(s)
         th = self.events.columns["theta_cm"][elastic]
@@ -1047,7 +1048,7 @@ class Analysis:
             scheme.set_matrix_element(sol.ground, level, "E2", math.copysign(size, old.value if old else 1.0),
                                       source="user")
             cc = CoupledChannels(sol.beam, sol.target, sol.beam_energy, scheme, excite=sol.excite,
-                                 tolerance=EVENT_TOLERANCE)
+                                 tolerance=EVENT_TOLERANCE, e1_polarisation=sol.e1_polarisation)
             grid = np.arange(max(2.0, 2.0 * math.floor(lo / 2.0)), min(180.0, 2.0 * math.ceil(hi / 2.0)) + 1e-9, 2.0)
             if len(grid) < 2:
                 grid = np.array([max(grid[0] - 2.0, 2.0), grid[0]]) if grid[0] > 2.0 else np.array([2.0, 4.0])
@@ -1170,7 +1171,8 @@ class Analysis:
         ion = beam_ion(self.experiment)
         target = data.nuclide(max(self._layers[0].nuclides.items(), key=lambda kv: kv[1])[0]).name
         other = "projectile" if exc.excite == "target" else "target"
-        cx = Coulex(ion, target, self._e_mid, excite=other, energy=energy, multipolarity="E2", b_up=b_val)
+        cx = Coulex(ion, target, self._e_mid, excite=other, energy=energy, multipolarity="E2", b_up=b_val,
+                    e1_polarisation=e1_polarisation(self.experiment))
         elastic_rows = self._elastic_rows(s)
         th = self.events.columns["theta_cm"][elastic_rows]
         p = float(np.average(np.asarray(cx.probability(th)), weights=self.events.columns["weight"][elastic_rows]))

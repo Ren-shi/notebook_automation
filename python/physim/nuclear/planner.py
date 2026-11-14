@@ -1526,6 +1526,7 @@ class Planner:
         cross section for exciting it directly and with feeding from above, and for each transition the cross
         section of its γ ray, integrated over all scattering angles at the mid-target energy.
         ``{"available": False}`` without a level scheme."""
+        from .gamma import e1_polarisation
         from .orientation import Excitation
 
         exp = self.experiment
@@ -1544,7 +1545,8 @@ class Planner:
                 target = scheme.nuclide
             try:
                 ex = Excitation(beam_ion(exp), target, e_mid, scheme,
-                                excite="target" if role == "target" else "projectile")
+                                excite="target" if role == "target" else "projectile",
+                                e1_polarisation=e1_polarisation(exp))
             except ValueError as e:
                 return {"available": False, "reason": str(e)}
             cs = ex.cross_sections()

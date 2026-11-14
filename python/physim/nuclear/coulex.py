@@ -14,6 +14,14 @@ multipolarity λ (from a 0⁺ ground state) is first-order perturbation theory a
     c.xi                              # adiabaticity ξ: excitation is suppressed when ξ ≳ 1
     c.safe(120.0)                     # Cline's safe-distance criterion at that angle
 
+``e1_polarisation`` (the parameter d of GOSIA: 0.0038 by default in GOSIA and in a setup, 0.005 in GOSIA's manual;
+this class leaves the correction out unless given one) adds the E1 polarisation correction to E2
+excitation: the virtual excitation of the giant dipole resonance during the collision acts as an extra E2
+interaction that falls off one power of r faster than the direct one and opposes it. GOSIA's form (manual eq. 3.27,
+after Alder and Winther, *Electromagnetic Excitation*, appendix J) multiplies the E2 collision functions by
+(1 − z a/r) along the orbit, with z = d E_cm A / Z² for the excited nucleus (:func:`polarisation_strength`); in the
+orbit integrals that is I_μ(λ = 2) − z I_μ(λ = 3) (:func:`polarised_integrals`).
+
 Units: angles in degrees (CM unless a name says lab), energies MeV, lengths fm, B(Eλ) in e² fm^(2λ).
 """
 
@@ -39,6 +47,12 @@ SAFE_MARGIN_FM = 5.0
 B_UNITS = {1: {"e2fm2": 1.0, "e2b": 100.0}, 2: {"e2fm4": 1.0, "e2b2": 1e4}, 3: {"e2fm6": 1.0, "e2b3": 1e6}}
 
 ArrayLike = Union[float, np.ndarray]
+#: GOSIA's E1 polarisation parameter d as GOSIA takes it when its input does not set it with ``DIP,`` (since version
+#: 20110524.11, April 2023): the default of a setup's ``[reaction] e1_polarisation``. The classes here leave the
+#: correction out unless given a d.
+GOSIA_DIPOLE_POLARISATION = 0.0038
+#: The value of GOSIA's manual (2012, eq. 3.28), GOSIA's default before April 2023.
+GOSIA_MANUAL_DIPOLE_POLARISATION = 0.005
 
 
 def parse_b(text: Union[str, float], lam: int) -> float:
@@ -160,16 +174,44 @@ def orbit_integrals(lam: int, epsilon: float, xi: float, tol: float = 1e-9) -> n
     return out
 
 
+def polarisation_strength(d: float, beam, target, beam_energy_mev: float, excite: str = "target") -> float:
+    """z of the E1 polarisation correction, the factor (1 − z a/r) on the E2 collision functions: GOSIA's
+    z = d E_p A₂ / (Z₂² (1 + A₁/A₂)) for target excitation (manual eq. 3.28, E_p the beam energy in MeV, 1 the
+    projectile and 2 the target), that is d E_cm A / Z² of the excited nucleus with E_cm from the mass numbers;
+    for projectile excitation GOSIA's code (subroutine LOAD) takes the same, d E_cm A / Z², of the projectile.
+    ``beam`` and ``target`` are nuclides (with ``A`` and ``Z``)."""
+    if not d:
+        return 0.0
+    if excite not in ("target", "projectile"):
+        raise ValueError("excite must be 'target' or 'projectile'")
+    a1, a2 = float(beam.A), float(target.A)
+    e_cm = beam_energy_mev * a2 / (a1 + a2)
+    nucleus = target if excite == "target" else beam
+    return d * e_cm * float(nucleus.A) / float(nucleus.Z) ** 2
+
+
+def polarised_integrals(lam: int, epsilon: float, xi: float, z: float = 0.0) -> np.ndarray:
+    """The orbit integrals of :func:`orbit_integrals` with the E1 polarisation correction: for λ = 2 and z ≠ 0,
+    ∫ e^{iξ(ε sinh w + w)} e^{iμφ} (1 − z/(ε cosh w + 1)) / (ε cosh w + 1)² dw = I_μ(2) − z I_μ(3) for
+    μ = −2…2; otherwise the integrals unchanged."""
+    out = orbit_integrals(lam, epsilon, xi)
+    if lam != 2 or not z:
+        return out
+    return out - z * orbit_integrals(3, epsilon, xi)[1:6]
+
+
 class Coulex:
     """First-order Coulomb excitation of one state, of the target or of the projectile.
 
     ``energy`` is E* (MeV or text), ``multipolarity`` "E1", "E2" or "E3" (from a 0⁺ ground state), ``b_up``
     B(Eλ↑) in e² fm^(2λ) or text with a unit (``"0.0695 e2b2"``). The orbit is symmetrised between the initial and
     final velocities (Alder and Winther): a = Z₁Z₂e²/(μ v_i v_f), ξ = (Z₁Z₂e²/ħ)(1/v_f − 1/v_i).
+    ``e1_polarisation`` is GOSIA's parameter d of the E1 polarisation correction (0, the default, leaves it out;
+    see the module's notes): it changes E2 excitation only.
     """
 
     def __init__(self, beam: str, target: str, beam_energy, *, excite: str = "target", energy=None,
-                 multipolarity: str = "E2", b_up=None, r0: float = 1.25):
+                 multipolarity: str = "E2", b_up=None, r0: float = 1.25, e1_polarisation: float = 0.0):
         if excite not in ("target", "projectile"):
             raise ValueError("excite must be 'target' or 'projectile'")
         if multipolarity not in ("E1", "E2", "E3"):
@@ -202,6 +244,11 @@ class Coulex:
         self.xi = self.k / HBARC_MEV_FM * (1 / self.beta_f - 1 / self.beta_i)
         #: Sommerfeld parameter (symmetrised): the semiclassical picture needs η ≫ 1.
         self.eta = self.k / (HBARC_MEV_FM * self.beta)
+        #: The E1 polarisation parameter d and the z it gives (:func:`polarisation_strength`), which multiplies
+        #: a/r in the factor on the E2 collision functions.
+        self.e1_polarisation = float(e1_polarisation or 0.0)
+        self.polarisation = polarisation_strength(self.e1_polarisation, self.beam, self.target,
+                                                  self.kinematics.beam_energy_mev, excite)
 
     # -- excitation probability -------------------------------------------------------------------------------
 
@@ -210,7 +257,7 @@ class Coulex:
         s = math.sin(math.radians(theta_cm) / 2)
         if s <= 0:
             return 0.0
-        integrals = orbit_integrals(lam, 1 / s, self.xi)
+        integrals = polarised_integrals(lam, 1 / s, self.xi, self.polarisation)
         ys = np.array([ylm_equator(lam, mu) for mu in range(-lam, lam + 1)])
         # P = (4π Z e² / (ħc (2λ+1)))² · B/(2λ+1) · Σ_μ |Y_λμ(π/2,0) I_μ / (β a^λ)|²
         pref = (4 * math.pi * self.z_exciting * E2_MEV_FM / (HBARC_MEV_FM * (2 * lam + 1))) ** 2
@@ -338,4 +385,6 @@ class Coulex:
         return f"Coulex({who} {self.e_star:g} MeV E{self.lam}, {self.kinematics.label})"
 
 
-__all__ = ["B_UNITS", "Coulex", "HBARC_MEV_FM", "orbit_integrals", "parse_b", "ylm_equator"]
+__all__ = ["B_UNITS", "Coulex", "GOSIA_DIPOLE_POLARISATION", "GOSIA_MANUAL_DIPOLE_POLARISATION", "HBARC_MEV_FM",
+           "orbit_integrals", "parse_b",
+           "polarisation_strength", "polarised_integrals", "ylm_equator"]

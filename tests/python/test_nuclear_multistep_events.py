@@ -39,7 +39,7 @@ def test_many_angles_solved_together_are_the_single_solutions():
     exp = ni62().experiment
     first = cascade_excitation(exp, order="first")
     cc = CoupledChannels(first.beam, first.target, first.beam_energy, first.scheme, excite="projectile",
-                         tolerance=1e-3)
+                         tolerance=1e-3, e1_polarisation=first.e1_polarisation)
     angles = [4.0, 30.0, 91.0, 150.0, 180.0]
     for theta, a in zip(angles, cc.solve_many(angles)):
         assert np.abs(a - cc.solve(theta)).max() < 1e-12, theta
@@ -65,7 +65,8 @@ def test_all_orders_reach_the_levels_first_order_cannot_and_first_order_is_a_swi
     assert cascade_excitation(exp) is cex  # solved once, shared by the events, the rates and the γ rays
     assert start_levels(cex) == [1, 2, 3, 4, 5] and unreached_levels(exp) == []
     back = cex.near(150.0)
-    assert back.direct[FOUR] == pytest.approx(5.8e-3, rel=0.05) and back.direct[ZERO] == pytest.approx(8.1e-3, rel=0.05)
+    # With the E1 polarisation of the default setup (d = 0.0038); without it 5.8e-3 and 8.1e-3.
+    assert back.direct[FOUR] == pytest.approx(5.3e-3, rel=0.05) and back.direct[ZERO] == pytest.approx(7.4e-3, rel=0.05)
     # The two-step excitation leaves the 4⁺ state oriented: its γ rays are not isotropic.
     assert abs(back.coefficients(FOUR, TWO)[(2, 0)]) > 0.1
 

@@ -511,6 +511,10 @@ class Excitation:
     With a level scheme of the excited nucleus (``[levels]``) the simulated events populate its levels as the
     coupled equations give them, to all orders; ``order = "first"`` keeps first-order theory (each level in one
     step from the ground state).
+
+    ``e1_polarisation`` is the E1 polarisation correction to the excitation, as GOSIA has it: the parameter d of
+    GOSIA, not GOSIA's input ``DIP,`` which is 1000 d. Left out it is 0.0038, GOSIA's own default since 2023 (its
+    manual has 0.005); 0 leaves the correction out.
     """
 
     energy: QuantityLike
@@ -523,6 +527,8 @@ class Excitation:
     #: How the levels of a level scheme are populated in the events: "all" orders (also when left out) or
     #: "first" order.
     order: Optional[str] = None
+    #: GOSIA's E1 polarisation parameter d: 0.0038 (GOSIA's default) when None, no correction with 0.
+    e1_polarisation: Optional[float] = None
 
     SPECS = (
         _Field("excite", "str", check=lambda s: None if s in ("target", "projectile")
@@ -533,6 +539,9 @@ class Excitation:
         _Field("emission", "str", check=lambda s: None if s in ("correlated", "isotropic")
                else "must be 'correlated' or 'isotropic'"),
         _Field("order", "str", check=lambda s: None if s in ("all", "first") else "must be 'all' or 'first'"),
+        _Field("e1_polarisation", "number", check=lambda d: None if 0 <= d <= 0.05 else
+               "must be between 0 and 0.05: GOSIA's parameter d (0.0038 by default, 0 for none), not its DIP, input "
+               "(1000 d)"),
     )
 
     @property
