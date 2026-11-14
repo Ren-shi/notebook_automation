@@ -80,6 +80,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 72 | [Summing and pile-up](72-summing-and-pile-up.md) | Experiment workbench (physics) | P3 | M | 63, 71 |
 | 73 | [Lifetimes: decay in flight](73-lifetimes.md) | Experiment workbench (physics) | P3 | M | 50, 55, 63 |
 | 74 | [Contaminant reactions, beam spot and halo](74-contaminants-and-beam-spot.md) | Experiment workbench (physics) | P3 | M | 63, 67 |
+| 75 | [Fusion-evaporation: the compound nucleus, its decay and the residues' γ rays](75-fusion-evaporation.md) (built; validation open) | Nuclear planner (third slice) | P3 | L | 34–39, 50, 54, 55, 63, 71 |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - `NewtonianGravity` is direct O(N²); `TreeGravity` (item 10) is O(N log N) but its per-interaction cost is not yet
@@ -111,7 +112,7 @@ Slices, one at a time:
 1. **Elastic scattering** (33–42), the first vertical slice. Suggested order: 33 and 34 → 35 → 36 and 37 → 38 →
    31 and 39 → 40 throughout → 41 and 42 as the physics lands.
 2. Inelastic scattering and Coulomb excitation (43).
-3. Transfer reactions, then fusion-evaporation (not yet written up).
+3. Transfer reactions (not yet written up), then fusion-evaporation (75).
 
 Items 33–42 take priority over the deferred items 23–30. Item 31 (seeded randomness) is needed by 39 and moves up
 with them.

@@ -48,6 +48,8 @@ def summary(p: Planner) -> dict:
         "gamma_detectors": [_line(i + 1, det) for i, det in enumerate(d.get("gamma_detectors", []))],
         "level_schemes": levels,
         "residues": _residues(p),
+        "neutron_wall": (None if p.experiment.neutron_wall is None else
+                         ", ".join(f"{k} {v}" for k, v in d.get("neutron_wall", {}).items())),
         "current_run": p.run_status(),
         "problems": list(p.problems),
         "warnings": [{"level": w.level, "source": w.source, "text": w.text} for w in p.warnings()],
@@ -181,11 +183,33 @@ class SetupTools:
             return {"ok": False, "problems": [str(e)], "note": "The setup was not replaced; it is as it was."}
         return _changed(p, p.adopt(other))
 
+    def channel_selection(self, events: int = 50000, seed: int = 1) -> dict:
+        """For a fusion-evaporation setup with a neutron wall ([neutron_wall], added with set_value("neutron_wall",
+        "cells", 50) and set_value("neutron_wall", "distance", "510 mm")): which detected class (counts of
+        neutrons, protons and α particles seen, such as "1n" or "p2n") each true exit channel's events fall in, and
+        what a gate on each class contains. Takes a few seconds."""
+        p = self.session.require()
+        return plain(p.channel_selection(events, seed))
+
+    def fill_channels(self, events: int = 20000, seed: int = 1) -> dict:
+        """For a fusion-evaporation reaction: replace the exit-channel table with physim's own estimate (fusion
+        cross section from the Bass barrier averaged over the target, then the evaporation Monte Carlo with
+        ``events`` decay chains). It takes a few seconds. Returns ok, the fusion numbers and their warnings
+        (read them: for heavy beams at high spin the evaporation is known to disagree with PACE4), and the
+        summary with the new channels."""
+        p = self.session.require()
+        made = p.physim_channels(events, seed)
+        out = _changed(p, p.fill_channels(events, seed))
+        info = made.summary()
+        info.pop("channels", None)
+        out["physim"] = info
+        return out
+
     def set_value(self, section: str, field: str, value: Value) -> dict:
         """Set one field of the setup. section is "beam", "target", "backing" (the target's backing layer),
         "reaction", "run", "title", "description", "detector N" or "gamma detector N" (N counting from 1, or the
-        detector's name, e.g. "detector CD"), or "reaction channel N" (an exit channel of a fusion-evaporation
-        reaction, from 1). value is text with a unit for quantities ("6 MeV", "0.5 mg/cm2",
+        detector's name, e.g. "detector CD"), "reaction channel N" (an exit channel of a fusion-evaporation
+        reaction, from 1) or "neutron_wall" (its neutron wall; setting a field creates it). value is text with a unit for quantities ("6 MeV", "0.5 mg/cm2",
         "45 deg", "100 mm", "24 h"), a number for counts (rings = 16), or null to remove an optional field.
         Examples: ("beam", "energy", "32 MeV"); ("target", "material", "208Pb"); ("reaction", "type", "coulex");
         ("reaction", "type", "fusion-evaporation"); ("reaction channel 2", "cross_section", "450 mb");
@@ -276,6 +300,7 @@ class SetupTools:
         ("new_experiment", True), ("get_setup", False), ("replace_setup", True), ("set_value", True),
         ("add_detector", True), ("remove_detector", True), ("duplicate_detector", True),
         ("add_gamma_detector", True), ("remove_gamma_detector", True), ("duplicate_gamma_detector", True),
-        ("lookup_levels", True), ("use_state", True), ("set_matrix_element", True),
+        ("lookup_levels", True), ("use_state", True), ("set_matrix_element", True), ("fill_channels", True),
+        ("channel_selection", False),
     )
 

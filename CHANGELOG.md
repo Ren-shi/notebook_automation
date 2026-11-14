@@ -11,6 +11,24 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Fusion-evaporation (backlog 75): `[reaction] type = "fusion-evaporation"` plans the residues of a compound
+  nucleus, from the exit channels' cross sections to the residues' Doppler-corrected γ rays.
+  - Stage 1 (`physim.nuclear.residues`): the channel table (`[[reaction.channels]]`), the compound nucleus's exact
+    E* and speed through the target, events per channel with the particles evaporated one by one and the residue's
+    recoil from each, and the residue's cascade entering its known levels by spin, aligned perpendicular to the
+    beam. The Plan tab lists the residues, their rates and strongest lines; the Data tab their γ-ray spectra. Example:
+    `fusion_dy158` (¹²C on ¹⁵⁰Nd at 60 MeV).
+  - The fusion cross section (`physim.nuclear.fusion`): the Bass barrier, Wong's transmission summed over partial
+    waves, σ_ℓ and the average over the target. The Plan tab shows the barrier and the excitation function.
+  - The evaporation Monte Carlo (`physim.nuclear.evaporation`): one Hauser–Feshbach chain per event (n, p, α,
+    giant-dipole γ rays, fission), with Gilbert–Cameron level densities. PACE4 4.36.0 runs in silent mode and was
+    compared for five systems: light beams agree within 15%; heavy beams at high spin do not yet (see
+    `docs/theory/evaporation.md`).
+  - "Fill from physim" in the reaction's card (and the MCP tool `fill_channels`) replaces the channel table with
+    the fusion and evaporation results (`physim.nuclear.exit_channels`); the setup keeps its shape.
+  - Neutron detectors (`physim.nuclear.neutrons`) and an optional `[neutron_wall]`: the Plan tab's channel
+    selection shows which detected class (neutrons, protons, α particles seen) each channel's events fall in, and
+    what a gate on each class contains (MCP tool `channel_selection`).
 - The angular correlation between the γ rays of one cascade (backlog 71). Each excitation carries the density
   matrix of its level down the cascade (`physim.nuclear.correlation`): a γ ray is drawn along a direction with
   the probability its level's state gives, and leaves the next level in the state that direction selects, from

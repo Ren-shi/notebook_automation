@@ -24,7 +24,7 @@ GAMMA_FIELDS = _wb.GAMMA_FIELDS + _wb.GAMMA_MORE
 CRYSTAL_FIELDS = _wb.CRYSTAL_FIELDS
 CLOVER_FIELDS = _wb.CLOVER_FIELDS
 SHAPE_FIELDS = _wb.SHAPE_FIELDS
-INT_FIELDS = {"charge_state", "counts_wanted", "strips_x", "strips_y", "rings", "sectors", "crystals"}
+INT_FIELDS = {"charge_state", "counts_wanted", "strips_x", "strips_y", "rings", "sectors", "crystals", "cells"}
 
 #: Detector and curve colours (Okabe–Ito first): distinguishable for colour-blind readers, legible on the light and
 #: the dark page.
@@ -406,6 +406,25 @@ def figure_gamma_spectra(planner: Planner, detector: str, events: int = 400_000,
     fig.add_vline(x=g["energy_kev"], line=dict(color="#888", width=1, dash="dot"))
     fig.update_layout(xaxis=dict(title="γ-ray energy (keV)"), yaxis=dict(title="counts / bin in the run"),
                       margin=dict(l=50, r=10, t=10, b=40), height=320, legend=dict(orientation="h", y=-0.3, x=0))
+    return fig
+
+
+def figure_fusion(planner: Planner):
+    """The fusion excitation function of the setup's beam and target (Bass barrier, Wong's transmission, thin
+    target), with the barrier and the beam's energies entering and leaving the target as lines."""
+    go = _go()
+    f = planner.fusion()
+    ef = f["excitation_function"]
+    fig = go.Figure()
+    y = np.asarray(ef["sigma_mb"], dtype=float)
+    fig.add_trace(go.Scatter(x=ef["beam_energy_mev"], y=np.where(y > 0, y, np.nan), mode="lines",
+                             name="σ_fus", line=dict(color=COLORS[0], width=1.6)))
+    fig.add_vline(x=f["barrier_lab_mev"], line=dict(color="#888", width=1, dash="dot"),
+                  annotation_text="barrier", annotation_position="top left")
+    fig.add_vrect(x0=f["e_out_mev"], x1=f["e_in_mev"], fillcolor=COLORS[1], opacity=0.15, line_width=0,
+                  annotation_text="in the target", annotation_position="top right")
+    fig.update_layout(xaxis=dict(title="beam energy (MeV, lab)"), yaxis=dict(title="σ_fus (mb)", type="log"),
+                      margin=dict(l=50, r=10, t=10, b=40), height=300, showlegend=False)
     return fig
 
 

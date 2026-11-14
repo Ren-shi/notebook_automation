@@ -426,7 +426,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     def card_of(section: str) -> Optional[str]:
         if section in ("beam", "run"):
             return section
-        if section in ("target", "backing", "reaction") or section.startswith("reaction channel"):
+        if section in ("target", "backing", "reaction", "neutron_wall") or section.startswith("reaction channel"):
             return "target"
         if section.startswith("gamma detector"):
             return f"gamma:{int(section.split()[2]) - 1}"
@@ -841,7 +841,44 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 ui.button(icon="delete_outline", on_click=lambda k=k: remove_channel(k)).props(
                     "dense flat round size=sm").tooltip("Remove this channel")
             section("", wb.CHANNEL_FIELDS, sec, ch)
-        ui.button("Add a channel", icon="add", on_click=add_channel).props("dense flat no-caps size=sm")
+        with ui.row().classes("gap-1"):
+            ui.button("Add a channel", icon="add", on_click=add_channel).props("dense flat no-caps size=sm")
+            ui.button("Fill from physim", icon="calculate", on_click=fill_channels).props(
+                "dense flat no-caps size=sm").tooltip(
+                "Replace the table with physim's own fusion (Bass barrier) and evaporation Monte Carlo: an "
+                "estimate; PACE4 or a measurement is the better source")
+        neutron_wall_fields()
+
+    def neutron_wall_fields() -> None:
+        """The neutron wall that tells the exit channels apart (backlog item 75): its fields, or a button to add
+        one."""
+        wall = D().draft.get("neutron_wall")
+        ui.label("Neutron wall").classes("ps-section mt-2")
+        if wall is None:
+            ui.label("No neutron wall: add one to see which channel each event looks like (Plan).").classes(
+                "text-xs ps-muted")
+            ui.button("Add a neutron wall", icon="add", on_click=lambda: None if locked() else staged(
+                D().add_neutron_wall(), rebuild=True)).props("dense flat no-caps size=sm")
+            return
+        section("", wb.NEUTRON_WALL_FIELDS, "neutron_wall", wall)
+        ui.button("Remove the neutron wall", icon="delete_outline", on_click=lambda: None if locked() else staged(
+            D().remove_neutron_wall(), rebuild=True)).props("dense flat no-caps size=sm")
+
+    async def fill_channels() -> None:
+        if locked():
+            return
+        if D().problems:
+            ui.notify("Fix the setup's problems first: " + "; ".join(D().problems), type="warning", multi_line=True)
+            return
+        note = ui.notification("Fusion and evaporation: 20 000 decay chains…", spinner=True, timeout=None)
+        try:
+            await run.io_bound(D().physim_channels)
+        except ValueError as err:
+            note.dismiss()
+            ui.notify(str(err), type="negative", multi_line=True)
+            return
+        note.dismiss()
+        staged(D().fill_channels(), rebuild=True)
 
     def add_channel() -> None:
         if locked():

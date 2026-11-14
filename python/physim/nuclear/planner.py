@@ -579,7 +579,7 @@ class Planner:
         if kept and old == "fusion-evaporation":
             # The residues' level schemes go with the channel table, and come back with it.
             residue_levels = {role: s for role, s in d.get("levels", {}).items() if role not in ("beam", "target")}
-            self._stashed_fusion = dict(kept, _levels=residue_levels)
+            self._stashed_fusion = dict(kept, _levels=residue_levels, _wall=d.pop("neutron_wall", None))
         elif kept and old != value:
             self._stashed_excitation = kept
         if value == old:
@@ -592,6 +592,9 @@ class Planner:
         elif value == "fusion-evaporation":
             stash = copy.deepcopy(self._stashed_fusion) or self._starter_channels(d)
             levels = stash.pop("_levels", {})
+            wall = stash.pop("_wall", None)
+            if wall:
+                d["neutron_wall"] = wall
             d["reaction"] = {"type": value, **stash}
             if levels:
                 d.setdefault("levels", {}).update(levels)
@@ -673,6 +676,31 @@ class Planner:
         """Remove an exit channel, by index (from 0), particles or residue."""
         d = self.draft
         d["reaction"]["channels"].pop(self._channel_index(which))
+        self._drop_orphan_levels(d)
+        return self._apply(d)
+
+    def physim_channels(self, events: Optional[int] = None, seed: int = 1):
+        """The exit channels from physim's own fusion and evaporation
+        (:func:`physim.nuclear.exit_channels.physim_channels`) for the current setup. Kept until the setup
+        changes."""
+        from .exit_channels import EVENTS, physim_channels
+
+        if self.experiment.fusion is None:
+            raise ValueError("the setup is not a fusion-evaporation reaction")
+        key = ("physim_channels", events or EVENTS, seed)
+        if key not in self._cache:
+            self._cache[key] = physim_channels(self.experiment, events or EVENTS, seed)
+        return self._cache[key]
+
+    def fill_channels(self, events: Optional[int] = None, seed: int = 1) -> bool:
+        """Replace the channel table with the one physim's own fusion and evaporation give (each channel's
+        ``source`` says so). The setup keeps its shape: the channels can still be edited, or replaced by numbers
+        from PACE4 or a measurement. Level schemes of residues no longer made leave the setup."""
+        if self.experiment.fusion is None:
+            raise ValueError("channels belong to a fusion-evaporation reaction: set the reaction type first")
+        made = self.physim_channels(events, seed)
+        d = self.draft
+        d["reaction"]["channels"] = made.table.to_setup()
         self._drop_orphan_levels(d)
         return self._apply(d)
 
@@ -925,6 +953,10 @@ class Planner:
                 level = "warning" if ("below the Coulomb barrier" in text or "needs E*" in text
                                       or "placeholder" in text) else "note"
                 out.append(Warning(level, "physics", text))
+            plain = self._plain_fusion()
+            for text in (plain or {}).get("warnings", []):
+                level = "warning" if ("below the fusion barrier" in text or "quasi-fission" in text) else "note"
+                out.append(Warning(level, "physics", text))
         for text in self._rates().warnings():
             level = "warning" if any(k in text for k in ("pile-up", "not Rutherford", "Mott", "stops inside",
                                                          "records nothing", "beam path", "blocks", "hides")) else "note"
@@ -1100,6 +1132,7 @@ class Planner:
         timed = [d for d in detectors if d["beam_time_s"] is not None]
         needed = max(timed, key=lambda d: d["beam_time_s"]) if timed else None
         residues = self.residues() if exp.fusion is not None else None
+        fusion = self._plain_fusion() if exp.fusion is not None else None
         return {"measured": t["measured"], "counts_wanted": t["counts_wanted"], "beam_time_s": t["beam_time_s"],
                 "beam_time_needed_s": needed["beam_time_s"] if needed else None,
                 "limiting_detector": needed["detector"] if needed else None,
@@ -1111,7 +1144,28 @@ class Planner:
                 "other_peak": ({"label": other["label"], "nuclide": other["nuclide"],
                                 "energy_kev": other["energy_kev"]} if other else None),
                 # Fusion-evaporation: the residues of the channel table (backlog item 75).
-                "residues": residues}
+                "residues": residues, "fusion": fusion}
+
+    def fusion(self) -> dict:
+        """The fusion of the setup's beam and target (:func:`physim.nuclear.exit_channels.fusion_summary`): the
+        barrier, σ_fus at the beam energy and through the target, the excitation function and the model's
+        warnings. Kept until the setup changes."""
+        if "fusion" not in self._cache:
+            from .exit_channels import fusion_summary
+
+            self._cache["fusion"] = fusion_summary(self.experiment)
+        return self._cache["fusion"]
+
+    def _plain_fusion(self) -> Optional[dict]:
+        """:meth:`fusion` without the excitation function's arrays, for the plan (None if it cannot be worked
+        out; the warnings then say why the setup is incomplete)."""
+        try:
+            f = self.fusion()
+        except Exception:  # noqa: BLE001 - the plan still comes back
+            return None
+        return {k: (tuple(float(x) for x in v) if isinstance(v, tuple) else
+                    (float(v) if isinstance(v, (float, np.floating)) else v))
+                for k, v in f.items() if k != "excitation_function"}
 
     def residues(self) -> dict:
         """The fusion-evaporation residues (:func:`physim.nuclear.residues.residue_table`): per channel its cross
@@ -1246,6 +1300,28 @@ class Planner:
                 "gamma_detectors": g.detector_names(), "particle_detectors": list(g.events.detectors),
                 "notes": g.notes, "n_gammas": len(g), "modes": modes,
                 "run": self.run_status() if self._beam_run() else None}
+
+    def channel_selection(self, events: Optional[int] = None, seed: int = 1) -> dict:
+        """The channel-selection matrix of the neutron wall and the particle detectors
+        (:func:`physim.nuclear.exit_channels.channel_selection`). Kept until the setup changes."""
+        from .exit_channels import SELECTION_EVENTS, channel_selection
+
+        key = ("channel_selection", events or SELECTION_EVENTS, seed)
+        if key not in self._cache:
+            self._cache[key] = channel_selection(self.experiment, events or SELECTION_EVENTS, seed)
+        return self._cache[key]
+
+    def add_neutron_wall(self, **fields) -> bool:
+        """Give a fusion-evaporation setup a neutron wall (``[neutron_wall]``); without fields, 50 typical EJ-301
+        cells 510 mm from the target."""
+        d = self.draft
+        d["neutron_wall"] = dict(fields) or {"cells": 50, "distance": "510 mm"}
+        return self._apply(d)
+
+    def remove_neutron_wall(self) -> bool:
+        d = self.draft
+        d.pop("neutron_wall", None)
+        return self._apply(d)
 
     def residue_gamma_spectra(self, events: int = 100_000, seed: int = 1, bin_kev: float = 1.0) -> dict:
         """The fusion-evaporation residues' γ rays (:func:`physim.nuclear.residues.simulate_residue_gammas`): for

@@ -8,7 +8,7 @@ takes the cross section of each exit channel from a table (typed into the setup,
     from physim.nuclear import Experiment
     from physim.nuclear.residues import ChannelTable, compound_profile, simulate_residues, simulate_residue_gammas
 
-    exp = Experiment.example("fusion_er158")
+    exp = Experiment.example("fusion_dy158")
     table = ChannelTable.from_experiment(exp)       # the channels, their cross sections and residues
     cn = table.compound_at(exp.beam.energy_mev)     # E* = E_cm + Q and the compound nucleus's speed, exact
     ev = simulate_residues(exp, events=100_000, seed=1)

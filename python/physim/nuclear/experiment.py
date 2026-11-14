@@ -813,6 +813,76 @@ class Chamber:
     )
 
 
+def _scintillator(name: str) -> Optional[str]:
+    from .neutrons import materials
+
+    known = materials()
+    return None if name in known else f"is not a known scintillator (known: {', '.join(sorted(known))})"
+
+
+@dataclass
+class NeutronWallSetup:
+    """A wall of organic-scintillator cells that counts the evaporated neutrons (``[neutron_wall]``, for a
+    fusion-evaporation reaction): ``cells`` identical cylinders ``distance`` from the target, side by side at
+    ``pitch``, filling a cone around the beam from ``theta_min``. The fields left out take the typical values of
+    :class:`physim.nuclear.neutrons.NeutronDetector` (an EJ-301 cell, 127 mm across and 150 mm deep, 100 keVee)."""
+
+    cells: int
+    distance: QuantityLike
+    pitch: Optional[QuantityLike] = None
+    radius: Optional[QuantityLike] = None
+    depth: Optional[QuantityLike] = None
+    material: Optional[str] = None
+    threshold: Optional[QuantityLike] = None
+    layout: Optional[str] = None
+    theta_min: Optional[QuantityLike] = None
+    neutron_as_gamma: Optional[QuantityLike] = None
+    gamma_as_neutron: Optional[QuantityLike] = None
+
+    SPECS = (
+        _Field("cells", "int", required=True, check=lambda n: None if n >= 1 else "must be at least 1"),
+        _Field("distance", "length", required=True, check=_positive),
+        _Field("pitch", "length", check=_positive),
+        _Field("radius", "length", check=_positive),
+        _Field("depth", "length", check=_positive),
+        _Field("material", "str", check=_scintillator),
+        _Field("threshold", "energy", check=_positive),
+        _Field("layout", "str", check=lambda s: None if s in ("hexagonal", "square")
+               else "must be 'hexagonal' or 'square'"),
+        _Field("theta_min", "angle", check=lambda q: None if 0 <= q.to("deg") < 180 else "must be 0 to 180 deg"),
+        _Field("neutron_as_gamma", "fraction", check=lambda q: None if 0 <= q.to("%") <= 100 else
+               "must be 0 to 100 %"),
+        _Field("gamma_as_neutron", "fraction", check=lambda q: None if 0 <= q.to("%") <= 100 else
+               "must be 0 to 100 %"),
+    )
+
+    def model(self):
+        """The wall as :class:`physim.nuclear.neutrons.NeutronWall`, with the typical values where the setup gives
+        none."""
+        from . import neutrons
+
+        def text(q, unit: str) -> str:
+            return f"{_q(q).to(unit):.10g} {unit}"
+
+        cell = {"distance": text(self.distance, "mm")}
+        for name, unit in (("radius", "mm"), ("depth", "mm"), ("threshold", "MeV"), ("neutron_as_gamma", "%"),
+                           ("gamma_as_neutron", "%")):
+            if getattr(self, name) is not None:
+                cell[name] = text(getattr(self, name), unit)
+        if self.material is not None:
+            cell["material"] = self.material
+        wall = {"cell": neutrons.NeutronDetector(**cell), "cells": self.cells}
+        if self.pitch is not None:
+            wall["pitch"] = text(self.pitch, "mm")
+        else:  # cells touching: the pitch is the cell's diameter
+            wall["pitch"] = f"{2 * wall['cell'].radius_mm:.10g} mm"
+        if self.layout is not None:
+            wall["layout"] = self.layout
+        if self.theta_min is not None:
+            wall["theta_min"] = text(self.theta_min, "deg")
+        return neutrons.NeutronWall(**wall)
+
+
 @dataclass
 class Experiment:
     """A complete setup. Build it in Python, or :meth:`load` it from a setup file."""
@@ -833,6 +903,8 @@ class Experiment:
     chamber: Optional[Chamber] = None
     #: The fusion-evaporation reaction and its exit channels, for ``reaction = "fusion-evaporation"``.
     fusion: Optional[FusionEvaporation] = None
+    #: The neutron wall, for a fusion-evaporation reaction.
+    neutron_wall: Optional[NeutronWallSetup] = None
 
     # -- reading ------------------------------------------------------------------------------------------------
 
@@ -843,7 +915,7 @@ class Experiment:
         if not isinstance(data, dict):
             raise SetupError(["the setup must be a table of sections"])
         known = ("schema", "title", "description", "reaction", "beam", "target", "detectors", "run",
-                 "gamma_detectors", "levels", "chamber")
+                 "gamma_detectors", "levels", "chamber", "neutron_wall")
         for key in data:
             if key not in known:
                 hint = difflib.get_close_matches(key, known, n=1)
@@ -985,6 +1057,19 @@ class Experiment:
                 chamber = Chamber(**c)
                 _check_chamber(chamber, detectors, gammas, problems)
 
+        neutron_wall = None
+        if "neutron_wall" in data:
+            if reaction != "fusion-evaporation":
+                problems.append("neutron_wall: a neutron wall counts evaporated neutrons; it needs [reaction] type = "
+                                "\"fusion-evaporation\"")
+            w = _read_section(data["neutron_wall"], NeutronWallSetup.SPECS, "neutron_wall", problems)
+            if "cells" in w and "distance" in w:
+                neutron_wall = NeutronWallSetup(**w)
+                try:
+                    neutron_wall.model().theta_max()
+                except ValueError as e:
+                    problems.append(f"neutron_wall: {e}")
+
         if target is not None and target.position is not None:
             origin = (0.0, 0.0, target.position_mm)
             for d in detectors + gammas:
@@ -1007,7 +1092,7 @@ class Experiment:
             raise SetupError(problems)
         return cls(title=title, beam=beam, target=target, detectors=detectors, run=run,
                    description=description, reaction=reaction, excitation=excitation, gamma_detectors=gammas,
-                   levels=levels, chamber=chamber, fusion=fusion)
+                   levels=levels, chamber=chamber, fusion=fusion, neutron_wall=neutron_wall)
 
     @classmethod
     def from_toml(cls, text: str) -> Experiment:
@@ -1056,6 +1141,8 @@ class Experiment:
             d["gamma_detectors"] = [_to_dict(g) for g in self.gamma_detectors]
         if self.chamber is not None:
             d["chamber"] = _to_dict(self.chamber)
+        if self.neutron_wall is not None:
+            d["neutron_wall"] = _to_dict(self.neutron_wall)
         if self.levels:
             d["levels"] = {role: scheme.to_dict() for role, scheme in self.levels.items()}
         return d
@@ -1297,5 +1384,5 @@ def _check_material(where: str, values: dict[str, Any], problems: list[str]) -> 
 
 
 __all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "main_nuclide", "Beam", "Chamber", "Detector",
-           "Excitation", "ExitChannel", "Experiment", "FusionEvaporation", "GammaDetector", "Layer", "Run",
+           "Excitation", "ExitChannel", "Experiment", "FusionEvaporation", "GammaDetector", "Layer", "NeutronWallSetup", "Run",
            "SetupError", "Target"]

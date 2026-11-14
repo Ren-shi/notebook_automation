@@ -53,6 +53,10 @@ REACTION_TYPES = {"elastic": "Elastic (Rutherford) scattering", "coulex": "Coulo
 #: The fusion-evaporation reaction's own fields, and those of each exit channel (backlog item 75).
 FUSION_FIELDS = [("temperature", "Temperature (default from E*)", "1.5 MeV"),
                  ("alignment", "Alignment σ/J", "0.3"), ("side_feeding", "Side feeding", "25 %")]
+NEUTRON_WALL_FIELDS = [("cells", "Cells", "50"), ("distance", "Distance", "510 mm"), ("pitch", "Pitch", "130 mm"),
+                       ("theta_min", "From θ", "0 deg"), ("radius", "Cell radius", "63.5 mm"),
+                       ("depth", "Cell depth", "150 mm"), ("threshold", "Threshold (electron-equivalent)", "0.1 MeV"),
+                       ("material", "Scintillator", "EJ-301"), ("layout", "Layout", "hexagonal")]
 CHANNEL_FIELDS = [("particles", "Particles", "4n, p2n, a n"), ("cross_section", "Cross section", "300 mb"),
                   ("entry_spin", "Entry spin (ħ)", "20"), ("source", "Source", "PACE4")]
 DETECTOR_FIELDS = [("name", "Name", "D1"), ("theta", "θ", "45 deg"), ("phi", "φ", "0 deg"),
