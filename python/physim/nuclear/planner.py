@@ -185,6 +185,8 @@ class Planner:
         self._earlier_rates: Optional[Rates] = None
         #: The Coulomb-excitation settings while the reaction is switched to elastic, so switching back restores them.
         self._stashed_excitation: dict = {}
+        #: The fusion-evaporation settings (the channel table) while another reaction is chosen.
+        self._stashed_fusion: dict = {}
         #: The experiment folder this setup belongs to (None until one is created or opened).
         self.folder: Optional[_runs.ExperimentFolder] = None
         #: The current run, which the spectra, analysis and the other views read (None: they simulate their own).
@@ -515,6 +517,14 @@ class Planner:
         d = self.draft
         if section == "reaction" and field == "type":
             return self._set_reaction_type(d, value)
+        if section.startswith("reaction channel"):
+            sec = d.get("reaction", {}).get("channels", [])[self._channel_index(section)]
+            if value is None:
+                sec.pop(field, None)
+            else:
+                sec[field] = value
+            self._drop_orphan_levels(d)
+            return self._apply(d)
         if section == "reaction" and field in ("excite", "multipolarity") and value is not None:
             d.setdefault("reaction", {})[field] = value
             if d["reaction"].get("type") == "coulex":
@@ -541,6 +551,7 @@ class Planner:
             d["target"].pop("backing")
         if (section, field) in (("beam", "nuclide"), ("target", "material")):
             self._new_nucleus(d, section)
+            self._drop_orphan_levels(d)
         return self._apply(d)
 
     def _new_nucleus(self, d: dict, role: str) -> None:
@@ -563,16 +574,106 @@ class Planner:
 
     def _set_reaction_type(self, d: dict, value: str) -> bool:
         reaction = d.setdefault("reaction", {"type": "elastic"})
+        old = reaction.get("type", "elastic")
+        kept = {k: v for k, v in reaction.items() if k != "type"}
+        if kept and old == "fusion-evaporation":
+            # The residues' level schemes go with the channel table, and come back with it.
+            residue_levels = {role: s for role, s in d.get("levels", {}).items() if role not in ("beam", "target")}
+            self._stashed_fusion = dict(kept, _levels=residue_levels)
+        elif kept and old != value:
+            self._stashed_excitation = kept
+        if value == old:
+            return self._apply(d)
         if value == "coulex":
+            reaction = d["reaction"] = {"type": "coulex"}
             reaction.update(self._stashed_excitation or {"excite": "target", "multipolarity": "E2"})
-            reaction["type"] = "coulex"
             if not reaction.get("energy") or not reaction.get("b_up"):
                 self._fill_state(d)
+        elif value == "fusion-evaporation":
+            stash = copy.deepcopy(self._stashed_fusion) or self._starter_channels(d)
+            levels = stash.pop("_levels", {})
+            d["reaction"] = {"type": value, **stash}
+            if levels:
+                d.setdefault("levels", {}).update(levels)
         else:
-            kept = {k: v for k, v in reaction.items() if k != "type"}
-            if kept:
-                self._stashed_excitation = kept
             d["reaction"] = {"type": value}
+        self._drop_orphan_levels(d)
+        return self._apply(d)
+
+    @staticmethod
+    def _drop_orphan_levels(d: dict) -> None:
+        """Level schemes of residues the channel table no longer makes leave the draft (a scheme must belong to a
+        nucleus of the setup). Left alone when the residues cannot be worked out (the setup's problems say why)."""
+        levels = d.get("levels")
+        if not levels:
+            return
+        keep = {"beam", "target"}
+        reaction = d.get("reaction", {})
+        if reaction.get("type") == "fusion-evaporation":
+            from .residues import parse_particles, residue_of
+
+            try:
+                b = parse_nuclide(d["beam"]["nuclide"])
+                z, a, _ = max(data.material(d["target"]["material"]).atoms, key=lambda t: t[2])
+                cn = (b[0] + z, b[1] + a)
+                for ch in reaction.get("channels", []):
+                    keep.add(data.nuclide(residue_of(cn, parse_particles(ch["particles"]))).name)
+            except Exception:  # noqa: BLE001 - an unfinished setup: keep every scheme for now
+                return
+        for role in [r for r in levels if r not in keep]:
+            levels.pop(role)
+        if not levels:
+            d.pop("levels")
+
+    def _starter_channels(self, d: dict) -> dict:
+        """A first channel table for a setup switched to fusion-evaporation: the xn channel the excitation energy
+        favours (:func:`physim.nuclear.residues.likely_xn`), with a placeholder cross section the planner warns
+        about. Without a valid beam and target, an empty table (the setup says what is missing)."""
+        from .residues import likely_xn
+
+        try:
+            exp = self.experiment
+            from .experiment import main_nuclide
+
+            k = likely_xn(beam_ion(exp), main_nuclide(exp.target), exp.beam.energy_mev)
+        except Exception:  # noqa: BLE001 - no valid setup to estimate from
+            k = 0
+        if k < 1:
+            return {"channels": []}
+        return {"channels": [{"particles": f"{k}n", "cross_section": "100 mb", "source": "placeholder"}]}
+
+    def _channel_index(self, which) -> int:
+        """A channel of the fusion-evaporation table: "reaction channel N" (from 1), its particles ("4n") or
+        residue ("158Dy"), or an index from 0."""
+        chans = self._draft.get("reaction", {}).get("channels", [])
+        if isinstance(which, str):
+            key = which[len("reaction channel"):].strip() if which.startswith("reaction channel") else which
+            if key.isdigit():
+                i = int(key) - 1
+            else:
+                found = [k for k, c in enumerate(chans) if key in (c.get("particles"), c.get("residue"))]
+                if not found:
+                    raise KeyError(f"no channel {key!r}")
+                i = found[0]
+        else:
+            i = int(which)
+        if not 0 <= i < len(chans):
+            raise IndexError(f"there are {len(chans)} channels")
+        return i
+
+    def add_channel(self, **fields) -> bool:
+        """Append an exit channel to the fusion-evaporation table (fields as in ``[[reaction.channels]]``)."""
+        d = self.draft
+        if d.get("reaction", {}).get("type") != "fusion-evaporation":
+            raise ValueError("channels belong to a fusion-evaporation reaction: set the reaction type first")
+        d["reaction"].setdefault("channels", []).append(dict(fields))
+        return self._apply(d)
+
+    def remove_channel(self, which) -> bool:
+        """Remove an exit channel, by index (from 0), particles or residue."""
+        d = self.draft
+        d["reaction"]["channels"].pop(self._channel_index(which))
+        self._drop_orphan_levels(d)
         return self._apply(d)
 
     def _fill_state(self, d: dict) -> None:
@@ -817,6 +918,13 @@ class Planner:
 
     def _setup_warnings(self) -> list:
         out = []
+        if self.experiment.fusion is not None:
+            from .residues import warnings as fusion_warnings
+
+            for text in fusion_warnings(self.experiment, self.residues()):
+                level = "warning" if ("below the Coulomb barrier" in text or "needs E*" in text
+                                      or "placeholder" in text) else "note"
+                out.append(Warning(level, "physics", text))
         for text in self._rates().warnings():
             level = "warning" if any(k in text for k in ("pile-up", "not Rutherford", "Mott", "stops inside",
                                                          "records nothing", "beam path", "blocks", "hides")) else "note"
@@ -991,6 +1099,7 @@ class Planner:
                                "coincidence_per_s": sum(pairs.values())})
         timed = [d for d in detectors if d["beam_time_s"] is not None]
         needed = max(timed, key=lambda d: d["beam_time_s"]) if timed else None
+        residues = self.residues() if exp.fusion is not None else None
         return {"measured": t["measured"], "counts_wanted": t["counts_wanted"], "beam_time_s": t["beam_time_s"],
                 "beam_time_needed_s": needed["beam_time_s"] if needed else None,
                 "limiting_detector": needed["detector"] if needed else None,
@@ -1000,7 +1109,20 @@ class Planner:
                 "coincidences": matrix, "gamma_efficiency": t["gamma_efficiency"],
                 # The other nucleus's peak, which the events hold when the setup has its level scheme.
                 "other_peak": ({"label": other["label"], "nuclide": other["nuclide"],
-                                "energy_kev": other["energy_kev"]} if other else None)}
+                                "energy_kev": other["energy_kev"]} if other else None),
+                # Fusion-evaporation: the residues of the channel table (backlog item 75).
+                "residues": residues}
+
+    def residues(self) -> dict:
+        """The fusion-evaporation residues (:func:`physim.nuclear.residues.residue_table`): per channel its cross
+        section, residues per second and in the run, and its strongest lines. Kept until the setup changes."""
+        if self.experiment.fusion is None:
+            raise ValueError("the setup is not a fusion-evaporation reaction")
+        if "residues" not in self._cache:
+            from .residues import residue_table
+
+            self._cache["residues"] = residue_table(self.experiment)
+        return self._cache["residues"]
 
     def energy_loss(self) -> dict:
         """The beam through each layer (energy in and out, loss, straggling), the beam energy through the target,
@@ -1124,6 +1246,35 @@ class Planner:
                 "gamma_detectors": g.detector_names(), "particle_detectors": list(g.events.detectors),
                 "notes": g.notes, "n_gammas": len(g), "modes": modes,
                 "run": self.run_status() if self._beam_run() else None}
+
+    def residue_gamma_spectra(self, events: int = 100_000, seed: int = 1, bin_kev: float = 1.0) -> dict:
+        """The fusion-evaporation residues' γ rays (:func:`physim.nuclear.residues.simulate_residue_gammas`): for
+        each γ-ray detector its measured and Doppler-corrected singles spectrum (counts in the run per bin), the
+        strongest lines of the residue table, and the generator's notes. ``{"available": False}`` without a
+        fusion-evaporation reaction or γ-ray detectors. Kept until the setup changes."""
+        exp = self.experiment
+        if exp.fusion is None or not exp.gamma_detectors:
+            return {"available": False, "reason": "A fusion-evaporation reaction with γ-ray detectors is needed."}
+        key = ("residue_gammas", events, seed, bin_kev)
+        if key not in self._cache:
+            from .residues import simulate_residue_gammas
+
+            g = simulate_residue_gammas(exp, events, seed)
+            lines = [(x["energy_kev"], f"{r['residue']} {x['label']}") for r in self.residues()["rows"]
+                     for x in r["lines"]]
+            top = 1.15 * max([e for e, _ in lines] + [500.0]) * 1e-3
+            edges = np.arange(0.0, top + bin_kev * 1e-3, bin_kev * 1e-3)
+            names = list(dict.fromkeys(c.name.rsplit(" ", 1)[0] if c.element is not None else c.name
+                                       for c in g.crystals))
+            spectra = {}
+            for name in names:
+                measured, _ = g.spectrum(name, corrected=False, bins=edges)
+                corrected, _ = g.spectrum(name, corrected=True, bins=edges)
+                spectra[name] = {"measured": measured, "corrected": corrected, "edges": edges,
+                                 "counts": g.counts(name)}
+            self._cache[key] = {"available": True, "spectra": spectra, "gamma_detectors": names, "lines": lines,
+                                "notes": g.notes, "n_gammas": len(g), "beta": g.beta_nominal}
+        return self._cache[key]
 
     def tracks(self, n: int = 30, select: str = "all", weighted: bool = True, seed: int = 1,
                events: int = 400_000) -> dict:

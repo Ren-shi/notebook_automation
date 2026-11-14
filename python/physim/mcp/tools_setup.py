@@ -47,10 +47,23 @@ def summary(p: Planner) -> dict:
         "detectors": [_line(i + 1, det) for i, det in enumerate(d.get("detectors", []))],
         "gamma_detectors": [_line(i + 1, det) for i, det in enumerate(d.get("gamma_detectors", []))],
         "level_schemes": levels,
+        "residues": _residues(p),
         "current_run": p.run_status(),
         "problems": list(p.problems),
         "warnings": [{"level": w.level, "source": w.source, "text": w.text} for w in p.warnings()],
     })
+
+
+def _residues(p: Planner) -> Optional[list]:
+    """For fusion-evaporation, one line per exit channel: its residue, cross section and residues per second."""
+    if p.experiment.fusion is None:
+        return None
+    try:
+        rows = p.residues()["rows"]
+    except Exception as e:  # noqa: BLE001 - the summary still comes back; the warnings say what is wrong
+        return [f"the residues could not be worked out: {e}"]
+    return [f"{r['channel']} -> {r['residue']}: {r['cross_section_mb']:.4g} mb, {r['rate_per_s']:.4g} residues/s"
+            + (f", strongest line {r['lines'][0]['energy_kev']:.1f} keV" if r["lines"] else "") for r in rows]
 
 
 def _changed(p: Planner, ok: bool) -> dict:
@@ -171,9 +184,11 @@ class SetupTools:
     def set_value(self, section: str, field: str, value: Value) -> dict:
         """Set one field of the setup. section is "beam", "target", "backing" (the target's backing layer),
         "reaction", "run", "title", "description", "detector N" or "gamma detector N" (N counting from 1, or the
-        detector's name, e.g. "detector CD"). value is text with a unit for quantities ("6 MeV", "0.5 mg/cm2",
+        detector's name, e.g. "detector CD"), or "reaction channel N" (an exit channel of a fusion-evaporation
+        reaction, from 1). value is text with a unit for quantities ("6 MeV", "0.5 mg/cm2",
         "45 deg", "100 mm", "24 h"), a number for counts (rings = 16), or null to remove an optional field.
         Examples: ("beam", "energy", "32 MeV"); ("target", "material", "208Pb"); ("reaction", "type", "coulex");
+        ("reaction", "type", "fusion-evaporation"); ("reaction channel 2", "cross_section", "450 mb");
         ("detector CD", "distance", "35 mm"). Returns ok (whether the setup is valid) and the summary."""
         p = self.session.require()
         return _changed(p, p.set(_section(p, section), field, value))
