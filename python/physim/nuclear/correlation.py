@@ -28,8 +28,9 @@ rotated at once::
     w = e.weights(rho, directions)            # 4π W along each direction (rho: n × 9 × 9, trace 1)
     rho_2 = e.after(rho, directions)          # the 2⁺ state each γ ray leaves (n × 5 × 5, trace 1)
 
-Not included: the conversion electrons' own correlation (a converted transition feeds as an unobserved one), and
-deorientation while a level lives.
+Not included here: the conversion electrons' own correlation (a converted transition feeds as an unobserved one).
+Deorientation in vacuum while a level lives is applied by the events to the density matrices carried here
+(:mod:`physim.nuclear.deorientation`, ``[reaction] deorientation = "vacuum"``).
 """
 
 from __future__ import annotations

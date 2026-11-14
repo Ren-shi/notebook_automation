@@ -11,6 +11,35 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Deorientation in vacuum (`[reaction] deorientation = "vacuum"`; off unless set). An excited nucleus that decays
+  after leaving the target is deoriented by the hyperfine field of its highly charged ion: its statistical tensors
+  become G_k t_kq, so its γ rays come out more evenly. The model (`physim.nuclear.deorientation`) is GOSIA's: the
+  two-state model of Bosch and Spehl (Z. Phys. A 280 (1977) 329) and Brenn et al. (Z. Phys. A 281 (1977) 219)
+  with GOSIA's default parameters (manual of 10 May 2012, section 4.4 and table 4.1). Where the manual leaves
+  something open, the arithmetic of GOSIA's subroutines GKK and XSTATIC and its table of atomic spins is followed.
+  - The time-integral coefficients are GOSIA's closed form, checked against a line-by-line transcription of GKK
+    to 10⁻⁶. The time-differential G_k(t) that the events need is the closed-form convolution of the two-state
+    model with GOSIA's interpolating function. It is 1 with no slope at t = 0, tends to the static hard core at
+    long times, and its average over the decay is GOSIA's coefficient to 2·10⁻⁵.
+  - In the events each level is attenuated through its own time in vacuum: from the later of its formation and
+    the nucleus leaving the stack, to its decay, at the exit speed. In a cascade the density matrix is attenuated
+    before each γ ray is drawn and before it feeds the next level. A converted transition, which has no time
+    drawn, takes the average over its lifetime. Levels that decay in the target, or after the nucleus stopped,
+    and levels without a half-life are not deoriented.
+  - The plan (`correlation_table`, the rates, the analysis) takes each level's G_k averaged over its decay, times
+    the chance that it decays outside the target, for both nuclei of the collision. The feeding from above is
+    deoriented as well (`Faded`). On the ⁶²Ni on ¹⁹⁴Pt template the events agree with it crystal by crystal for
+    both nuclei: 400 000 reactions, the change of each line in each particle × γ-ray pair against the plan's,
+    mean pulls +0.03 and +0.07.
+  - The template's ¹⁹⁴Pt 2⁺ level (60 ps; the recoils leave the target at β ≈ 0.04) keeps G₂ = 0.20,
+    G₄ = 0.08; the ⁶²Ni 2⁺ level (2 ps) G₂ = 0.92, G₄ = 0.78. The plan's ⁶²Ni coincidences drop by 1.5% (CD) and
+    2.9% (strip detectors), the ¹⁹⁴Pt ones by 8% and 10%, and the beam time for the counts wanted rises by 3.0%.
+    With clovers the drops are 5–7% and 20–23%, and the beam time rises by 7.2%. `coulex_ni58` has no
+    half-lives and does not change. Deoriented ⁶²Ni events analysed without deorientation read B(E2) 2.7% low.
+    Five-minute runs of both templates agree with the plan on every rate and coincidence row of
+    `Planner.compare()`, with deorientation as without it.
+  - A setup switch with its guide entry, and a toggle under the angular-correlation table of the app. γ rays
+    with deorientation take 25 to 35% longer to make.
 - The angular correlation between the γ rays of one cascade (backlog 71). Each excitation carries the density
   matrix of its level down the cascade (`physim.nuclear.correlation`): a γ ray is drawn along a direction with
   the probability its level's state gives, and leaves the next level in the state that direction selects, from

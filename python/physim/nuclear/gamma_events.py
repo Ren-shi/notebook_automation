@@ -53,7 +53,8 @@ import numpy as np
 from . import angular, data
 from .detectors import Array
 from .events import Events, simulate
-from .gamma import cascade_excitation, excitation_of, excitation_order, other_excitation, start_levels
+from .gamma import (cascade_excitation, deorientation_of, excitation_of, excitation_order, other_excitation,
+                    start_levels)
 from .kinematics import TwoBody
 from .quantity import Quantity
 from .rates import (Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels, exit_energy, stack, stopping,
@@ -490,9 +491,12 @@ def _distribution(a_kq: dict, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
     return total
 
 
-def _table_weights(tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: np.ndarray):
+def _table_weights(tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: np.ndarray,
+                   fade: Optional[np.ndarray] = None):
     """(4π W of each γ ray along directions of the orbit's frame, from its transition's coefficient table at its
-    event's CM angle; the largest value any table reaches): the distribution :func:`_aimed` aims with."""
+    event's CM angle; the largest value any table reaches): the distribution :func:`_aimed` aims with. ``fade``
+    (γ rays × ranks) attenuates each γ ray's coefficients of rank k by its G_k (deorientation in vacuum); the
+    largest value stays a bound, since no G_k exceeds 1."""
     largest = max(float(np.max(sum(np.abs(v) for v in coeff.values()))) for _, coeff, _ in tables.values())
 
     def weigh(sel: np.ndarray, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
@@ -504,6 +508,9 @@ def _table_weights(tables: dict, initial: np.ndarray, final: np.ndarray, theta_c
             a_kq = {key: np.interp(theta_cm[sel][mine], grid, v.real) + 1j * np.interp(theta_cm[sel][mine], grid,
                                                                                          v.imag)
                     for key, v in coeff.items()}
+            if fade is not None:
+                g = fade[sel[mine]]
+                a_kq = {key: v * g[:, key[0]] for key, v in a_kq.items()}
             w[mine] = _distribution(a_kq, theta[mine], phi[mine])
         return w
 
@@ -635,6 +642,8 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
     n = len(rows)
 
     excited_rows = n // k_rep
+    # Each excitation's speed after the stack, and whether it leaves it: the deorientation of converted steps.
+    beta_exc, left_exc = beta.copy(), np.repeat(np.asarray(e_out) > 0, k_rep)
     # -- the cascade: which levels each excitation passes through, and its γ rays (backlog item 71) -----------------
     cascade = np.arange(n)
     initial = np.ones(n, dtype=int)
@@ -655,16 +664,23 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
     # -- lifetimes: the emitter slows down in the target and its backing before it decays (backlog item 73) ------
     taus = _mean_lives(experiment, cex, initial)
     stopped = np.zeros(n, dtype=bool)
+    fade = None
     if taus is not None and np.any(taus > 0):
         lrng = np.random.default_rng(em.seeds[1])
         draws = lrng.exponential(1.0, n) * taus
         # A level fed from above starts its own clock when the level above decays: the times add up the cascade.
         t_decay = _cumulative_by(cascade, draws)
-        e_at, stopped = _slowing(experiment, layers, start["depth"], start["direction"], emitter, start["energy"],
-                                 t_decay, m_emitter)
+        e_at, stopped, t_exit = _slowing(experiment, layers, start["depth"], start["direction"], emitter,
+                                         start["energy"], t_decay, m_emitter, exits=True)
         gam = 1 + np.maximum(e_at, 0.0) / m_emitter
         beta = np.sqrt(np.maximum(1 - 1 / gam**2, 0.0))
         velocity = start["direction"] * beta[:, None]
+        # -- deorientation in vacuum: each level is attenuated through its own time out of the stack ----------------
+        if deorientation_of(experiment) == "vacuum":
+            t_start = t_decay - draws
+            in_vacuum = np.where(np.isfinite(t_exit), np.maximum(t_decay - np.maximum(t_start, t_exit), 0.0), 0.0)
+            fade = _Fade((em.single if cex is None else cex).scheme, emitter, initial, in_vacuum * 1e12, beta,
+                         beta_exc, left_exc)
 
     # The γ ray leaves from where the reaction happened: the beam spot or halo moves it off the axis (item 74).
     origin = np.zeros((n, 3))
@@ -680,7 +696,7 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
     if cex is not None and not cex.isotropic:
         # The γ rays of one cascade share their directions (the correlation between successive γ rays): each is
         # drawn from the state the γ rays before it left, and only the last of a cascade is aimed.
-        known, deferred = _correlated(cex, exc_theta, taken, first, rng, aimed)
+        known, deferred = _correlated(cex, exc_theta, taken, first, rng, aimed, fade)
         last = np.flatnonzero(np.isnan(known[:, 0]))
         drawn = np.flatnonzero(~np.isnan(known[:, 0]))
         which_d, reached_d, lab_d = _from_rest(known[drawn], theta_cm[drawn], phi_ej[drawn], velocity[drawn],
@@ -710,7 +726,8 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
         tables = {pair: (em.single if cex is None else cex).coefficient_table(*pair) for pair in pairs}
         hit = None
         if aimed and n:
-            weigh, largest = _table_weights(tables, initial, final, theta_cm)
+            weigh, largest = _table_weights(tables, initial, final, theta_cm,
+                                            None if fade is None else fade.gamma)
             hit = _aimed(rng, weigh, largest, theta_cm, phi_ej, velocity, beta, gam, origin, flip, centres,
                          normals, radii)
         if hit is not None:
@@ -724,7 +741,8 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
             local = np.zeros((n, 3))
             for pair in pairs:
                 m = (initial == pair[0]) & (final == pair[1]) if cex is not None else np.ones(n, dtype=bool)
-                local[m] = _rest_directions(tables[pair], theta_cm[m], rng)
+                local[m] = _rest_directions(tables[pair], theta_cm[m], rng,
+                                            None if fade is None else fade.gamma[m])
             which, reached, lab = _from_rest(local, theta_cm, phi_ej, velocity, beta, gam, origin, flip, centres,
                                              normals, radii)
             nvel = _unit(velocity)
@@ -774,7 +792,8 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
             "theta": np.degrees(np.arccos(np.clip(lab[:, 2], -1, 1))),
             "phi": np.degrees(np.arctan2(lab[:, 1], lab[:, 0])), "beta": beta, "stopped": stopped, "weight": weight,
             "info": {"excited_rows": excited_rows, "summed": summed, "done": done,
-                     "lifetimes": taus is not None and bool(np.any(taus > 0)), "chains": excited_rows * k_rep}}
+                     "lifetimes": taus is not None and bool(np.any(taus > 0)), "chains": excited_rows * k_rep,
+                     "fade": None if fade is None else fade.summary()}}
 
 
 def other_rows(experiment, ev: Events, solution, count_once: bool, seed: int) -> tuple:
@@ -899,6 +918,18 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
         stopped = parts[0]["stopped"]
         notes.append(f"Lifetimes: each emitter slows down in the target and backing and decays after its level's "
                      f"lifetime; {stopped.mean():.1%} of the γ rays kept come from nuclei that had stopped.")
+    if deorientation_of(experiment) == "vacuum":
+        for part, nuclide in zip(info, [emitter] + ([other.scheme.nuclide] if other is not None else [])):
+            fade = part["fade"]
+            if fade is None:
+                notes.append(f"Deorientation in vacuum: no level of {nuclide} has a half-life, so each decays as it "
+                             "is formed, in the target, and is not deoriented.")
+            else:
+                notes.append(f"Deorientation in vacuum (the two-state model with GOSIA's parameters): "
+                             f"{fade['share']:.1%} of the γ rays of {nuclide} come from levels that spent time in "
+                             f"vacuum after leaving the target, their alignment attenuated by a mean G₂ of "
+                             f"{fade['g2']:.3f}; levels that decayed in the target, or after stopping, are not "
+                             "deoriented, nor are levels without a half-life.")
     how = ("in first order (each level in one step from the ground state)" if excitation_order(experiment)
            == "first" else "to all orders (the coupled equations: levels reached in several steps, and the "
            "reorientation)")
@@ -1084,11 +1115,13 @@ def _clock(species: str, material, density: float, mass_mev: float) -> tuple:
     return _CLOCKS[key]
 
 
-def _slowing(experiment, layers: list, depth, dirs, species: str, energy, t_decay, mass_mev: float) -> tuple:
+def _slowing(experiment, layers: list, depth, dirs, species: str, energy, t_decay, mass_mev: float,
+             exits: bool = False) -> tuple:
     """The emitter's energy (MeV) at its decay time ``t_decay`` (s after the reaction): it slows along its path
     through the rest of the stack, then flies at its exit energy; one that stops first decays at rest. Returns
-    (energy at the decay, whether it had stopped). The direction is kept (no angular straggling); time dilation
-    (a few parts in a thousand here) is left out."""
+    (energy at the decay, whether it had stopped), and with ``exits`` also the time (s) it left the stack, infinite
+    for one that decayed in the stack or stopped there: how long before its decay it was in vacuum. The direction
+    is kept (no angular straggling); time dilation (a few parts in a thousand here) is left out."""
     fwd, steps = _exit_paths(experiment, layers, 0, depth, dirs)
     e = np.asarray(energy, dtype=float).copy()
     elapsed = np.zeros(len(e))
@@ -1119,6 +1152,8 @@ def _slowing(experiment, layers: list, depth, dirs, species: str, energy, t_deca
         elapsed[idx[go]] += (t_in - t_out)[go]
         e[idx[go]] = e_out[go]
     out[~done] = e[~done]  # out of the stack: in flight at the exit energy
+    if exits:
+        return out, stopped, np.where(done, np.inf, elapsed)
     return out, stopped
 
 
@@ -1152,14 +1187,17 @@ def _sum_cascades(cascade, which, deposited, measured, counted, keep, kind, ener
     return done
 
 
-def _rest_directions(table: tuple, theta_cm: np.ndarray, rng) -> np.ndarray:
+def _rest_directions(table: tuple, theta_cm: np.ndarray, rng, fade: Optional[np.ndarray] = None) -> np.ndarray:
     """Unit vectors in the orbit's frame drawn from a transition's distribution W(θ, φ), its coefficients a_kq
     (``table`` from :meth:`~physim.nuclear.orientation.Excitation.coefficient_table`) interpolated at each event's
-    CM angle; by acceptance against Σ |a_kq|."""
+    CM angle, those of rank k times ``fade[:, k]`` if given (deorientation in vacuum); by acceptance against
+    Σ |a_kq|."""
     grid, coeff, _ = table
     n = len(theta_cm)
     a_kq = {key: np.interp(theta_cm, grid, v.real) + 1j * np.interp(theta_cm, grid, v.imag)
             for key, v in coeff.items()}
+    if fade is not None:
+        a_kq = {key: v * fade[:, key[0]] for key, v in a_kq.items()}
     bound = sum(np.abs(v) for v in a_kq.values())  # W × 4π ≤ Σ |a_kq|, since |Y_kq| ≤ √((2k+1)/4π)
     local = np.zeros((n, 3))
     todo = np.ones(n, dtype=bool)
@@ -1273,11 +1311,14 @@ def angular_allowed(ji: float, jf: float, lam: int) -> bool:
     return triangle(float(ji), int(lam), float(jf))
 
 
-def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng, aimed: bool) -> tuple:
+def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng, aimed: bool,
+                fade: Optional["_Fade"] = None) -> tuple:
     """The directions of the γ rays of each cascade, with the correlation between them (backlog item 71): each
     excitation starts in the density matrix the collision leaves its first level in, at its CM angle; each γ ray
     is drawn from the current state and leaves the next level oriented by its direction
-    (:class:`~physim.nuclear.correlation.Emission`); a converted transition feeds as an unobserved one.
+    (:class:`~physim.nuclear.correlation.Emission`); a converted transition feeds as an unobserved one. With
+    ``fade`` (deorientation in vacuum) each level's state is attenuated, G_k t_kq, before it decays: by the G_k of
+    its own time in vacuum for a γ ray, by their average over its lifetime for a converted transition.
 
     Returns (directions in the orbit's frame, one row per γ ray in the order of :func:`_cascade_steps`, NaN for
     the last γ ray of each cascade when ``aimed``; and for those, [(their γ-ray indices, emission, density
@@ -1307,8 +1348,10 @@ def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng,
     if aimed and alone.any():
         for (lev, f_lev) in sorted(set(zip(ini[alone].tolist(), fin[alone].tolist()))):
             k = np.flatnonzero(alone & (ini == lev) & (fin == f_lev))
+            spin = cex.scheme.levels[lev].spin
+            faded = None if fade is None or spin is None else (fade.for_gammas(gamma_of[k]), float(spin))
             deferred.append((gamma_of[k], _emission_of(cex, lev, f_lev),
-                             _Lazy(cex.density_table(lev), theta_cm[src[k]])))
+                             _Lazy(cex.density_table(lev), theta_cm[src[k]], faded)))
     # The state of every other excitation still decaying: {level: (excitations, ascending; density matrices)}.
     state = {}
     need = np.zeros(len(first), dtype=bool)
@@ -1354,6 +1397,10 @@ def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng,
             if not len(k):
                 continue
         sub = rho[pos]
+        if fade is not None and cex.scheme.levels[lev].spin is not None:
+            from .deorientation import attenuate
+            sub = attenuate(sub, float(cex.scheme.levels[lev].spin),
+                            fade.for_gammas(gamma_of[k]) if gives else fade.for_steps(lev, src[k]))
         em_ = _emission_of(cex, lev, f_lev)
         if gives:
             final_ones = is_last[k]
@@ -1382,18 +1429,72 @@ def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng,
     return known, deferred
 
 
+class _Fade:
+    """Deorientation in vacuum of the γ rays of one nucleus (:mod:`physim.nuclear.deorientation`): the G_k each
+    γ ray's level is attenuated by, from the time it spent in vacuum (ps) at its speed, and for the converted
+    transitions, whose times are not drawn, the average of G_k over the level's lifetime at the speed its
+    excitation left the stack with (1 if it stopped in the stack)."""
+
+    def __init__(self, scheme, nuclide: str, initial: np.ndarray, in_vacuum_ps: np.ndarray, beta: np.ndarray,
+                 beta_exc: np.ndarray, left_exc: np.ndarray):
+        from .deorientation import model
+
+        levels = scheme.levels
+        spins = [None if lv.spin is None else float(lv.spin) for lv in levels]
+        self.lives_ps = [lv.half_life.value / LN2 * 1e12 if lv.half_life is not None and lv.half_life.value > 0
+                         else 0.0 for lv in levels]
+        width = int(round(2 * max([s for s in spins if s is not None] or [0.0]))) + 1
+        self.models = {n: model(nuclide, s) for n, s in enumerate(spins) if s is not None and s > 0}
+        self.width, self.beta_exc, self.left_exc = width, beta_exc, left_exc
+        self.gamma = np.ones((len(initial), width))
+        self.in_vacuum = in_vacuum_ps > 0
+        for lev in np.unique(initial):
+            model = self.models.get(int(lev))
+            m = (initial == lev) & self.in_vacuum
+            if model is None or not m.any():
+                continue
+            g = model.g(in_vacuum_ps[m], beta[m])
+            self.gamma[np.flatnonzero(m)[:, None], np.arange(g.shape[1])[None, :]] = g
+
+    def for_gammas(self, idx: np.ndarray) -> np.ndarray:
+        """G_k (rows × ranks) of the γ rays ``idx``."""
+        return self.gamma[idx]
+
+    def for_steps(self, level: int, excitations: np.ndarray) -> np.ndarray:
+        """G_k (rows × ranks) for converted transitions from ``level`` of the ``excitations``."""
+        out = np.ones((len(excitations), self.width))
+        model, tau = self.models.get(int(level)), self.lives_ps[int(level)]
+        if model is None or tau <= 0 or not len(excitations):
+            return out
+        g = model.integral(np.full(len(excitations), tau), self.beta_exc[excitations])
+        g[~self.left_exc[excitations]] = 1.0
+        out[:, :g.shape[1]] = g
+        return out
+
+    def summary(self) -> dict:
+        """{"share": the share of the γ rays whose level spent time in vacuum, "g2": their mean G₂}."""
+        share = float(self.in_vacuum.mean()) if len(self.in_vacuum) else 0.0
+        g2 = float(self.gamma[self.in_vacuum, 2].mean()) if self.in_vacuum.any() and self.width > 2 else 1.0
+        return {"share": share, "g2": g2}
+
+
 class _Lazy:
     """Density matrices of a :meth:`~physim.nuclear.orientation.Excitation.density_table` at CM angles, worked
-    out only for the rows asked for (``lazy[rows]``)."""
+    out only for the rows asked for (``lazy[rows]``); with ``faded`` = (G_k of each row, spin), attenuated by
+    the deorientation in vacuum."""
 
-    def __init__(self, table: tuple, theta_cm: np.ndarray):
-        self.table, self.theta_cm = table, theta_cm
+    def __init__(self, table: tuple, theta_cm: np.ndarray, faded: Optional[tuple] = None):
+        self.table, self.theta_cm, self.faded = table, theta_cm, faded
 
     def __len__(self) -> int:
         return len(self.theta_cm)
 
     def __getitem__(self, rows) -> np.ndarray:
-        return _interp_density(self.table, self.theta_cm[rows])
+        rho = _interp_density(self.table, self.theta_cm[rows])
+        if self.faded is None:
+            return rho
+        from .deorientation import attenuate
+        return attenuate(rho, self.faded[1], self.faded[0][rows])
 
 
 def _deferred_weights(deferred: list, last: np.ndarray, n: int) -> tuple:
