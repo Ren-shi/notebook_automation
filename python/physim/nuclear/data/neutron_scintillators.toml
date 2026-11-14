@@ -1,0 +1,68 @@
+# Organic scintillators for neutron detection, read by physim.nuclear.neutrons.
+#
+# Each [materials.X] table has:
+#   title            what it is
+#   kind             "liquid" or "plastic"
+#   density          g/cm3
+#   hydrogen         hydrogen atoms per cm3
+#   carbon           carbon atoms per cm3
+#   light_output     the proton light-output curve L(E) = a1 E - a2 (1 - exp(-a3 E^a4)), with E the proton energy
+#                    in MeV and L in MeVee (the energy an electron would need to give the same light)
+#   sources          where the numbers come from
+#   typical          the fields that are NOT from the sources: typical values, to be replaced by the numbers of the
+#                    detector actually used
+#
+# [carbon_total] is the neutron total cross section of natural carbon, used only to attenuate the beam of
+# neutrons in the cell (the n-C collisions are taken to give no light).
+#
+# The n-p cross section is not tabulated here: physim.nuclear.neutrons uses Gammel's closed form.
+
+[materials.EJ-301]
+title = "EJ-301 liquid scintillator (the same as NE213 and BC-501A), with pulse-shape discrimination"
+kind = "liquid"
+density = 0.874
+hydrogen = 4.82e22
+carbon = 3.98e22
+light_output = { a1 = 0.83, a2 = 2.82, a3 = 0.25, a4 = 0.93 }
+sources = [
+    "Eljen Technology, EJ-301 and EJ-309 product page, https://eljentechnology.com/products/liquid-scintillators/ej-301-ej-309 (read 2026-11-14): specific gravity, H and C atoms per cm3",
+    "R. A. Cecil, B. D. Anderson and R. Madey, Nucl. Instrum. Methods 161, 439 (1979): light output of protons in NE213",
+]
+typical = []
+
+[materials.EJ-309]
+title = "EJ-309 liquid scintillator (high flash point), with pulse-shape discrimination"
+kind = "liquid"
+density = 0.959
+hydrogen = 5.43e22
+carbon = 4.35e22
+light_output = { a1 = 0.83, a2 = 2.82, a3 = 0.25, a4 = 0.93 }
+sources = [
+    "Eljen Technology, EJ-301 and EJ-309 product page, https://eljentechnology.com/products/liquid-scintillators/ej-301-ej-309 (read 2026-11-14): specific gravity, H and C atoms per cm3",
+]
+typical = ["light_output"]
+
+[materials.EJ-200]
+title = "EJ-200 plastic scintillator (the same as NE102 and BC-408), no pulse-shape discrimination"
+kind = "plastic"
+density = 1.023
+hydrogen = 5.17e22
+carbon = 4.69e22
+light_output = { a1 = 0.95, a2 = 8.0, a3 = 0.1, a4 = 0.90 }
+sources = [
+    "Eljen Technology, EJ-200 product page, https://eljentechnology.com/products/plastic-scintillators/ej-200-ej-204-ej-208-ej-212 (read 2026-11-14): density, H and C atoms per cm3",
+    "R. A. Cecil, B. D. Anderson and R. Madey, Nucl. Instrum. Methods 161, 439 (1979): light output of protons in NE102",
+]
+typical = ["light_output"]
+
+[carbon_total]
+# Neutron energy in MeV and total cross section of natural carbon in barns.
+#
+# Typical values: smooth averages over the resonances between 2 and 8 MeV, rounded, NOT read point by point
+# from an evaluation. They follow the shape of the ENDF/B-VIII.0 evaluation (MF=3, MT=1) to about 15%; the
+# resonances themselves (for example the peak near 2.08 MeV and the dip near 2.82 MeV) are left out. Replace them
+# with values read from ENDF/B-VIII.0 before using the carbon attenuation quantitatively. They change a cell's
+# efficiency by a few percent at most, since carbon only attenuates.
+typical = true
+energy_mev = [0.01, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 14.0, 17.0, 20.0, 25.0, 30.0]
+sigma_b = [4.73, 4.54, 4.29, 4.05, 3.65, 3.20, 2.60, 2.15, 1.75, 1.75, 1.80, 1.20, 1.25, 1.45, 1.50, 1.25, 1.30, 1.30, 1.38, 1.43, 1.40, 1.33]
