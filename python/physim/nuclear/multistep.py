@@ -32,6 +32,7 @@ import numpy as np
 from . import data
 from .coupled import CoupledChannels
 from .detectors import Array
+from .gamma import e1_polarisation
 from .levels import LevelScheme, quadrupole_factor
 from .orientation import Excitation
 from .rates import Rates, _q, beam_energy_at, beam_ion, stack
@@ -79,6 +80,8 @@ class Multistep:
         self.beam = beam_ion(experiment)
         self.target = _target_name(experiment)
         self.excite = "target" if role == "target" else "projectile"
+        #: GOSIA's E1 polarisation parameter d of the setup's ``[reaction]`` (0.0038 unless it says; 0: left out).
+        self.e1_polarisation = e1_polarisation(experiment)
         self.array = Array.from_experiment(experiment)
         self.notes: list = []
 
@@ -93,10 +96,13 @@ class Multistep:
         return np.asarray(e, dtype=float), w / 2
 
     def solver(self, energy: float, scheme: Optional[LevelScheme] = None):
+        """The solution at one beam energy, with the E1 polarisation correction if the setup asks for it."""
         scheme = scheme or self.scheme
         if self.first_order:
-            return Excitation(self.beam, self.target, energy, scheme, excite=self.excite)
-        return CoupledChannels(self.beam, self.target, energy, scheme, excite=self.excite, tolerance=self.tolerance)
+            return Excitation(self.beam, self.target, energy, scheme, excite=self.excite,
+                              e1_polarisation=self.e1_polarisation)
+        return CoupledChannels(self.beam, self.target, energy, scheme, excite=self.excite, tolerance=self.tolerance,
+                               e1_polarisation=self.e1_polarisation)
 
     def yields(self, scheme: Optional[LevelScheme] = None) -> Yields:
         """γ rays per second of every transition in every particle detector and ring."""
@@ -267,7 +273,11 @@ class Multistep:
         GOSIA's level numbering from 1 and its units, e b^λ/2 ... given as e fm^λ converted to eb and e b²), each
         experiment is one particle detector at its mean angle, and ``yields`` (if given) are written after
         OP.YIEL as the measured yields to fit. It is written from the manual, not checked against a run, since
-        GOSIA is not on this machine."""
+        GOSIA is not on this machine.
+
+        CONT sets GOSIA's E1 polarisation parameter (``DIP,`` 1000 d) to the setup's: GOSIA since version
+        20110524.11 takes a missing or zero ``DIP,`` as 0.0038, so without the correction the file asks for a
+        millionth (``DIP,0.001``), which changes the yields by about 10⁻⁵ (z = 1.4 × 10⁻⁵ for ⁶²Ni on ¹⁹⁴Pt)."""
         exp = self.experiment
         s = self.scheme
         lines = ["OP,TITL", title or exp.title, "OP,GOSI", "LEVE"]
@@ -300,6 +310,7 @@ class Multistep:
             lines.append(f"{sign * (z_p if self.role == 'target' else nuc_t.Z)} {a_p if self.role == 'target' else nuc_t.A} "
                          f"{exp.beam.energy_mev:.3f} {theta:.2f} 1 0 0 0 360 0 1")
         lines.append("CONT")
+        lines.append(f"DIP,{1000 * self.e1_polarisation if self.e1_polarisation else 0.001:.3f}")
         lines.append("END,")
         lines.append("0 0 0")
         lines.append("OP,YIEL")

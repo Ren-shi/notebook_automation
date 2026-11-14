@@ -26,8 +26,10 @@ laboratory.
     a = K_λ ⟨I_f‖M(Eλ)‖I_i⟩ (−1)^{I_f − M_f} (I_f λ I_i; −M_f μ M_i) Y_λμ(π/2, 0) I_λ,−μ(θ, ξ),   μ = M_f − M_i,
 
 with K_λ = 4π Z e² / (ħc (2λ + 1) β a^λ), the orbit integrals of :func:`physim.nuclear.coulex.orbit_integrals`
-and Z the charge of the nucleus whose field excites. Averaged over M_i, the amplitudes give the density matrix of
-the level and its statistical tensors t_kq, normalised so that t_00 is the population.
+and Z the charge of the nucleus whose field excites. With ``e1_polarisation`` (GOSIA's parameter d) the E2 orbit
+integrals carry the E1 polarisation correction, the factor (1 − z a/r) along the orbit
+(:func:`physim.nuclear.coulex.polarised_integrals`), as in GOSIA. Averaged over M_i, the amplitudes give the
+density matrix of the level and its statistical tensors t_kq, normalised so that t_00 is the population.
 
 **γ rays.** A transition from a level of tensors t_kq has the angular distribution
 
@@ -53,7 +55,7 @@ from typing import Optional
 import numpy as np
 
 from . import angular, data
-from .coulex import HBARC_MEV_FM, Coulex, orbit_integrals, ylm_equator
+from .coulex import HBARC_MEV_FM, Coulex, polarised_integrals, ylm_equator
 from .levels import Level, LevelScheme, Transition, Value, components
 from .rutherford import E2_MEV_FM
 
@@ -251,14 +253,19 @@ class Excitation:
     scheme belongs to. ``ground`` is the index of the state the nucleus starts in.
 
     Levels above the CM energy, levels without a spin, and matrix elements that the spins or parities do not
-    allow are left out; :attr:`notes` says which."""
+    allow are left out; :attr:`notes` says which.
+
+    ``e1_polarisation`` is GOSIA's parameter d of the E1 polarisation correction (0, the default here, leaves it
+    out; a setup has 0.0038, GOSIA's default): every E2 coupling is weakened by the factor (1 − z a/r) along the orbit, z = d E_cm
+    A / Z² of the excited nucleus (:func:`physim.nuclear.coulex.polarisation_strength`)."""
 
     def __init__(self, beam: str, target: str, beam_energy, scheme: LevelScheme, excite: str = "target",
-                 ground: int = 0, isotropic: bool = False):
+                 ground: int = 0, isotropic: bool = False, e1_polarisation: float = 0.0):
         if excite not in ("target", "projectile"):
             raise ValueError("excite must be 'target' or 'projectile'")
         self.beam, self.target, self.beam_energy = beam, target, beam_energy
         self.scheme, self.excite, self.ground, self.isotropic = scheme, excite, ground, isotropic
+        self.e1_polarisation = float(e1_polarisation or 0.0)
         self.notes: list = []
         g = scheme.levels[ground]
         if g.spin is None:
@@ -286,7 +293,7 @@ class Excitation:
                 b_up = me.value**2 / (2 * self.ground_spin + 1)
                 try:
                     cx = Coulex(beam, target, beam_energy, excite=excite, energy=lev.energy.value * 1e-3,
-                                multipolarity=mult, b_up=b_up)
+                                multipolarity=mult, b_up=b_up, e1_polarisation=self.e1_polarisation)
                 except ValueError:
                     self.notes.append(f"Level {n} ({lev.energy.value:g} keV) is above the energy available.")
                     continue
@@ -354,7 +361,7 @@ class Excitation:
             a = np.zeros((len(ms_f), len(ms_i)), dtype=complex)
             if s > 0:
                 for lam, me, cx in paths:
-                    integrals = orbit_integrals(lam, 1 / s, cx.xi)       # index μ + λ
+                    integrals = polarised_integrals(lam, 1 / s, cx.xi, cx.polarisation)  # index μ + λ
                     k = (4 * math.pi * cx.z_exciting * E2_MEV_FM
                          / (HBARC_MEV_FM * (2 * lam + 1) * cx.beta * cx.a**lam))
                     for i, mf in enumerate(ms_f):

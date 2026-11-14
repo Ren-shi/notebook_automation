@@ -11,7 +11,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
-- Deorientation in vacuum (`[reaction] deorientation = "vacuum"`; off unless set). An excited nucleus that decays
+- Deorientation in vacuum, on by default (`[reaction] deorientation`: `"vacuum"`, or `"none"` to switch it
+  off). An excited nucleus that decays
   after leaving the target is deoriented by the hyperfine field of its highly charged ion: its statistical tensors
   become G_k t_kq, so its γ rays come out more evenly. The model (`physim.nuclear.deorientation`) is GOSIA's: the
   two-state model of Bosch and Spehl (Z. Phys. A 280 (1977) 329) and Brenn et al. (Z. Phys. A 281 (1977) 219)
@@ -40,6 +41,22 @@ workflow builds the wheels, tests them and publishes to PyPI.
     `Planner.compare()`, with deorientation as without it.
   - A setup switch with its guide entry, and a toggle under the angular-correlation table of the app. γ rays
     with deorientation take 25 to 35% longer to make.
+- The E1 polarisation correction to Coulomb excitation, as GOSIA has it, on by default
+  (`[reaction] e1_polarisation`). The virtual excitation of the giant dipole resonance weakens every E2 coupling,
+  transitional and diagonal, by the factor (1 − z a/r) along the orbit, z = d E_cm A / Z² of the excited nucleus
+  (GOSIA manual eq. 3.27–3.28, after Alder and Winther, appendix J; for projectile excitation as GOSIA's code takes
+  it). The setting is GOSIA's parameter d. Left out it is 0.0038, what GOSIA uses since April 2023 when its input
+  does not set it (its manual has 0.005); `e1_polarisation = 0` switches it off. Every setup's numbers change.
+  - It is in the coupled equations (`CoupledChannels`), first order (`Excitation`, `Coulex`) and so in the events,
+    the plan's rates, the angular correlation, `Multistep` and both B(E2) readings of the analysis; the cache of
+    the level schemes' solutions keys on it, and the GOSIA input file writes it as `DIP,`.
+  - At 180° in the sudden limit it lowers the probability by (1 − 0.4 z)², as worked by hand, to 1e-6.
+  - With the default against none: the ⁶²Ni 2⁺ state of `coulex_ni62_pt194` is excited 3.8% less (z = 0.053), the
+    levels it reaches in two steps 6 to 9% less, and the plan's excitations fall 5.1% in the CD and 4.9% in the
+    strip detectors; the ¹⁹⁴Pt 2⁺ state is excited 0.6% less (z = 0.022) and the ⁵⁸Ni 2⁺ state of `coulex_ni58`
+    0.6% less (z = 0.0064). A ⁶²Ni run made with the correction and analysed without it reads B(E2) 7.2% low. The
+    reorientation of the ⁶²Ni 2⁺ state shrinks by 1.2% of itself, but the correction lowers the ratio of its
+    populations at 160° and 60° by 1.4%, as a diagonal matrix element 28% smaller would.
 - The angular correlation between the γ rays of one cascade (backlog 71). Each excitation carries the density
   matrix of its level down the cascade (`physim.nuclear.correlation`): a γ ray is drawn along a direction with
   the probability its level's state gives, and leaves the next level in the state that direction selects, from

@@ -2379,7 +2379,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                          "its highly charged ion (the two-state model, with GOSIA's parameters): its γ rays come "
                          "out more evenly, the more so the longer its level lives.").classes("text-xs ps-muted")
                 ui.toggle({"none": "No deorientation", "vacuum": "Deorientation in vacuum"},
-                          value=g.get("deorientation", "none"),
+                          value=g.get("deorientation", "vacuum"),
                           on_change=lambda e: direct(lambda planner: planner.set("reaction", "deorientation",
                                                                                  e.value))
                           ).props("dense no-caps unelevated")
