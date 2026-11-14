@@ -79,9 +79,27 @@ low-energy edge), not in α particles (within 8% everywhere) or in CsI. **Where 
   for O at 0.1 MeV/u, 0.90 against 0.61 at 1 MeV/u, and above 1 (1.09) at 10 MeV/u. So SRIM does not scale its
   proton stopping in hydrogen as it does in other targets.
 
-Which code is closer to measurement for heavy ions in hydrogen is not settled here. That needs measured data
-(for example, heavy ions in H₂ gas or polyethylene from the IAEA stopping-power database). Until then, plan with
-heavy ions in CD₂ or polyethylene targets with care, and check the result against SRIM.
+**Against measurements (2026-11-14).** Measured electronic stopping from the IAEA Stopping Power Database (version
+2026-09, read through its API; the database's own "SRIM2013" curve rows dropped) for C, O, Ar, Kr and Xe at
+0.05–15 MeV/u, compared point by point with physim and with SR Module (compound correction 1; H₂ and D₂ as gases).
+Not yet an automated check:
+
+| Target (measurements) | Points | RMS deviation, physim | RMS deviation, SRIM | What the data say |
+|---|---|---|---|---|
+| H₂ and D₂ gas, 1–3 MeV/u: Ar and Kr (Bimbot et al. 1989), one C point (1962) | 19 | 23% | 8% | physim too low: Ar −17%, Kr −27% (median). SRIM's special treatment of hydrogen is supported |
+| H₂ and D₂ gas, C, Ar, Kr, 3–15 MeV/u | 63 | 11.0% | 9.4% | Kr: physim −16%, SRIM −11% |
+| (CH₂)ₙ: polypropylene, polyethylene, C and O ions (6 data sets) | 206 | 10.3% | 9.4% | both about 6–7% low on average. Near 0.1 MeV/u the data lie between the codes: physim +9 to +14%, SRIM −9 to −14% |
+| Mylar, C to Xe (15 data sets) | 460 | 8.0% | 4.9% | Kr and Xe: physim −14% to −25%, SRIM about −10% |
+
+One polyethylene set (Diwan et al. 2003, 7 points) lies 20–40% below both codes and the polypropylene data, and is
+left out of the (CH₂)ₙ row. There are no measurements for pure hydrogen below 1 MeV/u in this range, and none for
+Ar or Xe in CH₂ polymers, so physim's largest disagreements with SRIM in CD₂ (+39% for Ar at 0.1 MeV/u, −20% for Xe
+at 1 MeV/u) are not tested directly.
+
+So for CD₂: at 1–3 MeV/u, physim's heavy-ion stopping in hydrogen is too low, by roughly the 15–25% it differs from
+SRIM there. At low energy, neither code matches the polymer data to better than about 10–14%. Until physim treats
+hydrogen targets better, plan with heavy ions in CD₂ or polyethylene targets with care, and check the result against
+SRIM.
 
 Validated 2026-10-04; SRIM comparison 2026-11-14.
 

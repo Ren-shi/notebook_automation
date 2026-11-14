@@ -30,8 +30,9 @@
 >   10 MeV/u; Mylar ⁴⁰Ar at 0.1 MeV/u +25.4% against 25%. α particles agree within 8% in every target. The gap is in
 >   hydrogen: physim's heavy-ion stopping in pure H is +80–97% (0.1 MeV/u) and −25 to −35% (1 MeV/u) off SRIM's,
 >   while carbon agrees within ~6%. SRIM's implied effective charge in H differs from its own in C (above 1 at
->   10 MeV/u). Ruled out: the target Fermi velocity (SRIM's v_F moves CD₂ by ≤ 0.3%). Open: which code matches
->   measured heavy-ion stopping in hydrogen. SRIM was run with compound
+>   10 MeV/u). Ruled out: the target Fermi velocity (SRIM's v_F moves CD₂ by ≤ 0.3%). Against measured data (IAEA
+>   database): in H₂/D₂ gas at 1–3 MeV/u physim is 17–27% low (RMS 23%, SRIM 8%); in (CH₂)ₙ polymers both codes are
+>   about 10% RMS. A hydrogen-specific heavy-ion treatment is the open fix. SRIM was run with compound
 >   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
 > - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.
 > - TRIM: every exported TRIM.IN (4 cases and the 2 example setups) ran unchanged. Mean energies within 1% except α
