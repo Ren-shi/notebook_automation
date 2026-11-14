@@ -20,8 +20,9 @@ needs_reference = pytest.mark.skipif(not REFERENCE.is_dir(), reason="reference f
 
 #: Checks where physim disagrees with the reference beyond the stated tolerance. The tolerance stays; the register
 #: shows these as not passing and says why (docs/physics-register/stopping.md and rates-and-events.md):
-#: CD₂ and Mylar stopping for C–Ar and Xe vs SRIM; TRIM's energy spread for slow Xe, and α in Mylar.
-KNOWN_FAILURES = {"stopping_compounds_vs_srim", "spectra_vs_trim"}
+#: CD₂ and Mylar stopping for C–Ar and Xe vs SRIM; TRIM's energy spread for slow Xe, and α in Mylar; measured
+#: stopping of Kr in H₂/D₂ and of Kr, Xe in Mylar at 1–10 MeV/u.
+KNOWN_FAILURES = {"stopping_compounds_vs_srim", "spectra_vs_trim", "stopping_hydrogen_vs_data"}
 
 
 def statuses(**kw):
@@ -55,7 +56,9 @@ def test_every_check_passes_or_waits_for_its_reference():
 
 def test_literature_checks_run_without_reference_files(tmp_path):
     for r in validation.run(kind="literature", reference=tmp_path):
-        if r.name != "closest_approach_above_barrier":
+        if r.name == "stopping_hydrogen_vs_data":  # measured data kept as a reference file
+            assert r.status == "pending", r.detail
+        elif r.name != "closest_approach_above_barrier":
             assert r.status == "pass", (r.name, r.detail)
 
 

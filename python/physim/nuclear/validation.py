@@ -395,6 +395,61 @@ def stopping_compounds_vs_srim(ref):
     return _stopping_vs_srim(ref, ("Mylar", "CD2", "CsI"))
 
 
+#: physim material for each target of stopping_measured_hydrogen.csv, and the group it is judged in.
+MEASURED_HYDROGEN_TARGETS = {"H2": ("H", "H₂/D₂ gas"), "D2": ("D2", "H₂/D₂ gas"), "Mylar": ("Mylar", "Mylar"),
+                             "Polypropylene": ("Polyethylene", "(CH₂)ₙ"), "Polyethylene": ("Polyethylene", "(CH₂)ₙ"),
+                             "CH2": ("Polyethylene", "(CH₂)ₙ")}
+
+
+@check("Stopping power and range", "literature", "Measured electronic stopping of C, O, Ar, Kr, Xe in H₂, D₂, "
+       "(CH₂)ₙ polymers and Mylar, 0.1–15 MeV/u, from the IAEA Stopping Power Database "
+       "(stopping_measured_hydrogen.csv; one outlier data set excluded, see its header)",
+       "median deviation per target group, ion and energy band inside the LISE++ band for that ion class and energy "
+       "band (STOPPING_TOLERANCE)")
+def stopping_hydrogen_vs_data(ref):
+    from .stopping import Stopping
+
+    path = _file(ref, "stopping_measured_hydrogen.csv")
+    if path is None:
+        return None, math.nan, 0, "stopping_measured_hydrogen.csv not found", {}
+    rows = [r for r in read_reference(path)[1] if r["used"] == "yes" and float(r["e_mev_u"]) >= 0.1]
+    cache: dict = {}
+    cells: dict = {}
+    srim_cells: dict = {}
+    xs, ratio = [], []
+    for r in rows:
+        material, group = MEASURED_HYDROGEN_TARGETS[r["target"]]
+        ion = f"{r['isotope']}{r['ion']}"
+        z, e_u = data.nuclide(ion).Z, float(r["e_mev_u"])
+        s = cache.setdefault((ion, material), Stopping(ion, material))
+        meas = float(r["electronic_mev_mg_cm2"])
+        d = float(s.stopping_power(e_u * int(r["isotope"]), part="electronic")) / meas - 1
+        key = (group, r["ion"], _ion_class(z), _energy_band(e_u))
+        cells.setdefault(key, []).append(d)
+        srim_cells.setdefault(key, []).append(float(r["srim_electronic_mev_mg_cm2"]) / meas - 1)
+        xs.append(e_u)
+        ratio.append(1 + d)
+    frac, fails, srim_fails = {}, {}, []
+    for key, devs in cells.items():
+        tol = STOPPING_TOLERANCE[("stopping", key[2], key[3])]
+        med = float(np.median(devs))
+        frac[key] = abs(med) / tol
+        if abs(med) > tol:
+            fails[key] = med
+        if abs(float(np.median(srim_cells[key]))) > tol:
+            srim_fails.append(key)
+    worst = max(frac.values())
+    label = lambda k: f"{k[1]} in {k[0]} {k[3]} MeV/u"  # noqa: E731
+    detail = (f"{len(cells)} cells; " + ("all inside their band" if not fails else "outside: " + ", ".join(
+        f"{label(k)} median {v:+.1%} (band {STOPPING_TOLERANCE[('stopping', k[2], k[3])]:.0%}, "
+        f"{len(cells[k])} points)" for k, v in sorted(fails.items(), key=lambda kv: kv[1])))
+        + f"; worst {worst:.0%} of a band. SRIM 2013 by the same rule (context): "
+        + ("all inside" if not srim_fails else "outside in " + ", ".join(label(k) for k in srim_fails)))
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(ratio)), "xlabel": "energy (MeV/u)",
+            "ylabel": "electronic stopping, physim / measured", "logx": True}
+    return not fails, worst, len(rows), detail, plot
+
+
 @check("Stopping power and range", "literature", "NIST PSTAR/ASTAR CSDA ranges (ICRU 49), p and α in C, Si, Au, "
        "water, 2 keV–100 MeV", "1%")
 def ranges_vs_nist(ref):

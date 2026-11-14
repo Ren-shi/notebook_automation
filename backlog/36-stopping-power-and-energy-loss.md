@@ -32,7 +32,11 @@
 >   while carbon agrees within ~6%. SRIM's implied effective charge in H differs from its own in C (above 1 at
 >   10 MeV/u). Ruled out: the target Fermi velocity (SRIM's v_F moves CD₂ by ≤ 0.3%). Against measured data (IAEA
 >   database): in H₂/D₂ gas at 1–3 MeV/u physim is 17–27% low (RMS 23%, SRIM 8%); in (CH₂)ₙ polymers both codes are
->   about 10% RMS. A hydrogen-specific heavy-ion treatment is the open fix. SRIM was run with compound
+>   about 10% RMS. The data are now a reference file (`stopping_measured_hydrogen.csv`) and a literature check,
+>   `stopping_hydrogen_vs_data`, which fails for Kr in H₂/D₂ (−19%) and Kr, Xe in Mylar (−15%, −18%) at 1–10 MeV/u.
+>   Carbon is within 7% of measured data; the hydrogen term is 6–60% low. A fitted factor on the H term fixes the
+>   gas data but fails a held-out test, so the open fix is a hydrogen-specific effective charge from an independent
+>   source (ICRU 73 / MSTAR, or ZBL 1985), judged by that check unchanged; see stopping.md, "Towards a fix". SRIM was run with compound
 >   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
 > - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.
 > - TRIM: every exported TRIM.IN (4 cases and the 2 example setups) ran unchanged. Mean energies within 1% except α
