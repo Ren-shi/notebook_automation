@@ -62,6 +62,29 @@ def test_with_weak_coupling_the_result_is_first_order():
     assert 0.97 < ratio < 0.995
 
 
+def test_all_orders_agree_with_gosia():
+    """GOSIA 20110524.14 on the same case to all orders (tests/reference/nuclear/coulex_gosia_all_orders.csv): within
+    1% at five angles, and its step from first order to all orders is physim's within 0.1 percentage point."""
+    from physim.nuclear import validation
+
+    ref = validation.reference_dir()
+    path = ref / "coulex_gosia_all_orders.csv" if ref else None
+    if path is None or not path.exists():
+        pytest.skip("no GOSIA reference")
+    rows = validation.read_reference(path)[1]
+    first = {float(r["theta_cm_deg"]): float(r["probability"])
+             for r in validation.read_reference(ref / "coulex_gosia.csv")[1]}
+    real = simple_scheme("58Ni", "1.454 MeV", "E2", "0.0695 e2b2")
+    cc, ex = CoupledChannels(*NI, real, tolerance=1e-7), Excitation(*NI, real)
+    for r in rows:
+        theta, gosia = float(r["theta_cm_deg"]), float(r["probability"])
+        ours = cc.probability(1, theta)
+        assert ours == pytest.approx(gosia, rel=0.01), theta
+        step_ours = ours / ex.probability(1, theta) - 1
+        step_gosia = gosia / first[theta] - 1
+        assert step_ours == pytest.approx(step_gosia, abs=1e-3), theta
+
+
 def test_the_probabilities_of_all_levels_sum_to_one():
     cc = CoupledChannels("16O", "194Pt", "60 MeV", band(8))
     for theta in (40.0, 100.0, 160.0):

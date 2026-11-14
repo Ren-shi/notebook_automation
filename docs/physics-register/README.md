@@ -54,7 +54,7 @@ Second slice: Coulomb excitation (backlog item 43).
 
 | Capability | Engine | App | vs tools | vs literature | Page | Backlog |
 |---|---|---|---|---|---|---|
-| Coulomb excitation, first-order semiclassical | ✅ | ✅ | 🟡 GOSIA requested (`pending/coulex_gosia.md`) | ✅ closed forms at 180° (1e-6), engine-orbit integration (5e-8), adiabatic cutoff; 🟡 measured data requested | [Theory](../theory/coulex.md) | 43 |
+| Coulomb excitation, first-order semiclassical | ✅ | ✅ | ✅ GOSIA 20110524.14, first order (weak-coupling limit), ¹⁶O + ⁵⁸Ni at 30 MeV, five angles (2%; worst 0.6%) | ✅ closed forms at 180° (1e-6), engine-orbit integration (5e-8), adiabatic cutoff; 🟡 measured data requested | [Theory](../theory/coulex.md) | 43 |
 | γ-ray Doppler shift and broadening | ✅ | ✅ | — exact formula instead | ✅ Lorentz boost (1e-12) | [Theory](../theory/coulex.md) | 43 |
 | Coulomb-excitation rates and spectra | ✅ | ✅ | — | ✅ Monte Carlo against analytic rates per channel within 4σ (`coulex_ni58`) | [Theory](../theory/coulex.md) | 43 |
 

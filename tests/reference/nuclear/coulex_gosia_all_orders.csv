@@ -1,0 +1,12 @@
+# tool: GOSIA 20110524.14 (N. Warr's release of 11 Nov 2026), OP,STAR, built with gfortran 16.2.0 (WinLibs, -O2 -std=legacy)
+# produced by: Claude for Ren-shi, run on this machine, 2026-11-14
+# settings: input coulex_gosia.inp as it is: <2+||E2||0+> = 0.263629 e b (B(E2) = 0.0695 e2b2), Q(2+) = 0, CONT ACC,8.,
+#   DIP default 0.0038 (no effect with Q = 0). GOSIA solves the coupled equations to all orders; physim's counterpart
+#   is physim.nuclear.coupled.CoupledChannels. Masses are GOSIA's integer A (16, 58); kinematics non-relativistic.
+#   Giving GOSIA the exact nuclear masses (15.990528 u, 57.920026 u) changes the probabilities by -0.02% to -0.08%.
+beam,target,beam_energy_mev,state_mev,b_e2_e2b2,theta_cm_deg,probability
+16O,58Ni,30.0,1.454,0.0695,59.974,4.31577e-04
+16O,58Ni,30.0,1.454,0.0695,89.968,1.49049e-03
+16O,58Ni,30.0,1.454,0.0695,119.970,2.38141e-03
+16O,58Ni,30.0,1.454,0.0695,149.982,2.72007e-03
+16O,58Ni,30.0,1.454,0.0695,169.994,2.75979e-03

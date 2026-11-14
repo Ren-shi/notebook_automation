@@ -30,8 +30,9 @@ comparisons (the user)**
 >   - The safe-distance warning appears exactly at Cline's angle.
 >   - ¹⁶O on ⁵⁸Ni at 30 MeV: ξ = 0.88, total 5.9 mb, P(170°) = 0.28%, and the CD records 1.3 excitations per second
 >     at 0.1 pnA. Doppler shifts are ±22.5 keV at 45° and 135° for CD events, with 13–18 keV FWHM.
-> - **Waiting on the user:** GOSIA and a published measurement (`tests/reference/nuclear/pending/coulex_gosia.md`),
->   which `validation.coulex_vs_gosia` reads as soon as the file exists.
+> - **GOSIA (2026-11-14):** GOSIA 20110524.14, built here, agrees within 0.6% at five angles, first order and all
+>   orders (`tests/reference/nuclear/coulex_gosia*.csv`, read by `validation.coulex_vs_gosia`).
+> - **Waiting on the user:** a published measurement (`tests/reference/nuclear/pending/coulex_literature.md`).
 > - **Left out:**
 >   - multi-step excitation and reorientation;
 >   - nuclear-Coulomb interference;
@@ -73,7 +74,7 @@ standard way of measuring collective properties of nuclei (B(E2) values). It reu
   - closed form at θ = 180°, ξ = 0;
   - independent integration along orbits from physim's engine;
   - adiabatic suppression with ξ;
-  - GOSIA (input requested from the user, `pending/coulex_gosia.md`);
+  - GOSIA, first order and all orders (`coulex_gosia.csv`, `coulex_gosia_all_orders.csv`);
   - a published Coulomb-excitation measurement (requested from the user).
 - **Left out:**
   - multi-step excitation and reorientation (second order: GOSIA's domain);
