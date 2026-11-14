@@ -1,6 +1,6 @@
 # 36 · Stopping power and energy loss
 
-**Priority:** P1 · **Size:** L · **Area:** Nuclear planner · **Status: Done** (SRIM/TRIM comparison pending)
+**Priority:** P1 · **Size:** L · **Area:** Nuclear planner · **Status: Done** (SRIM/TRIM compared 2026-11-14: compounds outside tolerance for heavy ions)
 
 > **Done** (`python/physim/nuclear/stopping.py`, `python/physim/nuclear/data/nist_pstar.csv` and `nist_astar.csv`,
 > `scripts/fetch_star_tables.py`, `scripts/lise_reference.py`, `tests/python/test_nuclear_stopping.py`,
@@ -22,8 +22,21 @@
 > range 1.2% (p/α), 4.8–6% (heavy ions); straggling FWHM within 25% at ≥ 30 MeV/u. Interpolated elements within 7%
 > above 0.5 MeV (leave-one-out). Building a table takes ~0.1 s.
 >
-> Not met / left out: the **SRIM/TRIM** comparison (compounds, slow heavy ions, transmitted-energy spread) needs
-> runs by hand, requested in `tests/reference/nuclear/pending/stopping_srim.md`. The planned 2% (p/α vs NIST) holds for
+> **SRIM/TRIM comparison (2026-11-14,** `scripts/srim_reference.py`, `stopping_srim.csv`, `straggling_trim.csv`**):**
+> SRIM 2013's SR Module and TRIM both run unattended from Python (SR Module has no window; TRIM with `TRIMAUTO` = 1).
+> - Stopping, 5 ions × 5 targets × 0.1–10 MeV/u, judged by the LISE++ bands: Au and Si pass (worst 90% of a band,
+>   Xe in Au at 1 MeV/u −10.7%). CsI passes (Xe at 10 MeV/u exactly at its 10%). **CD₂ and Mylar fail for heavy
+>   ions:** CD₂ +31% (¹⁶O) and +39% (⁴⁰Ar) at 0.1 MeV/u, −14% (Ar) and −20% (Xe) at 1 MeV/u, −4.2% (¹⁶O) at
+>   10 MeV/u; Mylar ⁴⁰Ar at 0.1 MeV/u +25.4% against 25%. α particles agree within 8% in every target. Likely
+>   cause, untested: the effective charge uses one Fermi velocity (v₀) for all targets. SRIM was run with compound
+>   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
+> - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.
+> - TRIM: every exported TRIM.IN (4 cases and the 2 example setups) ran unchanged. Mean energies within 1% except α
+>   in 10 µm Mylar (+1.05%; physim loses 4% less energy, likely TRIM's Bragg-additive Mylar against ICRU's); widths within 20%
+>   except 660 MeV ¹³²Xe in 2 µm C (−63%: charge-exchange straggling is not modelled, see below).
+> - Both comparisons are known failures in `tests/python/test_nuclear_validation.py`; the tolerances were not changed.
+>
+> Not met / left out: the 5% heavy-ion target against SRIM (see above). The planned 2% (p/α vs NIST) holds for
 > ranges; the 5% heavy-ion target holds only above 10 MeV/u: below 1 MeV/u heavy ions are within 25–55% (Kr/Xe ranges
 > within a factor 2), the limit of a model without Ziegler's per-ion coefficient tables, which could be added
 > later. Straggling below ~10 MeV/u differs from LISE++ by up to 2–4×. Channelling and charge-state distributions

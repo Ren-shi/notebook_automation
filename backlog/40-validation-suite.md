@@ -5,7 +5,7 @@ produce**
 
 > **Done** (`python/physim/nuclear/validation.py`, `python/physim/nuclear/export.py`,
 > `tests/python/test_nuclear_validation.py`, `notebooks/validation/` with `scripts/make_validation_notebooks.py`,
-> `docs/validation.md`, `tests/reference/nuclear/masses_lise.csv`, `rutherford_lisepp.csv`, `pending/trim/`,
+> `docs/validation.md`, `tests/reference/nuclear/masses_lise.csv`, `rutherford_lisepp.csv`, `trim/`,
 > `pending/rates_lisepp.md`).
 > - **`physim.nuclear.validation`:** 18 checks, one tool and one literature check per register capability.
 >   - The exceptions are Coulomb trajectories and detector solid angles, which have exact closed forms; no tool
@@ -37,15 +37,15 @@ produce**
 >     masses, transmitted ions saved.
 >   - `export.lise_settings(experiment)` lists what to enter in LISE++, alongside physim's energies, cross sections
 >     and rates.
->   - The four TRIM cases requested in item 36, and the two example setups, are written to `pending/trim/`.
+>   - The four TRIM cases requested in item 36, and the two example setups, are written to `tests/reference/nuclear/trim/` (run 2026-11-14).
 > - **Waiting on the user (the register shows 🟡):**
 >   - the LISE++ kinematics cases (`pending/kinematics_lisepp.md`);
 >   - LISE++ cross sections at the detector angles (`pending/rates_lisepp.md`, for rates);
->   - TRIM runs, which also check that the exported TRIM.IN files open and run in SRIM (`pending/stopping_srim.md`,
->     for spectra);
 >   - the Farwell–Wegner above-barrier data (`pending/rutherford_above_barrier.md`).
 >
 >   Each has a check that reads its file as soon as it exists.
+> - **TRIM.IN export checked (2026-11-14):** all six files in `tests/reference/nuclear/trim/` ran in TRIM (SRIM 2013)
+>   without changes; the transmitted spectra are in `straggling_trim.csv` (`spectra_vs_trim`, see item 36).
 
 ## Why
 Physicists trust LISE++, SRIM and Geant4 because they have been checked against data for decades. Physim aims to be

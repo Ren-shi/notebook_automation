@@ -1,0 +1,13 @@
+# tool: SRIM 2013 (installer SRIM-2013-Std.exe), TRIM.exe; output headers read "SRIM-2013.00"
+# produced by: scripts/srim_reference.py, 2026-11-14
+# settings: the request's TRIM_n.IN files exactly as written by physim.nuclear.export.trim_in (2000
+#   ions, quick Kinchin-Pease, compound correction 1, transmitted ions saved), run with TRIMAUTO = 1;
+#   mean and sample standard deviation of the energies of the transmitted ions (TRANSMIT.txt); density in g/cm3;
+#   opened_unchanged = yes if TRIM ran the unedited file to the end (TRIM_3: 1998 of 2000 protons
+#   transmitted in the first run, none backscattered). Random seed 0 as exported, so a rerun differs
+#   by about the standard error (sigma / sqrt(2000)).
+ion,material,density,energy_mev,thickness,mean_mev,sigma_mev,opened_unchanged
+4He,Mylar,,5.5,10 um,4.3201,0.02441,yes
+16O,Au,,64.0,0.5 um,62.282,0.06348,yes
+1H,Si,,10.0,300 um,7.2861,0.08562,yes
+132Xe,C,2.0,660.0,2 um,627.9,0.4851,yes

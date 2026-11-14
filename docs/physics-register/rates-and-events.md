@@ -48,6 +48,7 @@ Backlog item 39 · modules `physim.nuclear.rates`, `physim.nuclear.events`, `phy
 | Same seed, same events; 1 thread and 4 threads; run split in pieces | Bit-identical | exact | pass | `test_same_seed_same_events_and_pieces_add_up`, `tests/nuclear_events.rs` |
 | 10⁶ events in a few seconds | Benchmark `nuclear_events/alpha_on_gold_1e6` | — | 0.13 s (12 threads) | `benches/engine.rs` |
 | Count rates against LISE++ | LISE++ | — | not yet: item 40 | — |
+| Energy after a layer and its spread, 4 layers (⁴He 5.5 MeV / 10 µm Mylar, ¹⁶O 64 MeV / 0.5 µm Au, p 10 MeV / 300 µm Si, ¹³²Xe 660 MeV / 2 µm C) | TRIM, SRIM 2013, 2000 ions each, from physim's own TRIM.IN exports (`straggling_trim.csv`) | mean 1%, σ 20% | **fail** for 2 of 4: α in Mylar mean +1.05% (likely because TRIM's Mylar is Bragg-additive and physim's is ICRU's: physim loses 4% less energy); Xe σ −63% (charge-exchange straggling not modelled). The others: mean ≤ 0.15%, σ ≤ 10%. All 6 exported files ran unchanged | `spectra_vs_trim` (a known failure in `test_nuclear_validation.py`) |
 
 Validated 2026-10-04.
 

@@ -18,6 +18,12 @@ REGISTER = ROOT / "docs" / "physics-register" / "README.md"
 needs_reference = pytest.mark.skipif(not REFERENCE.is_dir(), reason="reference files are not shipped with the wheel")
 
 
+#: Checks where physim disagrees with the reference beyond the stated tolerance. The tolerance stays; the register
+#: shows these as not passing and says why (docs/physics-register/stopping.md and rates-and-events.md):
+#: CD₂ and Mylar stopping for C–Ar and Xe vs SRIM; TRIM's energy spread for slow Xe, and α in Mylar.
+KNOWN_FAILURES = {"stopping_compounds_vs_srim", "spectra_vs_trim"}
+
+
 def statuses(**kw):
     return {(r.capability, r.kind, r.name): r for r in validation.run(reference=REFERENCE, **kw)}
 
@@ -38,11 +44,12 @@ def test_every_capability_has_a_tool_and_a_literature_check():
 @needs_reference
 def test_every_check_passes_or_waits_for_its_reference():
     results = validation.run(reference=REFERENCE)
-    failed = [(r.name, r.detail) for r in results if r.status == "fail"]
-    assert not failed, failed
+    failed = {r.name: r.detail for r in results if r.status == "fail"}
+    # Known disagreements the register reports as such (not ✅); a fix must remove them from KNOWN_FAILURES.
+    assert set(failed) == set(KNOWN_FAILURES), failed
     pending = {r.name for r in results if r.status == "pending"}
     # Exactly the references still requested from the user (tests/reference/nuclear/pending/).
-    assert pending == {"closest_approach_above_barrier", "rates_vs_lise", "spectra_vs_trim", "coulex_vs_gosia"}
+    assert pending == {"closest_approach_above_barrier", "rates_vs_lise", "coulex_vs_gosia"}
     assert "| Capability |" in validation.report(results)
 
 
@@ -146,7 +153,8 @@ def _break_spectra(monkeypatch):
 BREAKS = {
     "masses": (_break_masses, ["masses_vs_lise", "q_values"]),
     "kinematics": (_break_kinematics, ["kinematics_vs_lise", "kinematics_classical_limit"]),
-    "stopping power": (lambda m: _scale_method(m, stopping.Stopping, "stopping_power", 1.10), ["stopping_vs_lise"]),
+    "stopping power": (lambda m: _scale_method(m, stopping.Stopping, "stopping_power", 1.10),
+                       ["stopping_vs_lise", "stopping_vs_srim"]),
     "range": (_break_ranges, ["ranges_vs_nist"]),
     "straggling": (lambda m: _scale_method(m, stopping.Stopping, "straggling", 1.3),
                    ["straggling_vs_lise", "straggling_bohr"]),
@@ -208,7 +216,7 @@ def test_trim_input_file():
 
 
 def test_trim_files_in_the_request_are_current():
-    trim = REFERENCE / "pending" / "trim"
+    trim = REFERENCE / "trim"
     if not trim.is_dir():
         pytest.skip("no request folder")
 

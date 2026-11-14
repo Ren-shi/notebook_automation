@@ -47,16 +47,36 @@ them interpolated) and 7 ions.
 | Range vs LISE++ | same | p/α: 3.5%, 6%, 21%. C–Ar: 5%, 15%, 39%. Kr/Xe: 9%, 53%, 100% | pass | `test_against_lise_atima` |
 | Energy after a fifth of the range vs LISE++ | same | p/α: 0.5%, 1.2%, 5.3%. C–Ar: 0.8%, 4.8%, 11.5%. Kr/Xe: 2.2%, 6%, 19% | pass | `test_against_lise_atima` |
 | Straggling (FWHM) ≥ 30 MeV/u vs LISE++ | same | 25% | pass | `test_straggling_against_lise_at_high_energy` |
-| Compounds, slow heavy ions, TRIM straggling | SRIM/TRIM | — | 🟡 request written (`tests/reference/nuclear/pending/stopping_srim.md`) | — |
+| Stopping power vs SRIM 2013 (SR Module), 5 ions (⁴He, ¹²C, ¹⁶O, ⁴⁰Ar, ¹³²Xe) × Au, Si × 0.1–10 MeV/u, 50 points | SRIM (`stopping_srim.csv`) | the LISE++ stopping bands above | pass (worst 90% of a band: Xe in Au at 1 MeV/u, −10.7% against 12%) | `stopping_vs_srim` |
+| Stopping power vs SRIM 2013, compounds: same ions × Mylar, CD₂, CsI, 75 points | same; compound correction 1 (Bragg additivity) | the same bands (no compound allowance; see below) | **fail**: CD₂ ¹⁶O/⁴⁰Ar 0.1 MeV/u +31%/+39% (25%), ⁴⁰Ar 1 MeV/u −14% (11%), ¹⁶O 10 MeV/u −4.2% (4%), Xe 1 MeV/u −20% (12%); Mylar ⁴⁰Ar 0.1 MeV/u +25.4% (25%). CsI and all ⁴He pass | `stopping_compounds_vs_srim` (a known failure in `test_nuclear_validation.py`) |
+| Range vs SRIM | same | not judged | SRIM gives the projected range, physim the path length (CSDA); they differ by up to a factor 2 for slow ions in Au, and by 1–12% at 10 MeV/u | reported in the checks' detail |
 
 The LISE++ values are generated on a machine with LISE++ installed by `scripts/lise_reference.py`; CI reads the
 committed file. Below 0.1 MeV/u nothing is tested against LISE++: there, the codes differ from each other by tens
 of percent (LISE++'s Hubert/Ziegler/ATIMA by up to 25% for protons and 48% for Xe).
 
-Validated 2026-10-04.
+SRIM's values are generated on a machine with SRIM 2013 installed by `scripts/srim_reference.py` (SR Module, no
+window). SR Module's output header reads "Calculation using SRIM-2006 / SRIM version ---> SRIM-2012.01": the 2013
+installer ships an SR Module built in 2011 whose stopping coefficients (`SCOEF03.dat`) are byte-identical to the
+full program's. Every compound was run with compound correction 1 (plain Bragg additivity), as physim's TRIM.IN
+export also writes: SR Module takes the factor as an input, and the Core-and-Bond factor SRIM's GUI would apply to
+its dictionary entry "Mylar" is computed only by the GUI. physim's Mylar uses the NIST/ICRU proton and α tables,
+which include the chemical binding.
+
+**Tolerance for compounds.** The register states no separate tolerance for compounds, and none is proposed: the
+model page claims the same accuracy for Bragg-additive compounds as for elements, so the compounds are judged by the
+same bands. They fail them. The disagreement is in heavy ions in hydrogen-rich targets (CD₂ most, Mylar at the
+low-energy edge), not in α particles (within 8% everywhere) or in CsI. A likely cause, not yet tested: physim scales
+proton stopping by the effective charge without the target dependence (Brandt–Kitagawa with a fixed Fermi
+velocity), which matters most for hydrogen. Until that is understood, planning with heavy ions in CD₂ or
+polyethylene targets should be checked against SRIM.
+
+Validated 2026-10-04; SRIM comparison 2026-11-14.
 
 ## Known limitations
 
+- Heavy ions in hydrogen-rich compounds (CD₂, Mylar) differ from SRIM by up to 20% at 1–3 MeV/u and up to 40%
+  at 0.1 MeV/u, beyond the stated bands (see the validation table).
 - Slow heavy ions (below 1 MeV/u, especially Kr and heavier): stopping within ~50%, range within a factor of two.
   Plan with care and check against SRIM. Ziegler's per-ion and per-target low-energy coefficient tables would fix
   this; they are not included (a possible later download).
