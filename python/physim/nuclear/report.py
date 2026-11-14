@@ -68,6 +68,11 @@ MODELS = ("Atomic masses and material data", "Two-body reaction kinematics", "St
           "Count rates and beam time", "Monte Carlo spectra")
 
 
+#: The reaction as the report names it.
+_REACTION_WORDS = {"elastic": "elastic scattering", "coulex": "Coulomb excitation (and elastic scattering)",
+                   "fusion-evaporation": "fusion-evaporation (the particle detectors see the elastic scattering)"}
+
+
 def _commit() -> str:
     """The git commit of the physim source, if it is a git checkout; otherwise "unknown"."""
     try:
@@ -278,7 +283,7 @@ class Report:
         return {
             "warnings": f'<ul class="warnings">{warn_html}</ul>',
             "setup": f"""{table(("", ""), setup_rows)}
-<p>Reaction: {e(exp.reaction)} scattering. Beam: {_fmt(self.planner.rates()['particles_per_second'])} particles
+<p>Reaction: {e(_REACTION_WORDS.get(exp.reaction, exp.reaction))}. Beam: {_fmt(self.planner.rates()['particles_per_second'])} particles
 per second.</p>
 {setup_figures}""",
             "setup_figures": setup_figures,

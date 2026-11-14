@@ -99,8 +99,25 @@ HELP = {
                                    "series), empty for none.", "0.5–5 /s unshielded", "more random coincidences "
                                    "and room lines in the spectra."),
     # -- reaction
-    ("reaction", "type"): _h("What happens in the target: elastic (Rutherford) scattering, or Coulomb excitation of "
-                             "one state.", "elastic for target analysis and cross sections; Coulomb excitation to "
+    ("reaction", "temperature"): _h("Nuclear temperature of the evaporation spectra, for every channel that gives "
+                                    "none. Left out, each emitting nucleus has T = √(E*/a), a = A/8 MeV⁻¹.",
+                                    "1–2 MeV", "harder particle spectra and a wider Doppler cone"),
+    ("reaction", "alignment"): _h("Width σ/J of the residues' magnetic-substate distribution about the beam: their "
+                                  "spin is perpendicular to the beam, and the γ rays have an angular distribution.",
+                                  "0.3 (0.2–0.4 is typical)", "less anisotropic γ rays"),
+    ("reaction", "side_feeding"): _h("Share of the γ-ray cascades that enter the known levels below the top yrast "
+                                     "level.", "10–40 %", "more of the low-lying lines, fewer of the high ones"),
+    ("channel", "particles"): _h("The light particles the compound nucleus emits in this channel: a count and n, p, "
+                                 "d, t or a (α) each.", "4n, p2n, a n", "—"),
+    ("channel", "cross_section"): _h("Cross section of the channel, from PACE4 (in LISE++) or a measurement.",
+                                     "1–1000 mb", "proportionally more residues"),
+    ("channel", "entry_spin"): _h("Spin (ħ) at which the residue's γ-ray cascade enters its levels. Left out: 2/3 "
+                                  "of the grazing angular momentum, less what the particles take away.", "10–30",
+                                  "longer cascades through higher yrast levels"),
+    ("channel", "source"): _h("Where the cross section comes from, in words; \"placeholder\" marks a value nobody "
+                              "has checked.", "PACE4, measured", "—"),
+    ("reaction", "type"): _h("What happens in the target: elastic (Rutherford) scattering, Coulomb excitation of "
+                             "one state, or fusion-evaporation with a table of exit channels.", "elastic for target analysis and cross sections; Coulomb excitation to "
                              "measure B(E2)", "—"),
     ("reaction", "excite"): _h("Which nucleus is excited: the target or the beam.", "the target for a stable "
                                "target nucleus; the beam for radioactive beams", "—"),
@@ -215,7 +232,9 @@ HELP = {
 
 def help_for(section: str, field: str) -> Optional[Help]:
     """Help for a field of a section as the planner names it ("detector 2" and "gamma detector 1" included)."""
-    if section.startswith("gamma detector"):
+    if section.startswith("reaction channel"):
+        section = "channel"
+    elif section.startswith("gamma detector"):
         section = "gamma"
     elif section.startswith("detector"):
         section = "detector"

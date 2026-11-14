@@ -42,6 +42,10 @@ theory/rutherford
 theory/detectors
 theory/events
 theory/coulex
+theory/fusion-evaporation
+theory/fusion
+theory/evaporation
+theory/neutrons
 ```
 
 ```{toctree}

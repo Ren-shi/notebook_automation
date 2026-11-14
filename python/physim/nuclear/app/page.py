@@ -20,7 +20,7 @@ from ..quantity import Quantity
 from .. import dataviews as dv
 from .figures import (CLOVER_FIELDS, REACTION_FIELDS, REACTION_TYPES, STYLE, THEMES, _shown, _value,
                       figure_alignment, figure_gamma_crystal, figure_peak, figure_search, figure_detector_spectrum, figure_efficiency, figure_energy_loss,
-                      figure_excitation, figure_gamma_spectra, figure_kinematics, figure_levels, figure_overlay,
+                      figure_excitation, figure_gamma_spectra, figure_residue_gammas, figure_kinematics, figure_levels, figure_overlay,
                       figure_source_spectrum, figure_spectra, figure_strips, figure_sweep, figure_trajectories,
                       themed)
 
@@ -190,6 +190,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             return setup.get("title")
         if section == "backing":
             return setup["target"].get("backing", {}).get(field)
+        if section.startswith("reaction channel"):
+            items = setup.get("reaction", {}).get("channels", [])
+            i = int(section.split()[2]) - 1
+            return items[i].get(field) if 0 <= i < len(items) else None
         if section.startswith(("gamma detector", "detector")):
             gamma = section.startswith("gamma")
             items = setup.get("gamma_detectors" if gamma else "detectors", [])
@@ -422,7 +426,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     def card_of(section: str) -> Optional[str]:
         if section in ("beam", "run"):
             return section
-        if section in ("target", "backing", "reaction"):
+        if section in ("target", "backing", "reaction", "neutron_wall") or section.startswith("reaction channel"):
             return "target"
         if section.startswith("gamma detector"):
             return f"gamma:{int(section.split()[2]) - 1}"
@@ -797,6 +801,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             "dense outlined").classes("w-full")
         help_icon(sel, "reaction", "type")
         mark(sel, "reaction", "type")
+        if kind == "fusion-evaporation":
+            channel_table(reaction)
+            return
         if kind != "coulex":
             return
         with ui.grid(columns=2).classes("w-full gap-1"):
@@ -813,6 +820,76 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             mark(mul, "reaction", "multipolarity")
         state_picker(reaction)
         section("", REACTION_FIELDS, "reaction", reaction)
+
+    def channel_table(reaction: dict) -> None:
+        """The fusion-evaporation reaction (backlog item 75): its own fields, then one row per exit channel with its
+        particles, cross section, entry spin and source, the residue they leave, and a button to remove it."""
+        section("", wb.FUSION_FIELDS, "reaction", reaction)
+        ui.label("Exit channels").classes("ps-section mt-2")
+        chans = reaction.get("channels", [])
+        if not chans:
+            ui.label("No exit channel yet: add one, with its cross section from PACE4 or a measurement.").classes(
+                "text-xs ps-muted")
+        residues = {}
+        if not D().problems and D().experiment.fusion is not None:
+            residues = {ch.particles: ch.residue_name for ch in D().experiment.fusion.channels}
+        for k, ch in enumerate(chans):
+            sec = f"reaction channel {k + 1}"
+            with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                ui.label(residues.get(ch.get("particles"), ch.get("residue") or "?")).classes(
+                    "text-sm font-medium").style("min-width: 4em")
+                ui.button(icon="delete_outline", on_click=lambda k=k: remove_channel(k)).props(
+                    "dense flat round size=sm").tooltip("Remove this channel")
+            section("", wb.CHANNEL_FIELDS, sec, ch)
+        with ui.row().classes("gap-1"):
+            ui.button("Add a channel", icon="add", on_click=add_channel).props("dense flat no-caps size=sm")
+            ui.button("Fill from physim", icon="calculate", on_click=fill_channels).props(
+                "dense flat no-caps size=sm").tooltip(
+                "Replace the table with physim's own fusion (Bass barrier) and evaporation Monte Carlo: an "
+                "estimate; PACE4 or a measurement is the better source")
+        neutron_wall_fields()
+
+    def neutron_wall_fields() -> None:
+        """The neutron wall that tells the exit channels apart (backlog item 75): its fields, or a button to add
+        one."""
+        wall = D().draft.get("neutron_wall")
+        ui.label("Neutron wall").classes("ps-section mt-2")
+        if wall is None:
+            ui.label("No neutron wall: add one to see which channel each event looks like (Plan).").classes(
+                "text-xs ps-muted")
+            ui.button("Add a neutron wall", icon="add", on_click=lambda: None if locked() else staged(
+                D().add_neutron_wall(), rebuild=True)).props("dense flat no-caps size=sm")
+            return
+        section("", wb.NEUTRON_WALL_FIELDS, "neutron_wall", wall)
+        ui.button("Remove the neutron wall", icon="delete_outline", on_click=lambda: None if locked() else staged(
+            D().remove_neutron_wall(), rebuild=True)).props("dense flat no-caps size=sm")
+
+    async def fill_channels() -> None:
+        if locked():
+            return
+        if D().problems:
+            ui.notify("Fix the setup's problems first: " + "; ".join(D().problems), type="warning", multi_line=True)
+            return
+        note = ui.notification("Fusion and evaporation: 20 000 decay chains…", spinner=True, timeout=None)
+        try:
+            await run.io_bound(D().physim_channels)
+        except ValueError as err:
+            note.dismiss()
+            ui.notify(str(err), type="negative", multi_line=True)
+            return
+        note.dismiss()
+        staged(D().fill_channels(), rebuild=True)
+
+    def add_channel() -> None:
+        if locked():
+            return
+        taken = {c.get("particles") for c in D().draft.get("reaction", {}).get("channels", [])}
+        k = next(n for n in range(1, 13) if f"{n}n" not in taken)
+        staged(D().add_channel(particles=f"{k}n", cross_section="10 mb", source="placeholder"), rebuild=True)
+
+    def remove_channel(k: int) -> None:
+        if not locked():
+            staged(D().remove_channel(k), rebuild=True)
 
     def state_picker(reaction: dict) -> None:
         """The excited state, chosen from the excited nucleus's level scheme (read from ENSDF); choosing one fills in
@@ -1776,6 +1853,52 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         with plot_area:
             plot(shown("spectra", state["events"], 1), "spectra", events=state["events"], seed=1)
         gamma_block()
+        residue_gamma_block()
+
+    def residue_gamma_block() -> None:
+        """Fusion-evaporation (backlog item 75): the residues' γ rays in each γ-ray detector, measured and Doppler
+        corrected."""
+        if P().experiment.fusion is None or not P().experiment.gamma_detectors:
+            return
+        ui.label("The residues' γ rays").classes("font-semibold mt-3")
+        ui.label("Each event picks an exit channel by its cross section; the light particles leave isotropically "
+                 "with an evaporation spectrum, and the residue recoils from each. Its cascade enters the known "
+                 "levels by spin, aligned perpendicular to the beam, and the crystals record the γ rays with their "
+                 "response. The Doppler correction assumes the residue moves along the beam at the compound "
+                 "nucleus's speed. Singles: no particle is asked for.").classes("text-xs ps-muted")
+        holder = ui.column().classes("w-full")
+
+        async def build() -> None:
+            holder.clear()
+            with holder:
+                ui.spinner(size="md")
+            try:
+                g = await run.io_bound(P().snapshot().residue_gamma_spectra, 100_000, 1)
+            except ValueError as err:
+                holder.clear()
+                with holder:
+                    ui.label(str(err)).classes("text-sm ps-warn")
+                return
+            holder.clear()
+            with holder:
+                if not g["available"]:
+                    ui.label(g["reason"]).classes("text-sm")
+                    return
+                ui.label(" ".join(g["notes"])).classes("text-xs ps-muted")
+                sel = ui.select(g["gamma_detectors"], value=g["gamma_detectors"][0], label="γ-ray detector").props(
+                    "dense outlined").classes("w-48")
+                fig_box = ui.column().classes("w-full")
+
+                def draw() -> None:
+                    fig_box.clear()
+                    with fig_box:
+                        ui.plotly(themed(figure_residue_gammas(P(), sel.value, 100_000, 1),
+                                         state["theme"])).classes("w-full")
+
+                sel.on_value_change(lambda e: draw())
+                draw()
+
+        ui.button("Simulate the residues' γ rays", icon="play_arrow", on_click=build).props("dense flat no-caps")
 
     def gamma_block() -> None:
         """Particle–γ coincidences: the matrix, and each γ-ray detector's raw and corrected spectrum."""
