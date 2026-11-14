@@ -157,19 +157,23 @@ class _CoulexReaction:
 
 @lru_cache(maxsize=64)
 def _coulex_at(beam: str, nuclide: str, energy: float, excite: str, e_star: float, multipolarity: str,
-               b_up: float):
+               b_up: float, e1_polarisation: float = 0.0):
     from .coulex import Coulex
 
-    return Coulex(beam, nuclide, energy, excite=excite, energy=e_star, multipolarity=multipolarity, b_up=b_up)
+    return Coulex(beam, nuclide, energy, excite=excite, energy=e_star, multipolarity=multipolarity, b_up=b_up,
+                  e1_polarisation=e1_polarisation)
 
 
 def coulex_for(experiment, channel: Channel, layers: Optional[list] = None):
-    """The :class:`~physim.nuclear.coulex.Coulex` of a channel, at the beam energy in the middle of its layer."""
+    """The :class:`~physim.nuclear.coulex.Coulex` of a channel, at the beam energy in the middle of its layer, with
+    the E1 polarisation correction if the setup asks for it."""
+    from .gamma import e1_polarisation
+
     layers = layers or stack(experiment)
     e_mid = float(beam_energy_at(experiment, channel.layer, [layers[channel.layer].thickness / 2], layers)[0])
     e = channel.excitation
     return _coulex_at(beam_ion(experiment), channel.nuclide.name, round(e_mid, 9), e.excite, e.energy_mev,
-                      e.multipolarity, e.b_up_e2fm)
+                      e.multipolarity, e.b_up_e2fm, e1_polarisation(experiment))
 
 
 class SchemeProbability:

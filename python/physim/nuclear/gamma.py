@@ -159,7 +159,8 @@ def excitation_of(experiment, isotropic=None):
     # The same energy, rounded the same way, as the rates use: the orbit integrals are then shared.
     e_mid = round(float(beam_energy_at(experiment, 0, [lay.thickness / 2], layers)[0]), 9)
     flat = (exc.emission == "isotropic") if isotropic is None else isotropic
-    return _excitation(beam, target, e_mid, exc.excite, exc.energy_mev, exc.multipolarity, exc.b_up_e2fm, flat)
+    return _excitation(beam, target, e_mid, exc.excite, exc.energy_mev, exc.multipolarity, exc.b_up_e2fm, flat,
+                       e1_polarisation(experiment))
 
 
 #: Accuracy of the coupled equations' probabilities in the events (relative, roughly; see
@@ -175,6 +176,26 @@ def excitation_order(experiment) -> str:
     """ "all" or "first": how the events populate the levels of a level scheme (``[reaction] order``)."""
     exc = experiment.excitation
     return (getattr(exc, "order", None) or "all") if exc is not None else "all"
+
+
+def deorientation_of(experiment) -> str:
+    """ "none" or "vacuum": whether a nucleus that decays after leaving the target is deoriented
+    (``[reaction] deorientation``, :mod:`physim.nuclear.deorientation`). "vacuum" when the setup does not say."""
+    exc = experiment.excitation
+    return (getattr(exc, "deorientation", None) or "vacuum") if exc is not None else "none"
+
+
+def e1_polarisation(experiment) -> float:
+    """GOSIA's parameter d of the E1 polarisation correction of the setup (``[reaction] e1_polarisation``): GOSIA's
+    default, 0.0038 (:data:`~physim.nuclear.coulex.GOSIA_DIPOLE_POLARISATION`), when the setup does not set it,
+    0 when it switches it off."""
+    from .coulex import GOSIA_DIPOLE_POLARISATION
+
+    exc = experiment.excitation
+    if exc is None:
+        return 0.0
+    d = getattr(exc, "e1_polarisation", None)
+    return GOSIA_DIPOLE_POLARISATION if d is None else float(d)
 
 
 def other_role(experiment) -> str:
@@ -273,7 +294,9 @@ def cascade_excitation(experiment, isotropic=None, order=None, channel=None, nuc
     It is the coupled equations' solution to all orders (:class:`~physim.nuclear.coupled.CoupledChannels`: the
     levels reached in two steps, the reorientation, and the orientation of every level), or with ``order``
     "first" (the setup's ``[reaction] order`` if None) first-order theory
-    (:class:`~physim.nuclear.orientation.Excitation`: each level in one step from the ground state).
+    (:class:`~physim.nuclear.orientation.Excitation`: each level in one step from the ground state). Either has
+    the E1 polarisation correction of the setup's ``[reaction] e1_polarisation`` (on by default, see
+    :func:`e1_polarisation`).
 
     ``channel`` (a :class:`~physim.nuclear.rates.Channel` with an excitation) picks the nucleus the excited one
     scatters on and the layer; by default the target's main nuclide. The solution is at the beam energy in the
@@ -307,18 +330,19 @@ def cascade_excitation(experiment, isotropic=None, order=None, channel=None, nuc
     if order not in ("all", "first"):
         raise ValueError("order must be 'all' or 'first'")
     beam = beam_ion(experiment)
-    key = (beam, target, e_mid, excite, bool(flat), order, json.dumps(scheme.to_dict(), sort_keys=True,
-                                                                     default=str))
+    pol = e1_polarisation(experiment)
+    key = (beam, target, e_mid, excite, bool(flat), order, pol, json.dumps(scheme.to_dict(), sort_keys=True,
+                                                                          default=str))
     with _SOLVING:  # one thread solves; the others then find the solution
         if key in _SOLVED:
             _SOLVED.move_to_end(key)
             return _SOLVED[key]
         try:
             if order == "first":
-                ex = Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=flat)
+                ex = Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=flat, e1_polarisation=pol)
             else:
                 ex = CoupledChannels(beam, target, e_mid, scheme, excite=excite, isotropic=flat,
-                                     tolerance=EVENT_TOLERANCE)
+                                     tolerance=EVENT_TOLERANCE, e1_polarisation=pol)
         except ValueError:
             ex = None
         # The [reaction] nucleus keeps its one-γ-ray chain for a single transition; the other nucleus has no
@@ -369,11 +393,12 @@ def unreached_levels(experiment) -> list:
 
 @lru_cache(maxsize=16)
 def _excitation(beam: str, target: str, e_mid: float, excite: str, e_star: float, multipolarity: str,
-                b_up: float, isotropic: bool):
+                b_up: float, isotropic: bool, e1_polarisation: float = 0.0):
     from .orientation import Excitation, simple_scheme
 
     scheme = simple_scheme(target if excite == "target" else beam, e_star, multipolarity, b_up)
-    return Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=isotropic)
+    return Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=isotropic,
+                      e1_polarisation=e1_polarisation)
 
 
 def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucleus: str = "reaction") -> list:
@@ -394,6 +419,14 @@ def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucle
     Each row also gives "detector_factor" for the γ-ray detector as a whole (its crystals averaged by the solid
     angle each covers). The kinematics are those at the middle of the target; shadowing is not applied.
 
+    With ``[reaction] deorientation = "vacuum"`` every level with a half-life is deoriented before it decays, as
+    in the events: its tensors are multiplied by G_k averaged over its decay times (GOSIA's time integral,
+    :meth:`~physim.nuclear.deorientation.TwoState.integral`, at the speed the nucleus leaves the target with),
+    times the chance that it decays after leaving the target, to which the chance that it decays inside adds 1;
+    a nucleus that stops in the target is not deoriented. The levels above feed each level after their own
+    attenuation (:class:`~physim.nuclear.deorientation.Faded`). Where the nucleus leaves is worked out at each
+    CM angle of the solution's grid, from the middle of the target, along the azimuth 0.
+
     ``nucleus`` "other" gives the table for the other nucleus of the collision
     (:func:`other_excitation`; empty without its level scheme): for the transition from its first excited level
     to the ground state, each point weighted by that level's population with the feeding from above."""
@@ -408,20 +441,72 @@ def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucle
             transition = state_transition(experiment)
     solution = ex if ex is not None else excitation_of(experiment)
     # Kept with the solution, by the detectors: the plan asks again at every change of anything else.
+    fade = deorientation_of(experiment) == "vacuum"
     key = repr((order, crystal_points, transition, experiment.detectors, experiment.gamma_detectors,
-                experiment.chamber if hasattr(experiment, "chamber") else None))
+                experiment.chamber if hasattr(experiment, "chamber") else None,
+                (experiment.target, experiment.levels) if fade else None))
     kept = solution.__dict__.setdefault("_correlation_tables", {})
     if key not in kept:
         if len(kept) > 8:
             kept.clear()
-        kept[key] = _correlation_rows(experiment, ex, order, crystal_points, transition)
+        kept[key] = _correlation_rows(experiment, ex, order, crystal_points, transition, fade)
     return [dict(row) for row in kept[key]]
 
 
-def _correlation_rows(experiment, solution, order: int, crystal_points: int, transition=None) -> list:
+def level_lives(experiment, ex, single: bool) -> list:
+    """The mean life (s) of each level of ``ex.scheme``, 0 without a half-life: from the scheme itself, or for
+    the ``[reaction]`` state alone (``single``) from the setup's scheme level at the state's energy, as the
+    events take it."""
+    from .gamma_events import LN2
+
+    if not single:
+        return [lv.half_life.value / LN2 if lv.half_life is not None and lv.half_life.value > 0 else 0.0
+                for lv in ex.scheme.levels]
+    exc = experiment.excitation
+    lives = [0.0] * len(ex.scheme.levels)
+    scheme = experiment.levels.get("target" if exc.excite == "target" else "beam")
+    for lv in (scheme.levels if scheme is not None else []):
+        if abs(lv.energy.value - 1e3 * exc.energy_mev) < 1.0 and lv.half_life is not None and lv.half_life.value > 0:
+            lives[1] = lv.half_life.value / LN2
+            break
+    return lives
+
+
+def deorientation_factors(experiment, ex, excite: str, tb, m_emitter: float, lives: list, step: float = 2.0) -> dict:
+    """{level: G_k on the CM-angle grid of ``ex.table(step)`` (angles × ranks)} for the levels with a mean life
+    in ``lives``: the attenuation averaged over each level's decay, for a nucleus that starts in the middle of the
+    target and leaves along the two-body direction at azimuth 0 (see :func:`correlation_table`)."""
+    from .deorientation import model
+    from .gamma_events import _slowing
+
+    grid, _ = ex.table(step)
+    layers = stack(experiment)
+    point = tb.recoil_for(grid) if excite == "recoil" else tb.at_cm(grid, "ejectile")
+    th = np.radians(np.nan_to_num(np.asarray(point.theta_lab, dtype=float)))
+    energy = np.nan_to_num(np.asarray(point.energy, dtype=float))
+    dirs = np.stack([np.sin(th), np.zeros_like(th), np.cos(th)], axis=-1)
+    depth = np.full(len(grid), layers[0].thickness / 2)
+    e_out, _, t_exit = _slowing(experiment, layers, depth, dirs, ex.scheme.nuclide, energy, np.full(len(grid), np.inf),
+                                m_emitter, exits=True)
+    gam = 1 + np.maximum(e_out, 0.0) / m_emitter
+    beta = np.sqrt(np.maximum(1 - 1 / gam**2, 0.0))
+    left = np.isfinite(t_exit) & (energy > 0)
+    out = {}
+    for n, tau in enumerate(lives):
+        spin = ex.scheme.levels[n].spin
+        if tau <= 0 or spin is None or spin <= 0:
+            continue
+        g = model(ex.scheme.nuclide, float(spin)).integral(np.full(len(grid), tau * 1e12), beta)
+        after = np.where(left, np.exp(-np.where(left, t_exit, 0.0) / tau), 0.0)[:, None]
+        out[n] = (1 - after) + after * g
+    return out
+
+
+def _correlation_rows(experiment, solution, order: int, crystal_points: int, transition=None,
+                      fade: bool = False) -> list:
     """The rows of :func:`correlation_table`: for the ``transition`` (initial, final) of ``solution``, the
     solution of a level scheme (by default from its first excited level to the ground state), or without a
-    solution for the ``[reaction]`` state alone."""
+    solution for the ``[reaction]`` state alone; with ``fade``, deoriented in vacuum."""
     from . import data
     from .kinematics import TwoBody
 
@@ -450,6 +535,14 @@ def _correlation_rows(experiment, solution, order: int, crystal_points: int, tra
     tb = TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=e0, excite=excite)
     m_emitter = data.nuclide(ex.scheme.nuclide).nuclear_mass_mev + e0
     cx = ex.paths[lev_i][0][2] if lev_i in ex.paths else None
+    states_of = ex.near
+    if fade and not ex.isotropic:
+        from .deorientation import Faded
+
+        factors = deorientation_factors(experiment, ex, excite, tb, m_emitter, level_lives(experiment, ex,
+                                                                                         solution is None))
+        if factors:
+            states_of = Faded(ex, factors).near
     crystals = []
     for i, gd in enumerate(experiment.gamma_detectors):
         for label, centre, radius in gd.elements():
@@ -480,7 +573,7 @@ def _correlation_rows(experiment, solution, order: int, crystal_points: int, tra
                         ph_ej = phi[k] if particle == "ejectile" else phi[k] + 180.0
                         if not 0 < th_ej <= 180:
                             continue
-                        state = ex.near(th_ej)
+                        state = states_of(th_ej)
                         w = weigh(state) * float(cx.rutherford_cm(th_ej)) * jac[k] * dom[k]
                         if w <= 0:
                             continue
@@ -506,6 +599,6 @@ def _correlation_rows(experiment, solution, order: int, crystal_points: int, tra
     return rows
 
 
-__all__ = ["cascade_excitation", "correlation_table", "doppler_energy", "doppler_table", "emitters",
-           "excitation_of", "excitation_order", "level_names", "other_excitation", "other_role", "start_levels",
-           "state_transition", "transition_lines", "unreached_levels"]
+__all__ = ["cascade_excitation", "correlation_table", "doppler_energy", "doppler_table", "e1_polarisation",
+           "emitters", "excitation_of", "excitation_order", "level_names", "other_excitation", "other_role",
+           "start_levels", "state_transition", "transition_lines", "unreached_levels"]

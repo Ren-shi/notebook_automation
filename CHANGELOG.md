@@ -11,6 +11,58 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Deorientation in vacuum and the E1 polarisation correction are both on by default (the two entries below). Together
+  they change every Coulomb-excitation plan with a level scheme: on the ⁶²Ni on ¹⁹⁴Pt template the ⁶²Ni
+  coincidences fall by 6.5% (CD) and 7.7% (strip detectors) and the beam time for the counts wanted rises by 8.3%
+  (9.8 to 10.6 min); with clovers by 10.1% and 11.2%, and 12.6% (3.7 to 4.2 min). `coulex_ni58` has no
+  half-lives, so only the E1 polarisation acts there: 0.6 to 0.8% fewer coincidences. `deorientation = "none"`
+  and `e1_polarisation = 0` give the numbers of before.
+- Deorientation in vacuum, on by default (`[reaction] deorientation`: `"vacuum"`, or `"none"` to switch it
+  off). An excited nucleus that decays
+  after leaving the target is deoriented by the hyperfine field of its highly charged ion: its statistical tensors
+  become G_k t_kq, so its γ rays come out more evenly. The model (`physim.nuclear.deorientation`) is GOSIA's: the
+  two-state model of Bosch and Spehl (Z. Phys. A 280 (1977) 329) and Brenn et al. (Z. Phys. A 281 (1977) 219)
+  with GOSIA's default parameters (manual of 10 May 2012, section 4.4 and table 4.1). Where the manual leaves
+  something open, the arithmetic of GOSIA's subroutines GKK and XSTATIC and its table of atomic spins is followed.
+  - The time-integral coefficients are GOSIA's closed form, checked against a line-by-line transcription of GKK
+    to 10⁻⁶. The time-differential G_k(t) that the events need is the closed-form convolution of the two-state
+    model with GOSIA's interpolating function. It is 1 with no slope at t = 0, tends to the static hard core at
+    long times, and its average over the decay is GOSIA's coefficient to 2·10⁻⁵.
+  - In the events each level is attenuated through its own time in vacuum: from the later of its formation and
+    the nucleus leaving the stack, to its decay, at the exit speed. In a cascade the density matrix is attenuated
+    before each γ ray is drawn and before it feeds the next level. A converted transition, which has no time
+    drawn, takes the average over its lifetime. Levels that decay in the target, or after the nucleus stopped,
+    and levels without a half-life are not deoriented.
+  - The plan (`correlation_table`, the rates, the analysis) takes each level's G_k averaged over its decay, times
+    the chance that it decays outside the target, for both nuclei of the collision. The feeding from above is
+    deoriented as well (`Faded`). On the ⁶²Ni on ¹⁹⁴Pt template the events agree with it crystal by crystal for
+    both nuclei: 400 000 reactions, the change of each line in each particle × γ-ray pair against the plan's,
+    mean pulls +0.03 and +0.07.
+  - The template's ¹⁹⁴Pt 2⁺ level (60 ps; the recoils leave the target at β ≈ 0.04) keeps G₂ = 0.20,
+    G₄ = 0.08; the ⁶²Ni 2⁺ level (2 ps) G₂ = 0.92, G₄ = 0.78. The plan's ⁶²Ni coincidences drop by 1.5% (CD) and
+    2.9% (strip detectors), the ¹⁹⁴Pt ones by 8% and 10%, and the beam time for the counts wanted rises by 3.0%.
+    With clovers the drops are 5–7% and 20–23%, and the beam time rises by 7.2%. `coulex_ni58` has no
+    half-lives and does not change. Deoriented ⁶²Ni events analysed without deorientation read B(E2) 2.7% low.
+    Five-minute runs of both templates agree with the plan on every rate and coincidence row of
+    `Planner.compare()`, with deorientation as without it.
+  - A setup switch with its guide entry, and a toggle under the angular-correlation table of the app. γ rays
+    with deorientation take 25 to 35% longer to make.
+- The E1 polarisation correction to Coulomb excitation, as GOSIA has it, on by default
+  (`[reaction] e1_polarisation`). The virtual excitation of the giant dipole resonance weakens every E2 coupling,
+  transitional and diagonal, by the factor (1 − z a/r) along the orbit, z = d E_cm A / Z² of the excited nucleus
+  (GOSIA manual eq. 3.27–3.28, after Alder and Winther, appendix J; for projectile excitation as GOSIA's code takes
+  it). The setting is GOSIA's parameter d. Left out it is 0.0038, what GOSIA uses since April 2023 when its input
+  does not set it (its manual has 0.005); `e1_polarisation = 0` switches it off. Every setup's numbers change.
+  - It is in the coupled equations (`CoupledChannels`), first order (`Excitation`, `Coulex`) and so in the events,
+    the plan's rates, the angular correlation, `Multistep` and both B(E2) readings of the analysis; the cache of
+    the level schemes' solutions keys on it, and the GOSIA input file writes it as `DIP,`.
+  - At 180° in the sudden limit it lowers the probability by (1 − 0.4 z)², as worked by hand, to 1e-6.
+  - With the default against none: the ⁶²Ni 2⁺ state of `coulex_ni62_pt194` is excited 3.8% less (z = 0.053), the
+    levels it reaches in two steps 6 to 9% less, and the plan's excitations fall 5.1% in the CD and 4.9% in the
+    strip detectors; the ¹⁹⁴Pt 2⁺ state is excited 0.6% less (z = 0.022) and the ⁵⁸Ni 2⁺ state of `coulex_ni58`
+    0.6% less (z = 0.0064). A ⁶²Ni run made with the correction and analysed without it reads B(E2) 7.2% low. The
+    reorientation of the ⁶²Ni 2⁺ state shrinks by 1.2% of itself, but the correction lowers the ratio of its
+    populations at 160° and 60° by 1.4%, as a diagonal matrix element 28% smaller would.
 - The angular correlation between the γ rays of one cascade (backlog 71). Each excitation carries the density
   matrix of its level down the cascade (`physim.nuclear.correlation`): a γ ray is drawn along a direction with
   the probability its level's state gives, and leaves the next level in the state that direction selects, from
@@ -347,7 +399,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
   194Pt) with silicon at backward angles and four clovers*). It is the ⁶²Ni on ¹⁹⁴Pt template with four germanium
   clovers in place of its four single crystals: above and below the beam at 45° and 135°, 150 mm from the target,
   with add-back and BGO shields. The γ-ray efficiency at 1173 keV is 1.71% against 0.83%, and the beam time for
-  the counts wanted 3.7 min against 9.8 min.
+  the counts wanted 3.7 min against 9.8 min (4.2 and 10.6 min with deorientation and the E1 polarisation, on by
+  default since).
 - Both nuclei of the collision are in the simulated events. The `[reaction]` names one; with a level scheme of
   the other in `[levels]` (¹⁹⁴Pt in the ⁶²Ni on ¹⁹⁴Pt template), that nucleus is excited too and its γ rays are
   in the same events and runs.

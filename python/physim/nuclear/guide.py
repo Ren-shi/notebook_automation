@@ -183,6 +183,21 @@ HELP = {
                               "first order (each level in one step from the ground state).", "all",
                               "first order leaves out the levels no matrix element joins to the ground state, "
                               "such as a 4⁺ state."),
+    ("reaction", "deorientation"): _h("Whether an excited nucleus that decays after leaving the target is "
+                                      "deoriented by the hyperfine field of its highly charged ion, which evens out "
+                                      "its γ rays: \"vacuum\" (the two-state model with GOSIA's default "
+                                      "parameters) or \"none\". It needs the levels' half-lives in the level scheme.",
+                                      "vacuum",
+                                      "the γ rays of long-lived levels come out more evenly: the yield in each "
+                                      "γ-ray detector, and so B(E2), changes; most for heavy nuclei and levels "
+                                      "living tens of picoseconds."),
+    ("reaction", "e1_polarisation"): _h("The E1 polarisation correction, as GOSIA has it: the virtual excitation of "
+                                        "the giant dipole resonance weakens every E2 coupling by the factor "
+                                        "(1 − z a/r) along the orbit, z = d E_cm A / Z² of the excited nucleus. "
+                                        "This is GOSIA's parameter d; GOSIA's input DIP, is 1000 d.",
+                                        "0.0038, GOSIA's default (its manual has 0.005); 0 for none",
+                                        "the excitation falls by a few percent, more at backward angles than at "
+                                        "forward ones, as a change of the quadrupole moment would."),
     ("gamma", "material"): _h("What the crystal is made of: Ge or LaBr3.", "Ge",
                               "LaBr3 is faster and more efficient per volume, with about ten times worse resolution."),
     ("gamma", "absorbers"): _h("Material between the target and the detector, such as a lead or copper sheet "

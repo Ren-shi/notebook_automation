@@ -23,12 +23,27 @@ matrix elements are those of the level scheme, with ⟨m‖M‖n⟩ = (−1)^{I_
 the quadrupole moment's. The orbit (a, β) is the symmetrised one of the ground state and a reference level, so
 with one level and weak coupling the solution is first order exactly.
 
+**The E1 polarisation correction** (``e1_polarisation``, GOSIA's parameter d). During the
+collision the field of the other nucleus also excites the giant dipole resonance virtually, and the second-order
+E1 process acts on the low-lying levels as an extra E2 interaction, proportional to the E2 matrix elements but
+falling off as 1/r⁴ and opposing the direct one. GOSIA approximates it (manual eq. 3.27–3.28, after Alder and
+Winther, *Electromagnetic Excitation*, appendix J) by multiplying every E2 collision function by
+
+    1 − z a/r = 1 − z / (ε cosh w + 1),   z = d E_cm A / Z²,
+
+with A and Z of the excited nucleus and E_cm in MeV (from the mass numbers), and so do these equations: the
+transitional and the diagonal E2 couplings alike, E1 and E3 unchanged. It is largest at the closest approach
+(a/r = 1/(ε + 1), a half at 180°), so it lowers the excitation at backward angles more than at forward ones, as a
+change of the quadrupole moment would: an analysis that leaves it out reads a different moment. This class leaves
+it out unless given a d; the solutions of a setup (:func:`physim.nuclear.gamma.cascade_excitation`) have it on,
+with GOSIA's default d = 0.0038, unless the setup's ``[reaction] e1_polarisation`` is 0.
+
 The equations are integrated by a fourth-order Runge–Kutta scheme in w, with steps that follow the fastest phase,
 from where the coupling is negligible on the way in to where it is on the way out. The probabilities of all
 levels sum to one at every step (the coupling is Hermitian).
 
-Not included: the E1 polarisation correction (virtual excitation of the giant dipole resonance), deorientation,
-lifetimes, mutual excitation of both nuclei, and nuclear interference above the safe energy.
+Not included here: mutual excitation of both nuclei, and nuclear interference above the safe energy. Lifetimes and
+deorientation act on the decay, after the collision (:mod:`physim.nuclear.deorientation`, the γ-ray events).
 """
 
 from __future__ import annotations
@@ -57,12 +72,13 @@ class CoupledChannels(Excitation):
     """Coulomb excitation of a level scheme to all orders. ``reference`` is the level whose symmetrised orbit is
     used (the lowest excited level with a matrix element to the ground state if None); ``tolerance`` sets the
     step of the integration (the relative accuracy of the probabilities, roughly); ``max_levels`` caps the
-    scheme (the lowest levels are kept)."""
+    scheme (the lowest levels are kept); ``e1_polarisation`` is GOSIA's parameter d of the E1 polarisation
+    correction (0 leaves it out; see the module's notes)."""
 
     def __init__(self, beam: str, target: str, beam_energy, scheme, excite: str = "target", ground: int = 0,
                  isotropic: bool = False, reference: Optional[int] = None, tolerance: float = 1e-5,
-                 max_levels: int = 30):
-        super().__init__(beam, target, beam_energy, scheme, excite, ground, isotropic)
+                 max_levels: int = 30, e1_polarisation: float = 0.0):
+        super().__init__(beam, target, beam_energy, scheme, excite, ground, isotropic, e1_polarisation)
         self.tolerance = tolerance
         levels = scheme.levels
         keep = [n for n in range(len(levels)) if levels[n].spin is not None]
@@ -82,6 +98,8 @@ class CoupledChannels(Excitation):
         self.cx = cx
         self.a, self.beta, self.k = cx.a, cx.beta, cx.k
         self.z_exciting = cx.z_exciting
+        #: z of the E1 polarisation correction: the E2 couplings carry the factor (1 − z a/r).
+        self.polarisation = cx.polarisation
         mu = cx.mu
         e_cm = cx.e_cm
         self._beta_level = {}
@@ -97,6 +115,8 @@ class CoupledChannels(Excitation):
         self._level_slices = {n: [i for i, (k, _) in enumerate(self.basis) if k == n] for n in self.included}
         self._couplings = self._build_couplings()
         self._mats = np.array([mat for _, _, mat in self._couplings]) if self._couplings else np.zeros((0, 1, 1))
+        #: z of each coupling matrix: that of the E1 polarisation for the E2 ones, zero for the others.
+        self._pol = np.array([self.polarisation if lam == 2 else 0.0 for lam, _, _ in self._couplings])
         n = len(self.basis)
         #: ξ of each basis state, k/(ħc β_n): ξ_nm = ξ_n − ξ_m.
         self.xi_state = np.array([self.k / HBARC_MEV_FM / self._beta_level[ni] for ni, _ in self.basis])
@@ -158,17 +178,18 @@ class CoupledChannels(Excitation):
         e_iphi = ((ch + eps) + 1j * math.sqrt(max(eps * eps - 1.0, 0.0)) * sh) / r
         phase = np.exp(1j * self.xi[None, :, :] * (eps * sh + w)[:, None, None])
         f = np.zeros((len(w), len(self.basis), len(self.basis)), dtype=complex)
-        for lam, mu, mat in self._couplings:
-            f += (e_iphi ** (-mu) / r**lam)[:, None, None] * mat[None, :, :]
+        for (lam, mu, mat), z in zip(self._couplings, self._pol):
+            f += (e_iphi ** (-mu) / r**lam * (1.0 - z / r))[:, None, None] * mat[None, :, :]
         return f * phase
 
     def _operator(self, w: float, eps: float) -> tuple:
-        """(c, p) at one w: the coefficient c_λμ(w) = e^{−iμφ} / r^λ of each coupling matrix, and the phases
+        """(c, p) at one w: the coefficient c_λμ(w) = e^{−iμφ} / r^λ of each coupling matrix (times 1 − z/r for
+        E2 with the E1 polarisation), and the phases
         p_n = exp(i ξ_n (ε sinh w + w)) of the basis states, so that F a = p ⊙ Σ c_λμ mat_λμ (p̄ ⊙ a)."""
         ch, sh = math.cosh(w), math.sinh(w)
         r = eps * ch + 1.0
         e_iphi = ((ch + eps) + 1j * math.sqrt(max(eps * eps - 1.0, 0.0)) * sh) / r
-        c = np.array([e_iphi ** (-mu) / r**lam for lam, mu, _ in self._couplings])
+        c = np.array([e_iphi ** (-mu) / r**lam for lam, mu, _ in self._couplings]) * (1.0 - self._pol / r)
         p = np.exp(1j * self.xi_state * (eps * sh + w))
         return c, p
 
@@ -256,13 +277,14 @@ class CoupledChannels(Excitation):
         todo.sort(key=lambda ke: -len(grids[ke[0]]))
         lam = np.array([lam for lam, _, _ in self._couplings])
         mu = np.array([mu for _, mu, _ in self._couplings])
+        pol = self._pol
         mats = self._mats.astype(complex)
 
         def operator(w, eps, root):
             ch, sh = np.cosh(w), np.sinh(w)
             r = eps * ch + 1.0
             e_iphi = ((ch + eps) + 1j * root * sh) / r
-            c = e_iphi[:, None] ** (-mu[None, :]) / r[:, None] ** lam[None, :]
+            c = e_iphi[:, None] ** (-mu[None, :]) / r[:, None] ** lam[None, :] * (1.0 - pol[None, :] / r[:, None])
             return c, np.exp(1j * self.xi_state[None, :] * (eps * sh + w)[:, None])
 
         def apply(op, a):

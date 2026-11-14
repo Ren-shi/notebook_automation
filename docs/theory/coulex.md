@@ -110,23 +110,74 @@ integrated together (`CoupledChannels.solve_many`), and the forward angles at wh
 more than 3 × 10⁻⁹). The table then takes about 2 s for the six levels of ⁶²Ni, where one angle after the other
 takes 16 s; first order takes 0.2 s.
 
-For `coulex_ni62_pt194` (⁶²Ni at 237 MeV on ¹⁹⁴Pt, the beam excited), at θ = 150° in the CM frame:
+For `coulex_ni62_pt194` (⁶²Ni at 237 MeV on ¹⁹⁴Pt, the beam excited), at θ = 150° in the CM frame, with the E1
+polarisation correction of the default setup (d = 0.0038, below) and without it:
 
-| Level of ⁶²Ni | First order | All orders |
-|---|---|---|
-| 2⁺, 1172.9 keV | 0.1932 | 0.1845 |
-| 0⁺, 2048.6 keV | 0 | 0.0081 |
-| 2⁺, 2301.9 keV | 0.0006 | 0.0017 |
-| 4⁺, 2336.5 keV | 0 | 0.0058 |
-| any level | 0.1938 | 0.2001 |
+| Level of ⁶²Ni | First order | All orders | First order, no E1 polarisation | All orders, no E1 polarisation |
+|---|---|---|---|---|
+| 2⁺, 1172.9 keV | 0.1827 | 0.1756 | 0.1932 | 0.1844 |
+| 0⁺, 2048.6 keV | 0 | 0.0074 | 0 | 0.0081 |
+| 2⁺, 2301.9 keV | 0.0005 | 0.0016 | 0.0006 | 0.0017 |
+| 4⁺, 2336.5 keV | 0 | 0.0053 | 0 | 0.0058 |
+| any level | 0.1833 | 0.1899 | 0.1938 | 0.2001 |
 
-The 2⁺ state loses 4.5% to the levels above it and gets it back, with more, when they decay through it: 3% more
-2⁺ → 0⁺ γ rays than first order gives, 4⁺ → 2⁺ γ rays (1163.5 keV) at 3% of them and 0⁺ → 2⁺ γ rays (875.6 keV)
-at 4%.
+The 2⁺ state loses 3.9% to the levels above it (4.5% without the correction) and gets it back, with more, when
+they decay through it: 3% more 2⁺ → 0⁺ γ rays than first order gives, 4⁺ → 2⁺ γ rays (1163.5 keV) at 3% of them
+and 0⁺ → 2⁺ γ rays (875.6 keV) at 4%.
 
 **One particle per collision.** A collision either excites the nucleus or leaves it as it was, so elastic
 scattering is the Rutherford cross section times 1 − P(θ): 20% fewer elastic particles at backward angles in the
 ⁶²Ni example, and elastic and excited particles together are Rutherford scattering.
+
+**The E1 polarisation correction** (`[reaction] e1_polarisation`, on by default with d = 0.0038). During the
+collision the field of the other nucleus also excites the giant dipole resonance, virtually, and this second-order
+E1 process acts on the low-lying levels like an extra E2 interaction: proportional to the E2 matrix elements,
+falling off as 1/r⁴ instead of 1/r³, and opposing the direct one. physim uses GOSIA's approximation of it
+(D. Cline, T. Czosnyka et al., *GOSIA user manual* (2012), eq. 3.27–3.28, after K. Alder and A. Winther,
+*Electromagnetic Excitation* (North-Holland, 1975), appendix J): every E2 collision function is multiplied along
+the orbit by
+
+$$
+1 - z\,\frac{a}{r} = 1 - \frac{z}{\varepsilon\cosh w + 1},
+\qquad
+z = d\,\frac{E_p A_2}{Z_2^2\,(1 + A_1/A_2)} = d\,\frac{E_\mathrm{cm} A}{Z^2},
+$$
+
+with E_p the beam energy in MeV, 1 the projectile and 2 the target, and A, Z those of the excited nucleus
+(E_cm from the mass numbers). The manual gives the formula for target excitation; for projectile excitation
+GOSIA's code (subroutine `LOAD` of `gosia_20110524.14.f`) takes the same d E_cm A/Z² with A and Z of the
+projectile. The parameter d is the setup's `e1_polarisation`. A setup that does not set it has d = 0.0038, what
+GOSIA uses since version 20110524.11 (April 2023) when its input does not set it, so that a GOSIA run with default
+settings compares like with like; GOSIA's manual has 0.005, its default before then. `e1_polarisation = 0` leaves
+the correction out. (GOSIA's `DIP,` option is 1000 d, and there `DIP,0` counts as not set.) The classes themselves
+(`CoupledChannels`, `Excitation`, `Coulex`) leave it out unless given a d. The factor is largest at the closest approach (a/r = 1/(ε + 1), a half at 180°). It applies to every
+E2 coupling, the transitions and the diagonal elements alike, in the coupled equations and in first order
+(GOSIA puts it into the collision functions every calculation of its starts from); E1 and E3 are unchanged. At
+180° in the sudden limit (ξ → 0) the first-order amplitude is ∫ dw/(1 + cosh w)² = 2/3 and the correction takes
+z ∫ dw/(1 + cosh w)³ = 4z/15 from it, so the probability falls by (1 − 0.4 z)², which the three solvers give.
+
+What the default d = 0.0038 changes on the templates, against `e1_polarisation = 0` (populations and γ rays
+integrated over all angles, the plan's rates in each particle detector, and B(E2) read from one simulated run made
+with the correction, analysed with and without it):
+
+| | z | Populations | γ rays | Plan's excitations | B(E2) read without the correction |
+|---|---|---|---|---|---|
+| `coulex_ni58`: ⁵⁸Ni, one state, first order | 0.0064 | 2⁺ −0.6% | −0.6% | −0.7% CD, −0.5% strips | −0.6% |
+| `coulex_ni62_pt194`: ⁶²Ni (the beam) | 0.053 | 2⁺₁ −3.8%, 0⁺₂ −8.7%, 2⁺₂ −6.4%, 4⁺ −7.9% | 1172.9 keV −4.0%, 1163.5 keV −7.9% | −5.1% CD, −4.9% strips | −7.2% (clovers: −7.1%) |
+| the same: ¹⁹⁴Pt (the target) | 0.022 | 2⁺₁ −0.6%, 2⁺₂ −1.9%, 4⁺₁ −2.1%, 6⁺ −4.0% | 328.5 keV −0.9% | — | — |
+
+z is at the beam energy in the middle of the target (¹⁶O at 28.9 MeV, ⁶²Ni at 233.8 MeV). The levels reached in two
+or three steps lose about twice what the first 2⁺ state loses, since each step is weakened. B(E2) moves more than
+the yield because the excitation saturates (step 7 of the analysis), and analysed with the correction the same run
+gives back the B(E2) it was made with. With the manual's d = 0.005 every change is about a third larger (the ⁶²Ni
+2⁺₁ state −5.0%, B(E2) read without the correction −9.4%).
+
+The reorientation of the ⁶²Ni 2⁺ state (⟨2‖E2‖2⟩ = +6.6 e fm², Q = +5 e fm², raising its population by 8.1% at
+170° against Q = 0) keeps its sign and shrinks by only 1.2% of itself, since the diagonal coupling is weakened with
+the transitional one. But the correction falls off faster than the excitation and so weighs the backward angles
+more: the ratio of the 2⁺ populations at 160° and at 60° falls by 1.4%, which is what a diagonal element 28%
+smaller (4.8 e fm², Q 1.4 e fm² lower) does without the correction (with d = 0.005: 1.9%, 37%, Q 1.8 e fm² lower).
+That is why quadrupole moments are where it matters.
 
 **What this leaves out.**
 
@@ -141,16 +192,123 @@ scattering is the Rutherford cross section times 1 − P(θ): 20% fewer elastic 
 - First-order theory reads B(E2) too high from events with all orders: the 2⁺ → 0⁺ peak holds the feeding from
   above, and a line the Doppler-corrected peak does not resolve from it (the 4⁺ → 2⁺ line of ⁶²Ni lies 9.4 keV
   below a peak 15 keV wide, and is 3% of its window). The analysis therefore solves the coupled equations of the
-  level scheme for the B(E2) that gives the measured yield, 4 to 8% below the first-order reading on the ⁶²Ni
-  example, with every other matrix element taken from the scheme. The excitation saturates: the yield grows as
+  level scheme for the B(E2) that gives the measured yield, 4 to 9% below the first-order reading on the ⁶²Ni
+  examples, with every other matrix element taken from the scheme. The excitation saturates: the yield grows as
   B(E2) to the power 0.67 there, so the uncertainties of B(E2) are 1.5 times those of the yield. With the ENSDF scheme of ⁵⁸Ni added to `coulex_ni58` (¹⁶O at 30 MeV), all orders give 5% fewer
   2⁺ → 0⁺ γ rays in the CD and 2% fewer in the strip detectors than first order, mostly through the reorientation.
-- The coupled equations have no E1 polarisation (virtual excitation of the giant dipole resonance), no excitation
-  of both nuclei in one collision, and no nuclear interference above the safe energy.
+- The coupled equations have no excitation of both nuclei in one collision and no nuclear interference above the
+  safe energy. The E1 polarisation correction is GOSIA's approximation, with one parameter d for every nucleus,
+  not a calculation from the giant dipole resonance of the nucleus at hand.
 - The plan's coincidence rate takes the angular correlation from the same solution as the events: with a level
   scheme the 2⁺ state as the whole scheme leaves it, to all orders. The state alone in first order is more
   sharply aligned: on the ⁶²Ni example it would send 14% fewer γ rays to the crystal at 90° with the CD, and 3%
   more to those at 45° and 135°. Without a level scheme the plan and the events both take the state alone.
+
+## Deorientation in vacuum
+
+An excited nucleus that leaves the target flies on as a highly charged ion with highly excited electron shells.
+The hyperfine field of those electrons acts on the nucleus's magnetic moment and turns its spin about, so the
+alignment the collision gave it is partly lost before it decays: the statistical tensors of the level become
+G_k(t) t_kq, with t the time it has spent in vacuum, and its γ rays come out more evenly. The effect grows with
+the level's lifetime and with the ion's charge. It is on unless `[reaction] deorientation = "none"`
+switches it off (`"vacuum"` says so explicitly).
+
+**The model** (`physim.nuclear.deorientation`) is the two-state model of Brenn and Spehl (F. Bosch and
+H. Spehl, Z. Phys. A 280 (1977) 329; R. Brenn et al., Z. Phys. A 281 (1977) 219) in the form and with the
+default parameters of GOSIA (the GOSIA manual of 10 May 2012, section 4.4, table 4.1 and the VAC switch of
+section 7.3), so that a GOSIA run compares like with like. Where the manual leaves something open, the module
+follows GOSIA's source (subroutines GKVAC, GKK and XSTATIC, and the function ATS, of `gosia_20110524.14.f`).
+The hyperfine field is either *fluctuating*, while the electron shells decay and reorient at random every τ_c,
+or *static*, once the ion is in its ground state; the ion goes from the first to the second at the rate Λ*:
+
+$$
+G_k(t) = e^{-\Lambda^* t} G_k^{fl}(t) + \int_0^t \Lambda^* G_k^{fl}(t') e^{-\Lambda^* t'} G_k^{st}(t-t')\,dt' .
+$$
+
+- The static part is G_k^st(t) = ⟨α_k⟩ + (1 − ⟨α_k⟩) e^{−Γt}, with
+  α_k(I, J) = Σ_F (2F + 1)²/(2J + 1) {F F k; I I J}² for a nuclear spin I and an electronic spin J, averaged
+  over the charge states Q of the ion. These are Gaussian about the Nikolaev–Dmitriev mean
+  Q₀ = Z h^0.6, h = 1/(1 + (0.012008 Z^0.45/β)^{5/3}), with the width √(Q₀(1 − h))/2 of GOSIA's code. The
+  ion with charge Q has the ground-state spin J that GOSIA's table gives for an atom of Z − Q electrons.
+- The fluctuating part decays at λ_k = (1 − ⟨α_k⟩_J)/τ_c · [1 − exp(−⟨ω²⟩τ_c²/(1 − ⟨α_k⟩_J))], with
+  ⟨ω²⟩ = k(k + 1) J(J + 1) ω₀²/3, ω₀ = μ_N g H/(ħJ) and H = K Z β^x, for one mean atomic spin J. GOSIA joins
+  its long-time form (1 − λ_kτ_c) e^{−λ_k t} to t = 0 by two more exponentials, e^{−(λ_k+p)t} and
+  e^{−(λ_k+2p)t}, which gives its time-integral coefficient in closed form:
+  G_k(τ) = G^BS [1 + λ_kτ(r − 2p²ττ_c)/((r + pτ)(r + 2pτ))], with G^BS = [1 + Λ*τ(1 + ⟨α_k⟩Γτ)/(1 + Γτ)]/r,
+  r = (Λ* + λ_k)τ + 1 and p = [(9λ_k² + 8λ_kτ_c(w − λ_k²))^{1/2} − 3λ_k]/(4λ_kτ_c), τ being the level's mean life.
+  The joining function is fixed by G^fl(0) = 1, no slope at t = 0 and that asymptote. With it the convolution
+  has a closed form, which the events use at each nucleus's own time; its average over the decay is GOSIA's
+  G_k(τ) to 2·10⁻⁵. In the manual w is ⟨ω²⟩; GOSIA's code puts ⟨ω²⟩τ_c² there, the quantity of λ_k, and so does
+  physim, to give GOSIA's numbers.
+
+| Parameter | Default (GOSIA) |
+|---|---|
+| mean atomic spin J of the fluctuating state | 3 |
+| Γ, width of the static frequency distribution | 0.02 ps⁻¹ |
+| Λ*, fluctuating-to-static rate | 0.0345 ps⁻¹ |
+| τ_c, correlation time | 3.5 ps |
+| g factor | Z/A |
+| K, x of the field H = K Z β^x | 600 T (6·10⁻⁶ in GOSIA's units), 0.6 |
+
+For the template `coulex_ni62_pt194` this gives, for the first 2⁺ levels:
+
+| Level | Mean life | β after the target | G₂ | G₄ |
+|---|---|---|---|---|
+| ¹⁹⁴Pt 2⁺, 328.5 keV | 60.2 ps | about 0.04 | 0.199 | 0.078 |
+| ⁶²Ni 2⁺, 1172.9 keV | 2.08 ps | about 0.05 | 0.916 | 0.783 |
+
+The platinum recoils do leave the 0.5 mg/cm² target (they go forward with 100 MeV and more) and decay in vacuum;
+the platinum level keeps a fifth of its alignment, the nickel level nine tenths.
+
+**Where it applies.** Only in vacuum. A level that decays while its nucleus is still in the target or its backing,
+or after the nucleus has stopped there, is not deoriented: the app does not model the hyperfine fields of a solid
+or the transient field of a nucleus moving through a magnetised one. A level without a half-life in the level
+scheme decays as it is formed and is not deoriented either, so a setup without a level scheme (`coulex_ni58` as
+shipped) is unchanged by the switch. GOSIA applies the time integral from the moment of the reaction, as for a
+thin target, and switches deorientation off for a thick target. In a thin target the difference is the time the
+nucleus takes to leave, about 0.01 ps.
+
+**In the events** (`gamma_events.simulate_gammas`) each γ ray's level is attenuated through its own time in vacuum.
+That time runs from the later of the moment the level was formed (the reaction, or the decay of the level above)
+and the moment the nucleus left the stack, to the decay drawn from the level's lifetime. The G_k are those of that
+time, at the speed the nucleus left with. In a cascade each level's density matrix is attenuated, G_k t_kq, before
+its γ ray is drawn and before it feeds the next level, and the next level starts its own clock. A converted
+transition has no time drawn: its level is attenuated by the average over its lifetime. One state without a
+cascade has the coefficients of its distribution attenuated in the same way. The run's notes give the share of the
+γ rays whose level spent time in vacuum and their mean G₂.
+
+**In the plan** (`gamma.correlation_table`, and with it the rates, the coincidence predictions and the analysis)
+each level with a half-life is attenuated by G_k(τ), at the speed the nucleus leaves the target with, times the
+chance that it decays after leaving; the chance that it decays inside adds 1. A nucleus that stops in the target
+or backing is not deoriented. The levels above feed each level after their own attenuation, as GOSIA treats the
+feeding. Where the nucleus leaves and how fast are worked out at each angle of the solution's grid, from the
+middle of the target, along the azimuth 0 (a tilted target is taken as seen from there).
+
+**How much it changes.** On the templates, the plan's coincidence rates with deorientation against without:
+
+| Template | ⁶²Ni 2⁺ → 0⁺ coincidences | ¹⁹⁴Pt 2⁺ → 0⁺ coincidences | beam time for the counts wanted |
+|---|---|---|---|
+| `coulex_ni62_pt194` | CD −1.5%, each strip detector −2.9% | CD −8.2%, strip detectors −10.4% | +3.0% |
+| `coulex_ni62_pt194_clovers` | CD −5.3%, strip detectors −6.7% | CD −20.1%, strip detectors −22.8% | +7.2% |
+| `coulex_ni58` | unchanged (no half-life) | — | unchanged |
+
+Detector by detector the change is larger and of either sign. In `coulex_ni62_pt194` the germanium detector at 90°
+sees 28% more ⁶²Ni γ rays and those at 45° and 135° 6% fewer. For platinum behind the strip detectors the 90°
+detector sees 0.44 of even emission without deorientation and 0.93 with it.
+
+Deoriented events of `coulex_ni62_pt194` (400 000 reactions, two seeds) analysed with the default settings give
+B(E2) 2.7% lower when the analysis leaves deorientation out than when it includes it (907.0 against 932.5 e²fm⁴,
+and 838.3 against 861.1): the analysis then expects more γ rays per excitation in the detectors than the nickel
+sends.
+
+**Checked.** The events and the plan were run on the same particle events with deorientation and without, and
+each particle × γ-ray detector pair was compared: how much each nucleus's 2⁺ → 0⁺ line changes in the events
+against how much the plan's factor changes. For `coulex_ni62_pt194`, 400 000 reactions, the mean pull was +0.03
+for ⁶²Ni and +0.07 for ¹⁹⁴Pt, with changes up to a factor 2.2. For the clover template, 300 000 reactions, it was
++0.12 and +0.14. Five-minute runs, predicted against measured (`Planner.compare`), agree on every rate and
+coincidence row with deorientation as without it. With the clovers the platinum peak, predicted 20% lower with
+deorientation, was measured at 0.990 ± 0.006 of the prediction in the CD and 0.997 and 0.994 in the strip
+detectors.
 
 ## γ rays and the Doppler shift
 
@@ -209,6 +367,10 @@ at 0.7% statistical error from 2 × 10⁶ events.
 | Safe distance | Closest approach equals the safe distance at the largest safe angle | 1e-9 | `test_safe_distance` |
 | Doppler formula | Four-vector Lorentz boost | 1e-12 | `test_doppler_formula_is_a_lorentz_boost` |
 | Angles solved together | Each angle solved alone | 1e-12 | `test_many_angles_solved_together_are_the_single_solutions` |
+| E1 polarisation strength z, target and projectile excitation | GOSIA manual eq. 3.28; GOSIA's subroutine `LOAD` | 1e-6 | `test_z_is_gosias_for_target_and_projectile_excitation` |
+| E1 polarisation at 180°, ξ → 0 | (1 − 0.4 z)² from the integrals above | 1e-6 (first order), 1e-5 (coupled equations) | `test_its_size_in_sudden_backscattering_is_the_hand_worked_one` |
+| E1 polarisation with a diagonal element | Second-order perturbation theory by nested quadrature | 2e-3 | `test_with_a_diagonal_element_the_solver_and_second_order_theory_agree_on_the_correction` |
+| B(E2) from a run made with the E1 polarisation, analysed with it | The value put in | 8% (the run's statistics) | `test_the_analysis_gives_back_the_b_e2_of_a_run_made_with_the_correction` |
 | The 4⁺ → 2⁺ and 0⁺ → 2⁺ lines in a 40 min run of ⁶²Ni on ¹⁹⁴Pt | Multi-step yields (`Multistep.yields`) times what the crystals record in the line's window | 3σ and 3% (absolute); 3σ and 1% (relative to the 2⁺ line) | `test_a_run_of_62ni_on_194pt_shows_the_4plus_and_0plus_lines_of_the_multistep_solution` |
 | Excitation rate in each particle detector, events against `Rates` | The same excitation probability in both | 3σ and 0.5% | `test_the_rates_and_the_generator_share_the_excitation_probability` |
 | Monte Carlo against analytic rates, every channel and detector of `coulex_ni58` | `Rates` | 4σ | `test_monte_carlo_rates_agree_with_analytic_rates[coulex_ni58]` |

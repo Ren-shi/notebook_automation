@@ -383,12 +383,12 @@ def test_a_clover_run_counts_what_its_data_sheet_efficiency_says(tmp_path):
     assert _own_shares(crystals_of(Experiment.example("coulex_ni62_pt194"))[0]) == pytest.approx(1.0)
     # The efficiency is the data sheet's all the same, in the events as in the plan: the run counts the platinum
     # peak the plan predicts. (With each crystal's efficiency spread over its whole face the run lost 3% of the
-    # γ rays; platinum is the line to look at, with 18 000 counts in two minutes.)
+    # γ rays; platinum is the line to look at, with 15 000 counts in two minutes.)
     p = Planner(exp)
     p.create_experiment(root=tmp_path)
     p.start_run("beam", duration="1 h", budget="2 min")
     rows = [r for r in p.compare()["rows"] if r["quantity"] == f"Coincidences in the {PT_FIRST} peak"]
     assert len(rows) == 3
     measured, predicted = sum(r["measured"] for r in rows), sum(r["predicted"] for r in rows)
-    assert measured * p.run.real_s > 15_000
+    assert measured * p.run.real_s > 14_000   # deorientation in vacuum evens the platinum γ rays out
     assert measured / predicted == pytest.approx(1.0, abs=0.015)

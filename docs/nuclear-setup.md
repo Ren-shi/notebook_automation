@@ -101,6 +101,8 @@ distance **d** from the target. θ = 0° is straight downstream and θ = 180° s
 | `multipolarity` | no | `"E2"` (default), `"E1"` or `"E3"`: the transition from the 0⁺ ground state. |
 | `emission` | no | `"correlated"` (default): the γ rays follow the particle–γ angular correlation. `"isotropic"`: they leave evenly in all directions. |
 | `order` | no | With a level scheme of the excited nucleus (`[levels]`): `"all"` (default) populates its levels in the simulated events as the coupled equations give them, to all orders (a 4⁺ state reached through the 2⁺, the reorientation); `"first"` keeps first-order theory, each level in one step from the ground state. Without a level scheme the events are first order. |
+| `deorientation` | no | `"vacuum"` (default): a level that decays after its nucleus has left the target is deoriented by the hyperfine field of its ion first (the two-state model with GOSIA's default parameters), in the events and in the plan alike. `"none"`: every level decays with the orientation the collision gave it. It needs the levels' half-lives in a level scheme (`[levels]`); a level without one is not deoriented. See {doc}`theory/coulex`. |
+| `e1_polarisation` | no | The E1 polarisation correction, as GOSIA has it: GOSIA's parameter d. Left out it is `0.0038`, GOSIA's own default since 2023 (its manual has 0.005); `0` switches the correction off. Every E2 coupling is weakened by (1 − z a/r) along the orbit, z = d E_cm A / Z² of the excited nucleus: with the default, 3.8% fewer 2⁺ excitations of ⁶²Ni in the `coulex_ni62_pt194` example, 0.6% in `coulex_ni58`. GOSIA's input `DIP,` is 1000 d. |
 | `b_up` | for `coulex` | B(Eλ↑), the reduced transition probability up, with its unit: `"0.0695 e2b2"` or `"695 e2fm4"` for E2 (`e2b`/`e2fm2` for E1, `e2b3`/`e2fm6` for E3). Take it from ENSDF; physim does not look it up. |
 
 A Coulomb-excitation setup:
@@ -369,10 +371,18 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
   particle is in the backward ring, and those at 45° and 135° see 1.5 times. With a level scheme that the events
   follow, the table is for the `[reaction]` state in that scheme's solution (to all orders unless the setup
   says first order), with its feeding from above: the plan and the events then share one angular correlation.
+- **Deorientation in vacuum.** With `[reaction] deorientation = "vacuum"` a level with a half-life that decays
+  after leaving the target is deoriented before it decays: its tensors become G_k t_kq, with GOSIA's two-state
+  model (`physim.nuclear.deorientation`). The table then uses G_k averaged over the level's decay, and the
+  simulated events the G_k of each nucleus's own time in vacuum. On `coulex_ni62_pt194` the ¹⁹⁴Pt 2⁺ level
+  (60 ps) keeps G₂ = 0.20 of its alignment and the ⁶²Ni 2⁺ level (2 ps) G₂ = 0.92: the platinum γ rays
+  in coincidence with the strip detectors drop by 10%, the nickel ones by 3%. {doc}`theory/coulex` has the
+  model and the numbers.
 - **Not included:** excitation in two or more steps and reorientation (first order only, so the matrix elements
-  enter through their size and not their sign), deorientation in vacuum, and lifetimes: every state decays in
-  flight with the orientation it was given. The simulated events of a setup with a level scheme do have the
-  further steps and the reorientation: see "Multi-step excitation and reorientation" below.
+  enter through their size and not their sign); `Excitation` itself has no lifetimes and no deorientation, so
+  every state decays with the orientation it was given. The simulated events of a setup with a level scheme do
+  have the further steps and the reorientation (see "Multi-step excitation and reorientation" below), and the
+  events and the table have the deorientation when it is switched on.
 
 (particle-gamma-events)=
 ## Particle–γ events
@@ -570,6 +580,13 @@ cc.at(150.0).gamma_yield(1, 0)    # with the decay through the scheme
   moment's, through `quadrupole_factor`.
 - **Speed:** a Runge–Kutta integration whose steps follow the fastest phase. 25 levels (265 substates) take
   about 0.4 s per angle; a grid of 45 angles and 2 energies for an experiment about 40 s.
+- **E1 polarisation:** `CoupledChannels(..., e1_polarisation=0.0038)` (and the same argument of first-order
+  `Excitation` and `Coulex`) multiplies every E2 coupling, diagonal ones included, by GOSIA's factor
+  (1 − z a/r), z = d E_cm A / Z² of the excited nucleus (GOSIA manual eq. 3.27–3.28, after Alder and Winther,
+  appendix J). The classes leave it out unless given a d; a setup has it on, with GOSIA's default d = 0.0038,
+  unless `[reaction] e1_polarisation = 0`, and then the events, the plan's rates, the angular correlation,
+  `Multistep` and the analysis all have it. {doc}`theory/coulex` has the formula and what it
+  changes on the examples.
 
 `physim.nuclear.multistep` applies it to the planned experiment:
 
@@ -591,8 +608,10 @@ ms.gosia_input(y)                   # a GOSIA input file for this setup, with th
 - **The fit** adjusts up to three matrix elements by Gauss–Newton least squares to measured counts; its
   uncertainties come from the curvature at the minimum.
 - **GOSIA** is not part of physim. The input file follows the published format so that GOSIA, run elsewhere, can
-  check these numbers or fit the matrix elements; it has not been checked against a run, since no GOSIA
-  installation exists on the development machine.
+  check these numbers or fit the matrix elements. Its CONT block sets the E1 polarisation (`DIP,`, 1000 d) to the
+  setup's (`DIP,3.800` by default), or to a millionth when the setup switches it off, since GOSIA takes a missing
+  or zero `DIP,` as 0.0038. It has
+  not been checked against a run, since no GOSIA installation exists on the development machine.
 
 In the app, **Solve with all orders** in the "Excitation and γ rays" tab (once a level scheme is looked up) shows
 the yields with all orders and with first order, the prolate–zero–oblate comparison per ring, and offers the
@@ -608,8 +627,10 @@ instead. The table of angles is solved once per setup, all angles together (abou
 the kinematics of the `[reaction]` state. The analysis extracts B(E2) from such events to all orders (step 7
 under {ref}`Automatic analysis <automatic-analysis>` below).
 
-Not included: the E1 polarisation correction, deorientation, lifetimes, mutual excitation of both nuclei, and
-nuclear interference above the safe energy.
+Not included: mutual excitation of both nuclei, and nuclear interference above the safe energy. The E1
+polarisation correction is included, with d = 0.0038 unless `[reaction] e1_polarisation` says otherwise.
+Lifetimes and deorientation in vacuum act on the decay, after the collision: they are in the events, and
+deorientation is in the plan too, unless `[reaction] deorientation = "none"` switches it off.
 
 ## Tracks of simulated events
 

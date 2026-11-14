@@ -119,7 +119,8 @@ review of 2026-10-07 settled the following, written up as items 63–74:
 - **Educational mode:** historical experiments (Rutherford, Compton, Chadwick) as limited-movement scenes with
   modern equipment. It reuses the scene of item 52.
 - **Lifetimes:** now item 73.
-- **Deorientation** of the angular correlation in vacuum.
+- **Deorientation** of the angular correlation in vacuum: built, as GOSIA's two-state model
+  (`[reaction] deorientation = "vacuum"`, `physim.nuclear.deorientation`).
 - **Radioactive beams:** mixed beams and decay background from stopped beam. The design leaves room for both.
 - **GRSISort export layout.**
 - **A facility case study** (iThemba LABS, AFRODITE) as a validation of the whole chain against published data.
