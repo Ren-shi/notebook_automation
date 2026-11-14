@@ -183,6 +183,14 @@ HELP = {
                               "first order (each level in one step from the ground state).", "all",
                               "first order leaves out the levels no matrix element joins to the ground state, "
                               "such as a 4⁺ state."),
+    ("reaction", "deorientation"): _h("Whether an excited nucleus that decays after leaving the target is "
+                                      "deoriented by the hyperfine field of its highly charged ion, which evens out "
+                                      "its γ rays: \"vacuum\" (the two-state model with GOSIA's default "
+                                      "parameters) or \"none\". It needs the levels' half-lives in the level scheme.",
+                                      "none",
+                                      "the γ rays of long-lived levels come out more evenly: the yield in each "
+                                      "γ-ray detector, and so B(E2), changes; most for heavy nuclei and levels "
+                                      "living tens of picoseconds."),
     ("gamma", "material"): _h("What the crystal is made of: Ge or LaBr3.", "Ge",
                               "LaBr3 is faster and more efficient per volume, with about ten times worse resolution."),
     ("gamma", "absorbers"): _h("Material between the target and the detector, such as a lead or copper sheet "

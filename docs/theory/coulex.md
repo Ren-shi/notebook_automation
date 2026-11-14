@@ -152,6 +152,112 @@ scattering is the Rutherford cross section times 1 − P(θ): 20% fewer elastic 
   sharply aligned: on the ⁶²Ni example it would send 14% fewer γ rays to the crystal at 90° with the CD, and 3%
   more to those at 45° and 135°. Without a level scheme the plan and the events both take the state alone.
 
+## Deorientation in vacuum
+
+An excited nucleus that leaves the target flies on as a highly charged ion with highly excited electron shells.
+The hyperfine field of those electrons acts on the nucleus's magnetic moment and turns its spin about, so the
+alignment the collision gave it is partly lost before it decays: the statistical tensors of the level become
+G_k(t) t_kq, with t the time it has spent in vacuum, and its γ rays come out more evenly. The effect grows with
+the level's lifetime and with the ion's charge. `[reaction] deorientation = "vacuum"` switches it on;
+`"none"`, or leaving it out, keeps it off.
+
+**The model** (`physim.nuclear.deorientation`) is the two-state model of Brenn and Spehl (F. Bosch and
+H. Spehl, Z. Phys. A 280 (1977) 329; R. Brenn et al., Z. Phys. A 281 (1977) 219) in the form and with the
+default parameters of GOSIA (the GOSIA manual of 10 May 2012, section 4.4, table 4.1 and the VAC switch of
+section 7.3), so that a GOSIA run compares like with like. Where the manual leaves something open, the module
+follows GOSIA's source (subroutines GKVAC, GKK and XSTATIC, and the function ATS, of `gosia_20110524.14.f`).
+The hyperfine field is either *fluctuating*, while the electron shells decay and reorient at random every τ_c,
+or *static*, once the ion is in its ground state; the ion goes from the first to the second at the rate Λ*:
+
+$$
+G_k(t) = e^{-\Lambda^* t} G_k^{fl}(t) + \int_0^t \Lambda^* G_k^{fl}(t') e^{-\Lambda^* t'} G_k^{st}(t-t')\,dt' .
+$$
+
+- The static part is G_k^st(t) = ⟨α_k⟩ + (1 − ⟨α_k⟩) e^{−Γt}, with
+  α_k(I, J) = Σ_F (2F + 1)²/(2J + 1) {F F k; I I J}² for a nuclear spin I and an electronic spin J, averaged
+  over the charge states Q of the ion. These are Gaussian about the Nikolaev–Dmitriev mean
+  Q₀ = Z h^0.6, h = 1/(1 + (0.012008 Z^0.45/β)^{5/3}), with the width √(Q₀(1 − h))/2 of GOSIA's code. The
+  ion with charge Q has the ground-state spin J that GOSIA's table gives for an atom of Z − Q electrons.
+- The fluctuating part decays at λ_k = (1 − ⟨α_k⟩_J)/τ_c · [1 − exp(−⟨ω²⟩τ_c²/(1 − ⟨α_k⟩_J))], with
+  ⟨ω²⟩ = k(k + 1) J(J + 1) ω₀²/3, ω₀ = μ_N g H/(ħJ) and H = K Z β^x, for one mean atomic spin J. GOSIA joins
+  its long-time form (1 − λ_kτ_c) e^{−λ_k t} to t = 0 by two more exponentials, e^{−(λ_k+p)t} and
+  e^{−(λ_k+2p)t}, which gives its time-integral coefficient in closed form:
+  G_k(τ) = G^BS [1 + λ_kτ(r − 2p²ττ_c)/((r + pτ)(r + 2pτ))], with G^BS = [1 + Λ*τ(1 + ⟨α_k⟩Γτ)/(1 + Γτ)]/r,
+  r = (Λ* + λ_k)τ + 1 and p = [(9λ_k² + 8λ_kτ_c(w − λ_k²))^{1/2} − 3λ_k]/(4λ_kτ_c), τ being the level's mean life.
+  The joining function is fixed by G^fl(0) = 1, no slope at t = 0 and that asymptote. With it the convolution
+  has a closed form, which the events use at each nucleus's own time; its average over the decay is GOSIA's
+  G_k(τ) to 2·10⁻⁵. In the manual w is ⟨ω²⟩; GOSIA's code puts ⟨ω²⟩τ_c² there, the quantity of λ_k, and so does
+  physim, to give GOSIA's numbers.
+
+| Parameter | Default (GOSIA) |
+|---|---|
+| mean atomic spin J of the fluctuating state | 3 |
+| Γ, width of the static frequency distribution | 0.02 ps⁻¹ |
+| Λ*, fluctuating-to-static rate | 0.0345 ps⁻¹ |
+| τ_c, correlation time | 3.5 ps |
+| g factor | Z/A |
+| K, x of the field H = K Z β^x | 600 T (6·10⁻⁶ in GOSIA's units), 0.6 |
+
+For the template `coulex_ni62_pt194` this gives, for the first 2⁺ levels:
+
+| Level | Mean life | β after the target | G₂ | G₄ |
+|---|---|---|---|---|
+| ¹⁹⁴Pt 2⁺, 328.5 keV | 60.2 ps | about 0.04 | 0.199 | 0.078 |
+| ⁶²Ni 2⁺, 1172.9 keV | 2.08 ps | about 0.05 | 0.916 | 0.783 |
+
+The platinum recoils do leave the 0.5 mg/cm² target (they go forward with 100 MeV and more) and decay in vacuum;
+the platinum level keeps a fifth of its alignment, the nickel level nine tenths.
+
+**Where it applies.** Only in vacuum. A level that decays while its nucleus is still in the target or its backing,
+or after the nucleus has stopped there, is not deoriented: the app does not model the hyperfine fields of a solid
+or the transient field of a nucleus moving through a magnetised one. A level without a half-life in the level
+scheme decays as it is formed and is not deoriented either, so a setup without a level scheme (`coulex_ni58` as
+shipped) is unchanged by the switch. GOSIA applies the time integral from the moment of the reaction, as for a
+thin target, and switches deorientation off for a thick target. In a thin target the difference is the time the
+nucleus takes to leave, about 0.01 ps.
+
+**In the events** (`gamma_events.simulate_gammas`) each γ ray's level is attenuated through its own time in vacuum.
+That time runs from the later of the moment the level was formed (the reaction, or the decay of the level above)
+and the moment the nucleus left the stack, to the decay drawn from the level's lifetime. The G_k are those of that
+time, at the speed the nucleus left with. In a cascade each level's density matrix is attenuated, G_k t_kq, before
+its γ ray is drawn and before it feeds the next level, and the next level starts its own clock. A converted
+transition has no time drawn: its level is attenuated by the average over its lifetime. One state without a
+cascade has the coefficients of its distribution attenuated in the same way. The run's notes give the share of the
+γ rays whose level spent time in vacuum and their mean G₂.
+
+**In the plan** (`gamma.correlation_table`, and with it the rates, the coincidence predictions and the analysis)
+each level with a half-life is attenuated by G_k(τ), at the speed the nucleus leaves the target with, times the
+chance that it decays after leaving; the chance that it decays inside adds 1. A nucleus that stops in the target
+or backing is not deoriented. The levels above feed each level after their own attenuation, as GOSIA treats the
+feeding. Where the nucleus leaves and how fast are worked out at each angle of the solution's grid, from the
+middle of the target, along the azimuth 0 (a tilted target is taken as seen from there).
+
+**How much it changes.** On the templates, the plan's coincidence rates with deorientation against without:
+
+| Template | ⁶²Ni 2⁺ → 0⁺ coincidences | ¹⁹⁴Pt 2⁺ → 0⁺ coincidences | beam time for the counts wanted |
+|---|---|---|---|
+| `coulex_ni62_pt194` | CD −1.5%, each strip detector −2.9% | CD −8.2%, strip detectors −10.4% | +3.0% |
+| `coulex_ni62_pt194_clovers` | CD −5.3%, strip detectors −6.7% | CD −20.1%, strip detectors −22.8% | +7.2% |
+| `coulex_ni58` | unchanged (no half-life) | — | unchanged |
+
+Detector by detector the change is larger and of either sign. In `coulex_ni62_pt194` the germanium detector at 90°
+sees 28% more ⁶²Ni γ rays and those at 45° and 135° 6% fewer. For platinum behind the strip detectors the 90°
+detector sees 0.44 of even emission without deorientation and 0.93 with it.
+
+Deoriented events of `coulex_ni62_pt194` (400 000 reactions, two seeds) analysed with the default settings give
+B(E2) 2.7% lower when the analysis leaves deorientation out than when it includes it (907.0 against 932.5 e²fm⁴,
+and 838.3 against 861.1): the analysis then expects more γ rays per excitation in the detectors than the nickel
+sends.
+
+**Checked.** The events and the plan were run on the same particle events with deorientation and without, and
+each particle × γ-ray detector pair was compared: how much each nucleus's 2⁺ → 0⁺ line changes in the events
+against how much the plan's factor changes. For `coulex_ni62_pt194`, 400 000 reactions, the mean pull was +0.03
+for ⁶²Ni and +0.07 for ¹⁹⁴Pt, with changes up to a factor 2.2. For the clover template, 300 000 reactions, it was
++0.12 and +0.14. Five-minute runs, predicted against measured (`Planner.compare`), agree on every rate and
+coincidence row with deorientation as without it. With the clovers the platinum peak, predicted 20% lower with
+deorientation, was measured at 0.990 ± 0.006 of the prediction in the CD and 0.997 and 0.994 in the strip
+detectors.
+
 ## γ rays and the Doppler shift
 
 The excited nucleus decays in flight. A photon emitted at angle α to its velocity β has

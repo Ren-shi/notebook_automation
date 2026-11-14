@@ -523,6 +523,10 @@ class Excitation:
     #: How the levels of a level scheme are populated in the events: "all" orders (also when left out) or
     #: "first" order.
     order: Optional[str] = None
+    #: Whether a nucleus that decays after leaving the target is deoriented by the hyperfine field of its ion:
+    #: "none" (also when left out) or "vacuum" (the two-state model with GOSIA's parameters,
+    #: :mod:`physim.nuclear.deorientation`).
+    deorientation: Optional[str] = None
 
     SPECS = (
         _Field("excite", "str", check=lambda s: None if s in ("target", "projectile")
@@ -533,6 +537,8 @@ class Excitation:
         _Field("emission", "str", check=lambda s: None if s in ("correlated", "isotropic")
                else "must be 'correlated' or 'isotropic'"),
         _Field("order", "str", check=lambda s: None if s in ("all", "first") else "must be 'all' or 'first'"),
+        _Field("deorientation", "str", check=lambda s: None if s in ("none", "vacuum")
+               else "must be 'none' or 'vacuum'"),
     )
 
     @property

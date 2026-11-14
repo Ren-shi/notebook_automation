@@ -2374,6 +2374,15 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             ui.toggle({"correlated": "Correlated with the particle", "isotropic": "Isotropic"}, value=g["emission"],
                       on_change=lambda e: direct(lambda planner: planner.set("reaction", "emission", e.value))
                       ).props("dense no-caps unelevated")
+            if g["emission"] == "correlated":
+                ui.label("A nucleus that decays after leaving the target is deoriented by the hyperfine field of "
+                         "its highly charged ion (the two-state model, with GOSIA's parameters): its γ rays come "
+                         "out more evenly, the more so the longer its level lives.").classes("text-xs ps-muted")
+                ui.toggle({"none": "No deorientation", "vacuum": "Deorientation in vacuum"},
+                          value=g.get("deorientation", "none"),
+                          on_change=lambda e: direct(lambda planner: planner.set("reaction", "deorientation",
+                                                                                 e.value))
+                          ).props("dense no-caps unelevated")
             names = list(dict.fromkeys((r["gamma_detector"], r["crystal"]) for r in g["correlation"]))
             cols = [("p", "Particle detector")] + [(f"c{i}", f"{n} {c}".strip()) for i, (n, c) in enumerate(names)]
             by = {}

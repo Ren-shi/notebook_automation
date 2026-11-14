@@ -1507,7 +1507,8 @@ class Planner:
                 "xi": cx.xi, "eta": cx.eta, "safe_distance_fm": cx.safe_distance, "max_safe_angle": cx.max_safe_angle(),
                 "total_mb": cx.total(), "theta_cm": th, "probability": cx.probability(th),
                 "rates": rates, "particles": self._particle_energies(ch), "doppler": self._cache["gamma"],
-                "emission": exc.emission or "correlated", "correlation": self.correlation()}
+                "emission": exc.emission or "correlated", "deorientation": exc.deorientation or "none",
+                "correlation": self.correlation()}
 
     def correlation(self) -> list:
         """For every particle detector × γ-ray crystal, the γ rays seen in coincidence relative to isotropic

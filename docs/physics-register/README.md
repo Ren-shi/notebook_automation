@@ -57,6 +57,7 @@ Second slice: Coulomb excitation (backlog item 43).
 | Coulomb excitation, first-order semiclassical | ✅ | ✅ | 🟡 GOSIA requested (`pending/coulex_gosia.md`) | ✅ closed forms at 180° (1e-6), engine-orbit integration (5e-8), adiabatic cutoff; 🟡 measured data requested | [Theory](../theory/coulex.md) | 43 |
 | γ-ray Doppler shift and broadening | ✅ | ✅ | — exact formula instead | ✅ Lorentz boost (1e-12) | [Theory](../theory/coulex.md) | 43 |
 | Coulomb-excitation rates and spectra | ✅ | ✅ | — | ✅ Monte Carlo against analytic rates per channel within 4σ (`coulex_ni58`) | [Theory](../theory/coulex.md) | 43 |
+| Deorientation in vacuum (two-state model, GOSIA's parameters; off unless switched on) | ✅ | ✅ | 🟡 a GOSIA run not yet made; GOSIA's formulas transcribed from its source agree to 1e-6 | ✅ G_k(0) = 1, long-time hard core, time integral against quadrature; events against plan crystal by crystal | [Theory](../theory/coulex.md) | — |
 
 Next slices: inelastic scattering through the nuclear interaction, then transfer reactions and fusion-evaporation.
 
