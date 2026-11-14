@@ -1,0 +1,16 @@
+# tool: GOSIA 20110524.14 (N. Warr's release of 11 Nov 2026), OP,STAR, built with gfortran 16.2.0 (WinLibs, -O2 -std=legacy)
+# produced by: Claude for Ren-shi, run on this machine, 2026-11-14
+# settings: input coulex_gosia.inp with the matrix element divided by 10 (<2+||E2||0+> = 0.0263629 e b instead of
+#   0.263629 e b) and the 2+ population multiplied by 100. Weak coupling makes GOSIA's all-orders solution first order
+#   (higher orders change it by ~1e-5 relative), which is what physim.nuclear.coulex computes. CONT ACC,8. (the
+#   populations change by <1e-5 relative from ACC,5. to ACC,8.); DIP left at its default 0.0038 (no effect here: the
+#   E1 polarisation acts on diagonal E2 elements only, and Q(2+) = 0). Masses are GOSIA's integer A (16, 58);
+#   kinematics non-relativistic. theta_cm_deg is GOSIA's printed CM angle for the lab angles of the input (physim's
+#   TwoBody for 60, 90, 120, 150, 170 deg CM). GOSIA does not print dσ/dΩ in OP,STAR, so that column is left out.
+#   The all-orders run with the full matrix element is in coulex_gosia_all_orders.csv.
+beam,target,beam_energy_mev,state_mev,b_e2_e2b2,theta_cm_deg,probability
+16O,58Ni,30.0,1.454,0.0695,59.974,4.32169e-04
+16O,58Ni,30.0,1.454,0.0695,89.968,1.49690e-03
+16O,58Ni,30.0,1.454,0.0695,119.970,2.40220e-03
+16O,58Ni,30.0,1.454,0.0695,149.982,2.75664e-03
+16O,58Ni,30.0,1.454,0.0695,169.994,2.80227e-03

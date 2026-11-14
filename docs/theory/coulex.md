@@ -213,4 +213,6 @@ at 0.7% statistical error from 2 × 10⁶ events.
 | Excitation rate in each particle detector, events against `Rates` | The same excitation probability in both | 3σ and 0.5% | `test_the_rates_and_the_generator_share_the_excitation_probability` |
 | Monte Carlo against analytic rates, every channel and detector of `coulex_ni58` | `Rates` | 4σ | `test_monte_carlo_rates_agree_with_analytic_rates[coulex_ni58]` |
 | Inelastic peak below the elastic one by the kinematic difference | `TwoBody` with and without E* | 10% | `test_coulomb_excitation_in_the_report` |
-| Against GOSIA and a published measurement | Requested from the user (`tests/reference/nuclear/pending/coulex_gosia.md`) | — | `validation.coulex_vs_gosia` (pending) |
+| Against GOSIA, first order, ¹⁶O + ⁵⁸Ni at 30 MeV, five angles | GOSIA 20110524.14 with the matrix element ÷10 (weak coupling), `tests/reference/nuclear/coulex_gosia.csv` | 2% (worst 0.6%) | `validation.coulex_vs_gosia` |
+| Against GOSIA, all orders, the same case | GOSIA 20110524.14, `coulex_gosia_all_orders.csv` | 1% (worst 0.6%) | `test_all_orders_agree_with_gosia` |
+| Against a published measurement | Requested from the user (`tests/reference/nuclear/pending/coulex_literature.md`) | — | not yet written |
