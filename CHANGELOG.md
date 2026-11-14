@@ -11,6 +11,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Deorientation in vacuum and the E1 polarisation correction are both on by default (the two entries below). Together
+  they change every Coulomb-excitation plan with a level scheme: on the ⁶²Ni on ¹⁹⁴Pt template the ⁶²Ni
+  coincidences fall by 6.5% (CD) and 7.7% (strip detectors) and the beam time for the counts wanted rises by 8.3%
+  (9.8 to 10.6 min); with clovers by 10.1% and 11.2%, and 12.6% (3.7 to 4.2 min). `coulex_ni58` has no
+  half-lives, so only the E1 polarisation acts there: 0.6 to 0.8% fewer coincidences. `deorientation = "none"`
+  and `e1_polarisation = 0` give the numbers of before.
 - Deorientation in vacuum, on by default (`[reaction] deorientation`: `"vacuum"`, or `"none"` to switch it
   off). An excited nucleus that decays
   after leaving the target is deoriented by the hyperfine field of its highly charged ion: its statistical tensors
@@ -393,7 +399,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
   194Pt) with silicon at backward angles and four clovers*). It is the ⁶²Ni on ¹⁹⁴Pt template with four germanium
   clovers in place of its four single crystals: above and below the beam at 45° and 135°, 150 mm from the target,
   with add-back and BGO shields. The γ-ray efficiency at 1173 keV is 1.71% against 0.83%, and the beam time for
-  the counts wanted 3.7 min against 9.8 min.
+  the counts wanted 3.7 min against 9.8 min (4.2 and 10.6 min with deorientation and the E1 polarisation, on by
+  default since).
 - Both nuclei of the collision are in the simulated events. The `[reaction]` names one; with a level scheme of
   the other in `[levels]` (¹⁹⁴Pt in the ⁶²Ni on ¹⁹⁴Pt template), that nucleus is excited too and its γ rays are
   in the same events and runs.

@@ -102,7 +102,7 @@ def test_add_back_returns_compton_events_to_the_peak_in_the_simulated_run(runs):
     # ... and the Doppler correction is made from that crystal.
     assert not np.allclose(g["corrected_recoil"][switched], g0["corrected_recoil"][switched])
     assert np.allclose(g["corrected_recoil"][~moved], g0["corrected_recoil"][~moved])
-    assert "Add-back returned" in g.notes[-1]
+    assert any("Add-back returned" in note for note in g.notes)
 
 
 def test_suppression_lowers_the_continuum_by_the_factor_and_leaves_the_peak(runs):

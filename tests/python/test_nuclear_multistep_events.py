@@ -24,13 +24,15 @@ TWO, ZERO, FOUR = 1, 2, 4
 LINE_4_2, LINE_0_2, LINE_2_0 = 1.16355, 0.87564, 1.17291  # MeV: differences of the level energies
 
 
-def ni62(order=None, emission=None) -> Planner:
+def ni62(order=None, emission=None, deorientation=None) -> Planner:
     p = Planner.example("coulex_ni62_pt194")
     d = p.draft
     if order is not None:
         d["reaction"]["order"] = order
     if emission is not None:
         d["reaction"]["emission"] = emission
+    if deorientation is not None:
+        d["reaction"]["deorientation"] = deorientation
     assert p._apply(d), p.problems
     return p
 
@@ -200,7 +202,8 @@ def test_the_plans_angular_correlation_is_the_level_schemes():
     def factors(rows):
         return {(r["particle_detector"], r["gamma_detector"]): r["detector_factor"] for r in rows}
 
-    exp = ni62().experiment
+    # Without deorientation in vacuum, which evens the pattern out further (tests/python/test_nuclear_deorientation.py).
+    exp = ni62(deorientation="none").experiment
     assert state_transition(exp) == (TWO, 0)
     plan = factors(correlation_table(exp))
     assert len(plan) == 12
@@ -219,7 +222,7 @@ def test_the_plans_angular_correlation_is_the_level_schemes():
     for g in ("Ge45", "Ge135"):
         assert plan[("CD", g)] / alone[("CD", g)] == pytest.approx(0.970, abs=0.005)
     # With the scheme in first order the two are the same (the second 2⁺ state feeds the first a little).
-    first = factors(correlation_table(ni62(order="first").experiment))
+    first = factors(correlation_table(ni62(order="first", deorientation="none").experiment))
     assert all(first[k] == pytest.approx(alone[k], rel=0.01) for k in plan)
     # The rates use it: the coincidences of each particle detector are its excitations × the efficiency of the
     # γ-ray detectors, each with its factor.
@@ -229,7 +232,7 @@ def test_the_plans_angular_correlation_is_the_level_schemes():
     for det in ("CD", "DSSD-L", "DSSD-R"):
         assert rates.gamma_efficiency(det)[0] == pytest.approx(sum(effs[g] * plan[(det, g)] for g in effs))
     # Without γ rays that follow the correlation only the forward throw is left, for the scheme as for a state.
-    even = ni62(emission="isotropic").experiment
+    even = ni62(emission="isotropic", deorientation="none").experiment
     flat, flat_alone = factors(correlation_table(even)), factors(_correlation_rows(even, None, 8, 6))
     assert all(abs(v - 1) < 0.08 and v == pytest.approx(flat_alone[k], rel=1e-3) for k, v in flat.items())
 

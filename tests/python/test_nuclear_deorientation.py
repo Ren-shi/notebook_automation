@@ -148,16 +148,18 @@ def test_attenuating_a_density_matrix_scales_its_tensors():
 # -- the setup -----------------------------------------------------------------------------------------------------
 
 
-def test_the_switch_is_off_unless_set():
+def test_the_switch_is_on_unless_set_to_none():
     exp = Experiment.example("coulex_ni62_pt194")
-    assert exp.excitation.deorientation is None and deorientation_of(exp) == "none"
+    assert exp.excitation.deorientation is None and deorientation_of(exp) == "vacuum"
     assert "deorientation" not in exp.to_dict()["reaction"]
     on = switched(exp)
     assert deorientation_of(on) == "vacuum" and on.to_dict()["reaction"]["deorientation"] == "vacuum"
-    assert deorientation_of(Experiment.from_dict(on.to_dict())) == "vacuum"
-    assert deorientation_of(switched(exp, "none")) == "none"
-    # Unset and "none" are the same plan.
-    assert correlation_table(exp, nucleus="other") == correlation_table(switched(exp, "none"), nucleus="other")
+    off = switched(exp, "none")
+    assert deorientation_of(off) == "none" and off.to_dict()["reaction"]["deorientation"] == "none"
+    assert deorientation_of(Experiment.from_dict(off.to_dict())) == "none"
+    # Unset and "vacuum" are the same plan; "none" is another.
+    assert correlation_table(exp, nucleus="other") == correlation_table(on, nucleus="other")
+    assert correlation_table(exp, nucleus="other") != correlation_table(off, nucleus="other")
     with pytest.raises(SetupError, match="deorientation"):
         switched(exp, "gas")
 
