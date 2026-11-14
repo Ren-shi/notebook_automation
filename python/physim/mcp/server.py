@@ -22,7 +22,8 @@ from .session import Session, ToolProblem
 from .tools_setup import SetupTools
 
 INSTRUCTIONS = """\
-physim's experiment planner for nuclear-physics beam time (Rutherford scattering and Coulomb excitation).
+physim's experiment planner for nuclear-physics beam time (Rutherford scattering, Coulomb excitation and
+fusion-evaporation from a table of exit channels).
 
 One experiment is open at a time. Start with list_experiments and open_experiment, or list_examples and
 new_experiment. The other tools act on the open experiment.

@@ -1,0 +1,477 @@
+schema = "physim.experiment/1"
+title = "Fusion-evaporation: 158Dy from 12C on 150Nd"
+description = "The 150Nd(12C,4n)158Dy reaction at 60 MeV, a standard way to make the yrast band of 158Dy: the compound nucleus 162Dy is made at 50 MeV of excitation and boils off mostly four neutrons. Five germanium detectors see the residues' gamma rays; a small silicon detector at 30 degrees counts the elastically scattered beam as a monitor. The channel cross sections are illustrative values of the size PACE4 gives for this system, not a measurement: replace them with your own PACE4 run or measured values. The yrast bands of 158Dy and 156Gd are from ENSDF."
+
+[reaction]
+type = "fusion-evaporation"
+alignment = 0.3
+side_feeding = "25 %"
+
+[[reaction.channels]]
+residue = "159Dy"
+particles = "3n"
+cross_section = "10 mb"
+source = "illustrative"
+
+[[reaction.channels]]
+residue = "158Dy"
+particles = "4n"
+cross_section = "520 mb"
+source = "illustrative"
+
+[[reaction.channels]]
+residue = "157Dy"
+particles = "5n"
+cross_section = "110 mb"
+source = "illustrative"
+
+[[reaction.channels]]
+residue = "158Tb"
+particles = "p3n"
+cross_section = "25 mb"
+source = "illustrative"
+
+[[reaction.channels]]
+residue = "156Gd"
+particles = "a2n"
+cross_section = "35 mb"
+source = "illustrative"
+
+[beam]
+nuclide = "12C"
+energy = "60 MeV"
+current = "5 pnA"
+energy_spread = "0.1 %"
+spot_size = "1 mm"
+
+[target]
+material = "150Nd"
+thickness = "1 mg/cm2"
+
+[run]
+beam_time = "48 h"
+counts_wanted = 10000
+
+[[detectors]]
+name = "Monitor"
+shape = "circle"
+theta = "30 deg"
+phi = "0 deg"
+distance = "200 mm"
+radius = "1 mm"
+thickness = "300 um"
+dead_layer = "0.5 um"
+resolution = "50 keV"
+threshold = "1 MeV"
+
+[[gamma_detectors]]
+name = "Ge90"
+theta = "90 deg"
+phi = "0 deg"
+distance = "200 mm"
+radius = "35 mm"
+resolution = "2.2 keV"
+
+[[gamma_detectors]]
+name = "Ge37"
+theta = "37 deg"
+phi = "90 deg"
+distance = "200 mm"
+radius = "35 mm"
+resolution = "2.2 keV"
+
+[[gamma_detectors]]
+name = "Ge79"
+theta = "79 deg"
+phi = "180 deg"
+distance = "200 mm"
+radius = "35 mm"
+resolution = "2.2 keV"
+
+[[gamma_detectors]]
+name = "Ge101"
+theta = "101 deg"
+phi = "-90 deg"
+distance = "200 mm"
+radius = "35 mm"
+resolution = "2.2 keV"
+
+[[gamma_detectors]]
+name = "Ge143"
+theta = "143 deg"
+phi = "45 deg"
+distance = "200 mm"
+radius = "35 mm"
+resolution = "2.2 keV"
+
+[levels]
+
+[levels.158Dy]
+nuclide = "158Dy"
+reference = "yrast band of 158Dy from ENSDF, adopted levels and γ rays of 158Dy, NDS 141, 1 (2017) (file dated 201704)"
+
+[[levels.158Dy.level]]
+energy = "0 keV"
+jpi = "0+"
+source = "ensdf"
+
+[[levels.158Dy.level]]
+energy = "98.918 keV"
+energy_unc = 0.001
+jpi = "2+"
+half_life = "1.66e-09 s"
+half_life_unc = 3e-11
+source = "ensdf"
+
+[[levels.158Dy.level]]
+energy = "317.139 keV"
+energy_unc = 0.004
+jpi = "4+"
+half_life = "7.2e-11 s"
+half_life_unc = 4e-12
+source = "ensdf"
+
+[[levels.158Dy.level]]
+energy = "637.712 keV"
+energy_unc = 0.025
+jpi = "6+"
+half_life = "9.1e-12 s"
+half_life_unc = 1e-12
+source = "ensdf"
+
+[[levels.158Dy.level]]
+energy = "1043.88 keV"
+energy_unc = 0.07
+jpi = "8+"
+half_life = "2.9e-12 s"
+half_life_unc = 6.000000000000001e-13
+source = "ensdf"
+
+[[levels.158Dy.level]]
+energy = "1520 keV"
+energy_unc = 0.4
+jpi = "10+"
+half_life = "1.41e-12 s"
+half_life_unc = 1.9e-13
+source = "ensdf"
+
+[[levels.158Dy.level]]
+energy = "2048.8 keV"
+energy_unc = 0.7000000000000001
+jpi = "12+"
+half_life = "8.5e-13 s"
+half_life_unc = 1.6e-13
+source = "ensdf"
+
+[[levels.158Dy.level]]
+energy = "2612.2 keV"
+energy_unc = 0.7000000000000001
+jpi = "14+"
+half_life = "7.3e-13 s"
+half_life_unc = 1.5e-13
+source = "ensdf"
+
+[[levels.158Dy.level]]
+energy = "3190.3 keV"
+energy_unc = 0.8
+jpi = "16+"
+half_life = "6.3e-13 s"
+half_life_unc = 9e-14
+source = "ensdf"
+
+[[levels.158Dy.level]]
+energy = "3781.3 keV"
+energy_unc = 0.8
+jpi = "18+"
+half_life = "5.5e-13 s"
+half_life_unc = 8e-14
+source = "ensdf"
+
+[[levels.158Dy.level]]
+energy = "4407.1 keV"
+energy_unc = 0.9
+jpi = "20+"
+half_life = "4e-13 s"
+half_life_unc = 8e-14
+source = "ensdf"
+
+[[levels.158Dy.transition]]
+from = 1
+to = 0
+energy = "98.918 keV"
+energy_unc = 0.001
+intensity = 100
+multipolarity = "E2"
+conversion = 2.82
+source = "ensdf"
+
+[[levels.158Dy.transition]]
+from = 2
+to = 1
+energy = "218.221 keV"
+energy_unc = 0.004
+intensity = 100
+multipolarity = "E2"
+conversion = 0.1771
+source = "ensdf"
+
+[[levels.158Dy.transition]]
+from = 3
+to = 2
+energy = "320.53 keV"
+energy_unc = 0.03
+intensity = 100
+multipolarity = "E2"
+conversion = 0.0528
+source = "ensdf"
+
+[[levels.158Dy.transition]]
+from = 4
+to = 3
+energy = "406.12 keV"
+energy_unc = 0.07
+intensity = 100
+multipolarity = "E2"
+conversion = 0.0266
+source = "ensdf"
+
+[[levels.158Dy.transition]]
+from = 5
+to = 4
+energy = "476 keV"
+energy_unc = 0.4
+intensity = 100
+multipolarity = "E2"
+conversion = 0.01724
+source = "ensdf"
+
+[[levels.158Dy.transition]]
+from = 6
+to = 5
+energy = "528.7 keV"
+energy_unc = 0.6000000000000001
+intensity = 100
+multipolarity = "E2"
+conversion = 0.01312
+source = "ensdf"
+
+[[levels.158Dy.transition]]
+from = 7
+to = 6
+energy = "563.4 keV"
+energy_unc = 0.30000000000000004
+intensity = 100
+multipolarity = "E2"
+conversion = 0.01118
+source = "ensdf"
+
+[[levels.158Dy.transition]]
+from = 8
+to = 7
+energy = "578.1 keV"
+energy_unc = 0.30000000000000004
+intensity = 100
+multipolarity = "E2"
+conversion = 0.01049
+source = "ensdf"
+
+[[levels.158Dy.transition]]
+from = 9
+to = 8
+energy = "591 keV"
+energy_unc = 0.30000000000000004
+intensity = 100
+multipolarity = "E2"
+conversion = 0.00993
+conversion_unc = 0.00014000000000000001
+source = "ensdf"
+
+[[levels.158Dy.transition]]
+from = 10
+to = 9
+energy = "625.8 keV"
+energy_unc = 0.30000000000000004
+intensity = 100
+multipolarity = "E2"
+conversion = 0.00864
+conversion_unc = 0.00013000000000000002
+source = "ensdf"
+
+[levels.156Gd]
+nuclide = "156Gd"
+reference = "yrast band of 156Gd from ENSDF, adopted levels and γ rays of 156Gd, NDS 113, 2537 (2012) (file dated 201210)"
+
+[[levels.156Gd.level]]
+energy = "0 keV"
+jpi = "0+"
+source = "ensdf"
+
+[[levels.156Gd.level]]
+energy = "88.97 keV"
+energy_unc = 0.001
+jpi = "2+"
+half_life = "2.21e-09 s"
+half_life_unc = 2.0000000000000002e-11
+source = "ensdf"
+
+[[levels.156Gd.level]]
+energy = "288.187 keV"
+energy_unc = 0.001
+jpi = "4+"
+half_life = "1.119e-10 s"
+half_life_unc = 1.7000000000000002e-12
+source = "ensdf"
+
+[[levels.156Gd.level]]
+energy = "584.715 keV"
+energy_unc = 0.003
+jpi = "6+"
+half_life = "1.58e-11 s"
+half_life_unc = 4e-13
+source = "ensdf"
+
+[[levels.156Gd.level]]
+energy = "965.134 keV"
+energy_unc = 0.006
+jpi = "8+"
+half_life = "4.32e-12 s"
+half_life_unc = 2.3000000000000003e-13
+source = "ensdf"
+
+[[levels.156Gd.level]]
+energy = "1416.078 keV"
+energy_unc = 0.021
+jpi = "10+"
+half_life = "1.9e-12 s"
+half_life_unc = 8e-14
+source = "ensdf"
+
+[[levels.156Gd.level]]
+energy = "1924.49 keV"
+energy_unc = 0.04
+jpi = "12+"
+half_life = "1.1e-12 s"
+half_life_unc = 1e-13
+source = "ensdf"
+
+[[levels.156Gd.level]]
+energy = "2475.82 keV"
+energy_unc = 0.07
+jpi = "14+"
+source = "ensdf"
+
+[[levels.156Gd.level]]
+energy = "3059.5 keV"
+energy_unc = 0.8
+jpi = "16+"
+source = "ensdf"
+
+[[levels.156Gd.level]]
+energy = "3673.3 keV"
+energy_unc = 0.5
+jpi = "18+"
+source = "ensdf"
+
+[[levels.156Gd.level]]
+energy = "4325.9 keV"
+jpi = "20+"
+source = "ensdf"
+
+[[levels.156Gd.transition]]
+from = 1
+to = 0
+energy = "88.97 keV"
+energy_unc = 0.001
+intensity = 100
+multipolarity = "E2"
+conversion = 3.88
+source = "ensdf"
+
+[[levels.156Gd.transition]]
+from = 2
+to = 1
+energy = "199.219 keV"
+energy_unc = 1e-05
+intensity = 100
+multipolarity = "E2"
+conversion = 0.225
+source = "ensdf"
+
+[[levels.156Gd.transition]]
+from = 3
+to = 2
+energy = "296.532 keV"
+energy_unc = 0.003
+intensity = 100
+multipolarity = "E2"
+conversion = 0.0625
+source = "ensdf"
+
+[[levels.156Gd.transition]]
+from = 4
+to = 3
+energy = "380.417 keV"
+energy_unc = 0.005
+intensity = 100
+multipolarity = "E2"
+conversion = 0.0297
+source = "ensdf"
+
+[[levels.156Gd.transition]]
+from = 5
+to = 4
+energy = "450.95 keV"
+energy_unc = 0.02
+intensity = 100
+multipolarity = "E2"
+conversion = 0.0184
+source = "ensdf"
+
+[[levels.156Gd.transition]]
+from = 6
+to = 5
+energy = "508.41 keV"
+energy_unc = 0.03
+intensity = 100
+multipolarity = "E2"
+conversion = 0.01335
+source = "ensdf"
+
+[[levels.156Gd.transition]]
+from = 7
+to = 6
+energy = "551.33 keV"
+energy_unc = 0.06
+intensity = 100
+multipolarity = "E2"
+conversion = 0.01083
+source = "ensdf"
+
+[[levels.156Gd.transition]]
+from = 8
+to = 7
+energy = "583.5 keV"
+energy_unc = 1
+intensity = 100
+multipolarity = "E2"
+conversion = 0.00939
+source = "ensdf"
+
+[[levels.156Gd.transition]]
+from = 9
+to = 8
+energy = "614 keV"
+energy_unc = 0.30000000000000004
+intensity = 100
+multipolarity = "E2"
+conversion = 0.00828
+source = "ensdf"
+
+[[levels.156Gd.transition]]
+from = 10
+to = 9
+energy = "652.4 keV"
+intensity = 100
+multipolarity = "E2"
+conversion = 0.00715
+source = "ensdf"

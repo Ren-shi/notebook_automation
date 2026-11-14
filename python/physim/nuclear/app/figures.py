@@ -184,7 +184,7 @@ def _value(field: str, text):
             return text  # the setup checks report it
     if field == "addback":
         return text.lower() in ("true", "yes", "on", "1")
-    if field in ("addback_factor", "suppression_factor"):
+    if field in ("addback_factor", "suppression_factor", "alignment", "entry_spin"):
         try:
             return float(text)
         except ValueError:
@@ -405,6 +405,29 @@ def figure_gamma_spectra(planner: Planner, detector: str, events: int = 400_000,
                                      visible=True if i == 0 else "legendonly"))
     fig.add_vline(x=g["energy_kev"], line=dict(color="#888", width=1, dash="dot"))
     fig.update_layout(xaxis=dict(title="γ-ray energy (keV)"), yaxis=dict(title="counts / bin in the run"),
+                      margin=dict(l=50, r=10, t=10, b=40), height=320, legend=dict(orientation="h", y=-0.3, x=0))
+    return fig
+
+
+def figure_residue_gammas(planner: Planner, detector: str, events: int = 100_000, seed: int = 1):
+    """A γ-ray detector's singles spectrum of the fusion-evaporation residues: as measured, and Doppler-corrected
+    for a residue moving along the beam; the strongest lines of the residue table as dotted lines."""
+    go = _go()
+    g = planner.residue_gamma_spectra(events, seed)
+    fig = go.Figure()
+    if not g["available"]:
+        fig.add_annotation(text=g["reason"], showarrow=False, x=0.5, y=0.5, xref="paper", yref="paper")
+        return fig
+    s = g["spectra"][detector]
+    x = 1e3 * np.repeat(s["edges"], 2)[1:-1]
+    for i, (key, label) in enumerate((("corrected", "Doppler corrected"), ("measured", "measured"))):
+        y = np.repeat(s[key], 2)
+        fig.add_trace(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines", name=label,
+                                 line=dict(color=COLORS[i % len(COLORS)], width=1.2 if i == 0 else 0.8)))
+    for e_kev, label in g["lines"]:
+        fig.add_vline(x=e_kev, line=dict(color="#888", width=1, dash="dot"))
+    fig.update_layout(xaxis=dict(title="γ-ray energy (keV)"), yaxis=dict(title="counts / bin in the run",
+                                                                          type="log"),
                       margin=dict(l=50, r=10, t=10, b=40), height=320, legend=dict(orientation="h", y=-0.3, x=0))
     return fig
 

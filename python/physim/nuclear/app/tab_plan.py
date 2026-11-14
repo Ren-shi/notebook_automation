@@ -147,6 +147,43 @@ def answers(ctx, pl: dict) -> None:
                      "are not taken off here (a run measures them).").classes("text-xs ps-muted mt-1")
 
 
+def residues(ctx, res: dict) -> None:
+    """The fusion-evaporation residues (backlog item 75): the compound nucleus, then per exit channel its cross
+    section, residues per second and in the run, the beam time for the counts wanted in its strongest line, and
+    its strongest lines."""
+    ui = ctx.ui
+    lo, hi = res["excitation_range_mev"]
+    head = (f"{res['compound']}* at E* = {res['excitation_mev']:.2f} MeV in the middle of the target ({lo:.2f}–"
+            f"{hi:.2f} MeV through it), E_cm = {res['e_cm_mev']:.2f} MeV, Q = {res['q_value_mev']:.3f} MeV; it "
+            f"moves along the beam at β = {res['beta']:.5f}. Σσ = {_fmt(res['total_mb'])} mb.")
+    with ctx.panel("Residues of the channel table"), ui.element("div").classes("w-full").style("overflow-x: auto"):
+        ui.label(head).classes("text-sm")
+        cols = 8
+        with ui.grid(columns=cols).classes("gap-x-6 gap-y-1 items-center ps-num text-sm").style(
+                f"grid-template-columns: repeat({cols}, auto); justify-content: space-between"):
+            heads = ["Channel", "Residue", "σ (mb)", "Share", "Residues (1/s)", "In the run", "Strongest lines",
+                     "Beam time"]
+            for h in heads:
+                ui.label(h).classes("text-xs ps-muted")
+            for r in res["rows"]:
+                ui.label(r["channel"]).classes("font-medium" + ("" if r["open"] else " ps-bad"))
+                ui.label(r["residue"])
+                ui.label(_fmt(r["cross_section_mb"]))
+                ui.label(f"{100 * r['share']:.1f}%")
+                ui.label(_fmt(r["rate_per_s"]))
+                ui.label(_fmt(r["residues_in_run"]))
+                lines = "; ".join(f"{x['energy_kev']:.1f} keV ({x['label']}, {_fmt(x['detected_per_s'])} /s)"
+                                  for x in r["lines"]) or "no level scheme"
+                ui.label(lines).classes("text-xs")
+                ui.label(_time(r["beam_time_s"]))
+        ui.label("Line rates: full-energy-peak counts per second in all γ-ray detectors together, from each "
+                 "detector's efficiency at the line's energy (no angular distribution, Doppler shift or summing). "
+                 "Beam time: for the counts wanted in the channel's strongest line. A channel in red needs more "
+                 "excitation energy than the compound nucleus has.").classes("text-xs ps-muted mt-1")
+        for note in res["notes"]:
+            ui.label(note).classes("text-xs ps-warn")
+
+
 def render_answers(ctx) -> None:
     """The answers (refreshed after every edit)."""
     try:
@@ -155,6 +192,8 @@ def render_answers(ctx) -> None:
         ctx.ui.label(f"The plan could not be computed: {err}").classes("ps-bad")
         return
     answers(ctx, pl)
+    if pl.get("residues"):
+        residues(ctx, pl["residues"])
 
 
 def render(ctx) -> None:
