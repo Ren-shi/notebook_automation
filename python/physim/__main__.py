@@ -1,5 +1,5 @@
 """``physim`` on the command line: ``physim app`` starts the experiment planner, ``physim report SETUP`` writes a
-beam-time report. ``python -m physim ...`` does the same."""
+beam-time report, ``physim mcp`` runs the planner as an MCP server. ``python -m physim ...`` does the same."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ USAGE = """usage: physim <command> [options]
 commands:
   app       start the experiment planner in the browser (physim app --help)
   report    write a beam-time report for a setup file (physim report --help)
+  mcp       run the planner as an MCP server for an LLM client (physim mcp --help)
 """
 
 
@@ -28,6 +29,10 @@ def main(argv=None) -> int:
         from .nuclear.report import main as report_main
 
         return report_main(rest)
+    if cmd == "mcp":
+        from .mcp import main as mcp_main
+
+        return mcp_main(rest)
     print(f"unknown command {cmd!r}\n\n{USAGE}", file=sys.stderr)
     return 2
 
