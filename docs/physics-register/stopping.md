@@ -66,10 +66,22 @@ which include the chemical binding.
 **Tolerance for compounds.** The register states no separate tolerance for compounds, and none is proposed: the
 model page claims the same accuracy for Bragg-additive compounds as for elements, so the compounds are judged by the
 same bands. They fail them. The disagreement is in heavy ions in hydrogen-rich targets (CD₂ most, Mylar at the
-low-energy edge), not in α particles (within 8% everywhere) or in CsI. A likely cause, not yet tested: physim scales
-proton stopping by the effective charge without the target dependence (Brandt–Kitagawa with a fixed Fermi
-velocity), which matters most for hydrogen. Until that is understood, planning with heavy ions in CD₂ or
-polyethylene targets should be checked against SRIM.
+low-energy edge), not in α particles (within 8% everywhere) or in CsI. **Where the CD₂ gap comes from (tested 2026-11-14).**
+
+- *Not the Fermi velocity.* physim's effective charge uses v_F = 1 v₀ for every target. SRIM's own values
+  (`SCOEF03.dat`, column 9) are H 1.031 and C 1.000, and putting SRIM's per-element v_F into physim moves CD₂ by at
+  most 0.3% (Si and Mylar as little; CsI up to 4.3% and Au up to 3.6%, where v_F is far from 1).
+- *Hydrogen.* SR Module runs for the same ions in pure C and pure H show that SRIM's CD₂ is exactly its Bragg sum
+  of C and H (within 0.05%). physim agrees with SRIM's carbon within about 6% (C, O, Ar; slow Xe up to −27%), but
+  not with its hydrogen: +79% to +97% at 0.1 MeV/u, −25% to −35% at 1 MeV/u, −6% to −12% at 10 MeV/u.
+- *SRIM treats hydrogen targets differently.* The effective charge SRIM implies, ζ² = S_ion / (Z₁² S_p), matches
+  physim's in carbon within a few percent. In hydrogen it departs from SRIM's own carbon value: 0.10 against 0.16
+  for O at 0.1 MeV/u, 0.90 against 0.61 at 1 MeV/u, and above 1 (1.09) at 10 MeV/u. So SRIM does not scale its
+  proton stopping in hydrogen as it does in other targets.
+
+Which code is closer to measurement for heavy ions in hydrogen is not settled here. That needs measured data
+(for example, heavy ions in H₂ gas or polyethylene from the IAEA stopping-power database). Until then, plan with
+heavy ions in CD₂ or polyethylene targets with care, and check the result against SRIM.
 
 Validated 2026-10-04; SRIM comparison 2026-11-14.
 

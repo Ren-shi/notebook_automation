@@ -27,8 +27,11 @@
 > - Stopping, 5 ions × 5 targets × 0.1–10 MeV/u, judged by the LISE++ bands: Au and Si pass (worst 90% of a band,
 >   Xe in Au at 1 MeV/u −10.7%). CsI passes (Xe at 10 MeV/u exactly at its 10%). **CD₂ and Mylar fail for heavy
 >   ions:** CD₂ +31% (¹⁶O) and +39% (⁴⁰Ar) at 0.1 MeV/u, −14% (Ar) and −20% (Xe) at 1 MeV/u, −4.2% (¹⁶O) at
->   10 MeV/u; Mylar ⁴⁰Ar at 0.1 MeV/u +25.4% against 25%. α particles agree within 8% in every target. Likely
->   cause, untested: the effective charge uses one Fermi velocity (v₀) for all targets. SRIM was run with compound
+>   10 MeV/u; Mylar ⁴⁰Ar at 0.1 MeV/u +25.4% against 25%. α particles agree within 8% in every target. The gap is in
+>   hydrogen: physim's heavy-ion stopping in pure H is +80–97% (0.1 MeV/u) and −25 to −35% (1 MeV/u) off SRIM's,
+>   while carbon agrees within ~6%. SRIM's implied effective charge in H differs from its own in C (above 1 at
+>   10 MeV/u). Ruled out: the target Fermi velocity (SRIM's v_F moves CD₂ by ≤ 0.3%). Open: which code matches
+>   measured heavy-ion stopping in hydrogen. SRIM was run with compound
 >   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
 > - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.
 > - TRIM: every exported TRIM.IN (4 cases and the 2 example setups) ran unchanged. Mean energies within 1% except α
