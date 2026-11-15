@@ -1063,7 +1063,7 @@ FUSION_DATA_FROM = {"142Nd": 1.05, "150Nd": 1.15, "154Sm": 1.15}
 #: systems (they need a larger diffuseness than any global potential has, and attribute it to dynamical effects),
 #: which a one-dimensional Bass barrier does not describe. Points above are reported, not judged.
 FUSION_DATA_TO = 1.3
-#: Allowed |physim / measured − 1|: backlog 75's 15% for Stage 2 combined in quadrature with the measurements'
+#: Allowed ``|physim / measured − 1|``: backlog 75's 15% for Stage 2 combined in quadrature with the measurements'
 #: total errors (15% for Visakh et al., 10% for Stokstad et al.), rounded up.
 FUSION_DATA_TOLERANCE = 0.20
 
