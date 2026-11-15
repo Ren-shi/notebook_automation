@@ -6,6 +6,11 @@ and run by hand, so each file records exactly how it was produced, so that anyon
 - `pending/` holds **requests**: the exact cases still to be run, with the settings to use and physim's own values
   for comparison. When a request has been run, put the results in this folder in the format below and delete the
   request.
+- `trim/` holds the TRIM.IN files (written by `physim.nuclear.export`) that produced `straggling_trim.csv`; a test
+  keeps them identical to what the exporter writes today.
+- `stopping_measured_hydrogen.csv` is measured data, not a code's output: heavy-ion stopping in hydrogen-rich
+  targets from the IAEA Stopping Power Database (`scripts/iaea_stopping_reference.py`), with SRIM's value per point
+  for context. Its `tool:` line names the database and version; cite the original papers by `ref_id` and `doi`.
 - Files here are read by the checks in `physim.nuclear.validation` and the tests (`tests/python/test_nuclear_*.py`), which assert the tolerances stated in the
   physics register. Until a file exists, the matching test is skipped and the register shows 🟡.
 

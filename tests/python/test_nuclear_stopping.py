@@ -93,6 +93,50 @@ def test_bragg_additivity_for_a_formula():
     assert cd2.stopping_power(2.0, "electronic") == pytest.approx(expect, rel=5e-4)  # internal grid
 
 
+#: MSTAR 3.12 for ¹²C (MeV cm²/g at 0.07, 1, 10 MeV/u), from the original Fortran (MSTAR1, mode "b"), as listed in
+#: libdEdx's tests/test_mstar.c: water uses the solid fit with its C/Mylar correction (mode "d"), air the gas fit for
+#: carbon ions (mode "h").
+MSTAR_REFERENCE = {"Water": (5.589206e3, 6.586625e3, 1.639723e3), "Air": (4.140607e3, 5.216270e3, 1.447108e3)}
+
+
+@pytest.mark.parametrize("material", list(MSTAR_REFERENCE))
+def test_heavy_ions_in_icru49_compounds_follow_mstar(material):
+    s = Stopping("12C", material)
+    for e_u, expect in zip((0.07, 1.0, 10.0), MSTAR_REFERENCE[material]):
+        assert s.stopping_power(e_u * s.mass_u, "electronic") * 1e3 == pytest.approx(expect, rel=1e-3)
+
+
+def test_deuterated_compound_stops_like_its_parent_per_electron():
+    # CD₂ has polyethylene's electrons; per gram it has 14.03/16.04 of them.
+    cd2, ch2 = Stopping("16O", "CD2"), Stopping("16O", "Polyethylene")
+    epg = [st._electrons_per_gram_and_fractions(s.material)[0] for s in (cd2, ch2)]
+    for e_u in (0.1, 1.0, 10.0):
+        ratio = cd2.stopping_power(e_u * 16, "electronic") / ch2.stopping_power(e_u * 16, "electronic")
+        assert ratio == pytest.approx(epg[0] / epg[1], rel=1e-3)
+    assert epg[0] / epg[1] == pytest.approx(0.8745, rel=1e-3)
+
+
+@pytest.mark.parametrize("ion,material", [("12C", "Water"), ("40Ar", "Mylar"), ("16O", "CsI"), ("20Ne", "D2")])
+def test_mstar_hands_over_smoothly_at_high_energy(ion, material, monkeypatch):
+    s = Stopping(ion, material)
+    lo, hi = Stopping.MSTAR_BLEND
+    e_u = np.array([10.0, lo, 0.5 * (lo + hi), hi, 500.0])
+    blended = s._compute(e_u)[0]
+    pure_mstar = s._mstar(e_u)
+    monkeypatch.setattr(Stopping, "_mstar", lambda self, e: None)
+    old = s._compute(e_u)[0]
+    np.testing.assert_allclose(blended[:2], pure_mstar[:2], rtol=1e-12)  # MSTAR up to 50 MeV/u
+    np.testing.assert_allclose(blended[3:], old[3:], rtol=1e-12)  # unchanged from 200 MeV/u
+    # In between the two models are blended; they differ by < 2% there (CsI and NaI the most, −1.9%).
+    assert np.all(np.abs(pure_mstar[1:4] / old[1:4] - 1) < 0.02)
+
+
+def test_mstar_covers_lithium_to_argon_in_hydrogen_and_icru49_compounds():
+    # Heavier ions and elements are not MSTAR's: they keep the effective-charge model.
+    assert Stopping("132Xe", "Mylar")._mstar(np.array([1.0])) is None
+    assert Stopping("16O", "C")._mstar(np.array([1.0])) is None
+
+
 @pytest.mark.parametrize("z", [13, 29, 47, 79, 82])
 def test_interpolation_for_untabulated_elements(z):
     """Leave a tabulated element out and rebuild it from its neighbours: above 0.5 MeV within 7% (measured worst

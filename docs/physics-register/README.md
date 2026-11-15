@@ -40,14 +40,14 @@ First slice: elastic scattering (backlog items 33–42).
 | Experiment setup file | ✅ | ✅ | — | — | [Guide](../nuclear-setup.md) | 33 |
 | Atomic masses and material data | ✅ | ✅ | ✅ LISE++ masses, 46 nuclides, within 2 keV or the AME2020 uncertainty | ✅ Q-values within 1 keV; atomic weights vs NIST | [Data](nuclear-data.md) | 34 |
 | Two-body reaction kinematics | ✅ | ✅ | 🟡 LISE++: 1 case passes, 8 requested | ✅ analytic limit, Lorentz boost, threshold | [Kinematics](kinematics.md) | 35 |
-| Stopping power and range | ✅ | ✅ | ✅ LISE++ (1680 points, tolerances by regime); 🟡 SRIM requested | ✅ NIST CSDA ranges within 1% | [Stopping](stopping.md) | 36 |
-| Energy and angular straggling | ✅ | ✅ | ✅ LISE++ ≥ 30 MeV/u (25%); 🟡 TRIM requested | ✅ Bohr and Highland formulas | [Stopping](stopping.md) | 36 |
+| Stopping power and range | ✅ | ✅ | 🟡 LISE++ (1680 points, tolerances by regime) and SRIM for Au, Si (50 points, same bands) pass; SRIM compounds: Mylar and CsI pass, CD₂ fails (up to 27% at 0.1 MeV/u, 20% at 1 MeV/u) | 🟡 NIST CSDA ranges within 1% pass; measured heavy-ion stopping in H₂/D₂, (CH₂)ₙ and Mylar (IAEA, 744 points) fails 3 of 21 cells, all Kr and Xe (outside MSTAR): Kr in H₂/D₂ −19%, Kr and Xe in Mylar −15% and −18% at 1–10 MeV/u | [Stopping](stopping.md) | 36 |
+| Energy and angular straggling | ✅ | ✅ | ✅ LISE++ ≥ 30 MeV/u (25%); TRIM widths under Monte Carlo spectra | ✅ Bohr and Highland formulas | [Stopping](stopping.md) | 36 |
 | Rutherford cross section | ✅ | ✅ | ✅ LISE++ (1 case, 0.03%) | ✅ analytic, Geiger–Marsden 1913 | [Rutherford](rutherford.md) | 37 |
 | Distance of closest approach and validity checks | ✅ | ✅ | ✅ LISE++ grazing angle (1 case) | 🟡 above-barrier data requested | [Rutherford](rutherford.md) | 37 |
 | Coulomb trajectories | ✅ | ✅ | — exact closed form instead | ✅ analytic b(θ) to 1e-6° | [Rutherford](rutherford.md) | 37 |
 | Detector solid angles and response | ✅ | ✅ | — exact closed forms instead | ✅ closed forms to 1e-10, Monte Carlo | [Detectors](detectors.md) | 38 |
 | Count rates and beam time | ✅ | ✅ | 🟡 LISE++ cross sections at the detector angles requested | ✅ I n (dσ/dΩ) Ω within 1%; Monte Carlo within 4σ | [Rates and events](rates-and-events.md) | 39 |
-| Monte Carlo spectra | ✅ | ✅ | 🟡 TRIM transmitted spectra requested | ✅ peak positions and widths vs analytic (5%); seeded, thread-independent | [Rates and events](rates-and-events.md) | 39 |
+| Monte Carlo spectra | ✅ | ✅ | 🟡 TRIM, 4 layers: 2 within mean 1% and σ 20%; α in Mylar mean +1.05%, slow ¹³²Xe σ −63%. All 6 exported TRIM.IN files run unchanged | ✅ peak positions and widths vs analytic (5%); seeded, thread-independent | [Rates and events](rates-and-events.md) | 39 |
 | Beam-time report, CSV and ROOT export | ✅ | ✅ | 🟡 opening the ROOT file in ROOT requested (`pending/root_check.md`); ✅ uproot read-back | ✅ key numbers vs hand calculations (`test_nuclear_report.py`) | [Guide](../nuclear-setup.md) | 42 |
 
 Second slice: Coulomb excitation (backlog item 43).

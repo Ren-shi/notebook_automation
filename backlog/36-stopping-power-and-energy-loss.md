@@ -1,6 +1,6 @@
 # 36 · Stopping power and energy loss
 
-**Priority:** P1 · **Size:** L · **Area:** Nuclear planner · **Status: Done** (SRIM/TRIM comparison pending)
+**Priority:** P1 · **Size:** L · **Area:** Nuclear planner · **Status: Done** (SRIM/TRIM compared 2026-11-14: compounds outside tolerance for heavy ions)
 
 > **Done** (`python/physim/nuclear/stopping.py`, `python/physim/nuclear/data/nist_pstar.csv` and `nist_astar.csv`,
 > `scripts/fetch_star_tables.py`, `scripts/lise_reference.py`, `tests/python/test_nuclear_stopping.py`,
@@ -22,8 +22,48 @@
 > range 1.2% (p/α), 4.8–6% (heavy ions); straggling FWHM within 25% at ≥ 30 MeV/u. Interpolated elements within 7%
 > above 0.5 MeV (leave-one-out). Building a table takes ~0.1 s.
 >
-> Not met / left out: the **SRIM/TRIM** comparison (compounds, slow heavy ions, transmitted-energy spread) needs
-> runs by hand, requested in `tests/reference/nuclear/pending/stopping_srim.md`. The planned 2% (p/α vs NIST) holds for
+> **SRIM/TRIM comparison (2026-11-14,** `scripts/srim_reference.py`, `stopping_srim.csv`, `straggling_trim.csv`**):**
+> SRIM 2013's SR Module and TRIM both run unattended from Python (SR Module has no window; TRIM with `TRIMAUTO` = 1).
+> - Stopping, 5 ions × 5 targets × 0.1–10 MeV/u, judged by the LISE++ bands: Au and Si pass (worst 90% of a band,
+>   Xe in Au at 1 MeV/u −10.7%). CsI passes (Xe at 10 MeV/u exactly at its 10%). **CD₂ and Mylar fail for heavy
+>   ions:** CD₂ +31% (¹⁶O) and +39% (⁴⁰Ar) at 0.1 MeV/u, −14% (Ar) and −20% (Xe) at 1 MeV/u, −4.2% (¹⁶O) at
+>   10 MeV/u; Mylar ⁴⁰Ar at 0.1 MeV/u +25.4% against 25%. α particles agree within 8% in every target. The gap is in
+>   hydrogen: physim's heavy-ion stopping in pure H is +80–97% (0.1 MeV/u) and −25 to −35% (1 MeV/u) off SRIM's,
+>   while carbon agrees within ~6%. SRIM's implied effective charge in H differs from its own in C (above 1 at
+>   10 MeV/u). Ruled out: the target Fermi velocity (SRIM's v_F moves CD₂ by ≤ 0.3%). Against measured data (IAEA
+>   database): in H₂/D₂ gas at 1–3 MeV/u physim is 17–27% low (RMS 23%, SRIM 8%); in (CH₂)ₙ polymers both codes are
+>   about 10% RMS. The data are now a reference file (`stopping_measured_hydrogen.csv`) and a literature check,
+>   `stopping_hydrogen_vs_data`, which fails for Kr in H₂/D₂ (−19%) and Kr, Xe in Mylar (−15%, −18%) at 1–10 MeV/u.
+>   Carbon is within 7% of measured data; the hydrogen term is 6–60% low. A fitted factor on the H term fixes the
+>   gas data but fails a held-out test, so the open fix is a hydrogen-specific effective charge from an independent
+>   source, judged by that check unchanged.
+>   **Done for Li–Ar (2026-11-15):** MSTAR 3.12 (ICRU 73's method) is ported (`physim.nuclear.mstar`) and used for
+>   ions Li–Ar in hydrogen, ICRU 49 compounds and their deuterated versions (CD₂). RMS against the data for C–Ar:
+>   H₂/D₂ 7.9% → 4.1%, (CH₂)ₙ 10.3% → 8.5%, Mylar 6.9% → 5.9%; Mylar now passes against SRIM, CD₂ still fails.
+>   **Open:** Kr and Xe in hydrogen (still 15–19% low; outside MSTAR). Tried 2026-11-15: DPASS 21.06 and
+>   SRIM-96 are as low as physim for Kr in H₂ (−18 to −28%); only SRIM 2013 matches (−8 to −11%); Xe in H₂ is
+>   fine at 25 MeV/u, the only data. Kr/Xe in Mylar fail because of carbon and oxygen (Xe in carbon −20% at
+>   0.1–1 MeV/u), not hydrogen. Using SRIM 2013's tables was rejected (fitted to the same data, unpublished,
+>   circular). The facts (register, "Why physim is low for Kr in hydrogen"): in one experiment physim goes from
+>   −20% in H₂ to +7% in Ar, so the effective charge depends on the target and physim's does not. Charge states
+>   (2026-11-15): measured ⁸⁶Kr charges at 2.7 MeV/u (H₂ 25.1 > He 23.2 > N₂ < 20, Kuboki et al. 2014) are in
+>   the same order as the charges the stopping needs (23.3, 22.4, 20.8), but their differences are twice as
+>   large; substituting them overshoots (H₂ +15%). Formulas (2026-11-15): Schiwietz–Grande 2001 (gas) has no
+>   usable target dependence; Winger 1992's, as a factor on physim's charge, fixes the gases but makes Ni, Ag, Au
+>   13–24% low. None is adopted. The missing piece is in the step from charge to stopping, not the charge alone.
+>   **Parked (2026-11-15):** the planner warns instead (ions with Z > 18 below 10 MeV/u in layers or detectors
+>   containing H or He, `stopping.known_shortfall`). To resume: a theory that computes stopping per charge state
+>   (CasP, or PASS with a chosen charge) fed the measured charges, to see why only half the charge difference
+>   shows in the stopping; heavy ions in carbon (Xe −17%) may share the cause.
+>   SRIM was run with compound
+>   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
+> - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.
+> - TRIM: every exported TRIM.IN (4 cases and the 2 example setups) ran unchanged. Mean energies within 1% except α
+>   in 10 µm Mylar (+1.05%; physim loses 4% less energy, likely TRIM's Bragg-additive Mylar against ICRU's); widths within 20%
+>   except 660 MeV ¹³²Xe in 2 µm C (−63%: charge-exchange straggling is not modelled, see below).
+> - Both comparisons are known failures in `tests/python/test_nuclear_validation.py`; the tolerances were not changed.
+>
+> Not met / left out: the 5% heavy-ion target against SRIM (see above). The planned 2% (p/α vs NIST) holds for
 > ranges; the 5% heavy-ion target holds only above 10 MeV/u: below 1 MeV/u heavy ions are within 25–55% (Kr/Xe ranges
 > within a factor 2), the limit of a model without Ziegler's per-ion coefficient tables, which could be added
 > later. Straggling below ~10 MeV/u differs from LISE++ by up to 2–4×. Channelling and charge-state distributions

@@ -332,6 +332,124 @@ def stopping_vs_lise(ref):
     return not failures, worst_frac, len(rows), detail + f" (worst {worst_frac:.0%} of a band's tolerance)", plot
 
 
+def _ion_class(z: int) -> str:
+    return "p,a" if z <= 2 else ("C-Ar" if z <= 18 else "Kr,Xe")
+
+
+def _energy_band(e_u: float) -> str:
+    return "0.1-1" if e_u < 1 else ("1-10" if e_u < 10 else ">=10")
+
+
+def _stopping_vs_srim(ref, targets: tuple) -> tuple:
+    """Total stopping power (electronic + nuclear) against SR Module, judged by the LISE++ bands of
+    STOPPING_TOLERANCE. SRIM's ranges are projected ranges, which are shorter than physim's path-length (CSDA)
+    ranges where ions scatter (light ions in heavy targets, slow ions), so they are reported, not judged."""
+    from .stopping import Stopping
+
+    path = _file(ref, "stopping_srim.csv")
+    if path is None:
+        return None, math.nan, 0, "stopping_srim.csv not yet produced (SR Module runs requested)", {}
+    rows = [r for r in read_reference(path)[1] if r["target"] in targets]
+    worst: dict = {}
+    per_target: dict = {}
+    range_10: dict = {}
+    xs, ratio = [], []
+    for r in rows:
+        nuc = data.nuclide(r["ion"])
+        e_u, rho = float(r["e_mev_u"]), float(r["density_g_cm3"])
+        s = Stopping(r["ion"], r["target"])
+        e = e_u * nuc.A
+        d = s.stopping_power(e) / (float(r["electronic_mev_mg_cm2"]) + float(r["nuclear_mev_mg_cm2"])) - 1
+        key = ("stopping", _ion_class(nuc.Z), _energy_band(e_u))
+        worst[key] = max(worst.get(key, 0.0), abs(d))
+        t = r["target"]
+        if abs(d) / STOPPING_TOLERANCE[key] > per_target.get(t, (0.0,))[0]:
+            per_target[t] = (abs(d) / STOPPING_TOLERANCE[key], f"{r['ion']} {e_u:g} MeV/u {d:+.1%}")
+        if e_u >= 10:
+            dr = float(s.range(e)) / rho * 10 / float(r["projected_range_um"]) - 1
+            range_10[t] = max(range_10.get(t, 0.0), abs(dr))
+        xs.append(e_u)
+        ratio.append(1 + d)
+    failures = {k: round(v, 3) for k, v in worst.items() if v > STOPPING_TOLERANCE[k]}
+    worst_frac = max(v / STOPPING_TOLERANCE[k] for k, v in worst.items())
+    detail = ("all bands inside their tolerance" if not failures else f"outside: {failures}") + (
+        f" (worst {worst_frac:.0%} of a band's tolerance); worst per target: "
+        + ", ".join(f"{t} {w[1]}" for t, w in per_target.items())
+        + "; path-length vs projected range at 10 MeV/u (not judged): "
+        + ", ".join(f"{t} {v:.1%}" for t, v in range_10.items()))
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(ratio)), "xlabel": "energy (MeV/u)",
+            "ylabel": "stopping power, physim / SRIM", "logx": True}
+    return not failures, worst_frac, len(rows), detail, plot
+
+
+@check("Stopping power and range", "tool", "SRIM 2013 SR Module: 5 ions (⁴He to ¹³²Xe) × Au, Si × 0.1–10 MeV/u "
+       "(stopping_srim.csv)", "the LISE++ bands for stopping power (STOPPING_TOLERANCE); ranges reported, not judged")
+def stopping_vs_srim(ref):
+    return _stopping_vs_srim(ref, ("Au", "Si"))
+
+
+@check("Stopping power and range", "tool", "SRIM 2013 SR Module, compounds: 5 ions × Mylar, CD₂, CsI × "
+       "0.1–10 MeV/u, compound correction 1 (stopping_srim.csv)", "the same bands as for elements "
+       "(STOPPING_TOLERANCE); ranges reported, not judged")
+def stopping_compounds_vs_srim(ref):
+    return _stopping_vs_srim(ref, ("Mylar", "CD2", "CsI"))
+
+
+#: physim material for each target of stopping_measured_hydrogen.csv, and the group it is judged in.
+MEASURED_HYDROGEN_TARGETS = {"H2": ("H", "H₂/D₂ gas"), "D2": ("D2", "H₂/D₂ gas"), "Mylar": ("Mylar", "Mylar"),
+                             "Polypropylene": ("Polyethylene", "(CH₂)ₙ"), "Polyethylene": ("Polyethylene", "(CH₂)ₙ"),
+                             "CH2": ("Polyethylene", "(CH₂)ₙ")}
+
+
+@check("Stopping power and range", "literature", "Measured electronic stopping of C, O, Ar, Kr, Xe in H₂, D₂, "
+       "(CH₂)ₙ polymers and Mylar, 0.1–15 MeV/u, from the IAEA Stopping Power Database "
+       "(stopping_measured_hydrogen.csv; one outlier data set excluded, see its header)",
+       "median deviation per target group, ion and energy band inside the LISE++ band for that ion class and energy "
+       "band (STOPPING_TOLERANCE)")
+def stopping_hydrogen_vs_data(ref):
+    from .stopping import Stopping
+
+    path = _file(ref, "stopping_measured_hydrogen.csv")
+    if path is None:
+        return None, math.nan, 0, "stopping_measured_hydrogen.csv not found", {}
+    rows = [r for r in read_reference(path)[1] if r["used"] == "yes" and float(r["e_mev_u"]) >= 0.1]
+    cache: dict = {}
+    cells: dict = {}
+    srim_cells: dict = {}
+    xs, ratio = [], []
+    for r in rows:
+        material, group = MEASURED_HYDROGEN_TARGETS[r["target"]]
+        ion = f"{r['isotope']}{r['ion']}"
+        z, e_u = data.nuclide(ion).Z, float(r["e_mev_u"])
+        s = cache.setdefault((ion, material), Stopping(ion, material))
+        meas = float(r["electronic_mev_mg_cm2"])
+        d = float(s.stopping_power(e_u * int(r["isotope"]), part="electronic")) / meas - 1
+        key = (group, r["ion"], _ion_class(z), _energy_band(e_u))
+        cells.setdefault(key, []).append(d)
+        srim_cells.setdefault(key, []).append(float(r["srim_electronic_mev_mg_cm2"]) / meas - 1)
+        xs.append(e_u)
+        ratio.append(1 + d)
+    frac, fails, srim_fails = {}, {}, []
+    for key, devs in cells.items():
+        tol = STOPPING_TOLERANCE[("stopping", key[2], key[3])]
+        med = float(np.median(devs))
+        frac[key] = abs(med) / tol
+        if abs(med) > tol:
+            fails[key] = med
+        if abs(float(np.median(srim_cells[key]))) > tol:
+            srim_fails.append(key)
+    worst = max(frac.values())
+    label = lambda k: f"{k[1]} in {k[0]} {k[3]} MeV/u"  # noqa: E731
+    detail = (f"{len(cells)} cells; " + ("all inside their band" if not fails else "outside: " + ", ".join(
+        f"{label(k)} median {v:+.1%} (band {STOPPING_TOLERANCE[('stopping', k[2], k[3])]:.0%}, "
+        f"{len(cells[k])} points)" for k, v in sorted(fails.items(), key=lambda kv: kv[1])))
+        + f"; worst {worst:.0%} of a band. SRIM 2013 by the same rule (context): "
+        + ("all inside" if not srim_fails else "outside in " + ", ".join(label(k) for k in srim_fails)))
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(ratio)), "xlabel": "energy (MeV/u)",
+            "ylabel": "electronic stopping, physim / measured", "logx": True}
+    return not fails, worst, len(rows), detail, plot
+
+
 @check("Stopping power and range", "literature", "NIST PSTAR/ASTAR CSDA ranges (ICRU 49), p and α in C, Si, Au, "
        "water, 2 keV–100 MeV", "1%")
 def ranges_vs_nist(ref):
@@ -625,8 +743,8 @@ def spectra_vs_analytic(ref):
                                            f"{pk.sigma * 1e3:.1f} keV"), plot
 
 
-@check("Monte Carlo spectra", "tool", "TRIM transmitted-energy spectra (requested in pending/stopping_srim.md, part "
-       "2)", "mean 1%, width 20%")
+@check("Monte Carlo spectra", "tool", "TRIM (SRIM 2013) transmitted-energy spectra, 4 layers, from physim's own "
+       "TRIM.IN exports (straggling_trim.csv)", "mean 1%, width 20%")
 def spectra_vs_trim(ref):
     path = _file(ref, "straggling_trim.csv")
     if path is None:
@@ -634,16 +752,18 @@ def spectra_vs_trim(ref):
     from .stopping import Stopping
 
     rows = read_reference(path)[1]
-    ok, worst = True, 0.0
+    ok, worst, notes = True, 0.0, []
     for r in rows:
-        s = Stopping(r["ion"], r["material"], r.get("density") or None)
+        s = Stopping(r["ion"], r["material"], float(r["density"]) if r.get("density") else None)  # g/cm³
         mean = s.energy_after(float(r["energy_mev"]), r["thickness"])
         sigma = s.straggling(float(r["energy_mev"]), r["thickness"])
-        d_mean = abs(mean / float(r["mean_mev"]) - 1)
-        d_sigma = abs(sigma / float(r["sigma_mev"]) - 1)
-        ok &= d_mean <= 0.01 and d_sigma <= 0.20
-        worst = max(worst, d_mean / 0.01, d_sigma / 0.20)
-    return bool(ok), worst, len(rows), "", {}
+        d_mean = mean / float(r["mean_mev"]) - 1
+        d_sigma = sigma / float(r["sigma_mev"]) - 1
+        ok &= abs(d_mean) <= 0.01 and abs(d_sigma) <= 0.20 and r.get("opened_unchanged", "yes") == "yes"
+        worst = max(worst, abs(d_mean) / 0.01, abs(d_sigma) / 0.20)
+        notes.append(f"{r['ion']} {r['energy_mev']} MeV in {r['thickness']} {r['material']}: mean {d_mean:+.2%}, "
+                     f"σ {d_sigma:+.0%}")
+    return bool(ok), worst, len(rows), "; ".join(notes), {}
 
 
 # ---------------------------------------------------------------------------------------------------------------

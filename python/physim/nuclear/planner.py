@@ -100,7 +100,9 @@ EXPLAIN = {
                    "stopping powers; straggling from Bohr's formula carried through the layer.",
         "assumptions": "Paths grow as 1/cos of the angle to the layer normal; fully stripped ions at high velocity, "
                        "effective charge below.",
-        "limits": "Slow heavy ions (below ~1 MeV/u) are uncertain to 10–50%; straggling below 10 MeV/u to ~2×.",
+        "limits": "Slow heavy ions (below ~1 MeV/u) are uncertain to 10–50%; straggling below 10 MeV/u to ~2×. "
+                  "Ions heavier than Ar in layers with hydrogen or helium lose up to 20% too little energy below "
+                  "10 MeV/u; the warnings say when.",
     },
     "spectra": {
         "title": "Simulated spectra",
@@ -962,10 +964,33 @@ class Planner:
                                                          "records nothing", "beam path", "blocks", "hides")) else "note"
             source = "rates" if ("counts" in text or "collects" in text or "records" in text) else "physics"
             out.append(Warning(level, source, text))
+        out += [Warning("warning", "physics", t) for t in self._stopping_shortfalls()]
         for p in _scene.problems(self.experiment):
             if p.kind == "overlap":  # a detector in the beam is already reported above
                 out.append(Warning("warning", "setup", p.text.replace("would overlap", "overlaps")
                                    + " They cannot both stand there."))
+        return out
+
+    def _stopping_shortfalls(self) -> list:
+        """One warning per heavy ion (beam or target nuclide, Z > 18) that crosses a layer or detector containing
+        hydrogen or helium, where physim's stopping is known to fall short of measured data (see
+        :func:`physim.nuclear.stopping.known_shortfall`)."""
+        from .stopping import known_shortfall
+
+        e_u = self.experiment.beam.energy_mev / data.nuclide(beam_ion(self.experiment)).A
+        ions = {data.nuclide(beam_ion(self.experiment))}
+        layers = stack(self.experiment)
+        ions |= {data.nuclide(key) for lay in layers for key, n in lay.nuclides.items() if n > 0}
+        places = [(lay.material, lay.name) for lay in layers]
+        places += [(d.material_data(), d.name) for d in self.experiment.detectors]
+        out = []
+        for ion in sorted(ions, key=lambda n: (n.Z, n.A)):
+            where = [f"{name} ({mat.name})" for mat, name in places if known_shortfall(ion.Z, mat, e_u)]
+            if where:
+                out.append(f"Energy loss of {ion.name} in {', '.join(dict.fromkeys(where))} may be up to 20% too "
+                           f"low: for ions heavier than Ar below 10 MeV/u in hydrogen or helium, physim's stopping "
+                           f"falls short of measured data (physics register, stopping). Check the energies after "
+                           f"these layers against SRIM or data.")
         return out
 
     def explain(self, tab: str) -> dict:

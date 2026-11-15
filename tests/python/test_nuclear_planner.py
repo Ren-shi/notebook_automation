@@ -328,3 +328,30 @@ def test_results_kept_on_disk_belong_to_the_setup_they_were_computed_for(tmp_pat
     setup = (folder / "experiment.toml").read_text(encoding="utf-8")
     assert "40 MeV" not in setup  # an edit of the draft is not saved
     assert p.adopt(draft) and "40 MeV" in (folder / "experiment.toml").read_text(encoding="utf-8")  # Apply is
+
+
+def _shortfalls(p):
+    return [w for w in p.warnings() if "may be up to 20% too low" in w.text]
+
+
+def test_heavy_ions_in_hydrogen_rich_layers_warn_that_their_stopping_falls_short():
+    p = Planner.example("alpha_on_gold")
+    assert not _shortfalls(p)
+    assert p.set("beam", "nuclide", "84Kr") and p.set("beam", "energy", "250 MeV")
+    assert not _shortfalls(p)  # gold: no hydrogen or helium
+    assert p.set("target", "material", "CD2")
+    (w,) = _shortfalls(p)
+    assert w.level == "warning" and w.source == "physics"
+    assert "84Kr" in w.text and "target (CD2)" in w.text
+    assert p.set("beam", "energy", "1000 MeV")  # 11.9 MeV/u: the data agree there
+    assert not _shortfalls(p)
+    assert p.set("beam", "nuclide", "40Ar") and p.set("beam", "energy", "120 MeV")
+    assert not _shortfalls(p)  # Ar and lighter follow MSTAR in hydrogen
+
+
+def test_a_heavy_target_nuclide_in_a_hydrogen_rich_backing_warns_too():
+    p = Planner.example("alpha_on_gold")
+    p.set("backing", "material", "Mylar")  # incomplete until it has a thickness
+    assert p.set("backing", "thickness", "1 mg/cm2")
+    (w,) = _shortfalls(p)  # the gold recoils cross the Mylar backing
+    assert "197Au" in w.text and "backing (Mylar)" in w.text
