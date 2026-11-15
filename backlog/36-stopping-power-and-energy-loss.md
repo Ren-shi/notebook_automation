@@ -43,7 +43,11 @@
 >   **Open:** Kr and Xe in hydrogen (still 15–19% low; outside MSTAR). Tried 2026-11-15: DPASS 21.06 and
 >   SRIM-96 are as low as physim for Kr in H₂ (−18 to −28%); only SRIM 2013 matches (−8 to −11%); Xe in H₂ is
 >   fine at 25 MeV/u, the only data. Kr/Xe in Mylar fail because of carbon and oxygen (Xe in carbon −20% at
->   0.1–1 MeV/u), not hydrogen. SRIM was run with compound
+>   0.1–1 MeV/u), not hydrogen. Using SRIM 2013's tables was rejected (fitted to the same data, unpublished,
+>   circular). The facts (register, "Why physim is low for Kr in hydrogen"): in one experiment physim goes from
+>   −20% in H₂ to +7% in Ar, so the effective charge depends on the target and physim's does not. **Next:** test
+>   whether Kr's equilibrium charge state in H₂ is higher than ZBL's solid fit, against measured charge states.
+>   SRIM was run with compound
 >   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
 > - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.
 > - TRIM: every exported TRIM.IN (4 cases and the 2 example setups) ran unchanged. Mean energies within 1% except α

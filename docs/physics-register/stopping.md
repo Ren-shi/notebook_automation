@@ -142,8 +142,8 @@ Caveats:
 
 | Data | Points | physim | DPASS 21.06 | SRIM-96 (ZBL) | SRIM 2013 |
 |---|---|---|---|---|---|
-| Kr in H₂/D₂, 1–3 MeV/u (Bimbot et al. 1989) | 12 | −27% / 27% | −28% / 28% | −22% / 22% | −8% / 9% |
-| Kr in H₂/D₂, 3–15 MeV/u | 22 | −16% / 17% | −21% / 21% | −18% / 19% | −11% / 12% |
+| Kr in H₂/D₂, 1–3 MeV/u (Bimbot et al. 1989, as all Kr points in H₂/D₂) | 12 | −27% / 27% | −28% / 28% | −22% / 22% | −8% / 9% |
+| Kr in H₂/D₂, 3–15 MeV/u (data stop at 5.2 MeV/u) | 22 | −16% / 17% | −21% / 21% | −18% / 19% | −11% / 12% |
 | Xe in H₂, 25 MeV/u (He1991, errors 4.7–8.6%) | 2 | +4% | −7% | −7% | −4% |
 | Ar in H₂/D₂, 1–15 MeV/u (for comparison; physim uses MSTAR) | 39 | −2% / 4% | −13% / 14% | −15% / 16% | −6% / 6% |
 
@@ -156,12 +156,65 @@ The Kr and Xe failures in Mylar are not a hydrogen problem: replacing only physi
 under 1%, while physim is low in carbon too (Xe in carbon: −20% at 0.1–1 MeV/u, −7% at 1–10 MeV/u, against 212
 measured points; DPASS +5% and 0%, SRIM-96 −9% and −2%).
 
+**Why physim is low for Kr in hydrogen: the facts (2026-11-15).** physim's effective-charge model alone (Kr is
+outside MSTAR) against the IAEA database, median of model ÷ measured − 1 per data set:
+
+1. *One experiment.* All 34 Kr points in H₂ and D₂ are Bimbot et al. 1989 (Bi1989b), 1.5–5.2 MeV/u. There are none
+   between 5.2 and 21 MeV/u.
+2. *The same experiment measured Kr in other gases* at the same energies, with the same beam and method:
+
+   | Gas | H₂ | D₂ | He | N₂ | Ar |
+   |---|---|---|---|---|---|
+   | physim ÷ measured − 1 | −20% | −16% | −3% | +6% | +7% |
+
+   Errors common to the experiment (beam energy, gas thickness) cannot make this spread. H₂ and D₂ should agree per
+   electron; their 4% difference is the experiment's scatter, against 23–27% from H₂ to N₂ and Ar.
+3. *Solids show the same order, across many groups* (0.5–10 MeV/u, range of the per-source medians):
+
+   | Ion | C | Al | Ni | Au |
+   |---|---|---|---|---|
+   | Kr | −12% to +1% | −9% to +2% | −8% to 0% | −8% to +11% |
+   | Xe | −17% to −8% (5 of 6 sources near −17%) | −11% to −3% | −2% to +1% | −10% to +11% |
+
+4. *Near full stripping the order remains* (22–26 MeV/u, He et al. 1991): Kr H₂ +4%, He +7%, N₂ +6%, Ar +9%;
+   Xe H₂ +4%, He +7%, N₂ +14%, Ar +23%.
+5. *It grows with the ion's charge:* in H₂ at 2–9 MeV/u, Ar is −6% (Bi1989a) and Kr −20%.
+6. *As an effective charge,* the data imply 2–3 more units of charge on Kr in H₂ than physim gives:
+
+   | E (MeV/u) | 1.5 | 1.9 | 3.1 | 4.3 | 22 |
+   |---|---|---|---|---|---|
+   | ζ, physim | 0.48 | 0.52 | 0.61 | 0.69 | 0.94 |
+   | ζ, from data | 0.57 | 0.60 | 0.69 | 0.75 | 0.92 |
+
+7. *physim cannot make a target dependence.* ζ is ZBL's fit, made mostly to solids, with the target Fermi velocity
+   set to 1 for every target; only the proton stopping changes with the target. MSTAR has a separate fit for H₂ and
+   He gas for this reason, which is why ions from Li to Ar now pass.
+8. *Ruled out:* the proton table (PSTAR's H₂ is used as published); the gas–solid effect (ions carry less charge in
+   gases, which would make physim too high, not too low); the target Fermi velocity (tested for CD₂); an isotope
+   effect (H₂ and D₂ are both low); scatter in the data (item 2).
+9. *DPASS is as low* (−28% and −21%, table above) although it has target-dependent stopping physics (Bloch,
+   Barkas and shell corrections). This points at its charge state for H₂ rather than at the stopping theory; it
+   does not prove it.
+
+Two explanations fit these facts. (a) *Charge state:* Kr may stay more stripped in H₂ than ZBL's solid fit says,
+since H₂ has two slow electrons per molecule and captures poorly onto a fast ion. This can be checked against
+measured equilibrium charge states in H₂ and N₂ (gas-stripper studies), which are independent of the stopping
+data. (b) *Stopping per unit charge:* for Kr here Z₁v₀/v = 2.5–4.6, so close collisions follow Bohr's classical
+regime, which lowers the stopping by a roughly fixed amount: a larger fraction for heavy targets than for hydrogen.
+A rough estimate gives H₂ about 15% above N₂ relative to the proton scaling, the right direction and size, but it
+also predicts Ar about 15% below N₂, which the data do not show. So (b) alone is not the whole story. Using SRIM
+2013's tables for these ions was considered and rejected: SRIM 2013 is fitted to data that include Bi1989b, does
+not publish its treatment of hydrogen, and would make the SRIM checks circular. (a) is to be tested first.
+
 Validated 2026-10-04; SRIM comparison 2026-11-14; MSTAR 2026-11-15.
 
 ## Known limitations
 
 - Heavy ions in CD₂ differ from SRIM by up to 20% at 1 MeV/u and up to 27% at 0.1 MeV/u, beyond the stated bands
   (see the validation table). Kr and Xe in hydrogen-rich targets are 15–19% below measured data at 1–10 MeV/u.
+- The effective charge of ions heavier than Ar does not depend on the target, but measured stopping says it
+  does: below ~10 MeV/u physim is up to 20% low in H₂ and C and a few percent high in N₂ and Ar (see "Why physim
+  is low for Kr in hydrogen").
 - Slow heavy ions (below 1 MeV/u, especially Kr and heavier): stopping within ~50%, range within a factor of two.
   Plan with care and check against SRIM. Ziegler's per-ion and per-target low-energy coefficient tables would fix
   this; they are not included (a possible later download).
