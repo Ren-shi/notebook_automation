@@ -1,7 +1,7 @@
 """The evaporation Monte Carlo (backlog item 75, Stage 3): each chain conserves energy and momentum exactly; with
 only neutrons allowed the first neutron follows Weisskopf's spectrum ε σ_inv(ε) exp(−ε/T); seeded runs repeat bit
-for bit; the channel shares sum to one; fission takes over in heavy nuclei; and the channels and particle energies
-of 12C + 150Nd at 70 MeV come close to PACE4's."""
+for bit; the channel shares sum to one; fission takes over in heavy nuclei; the xn thresholds of 4He + 165Ho fall
+where they are measured; and the channels and particle energies of 12C + 150Nd at 70 MeV come close to PACE4's."""
 
 import math
 from pathlib import Path
@@ -61,6 +61,9 @@ def test_entry_states_are_physical(run):
     yrast = np.array([ev.yrast_energy_mev(aa, j) for aa, j in zip(run.residue_a[ok], run.entry_spin[ok])])
     assert (run.entry_energy_mev[ok] >= yrast - 1e-9).all()
     assert run.entry_energy_mev[ok].mean() < 20.0
+    # The rotational part of the entry energy is that yrast energy.
+    assert np.allclose(run.entry_rotational_energy_mev[ok], yrast, rtol=1e-12)
+    assert np.isnan(run.entry_rotational_energy_mev[run.fission]).all()
 
 
 def test_shares_sum_to_one_and_cross_sections_to_sigma_fus(run):
@@ -197,6 +200,53 @@ def test_gdr_strength_gives_radiative_widths_of_the_right_size():
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# Measured data
+
+
+def _crossing(es, low, high):
+    """First energy where ``high`` overtakes ``low`` (linear interpolation)."""
+    d = np.asarray(low, float) - np.asarray(high, float)
+    i = int(np.nonzero((d[:-1] > 0) & (d[1:] <= 0))[0][0])
+    return es[i] + (es[i + 1] - es[i]) * d[i] / (d[i] - d[i + 1])
+
+
+def test_xn_thresholds_match_measured_4he_165ho():
+    """⁴He + ¹⁶⁵Ho: the beam energies where 3n overtakes 2n and 4n overtakes 3n, from physim's own fusion σ_ℓ,
+    against three stacked-foil measurements (Usman 2020, Kormazeva 2022, Gadkari 1997; EXFOR).
+
+    Each crossing sits where the energy left after the neutrons can just pay for one more, so it tests the energy the
+    neutrons carry, which the absolute cross sections (normalised by σ_fus, with pre-equilibrium losses above 45 MeV)
+    do not. Measured: 2n/3n 30.5–31.8 MeV, 3n/4n 41.8–42.2 MeV. Tolerance 1 MeV from the mean of the three, the
+    foils' own energy uncertainty (0.8–2.4 MeV near the crossings). PACE4 4.36 puts 3n/4n at 43.9 MeV, its harder
+    neutrons (docs/theory/evaporation.md).
+    """
+    from physim.nuclear.fusion import Fusion
+
+    rows = [ln.split(",") for ln in (REFERENCE / "evaporation_4He_165Ho_literature.csv").read_text(
+        encoding="utf-8").splitlines() if ln and not ln.startswith(("#", "beam"))]
+    fusion = Fusion("4He", "165Ho")
+    for low, high, energies in (("2n", "3n", (29.0, 30.0, 31.0, 32.0, 33.0)),
+                                ("3n", "4n", (40.0, 41.0, 42.0, 43.0, 44.0))):
+        measured = []
+        for ref in sorted({r[8] for r in rows}):
+            pts: dict = {}
+            for r in rows:
+                if r[8] == ref and r[3] in (low, high):
+                    pts.setdefault(float(r[4]), {})[r[3]] = float(r[6])
+            es = sorted(e for e, v in pts.items() if low in v and high in v)
+            measured.append(_crossing(es, [pts[e][low] for e in es], [pts[e][high] for e in es]))
+        shares = {low: [], high: []}
+        for e in energies:
+            cn = fusion.compound(e)
+            r = ev.evaporate("169Tm", cn.excitation_mev, sigma_l_mb=cn.sigma_l_mb, events=10000, seed=5)
+            s = r.shares()
+            shares[low].append(s.get(low, 0.0))
+            shares[high].append(s.get(high, 0.0))
+        ours = _crossing(energies, shares[low], shares[high])
+        assert ours == pytest.approx(np.mean(measured), abs=1.0), (low, high, ours, measured)
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # PACE4
 
 
@@ -217,8 +267,10 @@ def test_channels_and_energies_close_to_pace4():
     """12C + 150Nd at 70 MeV (E* = 59.3 MeV in 162Dy) with PACE4's own spin distribution.
 
     Tolerances: the strongest residue the same and within 20%, the second within 30% and in order; mean proton and α
-    energies within 10%. Mean neutron energies are 10–20% below PACE4's (see docs/theory/evaporation.md), within
-    25% here; that also moves some 5n events to 6n, so the third channel is not compared.
+    energies within 10%. Mean neutron energies are 10–25% below PACE4's, within 25% here: the spectra share their
+    slope above 4 MeV, but PACE4 has only 6–11% of its neutrons below 1 MeV (physim 17–25%), and the measured xn
+    thresholds of 4He + 165Ho side with physim (docs/theory/evaporation.md, "Inside PACE4"). The softer neutrons
+    leave room for a sixth neutron in more chains, so the third channel (6n) is not compared.
     """
     header, rows = _pace("pace4_12C_150Nd_70MeV.csv")
     sigma_j = [float(x) for x in header["sigma_j_mb"].split(",")]

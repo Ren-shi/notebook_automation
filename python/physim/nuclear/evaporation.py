@@ -43,7 +43,9 @@ An :class:`Evaporation` with NumPy arrays. Per event (length ``events``):
   ``labels``; ``label_of_event`` gives the strings such as ``"p2n"``, ``"a3n"``, ``"4n"``, ``"g"`` for no particle,
   ``"fission"``), ``fission`` (bool).
 - ``entry_energy_mev`` and ``entry_spin``: the state (E*, J) of the residue after the last particle. For a fission
-  event, the state of the nucleus that fissioned.
+  event, the state of the nucleus that fissioned. ``entry_rotational_energy_mev``: the part of the entry energy
+  locked in rotation (the residue's yrast energy at its entry spin); channel shares are validated while its mean
+  stays below about 5 MeV (``docs/theory/evaporation.md``, "The bound").
 - ``recoil_momentum_mev_c`` (events × 3): the residue's momentum in the compound nucleus's rest frame, MeV/c.
 
 Per emission, in flat arrays, event ``i`` owning ``offsets[i]:offsets[i+1]`` in emission order:
@@ -811,6 +813,14 @@ class Evaporation:
     @property
     def label_of_event(self) -> np.ndarray:
         return np.array(self.labels, dtype=object)[self.channel]
+
+    @property
+    def entry_rotational_energy_mev(self) -> np.ndarray:
+        """Yrast energy ħ²J²/2I of each residue at its entry spin, MeV (NaN for fission): the part of the entry
+        energy locked in rotation, which no neutron can use. Channel shares are validated while its mean stays
+        below about 5 MeV (half a neutron separation energy); see ``docs/theory/evaporation.md``, "The bound"."""
+        out = rotational_constant_mev(self.residue_a.astype(float), self.model) * self.entry_spin.astype(float) ** 2
+        return np.where(self.fission, np.nan, out)
 
     def particles(self, i: int) -> dict:
         """The emissions of event i: kinds (as letters), energies (MeV) and momenta (MeV/c)."""

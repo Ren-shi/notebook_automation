@@ -107,7 +107,10 @@ $$
 $E_G = 31.2A^{-1/3} + 20.6A^{-1/6}$ MeV (Berman and Fultz 1975), $\Gamma_G = 5$ MeV, and $\sigma_0$ from the
 Thomas–Reiche–Kuhn sum rule, $\int\sigma\,dE = 60NZ/A$ mb MeV. The resulting radiative width at the neutron
 separation energy of ¹⁶⁸Yb is 0.1–0.2 eV; measured values for rare-earth nuclei are 50–100 meV. There is no E2 or
-M1: collective E2 strength near the yrast line is left to the discrete cascade.
+M1: collective E2 strength near the yrast line is left to the discrete cascade. PACE4 has E1, M1, E2 and M2 with
+strengths in Weisskopf units (E1 1.1 × 10⁻⁵, M1 0.01, E2 9, M2 1.2 for the rare earths; E2 5.9 for ¹²⁴Ce), but its
+E2 γ rays come almost all after the last neutron (see "Inside PACE4" below), so their absence from the chain here is
+not what separates the two codes.
 
 ## Fission: Bohr–Wheeler with a liquid-drop barrier
 
@@ -141,6 +144,8 @@ The tests (`tests/python/test_nuclear_evaporation.py`) check:
   within 15% of $\sqrt{U/a}$.
 - **Reproducibility.** Seeded runs are bit-identical. The channel shares sum to one, and the cross sections to σ_fus.
 - **Fission** takes over in ²²⁴Th, grows with spin, and is absent in ¹⁷²Yb.
+- **Measured xn thresholds.** ⁴He + ¹⁶⁵Ho from physim's own fusion σ_ℓ: the beam energies where 3n overtakes 2n and
+  4n overtakes 3n lie within 1 MeV of the mean of three measurements (see "Inside PACE4").
 - **PACE4.** 12C + 150Nd at 70 MeV (E* = 59.3 MeV in ¹⁶²Dy, PACE4's own σ_J): see below.
 
 The validation suite (`physim.nuclear.validation`) holds the comparisons for all five systems below, and two exact
@@ -176,23 +181,26 @@ What agrees and what does not:
 
 - **Charged particles.** α energies agree within 5% everywhere, protons within 10%.
 - **Neutrons** come out 10–25% softer than PACE4's. The first neutron of a chain does follow $2T$ of the model's own
-  level density (3.06 MeV against the direct integral 3.04 MeV for ¹⁶⁹Tm at 47.6 MeV). The difference is in the
-  later, colder steps, and so in the models, not the sampling. Softer neutrons leave energy for one more neutron in
-  some chains, which is why ¹⁵⁶Dy (6n) is three times PACE4's share for ¹²C + ¹⁵⁰Nd.
-- **Light and medium systems at moderate spin** (⁴He, ¹²C): the strongest two channels agree within 15% and in order.
-- **High spin.** For heavy projectiles physim leaves more energy in rotation at the end of the chain. Entry spins are
-  about 45 ħ after ⁴⁸Ca + ¹²⁴Sn, so fewer neutrons are emitted (5n and 4n instead of 6n and 5n). Event by event the
-  model is consistent: chains that start below 40 ħ give 6n as in PACE4. PACE4 removes much more spin on the way,
-  with strong statistical E2 emission (12 E2 γ rays per event) that physim does not have. Adding a constant-strength
-  statistical E2 here made the neutron deficit worse, because it also competes with the neutrons near threshold.
+  level density (3.06 MeV against the direct integral 3.04 MeV for ¹⁶⁹Tm at 47.6 MeV), and above 4 MeV the two
+  codes' spectra have the same slope. The whole difference is below 2 MeV, where PACE4 has few neutrons, and the
+  measured xn thresholds of ⁴He + ¹⁶⁵Ho side with physim (see "Inside PACE4" below). Softer neutrons leave energy for
+  one more neutron in some chains, which is why ¹⁵⁶Dy (6n) is three times PACE4's share for ¹²C + ¹⁵⁰Nd.
+- **Light and medium systems at moderate spin** (⁴He, ¹²C): the strongest two channels agree within 20% and in order.
+- **High spin.** For heavy projectiles physim leaves more energy in rotation at the end of the chain: entry spins are
+  about 45 ħ after ⁴⁸Ca + ¹²⁴Sn, 16.6 MeV of rotational energy, so fewer neutrons are emitted (5n and 4n instead of
+  6n and 5n). PACE4's cascades do not start from the σ_J it prints but from about half of it (⟨J⟩ 23 ħ instead of
+  52 ħ), and it does not remove spin with E2 γ rays during the chain, as an earlier reading of its output had it
+  (see "Inside PACE4"). So at high spin the comparison is not like for like.
 - **³²S + ⁹²Mo** (proton-rich ¹²⁴Ce at up to 69 ħ): physim emits too many protons and α particles and too few
-  neutrons (multiplicities 2.5, 1.0 and 0.5 against PACE4's 1.9, 0.6 and 1.4).
+  neutrons (multiplicities 2.5, 1.0 and 0.5 against PACE4's 1.9, 0.6 and 1.4). This persists when physim starts from
+  PACE4's own first-decay spins, so it is not a spin effect.
 
 The unit test (`test_nuclear_evaporation.py`) asserts the light-system agreement only: for ¹²C + ¹⁵⁰Nd, the
 strongest residue the same and within 20%, the second within 30% and in order, ⟨ε_p⟩ and ⟨ε_α⟩ within 10%, ⟨ε_n⟩
 within 25%. Item 75's target, held by the validation suite, is all three strongest channels within 30% and in
 order, and mean n and p energies within 10%. Today physim meets it for protons, and for the first two channels of
-light systems; not for the third channel, neutron energies or heavy, high-spin systems.
+light systems; not for the third channel, neutron energies or heavy, high-spin systems. "Inside PACE4" and "The
+bound" below say which of these misses are physim's and what the paper can claim.
 
 ### A third code: GEMINI++
 
@@ -222,7 +230,8 @@ What the third code says:
 - **Neutron energies.** GEMINI++'s neutrons are softer still than physim's: 1.9–2.1 MeV, against physim's 2.2–2.4 and
   PACE4's 2.8–2.9. Two independent codes are below PACE4, so physim's 10–25% deficit against PACE4 is not by itself
   evidence of a fault in physim; the spread between the three codes (25–35% of PACE4's value) is the model
-  uncertainty of ⟨ε_n⟩ at these energies. Measured spectra are needed to choose.
+  uncertainty of ⟨ε_n⟩ at these energies. Measured spectra would settle it; the measured xn thresholds of
+  ⁴He + ¹⁶⁵Ho already side with physim against PACE4 (next section).
 - **Channels.** GEMINI++ also boils off more neutrons than PACE4 where physim does: twice PACE4's ¹⁵⁶Dy (6n) for
   ¹²C + ¹⁵⁰Nd (physim three times), and ¹⁶⁴Tm (5n) strong for ⁴He + ¹⁶⁵Ho. For ¹⁶O + ¹⁴⁴Sm it puts 3n (¹⁵⁷Yb) first,
   as physim does, where PACE4 has 4n first. Its strongest residue agrees with PACE4 within 8% for ⁴He and ¹²C.
@@ -234,6 +243,104 @@ What the third code says:
   and, for ⁴⁸Ca, at a critical spin of 50 ħ; for ¹⁶O after 1500 events. Mode 0 hangs as well; mode 2 finishes but
   silently loses events (all of them for ⁴He, 94% for ¹⁶O). The standalone GEMINI++ (Charity's C++ source) would be
   the way to get them.
+
+### Inside PACE4: neutron energies and high spin
+
+PACE4's HTML output holds more than the reference files keep: its electromagnetic strengths, a decay summary per
+mode (counts by excitation energy and spin, multiplicity, spin removed), the CM spectra in 1 MeV bins, and a track
+of the decay at three excitation energies. `scripts/pace4_internals.py` reruns the five systems with the same decks
+(PACE4's seed is fixed, so the runs are those of the reference files), reads these tables and, with `--physim`, puts
+physim's numbers for the same E* and σ_J beside them:
+
+| System | ⟨J⟩ of PACE4's σ_J | ⟨J⟩ at PACE4's first decay | spin PACE4's cascades remove: n, E2, all | neutrons below 1 MeV, PACE4 / physim | tail slope T (4–10 MeV), PACE4 / physim |
+|---|---|---|---|---|---|
+| ⁴He + ¹⁶⁵Ho | 14.9 ħ | 9.9 ħ | 3.4, 5.4, 9.2 ħ | 10.4% / 25.2% | 1.23 / 1.24 MeV |
+| ¹²C + ¹⁵⁰Nd | 22.2 | 13.1 | 4.8, 7.0, 12.6 | 9.4 / 23.0 | 1.36 / 1.40 |
+| ¹⁶O + ¹⁴⁴Sm | 25.1 | 14.3 | 3.3, 8.7, 13.6 | 11.4 / 24.3 | 1.31 / 1.27 |
+| ³²S + ⁹²Mo | 36.8 | 18.5 | 2.2, 11.0, 17.9 | 6.1 / 17.2 | 1.46 / 1.59 |
+| ⁴⁸Ca + ¹²⁴Sn | 52.0 | 23.4 | 5.4, 16.1, 25.6 | 9.0 / 19.9 | 1.47 / 1.43 |
+
+The first-decay spins are those of the compound-nucleus row of PACE4's n, p and α decay summaries; "all" adds p, α,
+E1 and the spin left in the cascades PACE4 reports as trapped; the tail slope is that of N(ε)/ε.
+
+**Neutron energies (item E12).** Above 4 MeV the two spectra fall with the same slope, within 3% for four systems
+(³²S + ⁹²Mo: physim 9% hotter). The tail comes from the first, hottest steps, so the level densities agree there.
+The whole difference in ⟨ε_n⟩ is below 2 MeV: PACE4 has 6–11% of its neutrons below 1 MeV, physim 17–25%. That
+deficit does not follow from what PACE4 prints about itself. A spectrum ε exp(−ε/T) at PACE4's own tail temperature
+already has 15–20% below 1 MeV with a constant inverse cross section. The Wilmore–Hodgson potential PACE4 uses gives
+one rising toward low energy (3.4 b at 0.5 MeV, 2.6 b at 5 MeV for A = 168), which adds more, and the later, colder
+steps add more again. Its 1 MeV bins are not the cause: the mean of the bin centres reproduces its "Average Energy"
+exactly, and binning physim the same way moves physim's mean by less than 0.01 MeV. Where PACE4 loses its soft
+neutrons we have not found. physim's own inverse cross section (the black nucleus, flat at 2.1 b) is if anything a
+little low at low energy, which hardens physim's spectrum slightly against an optical model; it is not the cause of
+the softness either.
+
+Measured data decide between the two codes. Each xn excitation function hands over to the next where the energy
+left after the neutrons can just pay for one more, so the crossing energies measure the energy the neutrons carry.
+For ⁴He + ¹⁶⁵Ho (three stacked-foil data sets, `evaporation_4He_165Ho_literature.csv`; PACE4 at 26–50 MeV in 2 MeV
+steps, physim from PACE4's E* and σ_J), the beam energy (lab, MeV) where the heavier channel takes over:
+
+| | Usman 2020 | Kormazeva 2022 | Gadkari 1997 | PACE4 | physim |
+|---|---|---|---|---|---|
+| 3n overtakes 2n | 30.5 | 31.7 | 31.8 | 31.5 | 31.1 |
+| 4n overtakes 3n | 42.0 | 42.2 | 41.8 | 43.9 | 41.8 |
+
+After four neutrons PACE4's harder spectrum has pushed the 4n threshold 1.9 MeV above the measurements, beyond their
+energy uncertainties (0.8–2.4 MeV near the crossings); physim is within 0.2 MeV. Pre-equilibrium emission, which
+neither code has, adds 3n at the higher energies and so, if anything, raises the measured crossing. With physim's
+own fusion σ_ℓ the crossings are 31.0 and 41.7 MeV; `test_xn_thresholds_match_measured_4he_165ho` holds them within
+1 MeV of the measured mean. physim's neutron energies therefore stay as they are: hardening them towards PACE4 would
+move the thresholds away from the data. "Better" for ⟨ε_n⟩ means the measured thresholds, not PACE4's mean. physim
+lies between PACE4 (10–24% harder) and GEMINI++ (9–15% softer). The thresholds side with physim against PACE4, but
+with GEMINI++'s residues known only at 50 MeV here they cannot separate physim from GEMINI++.
+
+**High spin (item E11).** PACE4 does not decay its compound nucleus from the σ_J it prints. The states that emit the
+first particle have ⟨J⟩ = 23.4 ħ for ⁴⁸Ca + ¹²⁴Sn, with 8 of 19 996 above 50 ħ, where its σ_J has ⟨J⟩ = 52 ħ and
+reaches 90 ħ. The ratio is 0.45–0.66 in all five systems. Its angular-momentum budget agrees: the cascades remove
+25.6 ħ in all (5.4 ħ by neutrons, 16.1 ħ by 10.7 E2 γ rays, 3.7 ħ left in the 18% of cascades trapped at 20 ħ),
+not 52 ħ. physim starts from the σ_J. Why PACE4 does this we have not found out (the beam's and target's spins are 0
+in both decks). What matters here is that its xn shares at high spin answer a different question.
+
+The earlier reading, that PACE4 removes the spin with statistical E2 γ rays during the chain, does not hold either.
+PACE4's decay track records 4 γ rays against 19 366 neutrons from the compound nucleus, and 3 against 19 495 at
+36 MeV. 99.8% of its E2 γ rays come from states below 21 MeV, after the last neutron or from states whose spin keeps
+them from emitting one: the discrete cascade, which physim leaves to the event generator. physim's own statistical
+γ rays between particles number 0.02–0.12 per event. Each neutron removes about 1 ħ in both codes (PACE4 1.0–1.25 ħ
+per its decay track, physim 1.4 ħ for ⁴⁸Ca + ¹²⁴Sn).
+
+Statistical γ emission is also not the physics that could change the high-spin channels. A collective E2 along the
+yrast band carries away the rotational energy it removes (1.2 MeV for 2 ħ at 45 ħ in ¹⁶⁶Yb), which leaves the energy
+above the yrast line, and so the neutron threshold, where it was. Only a γ ray softer than the drop in yrast energy
+turns rotation into heat, and such γ rays are suppressed by ε^(2L+1). What decides how many neutrons a high-spin
+chain can afford is the energy locked in rotation at its end, set by the yrast line. Started from PACE4's
+first-decay spins instead of the σ_J, physim gives ⁴⁸Ca + ¹²⁴Sn 6n 0.67 and 5n 0.13 (PACE4 0.49, 0.40). The 6n
+excess is that of ¹²C + ¹⁵⁰Nd again: physim's softer neutrons leave room for one more.
+
+**³²S + ⁹²Mo** has a third difference that spin does not explain. From PACE4's first-decay spins physim still emits
+too few neutrons and too many protons (multiplicities 0.79 and 3.14, against PACE4's 1.37 and 1.92), and its neutron
+tail is 9% hotter. That is charged-particle competition in the proton-rich ¹²⁴Ce, outside items E11 and E12.
+
+### The bound
+
+Nothing in these comparisons justifies a change to physim's physics. The neutron energies agree with the measured
+thresholds, and no reference tests the high-spin channels: PACE4 4.36's cascades do not start from its σ_J, and
+the GEMINI++ 3.3 GUI build hangs on both high-spin systems. So the claim for physim's channel shares stops where the
+rotational energy left at the end of the chain becomes comparable to a neutron separation energy. From there on the
+yrast line (a rigid sphere here, untested), rather than the evaporation, decides the last neutron:
+
+| System | ⟨ℓ⟩ | entry ⟨J⟩ | rotational energy at entry | checked against |
+|---|---|---|---|---|
+| ⁴He + ¹⁶⁵Ho | 14.9 ħ | 14.0 ħ | 1.7 MeV | measured xn thresholds; first two channels of PACE4 and GEMINI++ |
+| ¹²C + ¹⁵⁰Nd | 22.2 | 19.8 | 3.6 | first two channels of PACE4 and GEMINI++ (within 20%) |
+| ¹⁶O + ¹⁴⁴Sm | 25.1 | 22.6 | 4.7 | GEMINI++'s order of the two strongest (3n above 4n) |
+| ³²S + ⁹²Mo | 36.7 | 26.1 | 9.7 | nothing: physim's prediction |
+| ⁴⁸Ca + ¹²⁴Sn | 51.9 | 45.4 | 16.6 | nothing: physim's prediction |
+
+The claim for the paper: physim's xn channel shares are checked where the mean rotational energy at entry stays
+below about 5 MeV, half a neutron separation energy. For compound nuclei of A ≈ 150–170 that means ⟨ℓ⟩ ≲ 25 ħ.
+Above that they are predictions whose accuracy is that of the yrast line. `Evaporation.entry_rotational_energy_mev`
+gives the number for any run. Neutron energies are checked through the xn thresholds of ⁴He + ¹⁶⁵Ho, not through
+PACE4's ⟨ε_n⟩.
 
 ## Speed
 
@@ -250,6 +357,9 @@ building the tables. The chains of all events advance together, one step at a ti
 - Neutron transmission from the black nucleus, not an optical model. Charged-particle barriers from the real
   potential only: no absorption above the barrier, no thermal or deformation lowering.
 - Only E1 γ rays (giant dipole). No statistical E2 or M1.
+- The yrast line is that of a rigid sphere, with no deformation or backbending. At high spin it decides how much
+  energy is left for the last neutrons, and nothing checks it yet: channel shares are validated only while the
+  rotational energy at entry stays below about 5 MeV (⟨ℓ⟩ ≲ 25 ħ for A ≈ 150–170; "The bound").
 - No deuterons, tritons, ³He or heavier fragments; no pre-equilibrium emission (item 75 leaves it out); fission
   only as a lost share, with no fragments.
 - Nuclides missing from AME2020 close the decays that would produce them.
@@ -257,6 +367,9 @@ building the tables. The chains of all events advance together, one step at a ti
 ## References
 
 - W. Hauser and H. Feshbach, Phys. Rev. 87, 366 (1952): the statistical (Hauser–Feshbach) widths.
+- A. R. Usman et al., Nucl. Instrum. Methods B 469, 42 (2020); E. S. Kormazeva et al., J. Radioanal. Nucl. Chem. 331,
+  4259 (2022); M. S. Gadkari et al., Phys. Scr. 55, 147 (1997): the measured ¹⁶⁵Ho(α,xn) excitation functions
+  (EXFOR E2650, F1469, D0068).
 - A. Gilbert and A. G. W. Cameron, Can. J. Phys. 43, 1446 (1965): constant temperature + Fermi gas, pairing energies.
 - A. Gavron, Phys. Rev. C 21, 230 (1980): PACE, the Monte Carlo chain this follows.
 - R. J. Charity, Phys. Rev. C 82, 014610 (2010): GEMINI++, the third code of the comparison.
