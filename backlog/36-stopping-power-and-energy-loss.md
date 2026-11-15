@@ -36,7 +36,11 @@
 >   `stopping_hydrogen_vs_data`, which fails for Kr in H₂/D₂ (−19%) and Kr, Xe in Mylar (−15%, −18%) at 1–10 MeV/u.
 >   Carbon is within 7% of measured data; the hydrogen term is 6–60% low. A fitted factor on the H term fixes the
 >   gas data but fails a held-out test, so the open fix is a hydrogen-specific effective charge from an independent
->   source (ICRU 73 / MSTAR, or ZBL 1985), judged by that check unchanged; see stopping.md, "Towards a fix". SRIM was run with compound
+>   source, judged by that check unchanged.
+>   **Done for Li–Ar (2026-11-15):** MSTAR 3.12 (ICRU 73's method) is ported (`physim.nuclear.mstar`) and used for
+>   ions Li–Ar in hydrogen, ICRU 49 compounds and their deuterated versions (CD₂). RMS against the data for C–Ar:
+>   H₂/D₂ 7.9% → 4.1%, (CH₂)ₙ 10.3% → 8.5%, Mylar 6.9% → 5.9%; Mylar now passes against SRIM, CD₂ still fails.
+>   **Open:** Kr and Xe in hydrogen (still 15–19% low; outside MSTAR). SRIM was run with compound
 >   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
 > - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.
 > - TRIM: every exported TRIM.IN (4 cases and the 2 example setups) ran unchanged. Mean energies within 1% except α

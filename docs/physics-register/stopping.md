@@ -11,6 +11,14 @@ Backlog item 36 · module `physim.nuclear.stopping` · tests `tests/python/test_
 - **Other compounds:** Bragg additivity.
 - **Heavy ions:** effective-charge scaling of proton stopping (Brandt–Kitagawa with Ziegler's ionisation fit). At
   low velocity, the larger of that and Lindhard–Scharff joined to full-charge stopping.
+- **Ions from Li to Ar in hydrogen and in ICRU 49 compounds** (since 2026-11-15): MSTAR 3.12 (Paul and Schinner,
+  the method of ICRU Report 73), `physim.nuclear.mstar`. It scales ICRU 49 α stopping by fits to measured data:
+  S = S_α(4E) · F(Z₁, E) · Z₁²/4, with separate fits for solids, for H₂ and He gas, and per ion for other gases.
+  Used for targets made only of hydrogen isotopes (H, D₂), for the ICRU 49 compounds (Mylar, polyethylene,
+  water, CsI, air, …), and for a deuterated version of one of them (CD₂ is polyethylene, scaled by electrons per
+  gram). Elements (including graphite), other compounds and heavier ions keep the effective-charge model. Above
+  50 MeV/u the two are blended in ln E, reaching the effective-charge model at 200 MeV/u (they differ by < 2%
+  there).
 - **Nuclear stopping:** NIST's tables for p and α in NIST materials, ZBL universal otherwise.
 - **Ranges and energy after a layer:** by integrating 1/S. Tilted layers are crossed along t/cos θ.
 - **Straggling:** Bohr, with the relativistic factor and Lindhard–Scharff's slow-ion reduction, carried through
@@ -48,9 +56,11 @@ them interpolated) and 7 ions.
 | Energy after a fifth of the range vs LISE++ | same | p/α: 0.5%, 1.2%, 5.3%. C–Ar: 0.8%, 4.8%, 11.5%. Kr/Xe: 2.2%, 6%, 19% | pass | `test_against_lise_atima` |
 | Straggling (FWHM) ≥ 30 MeV/u vs LISE++ | same | 25% | pass | `test_straggling_against_lise_at_high_energy` |
 | Stopping power vs SRIM 2013 (SR Module), 5 ions (⁴He, ¹²C, ¹⁶O, ⁴⁰Ar, ¹³²Xe) × Au, Si × 0.1–10 MeV/u, 50 points | SRIM (`stopping_srim.csv`) | the LISE++ stopping bands above | pass (worst 90% of a band: Xe in Au at 1 MeV/u, −10.7% against 12%) | `stopping_vs_srim` |
-| Stopping power vs SRIM 2013, compounds: same ions × Mylar, CD₂, CsI, 75 points | same; compound correction 1 (Bragg additivity) | the same bands (no compound allowance; see below) | **fail**: CD₂ ¹⁶O/⁴⁰Ar 0.1 MeV/u +31%/+39% (25%), ⁴⁰Ar 1 MeV/u −14% (11%), ¹⁶O 10 MeV/u −4.2% (4%), Xe 1 MeV/u −20% (12%); Mylar ⁴⁰Ar 0.1 MeV/u +25.4% (25%). CsI and all ⁴He pass | `stopping_compounds_vs_srim` (a known failure in `test_nuclear_validation.py`) |
+| Stopping power vs SRIM 2013, compounds: same ions × Mylar, CD₂, CsI, 75 points | same; compound correction 1 (Bragg additivity) | the same bands (no compound allowance; see below) | **fail, CD₂ only** (with MSTAR, 2026-11-15): ¹²C/¹⁶O 0.1 MeV/u +26%/+27% (25%), ¹²C/¹⁶O/⁴⁰Ar 1 MeV/u −16%/−15%/−17% (11%), Xe 1 MeV/u −20% (12%). Mylar (worst Xe 1 MeV/u −11.8%), CsI and all ⁴He pass. Before MSTAR: CD₂ ⁴⁰Ar 0.1 MeV/u +39%, Mylar ⁴⁰Ar 0.1 MeV/u +25.4% | `stopping_compounds_vs_srim` (a known failure in `test_nuclear_validation.py`) |
 | Range vs SRIM | same | not judged | SRIM gives the projected range, physim the path length (CSDA); they differ by up to a factor 2 for slow ions in Au, and by 1–12% at 10 MeV/u | reported in the checks' detail |
-| Electronic stopping vs measurements: C, O, Ar, Kr, Xe in H₂, D₂, (CH₂)ₙ polymers, Mylar, 0.1–15 MeV/u, 744 points | IAEA Stopping Power Database (`stopping_measured_hydrogen.csv`, `scripts/iaea_stopping_reference.py`) | median deviation per target group, ion and energy band inside the LISE++ stopping band above (the existing bands, not set from these data) | **fail** in 3 of 21 cells: Kr in H₂/D₂ 1–10 MeV/u −19.0% (12%, 34 points), Xe in Mylar −17.5% and Kr in Mylar −14.5% at 1–10 MeV/u (12%, 3 points each). SRIM by the same rule fails only C in H₂ (+10 to +14%) | `stopping_hydrogen_vs_data` (a known failure) |
+| Electronic stopping vs measurements: C, O, Ar, Kr, Xe in H₂, D₂, (CH₂)ₙ polymers, Mylar, 0.1–15 MeV/u, 744 points | IAEA Stopping Power Database (`stopping_measured_hydrogen.csv`, `scripts/iaea_stopping_reference.py`) | median deviation per target group, ion and energy band inside the LISE++ stopping band above (the existing bands, not set from these data) | **fail** in 3 of 21 cells: Kr in H₂/D₂ 1–10 MeV/u −19.0% (12%, 34 points), Xe in Mylar −17.5% and Kr in Mylar −14.5% at 1–10 MeV/u (12%, 3 points each), all outside MSTAR's range. RMS for C–Ar with MSTAR (before; SRIM): H₂/D₂ 4.1% (7.9%; 7.5%), (CH₂)ₙ 8.5% (10.3%; 9.4%), Mylar 5.9% (6.9%; 4.6%). SRIM by the same rule fails only C in H₂ (+10 to +14%) |
+| MSTAR port | MSTAR 3.12's own values for ¹²C in water (solid fit with target correction) and air (gas fit for C), 0.07–10 MeV/u, as extracted from the original Fortran in libdEdx's tests | 0.1% | pass (≤ 0.03%) | `test_heavy_ions_in_icru49_compounds_follow_mstar` |
+| MSTAR handoff above 50 MeV/u; CD₂ as polyethylene | Exact: MSTAR below 50 MeV/u, unchanged above 200; electrons per gram 0.8745 | 1e-12; 0.1% | pass | `test_mstar_hands_over_smoothly_at_high_energy`, `test_deuterated_compound_stops_like_its_parent_per_electron` | `stopping_hydrogen_vs_data` (a known failure) |
 
 The LISE++ values are generated on a machine with LISE++ installed by `scripts/lise_reference.py`; CI reads the
 committed file. Below 0.1 MeV/u nothing is tested against LISE++: there, the codes differ from each other by tens
@@ -103,40 +113,37 @@ SRIM there. At low energy, neither code matches the polymer data to better than 
 hydrogen targets better, plan with heavy ions in CD₂ or polyethylene targets with care, and check the result against
 SRIM.
 
-**Towards a fix (2026-11-14, exploratory, nothing changed in the code).** Splitting physim's stopping into its
-carbon and hydrogen parts:
+**The fix: MSTAR for ions from Li to Ar (2026-11-15).** Splitting physim's old stopping into its carbon and
+hydrogen parts showed the carbon part within +7% to −6% of 237 measured points for C and O in carbon, and
+the hydrogen part 6–60% low. Three home-made fixes (scaling from α, a factor fitted to the H₂/D₂ data, the
+NIST compound proton table) did not hold up; the fitted factor failed a held-out test (3.8% → 6.9% RMS on
+the data it was not fitted to). MSTAR, ported from its Fortran (`mspaul.f`, `mstar1.f`, `msid2z.f`) and not
+refitted, improves every hydrogen group it covers (RMS against the measured data, ions C–Ar, from
+0.1 MeV/u):
 
-- The carbon part is not the problem: against 237 measured points for C and O ions in carbon (IAEA), physim is
-  within +7% to −6% (median per band).
-- The hydrogen part is too low almost everywhere. Measured / physim for the H part: in H₂/D₂ gas 1.36 for Kr and
-  1.21 for Ar at 1–3 MeV/u, falling to 1.0–1.1 for C and at higher energy; inferred from (CH₂)ₙ, 1.07 at
-  0.1–0.3 MeV/u and 1.2–1.6 at 0.3–15 MeV/u (that inference doubles any error in the carbon part).
-- In hydrogen, the Lindhard–Scharff join (1/S = 1/S_LS + 1/(Z₁² S_p)) is larger than the effective-charge
-  scaling for C and O at 1–3 MeV/u and for Ar at 3 MeV/u, so it, not ζ, sets those values: hydrogen's small Z₂
-  makes S_LS large. The model for H targets is a patchwork of the two branches.
+| Target | Points | physim before | physim with MSTAR | SRIM 2013 |
+|---|---|---|---|---|
+| H₂/D₂ gas | 48 | 7.9% | 4.1% | 7.5% |
+| (CH₂)ₙ polymers | 206 | 10.3% | 8.5% | 9.4% |
+| Mylar | 439 | 6.9% | 5.9% | 4.6% |
 
-Candidates tried against the measured data (RMS deviation, points from 0.1 MeV/u, for H₂/D₂ gas, (CH₂)ₙ, Mylar):
+Caveats:
 
-| Candidate | H₂/D₂ | (CH₂)ₙ | Mylar |
-|---|---|---|---|
-| physim now | 14.7% | 10.3% | 7.6% |
-| Scale from α (ASTAR in H, ZBL helium effective charge) instead of p | 15.2% | 10.7% | 7.1% |
-| Factor g = 1.24 yr^−0.16 on the H term, yr = v/(v₀ Z₁^⅔), fitted to the H₂/D₂ data | 5.6% | 10.9% | 8.9% |
-| NIST compound proton table × (Z₁ζ)² for (CH₂)ₙ and Mylar | 14.7% | 13.4% | 8.0% |
+- MSTAR was fitted to measurements up to 2002, which likely include some of these (Bimbot et al. 1989 for Ar
+  in H₂/D₂), so this is a published fit judged against overlapping data, not an independent test.
+- The port reproduces MSTAR's own numbers for water and air to 0.03%. Its H₂/He coefficients have no
+  reference value; they were checked line by line against the Fortran and libdEdx's C port.
+- At 1 MeV/u, C, O and Ar in CD₂ are now 15–17% below SRIM (before 12–15%); the polymer data there side with
+  SRIM (MSTAR runs 5–7% low for C and O in (CH₂)ₙ at 1–10 MeV/u). Near 0.1 MeV/u they side with MSTAR.
+- Kr and Xe are outside MSTAR (Z₁ ≤ 18) and unchanged: in H₂/D₂ and Mylar they are still 15–19% low, against
+  SRIM's 10%. They need another source.
 
-The fitted factor does not survive a held-out test: fitted to Bimbot et al. 1989 (Ar, Kr) alone, it makes the
-other gas data (C in H₂, 1962) worse, 3.8% → 6.9% RMS. The shortfall depends on the ion's Z as well as on yr.
-So none of these is a fix. What would be: a target-dependent effective charge for hydrogen taken from a source
-fitted to independent data (candidates: ICRU Report 73 / Paul and Schinner's MSTAR scaling, which treats gas and
-solid targets separately; or SRIM's ZBL-type treatment of H targets, which matches the H₂/D₂ data at 8–9% RMS but sits
-10–14% below the polymer data near 0.1 MeV/u), checked against `stopping_hydrogen_vs_data` without refitting it.
-
-Validated 2026-10-04; SRIM comparison 2026-11-14.
+Validated 2026-10-04; SRIM comparison 2026-11-14; MSTAR 2026-11-15.
 
 ## Known limitations
 
-- Heavy ions in hydrogen-rich compounds (CD₂, Mylar) differ from SRIM by up to 20% at 1–3 MeV/u and up to 40%
-  at 0.1 MeV/u, beyond the stated bands (see the validation table).
+- Heavy ions in CD₂ differ from SRIM by up to 20% at 1 MeV/u and up to 27% at 0.1 MeV/u, beyond the stated bands
+  (see the validation table). Kr and Xe in hydrogen-rich targets are 15–19% below measured data at 1–10 MeV/u.
 - Slow heavy ions (below 1 MeV/u, especially Kr and heavier): stopping within ~50%, range within a factor of two.
   Plan with care and check against SRIM. Ziegler's per-ion and per-target low-energy coefficient tables would fix
   this; they are not included (a possible later download).

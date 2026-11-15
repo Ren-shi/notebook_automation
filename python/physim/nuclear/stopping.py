@@ -1,7 +1,8 @@
 """Stopping powers, ranges, energy loss and straggling of ions in matter.
 
 Protons and α particles use the NIST PSTAR and ASTAR tables (ICRU Reports 49) directly; heavier ions scale the
-proton stopping at the same velocity by an effective charge. Elements NIST does not tabulate are interpolated
+proton stopping at the same velocity by an effective charge, except ions from Li to Ar in hydrogen and in the ICRU
+49 compounds, which follow MSTAR (ICRU Report 73's method, :mod:`.mstar`). Elements NIST does not tabulate are interpolated
 between neighbours, and compounds not in the tables use Bragg additivity. Details and validation are in the theory
 note ``theory/stopping`` and the physics register.
 
@@ -28,7 +29,7 @@ from typing import Optional, Union
 
 import numpy as np
 
-from . import data
+from . import data, mstar
 from .quantity import Quantity
 
 ArrayLike = Union[float, np.ndarray]
@@ -179,6 +180,39 @@ def lindhard_scharff(z1: int, z2: int, e_per_u: ArrayLike) -> np.ndarray:
     return 8 * math.pi * E2_MEV_CM * A0_CM * z1 ** (7 / 6) * z2 / (z1 ** (2 / 3) + z2 ** (2 / 3)) ** 1.5 * v
 
 
+def _electrons_per_gram_and_fractions(material: data.Material) -> tuple:
+    """(electrons per unit mass, up to N_A; {Z: atom fraction} with isotopes merged)."""
+    by_z: dict = {}
+    for z, _, n in material.atoms:
+        by_z[z] = by_z.get(z, 0.0) + n
+    total = sum(by_z.values())
+    return sum(z * n for z, n in by_z.items()) / material.molar_mass, {z: n / total for z, n in by_z.items()}
+
+
+def _hydrogen_isotope_parent(material: data.Material) -> Optional[tuple]:
+    """(NIST table key, electrons-per-gram ratio) of the ICRU 49 compound this material is a deuterated or tritiated
+    version of (same elements and atom fractions within 1%, e.g. CD₂ and polyethylene); None if there is none."""
+    if not any(z == 1 and a and a >= 2 for z, a, _ in material.atoms):
+        return None
+    return _hydrogen_isotope_parent_cached(tuple(sorted(
+        (z, round(f, 4)) for z, f in _electrons_per_gram_and_fractions(material)[1].items())),
+        _electrons_per_gram_and_fractions(material)[0])
+
+
+@lru_cache(maxsize=None)
+def _hydrogen_isotope_parent_cached(fractions: tuple, electrons_per_gram: float) -> Optional[tuple]:
+    mine = dict(fractions)
+    for alias in dict.fromkeys(STAR_ALIASES):
+        key = _star_compound(alias)
+        if key is None:
+            continue
+        parent = data.material(alias)
+        epg, theirs = _electrons_per_gram_and_fractions(parent)
+        if set(theirs) == set(mine) and all(abs(mine[z] / theirs[z] - 1) < 0.01 for z in mine):
+            return key, electrons_per_gram / epg
+    return None
+
+
 def _beta(e_per_u: np.ndarray) -> np.ndarray:
     g = 1.0 + e_per_u / _U_MEV
     return np.sqrt(1.0 - 1.0 / g**2)
@@ -239,7 +273,42 @@ class Stopping:
         for (z2, _), n in self._atoms_per_unit().items():
             per_atom += n * z2 * self._electronic_per_electron(z2, e_u)
         se = per_atom * data.AVOGADRO / self.material.molar_mass
+        se_mstar = self._mstar(e_u)
+        if se_mstar is not None:
+            lo, hi = self.MSTAR_BLEND
+            w = np.clip(np.log(e_u / lo) / math.log(hi / lo), 0.0, 1.0)
+            se = (1.0 - w) * se_mstar + w * se
         return se, self._nuclear(e_u)
+
+    #: Ions from Li to Ar in hydrogen and in the ICRU 49 compounds follow MSTAR (:mod:`.mstar`) below the first
+    #: energy (MeV/u) and the effective-charge model above the second, blended in ln E in between, where the two agree
+    #: within 2% (CsI and NaI differ most; MSTAR's α tables end at 250 MeV/u).
+    MSTAR_BLEND = (50.0, 200.0)
+
+    def _mstar(self, e_u: np.ndarray) -> Optional[np.ndarray]:
+        """MSTAR's electronic stopping (MeV cm²/g) for ions Li–Ar in targets made only of hydrogen isotopes (the H₂/He
+        gas fit), in ICRU 49 compounds (MSTAR's own choice of fit), and in a compound that differs from one of
+        those only in its hydrogen isotopes (CD₂ as polyethylene, scaled by electrons per gram); else None, and the
+        effective-charge model is used (elements, other compounds, heavier ions)."""
+        z1 = self.ion.Z
+        if not mstar.Z1_MIN <= z1 <= mstar.Z1_MAX:
+            return None
+        atoms = self._atoms_per_unit()
+        e_alpha = e_u * 4.0  # MSTAR evaluates the α stopping at 4 E (MeV), not at the α's own velocity
+        if all(z2 == 1 for z2, _ in atoms):
+            n_h = sum(atoms.values())
+            s_alpha = _per_electron("astar", 1, e_alpha) * n_h * data.AVOGADRO / self.material.molar_mass
+            return s_alpha * mstar.factor(z1, e_u, "g", 1.0) * z1**2 / 4
+        key, scale = self._nist_key(), 1.0
+        if key is None or int(key[0]) not in mstar.COMPOUND_Z or int(key[0]) == 906:  # 906: graphite, an element
+            parent = _hydrogen_isotope_parent(self.material)
+            if parent is None:
+                return None
+            key, scale = parent
+        icru_id = int(key[0])
+        e, se, _, _ = _table("astar", key)
+        s_alpha = _loglog(e_alpha, e, se) * scale
+        return s_alpha * mstar.factor(z1, e_u, mstar.mode(z1, icru_id), mstar.target_z(icru_id)) * z1**2 / 4
 
     def _nist_key(self) -> Optional[tuple]:
         """The NIST table of this material: a tabulated compound, or a natural tabulated element."""

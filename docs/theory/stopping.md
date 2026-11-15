@@ -69,6 +69,25 @@ S_\text{LS} = 8\pi e^2 a_0\,\frac{Z_1^{7/6} Z_2}{\left(Z_1^{2/3} + Z_2^{2/3}\rig
 \quad\text{per atom.}
 $$
 
+## Ions from Li to Ar in hydrogen and compounds: MSTAR
+
+In hydrogen the effective-charge model above falls short of measured stopping by up to 30%. For ions from Li to Ar
+in targets made only of hydrogen isotopes, in the ICRU 49 compounds, and in a deuterated version of one of those,
+physim uses instead the empirical scaling of Paul and Schinner (MSTAR 3.12, the method of ICRU Report 73):
+
+$$
+S_\text{ion}(E) = S_\alpha(4E)\, F(Z_1, E)\, \frac{Z_1^2}{4},
+\qquad
+F = a + (1.01 - a)\left[1 - \exp\!\left(-\left(\frac{x + c\,(\ln 2)^{1/d} - b}{c}\right)^{d}\right)\right],
+$$
+
+with $E$ in MeV/u, $x = \log_{10} E$, $S_\alpha$ the ICRU 49 α stopping at $4E$ MeV, and $a$, $b$, $c$, $d$ functions
+of $Z_1$ fitted to measured data. There is one set for solids (times $1 + a' + b' e^{-x}$ and a small correction by
+target), one for H₂ and He gas, one for other gases, and constants per ion for gases other than H₂ and He. MSTAR's
+own rule picks the set from the target's ICRU 49 ID and effective $Z_2$. A deuterated compound (CD₂) uses its parent's
+table (polyethylene) scaled by electrons per gram. Above 50 MeV/u the result is blended in $\ln E$ into the
+effective-charge model, which takes over fully at 200 MeV/u.
+
 ## Nuclear stopping
 
 Elastic collisions with whole atoms use the **ZBL universal** stopping. In the reduced energy
