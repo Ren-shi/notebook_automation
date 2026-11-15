@@ -35,7 +35,7 @@ and run by hand, so each file records exactly how it was produced, so that anyon
 - `gemini_<beam>_<target>_<E>MeV.csv` are GEMINI++ runs (shipped with LISE++) for the same fusion-evaporation
   systems as the PACE4 files: residue cross sections as rows, E*, σ_fus, multiplicities and mean
   CM energies of n, p and α in the header. GEMINI++ has no silent mode; `scripts/gemini_reference.py` drives its
-  window through Windows UI Automation (`scripts/gemini_drive.ps1`) on a hidden desktop. GEMINI++ files exist for
+  window through Windows UI Automation (`physim/external/gemini_drive.ps1`) on a hidden desktop. GEMINI++ files exist for
   ⁴He + ¹⁶⁵Ho, ¹²C + ¹⁵⁰Nd and ¹⁶O + ¹⁴⁴Sm (1500 events, see its `note:` line); the LISE++ build hangs on
   ³²S + ⁹²Mo and ⁴⁸Ca + ¹²⁴Sn (`docs/theory/evaporation.md`). Read by the checks `evaporation_channels_vs_gemini`,
   `evaporation_spectra_vs_gemini` (physim from the file's E* and its Fermi spin distribution, `spin:` line) and

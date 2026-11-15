@@ -36,13 +36,16 @@ from __future__ import annotations
 import argparse
 import html
 import re
-import subprocess
 import sys
-import tempfile
 from datetime import date
 from pathlib import Path
 
-REF = Path(__file__).resolve().parents[1] / "tests" / "reference" / "nuclear"
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "python"))
+
+from physim.external import pace4 as _pace4  # noqa: E402
+
+REF = ROOT / "tests" / "reference" / "nuclear"
 
 #: (beam, Z, A), (target, Z, A), the evaporation's beam energy (lab MeV), the excitation function's beam energies.
 SYSTEMS = [
@@ -69,15 +72,8 @@ def deck(cascades: int, zp: int, ap: int, zt: int, at: int, e_lab: float) -> str
 
 
 def run(pace4: Path, text: str) -> tuple:
-    """Run one deck in a fresh temporary folder; (deck text, HTML output)."""
-    with tempfile.TemporaryDirectory(prefix="pace4_") as tmp:
-        work = Path(tmp)
-        (work / "run.pace").write_text(text, encoding="ascii", newline="\r\n")
-        subprocess.run([str(pace4), "-s", "run.pace"], cwd=work, check=True, timeout=1800)
-        out = work / "run.html"
-        if not out.exists():
-            raise RuntimeError(f"PACE4 wrote no output for\n{text}")
-        return text, out.read_text(encoding="latin-1")
+    """Run one deck out of sight in a fresh scratch folder (physim.external.pace4); (deck text, HTML output)."""
+    return text, _pace4.run(pace4, text, timeout_s=1800).html
 
 
 # --- reading PACE4's HTML output ------------------------------------------------------------------------------------
