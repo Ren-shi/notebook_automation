@@ -10,3 +10,4 @@ h5py
 plotly
 nicegui
 uproot
+mcp>=2,<3; python_version >= '3.10'

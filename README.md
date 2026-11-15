@@ -95,8 +95,9 @@ physim report coulex_ni58 -o report --pdf    # write the beam-time report (HTML,
 From Python, `physim.nuclear` gives the same pieces: kinematics, stopping powers, Rutherford and Coulomb
 excitation cross sections, detector geometry and γ-ray response, rates, event generation, analysis and reports.
 
-What it does not do yet: transfer and fusion-evaporation reactions (elastic scattering and Coulomb excitation are
-supported), and it is meant for one person on their own computer, not for hosting for a group.
+What it does not do yet: transfer reactions (elastic scattering, Coulomb excitation and fusion-evaporation are
+supported; fusion-evaporation's own cross sections are checked against PACE4 for light beams only), and it is
+meant for one person on their own computer, not for hosting for a group.
 
 ## The physics engine
 

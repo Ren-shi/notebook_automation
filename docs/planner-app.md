@@ -438,6 +438,7 @@ predictions at the time) and `events.npz` (named NumPy arrays: one row per count
 
 ## What it does not do yet
 
-- Elastic (Rutherford) scattering and Coulomb excitation of one state. Transfer and fusion-evaporation come
-  later.
+- Elastic (Rutherford) scattering, Coulomb excitation and fusion-evaporation. Transfer reactions come later.
+  Fusion-evaporation's own cross sections (physim's fusion and evaporation) are an estimate, checked against
+  PACE4 for light beams only; for heavy beams at high spin, take the channel table from PACE4 or a measurement.
 - One person at a time, on their own computer; it is not meant to be hosted for a group.

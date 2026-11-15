@@ -26,6 +26,7 @@ UNITS: dict[str, dict[str, float]] = {
     "fraction": {"%": 1.0},
     "rate": {"/s": 1.0, "Hz": 1.0, "1/s": 1.0, "kHz": 1e3, "/min": 1.0 / 60.0, "/h": 1.0 / 3600.0},
     "activity": {"Bq": 1.0, "kBq": 1e3, "MBq": 1e6, "uCi": 3.7e4, "µCi": 3.7e4, "mCi": 3.7e7},
+    "cross_section": {"mb": 1.0, "b": 1e3, "ub": 1e-3, "µb": 1e-3, "nb": 1e-6},
 }
 
 _NUMBER_AND_UNIT = re.compile(r"^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*([^\s\d.+-]\S*)\s*$")

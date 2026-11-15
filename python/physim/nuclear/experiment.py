@@ -32,7 +32,7 @@ from .quantity import Quantity
 SCHEMA = "physim.experiment/1"
 
 #: Reactions this version can plan. Others are added slice by slice (backlog item 43 onwards).
-REACTIONS = ("elastic", "coulex")
+REACTIONS = ("elastic", "coulex", "fusion-evaporation")
 
 #: Folder of the example setups shipped with the package.
 EXAMPLES = Path(__file__).resolve().parent / "examples"
@@ -552,6 +552,76 @@ class Excitation:
 
 
 @dataclass
+class ExitChannel:
+    """One exit channel of a fusion-evaporation reaction (``[[reaction.channels]]``): the light particles the
+    compound nucleus boils off (``"4n"``, ``"p2n"``, ``"a n"``), the residue they leave (worked out from the
+    compound nucleus if left out) and the channel's cross section with its unit (``"450 mb"``).
+
+    ``temperature`` sets the evaporation spectrum of the channel's particles (the reaction's, or one from the
+    excitation energy, if left out). ``entry_energy`` (excitation energy of the residue, MeV) and ``entry_spin``
+    (ħ) are where its γ-ray cascade starts. ``source`` says where the cross section comes from, in words
+    ("PACE4", "measured", "illustrative"); "placeholder" marks a value nobody has checked, and the planner warns.
+    """
+
+    particles: str
+    cross_section: QuantityLike
+    residue: Optional[str] = None
+    temperature: Optional[QuantityLike] = None
+    entry_energy: Optional[QuantityLike] = None
+    entry_spin: Optional[float] = None
+    source: Optional[str] = None
+    #: The residue's name as the setup's compound nucleus gives it (set when the setup is read).
+    _residue: Optional[str] = None
+
+    SPECS = (
+        _Field("residue", "nuclide"),
+        _Field("particles", "str", required=True),
+        _Field("cross_section", "cross_section", required=True, check=_positive),
+        _Field("temperature", "energy", check=_positive),
+        _Field("entry_energy", "energy", check=_non_negative),
+        _Field("entry_spin", "number", check=lambda x: None if 0 <= x <= 120 and (2 * x).is_integer()
+               else "must be a whole or half-whole number of ħ between 0 and 120"),
+        _Field("source", "str"),
+    )
+
+    @property
+    def cross_section_mb(self) -> float:
+        return _q(self.cross_section).to("mb")
+
+    @property
+    def residue_name(self) -> str:
+        """The residue, as AME names it ("158Er"): from the setup's compound nucleus, or as given."""
+        if self._residue is not None:
+            return self._residue
+        return _data.nuclide(self.residue).name if self.residue else "?"
+
+
+@dataclass
+class FusionEvaporation:
+    """The fusion-evaporation reaction (``[reaction] type = "fusion-evaporation"``): the beam fuses with the
+    target's main nuclide into a compound nucleus, which boils off light particles; each exit channel of
+    ``channels`` has its cross section.
+
+    ``temperature`` is the default nuclear temperature of the evaporation spectra. ``alignment`` is the width
+    σ/J of the compound nucleus's distribution of magnetic substates about the beam (its spin is perpendicular to
+    the beam; 0.3 if left out). ``side_feeding`` is the share of the γ-ray cascades that enter the known levels
+    below the top one (25 % if left out).
+    """
+
+    channels: list = field(default_factory=list)
+    temperature: Optional[QuantityLike] = None
+    alignment: Optional[float] = None
+    side_feeding: Optional[QuantityLike] = None
+
+    SPECS = (
+        _Field("temperature", "energy", check=_positive),
+        _Field("alignment", "number", check=lambda x: None if 0 < x <= 2 else "must be above 0 and at most 2"),
+        _Field("side_feeding", "fraction", check=lambda q: None if 0 <= q.to("%") <= 100
+               else "must be between 0 and 100 %"),
+    )
+
+
+@dataclass
 class GammaDetector:
     """A γ-ray detector facing the target: one crystal, or the four crystals of a clover.
 
@@ -743,6 +813,76 @@ class Chamber:
     )
 
 
+def _scintillator(name: str) -> Optional[str]:
+    from .neutrons import materials
+
+    known = materials()
+    return None if name in known else f"is not a known scintillator (known: {', '.join(sorted(known))})"
+
+
+@dataclass
+class NeutronWallSetup:
+    """A wall of organic-scintillator cells that counts the evaporated neutrons (``[neutron_wall]``, for a
+    fusion-evaporation reaction): ``cells`` identical cylinders ``distance`` from the target, side by side at
+    ``pitch``, filling a cone around the beam from ``theta_min``. The fields left out take the typical values of
+    :class:`physim.nuclear.neutrons.NeutronDetector` (an EJ-301 cell, 127 mm across and 150 mm deep, 100 keVee)."""
+
+    cells: int
+    distance: QuantityLike
+    pitch: Optional[QuantityLike] = None
+    radius: Optional[QuantityLike] = None
+    depth: Optional[QuantityLike] = None
+    material: Optional[str] = None
+    threshold: Optional[QuantityLike] = None
+    layout: Optional[str] = None
+    theta_min: Optional[QuantityLike] = None
+    neutron_as_gamma: Optional[QuantityLike] = None
+    gamma_as_neutron: Optional[QuantityLike] = None
+
+    SPECS = (
+        _Field("cells", "int", required=True, check=lambda n: None if n >= 1 else "must be at least 1"),
+        _Field("distance", "length", required=True, check=_positive),
+        _Field("pitch", "length", check=_positive),
+        _Field("radius", "length", check=_positive),
+        _Field("depth", "length", check=_positive),
+        _Field("material", "str", check=_scintillator),
+        _Field("threshold", "energy", check=_positive),
+        _Field("layout", "str", check=lambda s: None if s in ("hexagonal", "square")
+               else "must be 'hexagonal' or 'square'"),
+        _Field("theta_min", "angle", check=lambda q: None if 0 <= q.to("deg") < 180 else "must be 0 to 180 deg"),
+        _Field("neutron_as_gamma", "fraction", check=lambda q: None if 0 <= q.to("%") <= 100 else
+               "must be 0 to 100 %"),
+        _Field("gamma_as_neutron", "fraction", check=lambda q: None if 0 <= q.to("%") <= 100 else
+               "must be 0 to 100 %"),
+    )
+
+    def model(self):
+        """The wall as :class:`physim.nuclear.neutrons.NeutronWall`, with the typical values where the setup gives
+        none."""
+        from . import neutrons
+
+        def text(q, unit: str) -> str:
+            return f"{_q(q).to(unit):.10g} {unit}"
+
+        cell = {"distance": text(self.distance, "mm")}
+        for name, unit in (("radius", "mm"), ("depth", "mm"), ("threshold", "MeV"), ("neutron_as_gamma", "%"),
+                           ("gamma_as_neutron", "%")):
+            if getattr(self, name) is not None:
+                cell[name] = text(getattr(self, name), unit)
+        if self.material is not None:
+            cell["material"] = self.material
+        wall = {"cell": neutrons.NeutronDetector(**cell), "cells": self.cells}
+        if self.pitch is not None:
+            wall["pitch"] = text(self.pitch, "mm")
+        else:  # cells touching: the pitch is the cell's diameter
+            wall["pitch"] = f"{2 * wall['cell'].radius_mm:.10g} mm"
+        if self.layout is not None:
+            wall["layout"] = self.layout
+        if self.theta_min is not None:
+            wall["theta_min"] = text(self.theta_min, "deg")
+        return neutrons.NeutronWall(**wall)
+
+
 @dataclass
 class Experiment:
     """A complete setup. Build it in Python, or :meth:`load` it from a setup file."""
@@ -757,9 +897,14 @@ class Experiment:
     #: The excited state, for ``reaction = "coulex"``.
     excitation: Optional[Excitation] = None
     gamma_detectors: list = field(default_factory=list)
-    #: Level schemes (:class:`~physim.nuclear.levels.LevelScheme`) of the nuclei, by role: "beam" and "target".
+    #: Level schemes (:class:`~physim.nuclear.levels.LevelScheme`) of the nuclei, by role: "beam" and "target",
+    #: and for fusion-evaporation each residue by its name ("158Er").
     levels: dict = field(default_factory=dict)
     chamber: Optional[Chamber] = None
+    #: The fusion-evaporation reaction and its exit channels, for ``reaction = "fusion-evaporation"``.
+    fusion: Optional[FusionEvaporation] = None
+    #: The neutron wall, for a fusion-evaporation reaction.
+    neutron_wall: Optional[NeutronWallSetup] = None
 
     # -- reading ------------------------------------------------------------------------------------------------
 
@@ -770,7 +915,7 @@ class Experiment:
         if not isinstance(data, dict):
             raise SetupError(["the setup must be a table of sections"])
         known = ("schema", "title", "description", "reaction", "beam", "target", "detectors", "run",
-                 "gamma_detectors", "levels", "chamber")
+                 "gamma_detectors", "levels", "chamber", "neutron_wall")
         for key in data:
             if key not in known:
                 hint = difflib.get_close_matches(key, known, n=1)
@@ -789,15 +934,29 @@ class Experiment:
 
         reaction = "elastic"
         excitation = None
+        fusion = None
+        raw_channels = None
         if "reaction" in data:
-            r = _read_section(data["reaction"], (_Field("type", "str", required=True),) + Excitation.SPECS,
-                              "reaction", problems)
+            r = _read_section(data["reaction"], (_Field("type", "str", required=True),) + Excitation.SPECS
+                              + FusionEvaporation.SPECS, "reaction", problems, extra=("channels",))
             reaction = r.get("type", reaction)
             if "type" in r and reaction not in REACTIONS:
                 problems.append(f"reaction: type '{reaction}' is not available yet; available: {', '.join(REACTIONS)}")
             raw_r = data["reaction"] if isinstance(data["reaction"], dict) else {}
-            state = {k: v for k, v in r.items() if k != "type"}
-            if reaction == "coulex":
+            fusion_names = {s.name for s in FusionEvaporation.SPECS}
+            fusion_values = {k: v for k, v in r.items() if k in fusion_names}
+            state = {k: v for k, v in r.items() if k != "type" and k not in fusion_names}
+            if reaction != "fusion-evaporation":
+                given = sorted(set(fusion_values) | ({"channels"} if "channels" in raw_r else set()))
+                if given:
+                    problems.append(f"reaction: {', '.join(given)} only apply to type = \"fusion-evaporation\"")
+            else:
+                fusion = FusionEvaporation(**fusion_values)
+                raw_channels = raw_r.get("channels")
+            if reaction == "fusion-evaporation":
+                if state:
+                    problems.append(f"reaction: {', '.join(sorted(state))} only apply to type = \"coulex\"")
+            elif reaction == "coulex":
                 hints = {"energy": "the excited state's energy, e.g. \"1.454 MeV\"",
                          "b_up": "B(Eλ↑) of the excited state, e.g. \"0.0695 e2b2\""}
                 for need, hint in hints.items():
@@ -898,11 +1057,28 @@ class Experiment:
                 chamber = Chamber(**c)
                 _check_chamber(chamber, detectors, gammas, problems)
 
+        neutron_wall = None
+        if "neutron_wall" in data:
+            if reaction != "fusion-evaporation":
+                problems.append("neutron_wall: a neutron wall counts evaporated neutrons; it needs [reaction] type = "
+                                "\"fusion-evaporation\"")
+            w = _read_section(data["neutron_wall"], NeutronWallSetup.SPECS, "neutron_wall", problems)
+            if "cells" in w and "distance" in w:
+                neutron_wall = NeutronWallSetup(**w)
+                try:
+                    neutron_wall.model().theta_max()
+                except ValueError as e:
+                    problems.append(f"neutron_wall: {e}")
+
         if target is not None and target.position is not None:
             origin = (0.0, 0.0, target.position_mm)
             for d in detectors + gammas:
                 d._origin = origin
-        levels = _read_levels(data.get("levels"), beam, target, problems)
+        residues: tuple = ()
+        if fusion is not None:
+            fusion.channels = _read_channels(raw_channels, beam, target, problems)
+            residues = tuple(dict.fromkeys(ch._residue for ch in fusion.channels if ch._residue))
+        levels = _read_levels(data.get("levels"), beam, target, problems, residues)
 
         run = None
         if "run" not in data:
@@ -916,7 +1092,7 @@ class Experiment:
             raise SetupError(problems)
         return cls(title=title, beam=beam, target=target, detectors=detectors, run=run,
                    description=description, reaction=reaction, excitation=excitation, gamma_detectors=gammas,
-                   levels=levels, chamber=chamber)
+                   levels=levels, chamber=chamber, fusion=fusion, neutron_wall=neutron_wall)
 
     @classmethod
     def from_toml(cls, text: str) -> Experiment:
@@ -950,6 +1126,10 @@ class Experiment:
         d["reaction"] = {"type": self.reaction}
         if self.excitation is not None:
             d["reaction"].update(_to_dict(self.excitation))
+        if self.fusion is not None:
+            d["reaction"].update({s.name: _out(getattr(self.fusion, s.name)) for s in FusionEvaporation.SPECS
+                                  if getattr(self.fusion, s.name) is not None})
+            d["reaction"]["channels"] = [_to_dict(ch) for ch in self.fusion.channels]
         d["beam"] = _to_dict(self.beam)
         target = _to_dict(self.target)
         if self.target.backing is not None:
@@ -961,6 +1141,8 @@ class Experiment:
             d["gamma_detectors"] = [_to_dict(g) for g in self.gamma_detectors]
         if self.chamber is not None:
             d["chamber"] = _to_dict(self.chamber)
+        if self.neutron_wall is not None:
+            d["neutron_wall"] = _to_dict(self.neutron_wall)
         if self.levels:
             d["levels"] = {role: scheme.to_dict() for role, scheme in self.levels.items()}
         return d
@@ -1085,8 +1267,72 @@ def _read_detector(raw: dict[str, Any], label: str, problems: list[str]) -> Opti
     return Detector(**d)
 
 
-def _read_levels(raw: Any, beam: Optional[Beam], target: Optional[Target], problems: list[str]) -> dict:
-    """The ``[levels.beam]`` and ``[levels.target]`` sections: each scheme must belong to a nucleus of its role."""
+def main_nuclide(target: Target) -> str:
+    """The target's most abundant nuclide (the one a fusion-evaporation reaction fuses with), as AME names it."""
+    z, a, _ = max(_data.material(target.material).atoms, key=lambda t: t[2])
+    return _data.nuclide((z, a)).name
+
+
+def _read_channels(raw: Any, beam: Optional[Beam], target: Optional[Target], problems: list[str]) -> list:
+    """The ``[[reaction.channels]]`` of a fusion-evaporation reaction. Each channel's particles must leave a
+    residue of the compound nucleus (beam + the target's main nuclide) that the mass table knows; a residue
+    given must be that one; no two channels may emit the same particles."""
+    from .residues import parse_particles, residue_of
+
+    if raw is None:
+        problems.append("reaction: a fusion-evaporation reaction needs its exit channels: add [[reaction.channels]] "
+                        "sections, each with particles (e.g. \"4n\") and a cross_section (e.g. \"300 mb\")")
+        return []
+    if not isinstance(raw, list) or not all(isinstance(c, dict) for c in raw):
+        problems.append("reaction: channels must be written as [[reaction.channels]] sections")
+        return []
+    if not raw:
+        problems.append("reaction: the channel table is empty: add at least one [[reaction.channels]] section")
+        return []
+    compound = None
+    if beam is not None and target is not None:
+        try:
+            b, t = parse_nuclide(beam.nuclide), parse_nuclide(main_nuclide(target))
+            compound = _data.nuclide((b[0] + t[0], b[1] + t[1]))
+        except ValueError as e:
+            problems.append(f"reaction: the compound nucleus of {beam.nuclide} + {target.material}: {e}")
+    out, seen = [], {}
+    for i, rc in enumerate(raw, start=1):
+        label = f"reaction channel {i}" + (f" ({rc['particles']})" if isinstance(rc.get("particles"), str) else "")
+        before = len(problems)
+        c = _read_section(rc, ExitChannel.SPECS, label, problems)
+        parts = None
+        if "particles" in c:
+            try:
+                parts = parse_particles(c["particles"])
+            except ValueError as e:
+                problems.append(f"{label}: particles {_lower_first(str(e))}")
+        if parts is not None:
+            key = tuple(sorted(parts))
+            if key in seen:
+                problems.append(f"{label}: the same particles as channel {seen[key]}")
+            seen.setdefault(key, i)
+        residue = None
+        if parts is not None and compound is not None:
+            try:
+                residue = _data.nuclide(residue_of((compound.Z, compound.A), parts)).name
+            except ValueError as e:
+                problems.append(f"{label}: {compound.name} cannot emit {c['particles']}: {_lower_first(str(e))}")
+            if residue is not None and "residue" in c and _data.nuclide(c["residue"]).name != residue:
+                problems.append(f"{label}: residue {c['residue']} is not what {compound.name} leaves after emitting "
+                                f"{c['particles']} ({residue})")
+        if len(problems) > before or not all(k in c for k in ("particles", "cross_section")):
+            continue
+        ch = ExitChannel(**c)
+        ch._residue = residue
+        out.append(ch)
+    return out
+
+
+def _read_levels(raw: Any, beam: Optional[Beam], target: Optional[Target], problems: list[str],
+                 residues: tuple = ()) -> dict:
+    """The ``[levels.beam]`` and ``[levels.target]`` sections, and for fusion-evaporation ``[levels.<residue>]``
+    (``[levels.158Er]``): each scheme must belong to a nucleus of its role."""
     from .levels import LevelScheme
 
     if raw is None:
@@ -1096,14 +1342,17 @@ def _read_levels(raw: Any, beam: Optional[Beam], target: Optional[Target], probl
         return {}
     out = {}
     for role, section in raw.items():
-        if role not in ("beam", "target"):
-            problems.append(f"levels: unknown section '{role}'; use [levels.beam] or [levels.target]")
+        if role not in ("beam", "target") + tuple(residues):
+            extra = "".join(f", [levels.{r}]" for r in residues)
+            problems.append(f"levels: unknown section '{role}'; use [levels.beam] or [levels.target]{extra}")
             continue
         scheme = LevelScheme.from_dict(section, f"levels.{role}", problems)
         if scheme is None:
             continue
         za = parse_nuclide(scheme.nuclide)
-        if role == "beam" and beam is not None and za != parse_nuclide(beam.nuclide):
+        if role in residues and za != parse_nuclide(role):
+            problems.append(f"levels.{role}: nuclide {scheme.nuclide} is not the residue {role}")
+        elif role == "beam" and beam is not None and za != parse_nuclide(beam.nuclide):
             problems.append(f"levels.beam: nuclide {scheme.nuclide} is not the beam ({beam.nuclide})")
         elif role == "target" and target is not None:
             try:
@@ -1134,5 +1383,6 @@ def _check_material(where: str, values: dict[str, Any], problems: list[str]) -> 
                                 "not known; give 'density' or the thickness in mg/cm2")
 
 
-__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "Beam", "Chamber", "Detector", "Excitation",
-           "Experiment", "GammaDetector", "Layer", "Run", "SetupError", "Target"]
+__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "main_nuclide", "Beam", "Chamber", "Detector",
+           "Excitation", "ExitChannel", "Experiment", "FusionEvaporation", "GammaDetector", "Layer", "NeutronWallSetup", "Run",
+           "SetupError", "Target"]

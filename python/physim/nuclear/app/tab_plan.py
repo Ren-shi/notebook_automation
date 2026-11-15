@@ -147,6 +147,125 @@ def answers(ctx, pl: dict) -> None:
                      "are not taken off here (a run measures them).").classes("text-xs ps-muted mt-1")
 
 
+def residues(ctx, res: dict) -> None:
+    """The fusion-evaporation residues (backlog item 75): the compound nucleus, then per exit channel its cross
+    section, residues per second and in the run, the beam time for the counts wanted in its strongest line, and
+    its strongest lines."""
+    ui = ctx.ui
+    lo, hi = res["excitation_range_mev"]
+    head = (f"{res['compound']}* at E* = {res['excitation_mev']:.2f} MeV in the middle of the target ({lo:.2f}–"
+            f"{hi:.2f} MeV through it), E_cm = {res['e_cm_mev']:.2f} MeV, Q = {res['q_value_mev']:.3f} MeV; it "
+            f"moves along the beam at β = {res['beta']:.5f}. Σσ = {_fmt(res['total_mb'])} mb.")
+    with ctx.panel("Residues of the channel table"), ui.element("div").classes("w-full").style("overflow-x: auto"):
+        ui.label(head).classes("text-sm")
+        cols = 8
+        with ui.grid(columns=cols).classes("gap-x-6 gap-y-1 items-center ps-num text-sm").style(
+                f"grid-template-columns: repeat({cols}, auto); justify-content: space-between"):
+            heads = ["Channel", "Residue", "σ (mb)", "Share", "Residues (1/s)", "In the run", "Strongest lines",
+                     "Beam time"]
+            for h in heads:
+                ui.label(h).classes("text-xs ps-muted")
+            for r in res["rows"]:
+                ui.label(r["channel"]).classes("font-medium" + ("" if r["open"] else " ps-bad"))
+                ui.label(r["residue"])
+                ui.label(_fmt(r["cross_section_mb"]))
+                ui.label(f"{100 * r['share']:.1f}%")
+                ui.label(_fmt(r["rate_per_s"]))
+                ui.label(_fmt(r["residues_in_run"]))
+                lines = "; ".join(f"{x['energy_kev']:.1f} keV ({x['label']}, {_fmt(x['detected_per_s'])} /s)"
+                                  for x in r["lines"]) or "no level scheme"
+                ui.label(lines).classes("text-xs")
+                ui.label(_time(r["beam_time_s"]))
+        ui.label("Line rates: full-energy-peak counts per second in all γ-ray detectors together, from each "
+                 "detector's efficiency at the line's energy (no angular distribution, Doppler shift or summing). "
+                 "Beam time: for the counts wanted in the channel's strongest line. A channel in red needs more "
+                 "excitation energy than the compound nucleus has.").classes("text-xs ps-muted mt-1")
+        for note in res["notes"]:
+            ui.label(note).classes("text-xs ps-warn")
+
+
+def fusion(ctx, f: dict) -> None:
+    """The fusion of beam and target (backlog item 75, Stage 2): the barrier, σ_fus at the beam energy and through
+    the target, the spins it brings, and the excitation function."""
+    ui = ctx.ui
+    lo, hi = f["excitation_range_mev"]
+    text = (f"{f['beam']} + {f['target']} → {f['compound']}*. Fusion barrier (Bass) {f['barrier_cm_mev']:.1f} MeV "
+            f"in the CM, a beam of {f['barrier_lab_mev']:.1f} MeV in the lab, at {f['barrier_radius_fm']:.2f} fm "
+            f"(ħω = {f['hbar_omega_mev']:.2f} MeV). σ_fus = {_fmt(f['sigma_mb'])} mb at the beam energy, "
+            f"{_fmt(f['sigma_thick_mb'])} mb averaged over the target (the beam leaves it with "
+            f"{f['e_out_mev']:.1f} MeV); E* = {lo:.1f}–{hi:.1f} MeV through it. Spins up to {f['max_l']} ħ fuse, "
+            f"⟨ℓ⟩ = {f['mean_l']:.1f} ħ (critical ℓ {f['critical_l']} ħ).")
+    with ctx.panel("Fusion", "physim's own estimate (Bass barrier, Wong's transmission)"):
+        ui.label(text).classes("text-sm")
+        try:
+            from .figures import figure_fusion
+
+            ui.plotly(ctx.in_theme(figure_fusion(ctx.P()))).classes("w-full")
+        except Exception as err:  # noqa: BLE001 - the numbers above still stand
+            ui.label(f"The excitation function could not be drawn: {err}").classes("text-xs ps-warn")
+        ui.label("The channel table's cross sections are the setup's own; 'Fill from physim' in the reaction's "
+                 "card replaces them with physim's fusion and evaporation.").classes("text-xs ps-muted mt-1")
+        for note in f.get("warnings", []):
+            ui.label(note).classes("text-xs ps-warn")
+
+
+def selection(ctx) -> None:
+    """The channel selection of the neutron wall and the particle detectors (backlog item 75): worked out when asked
+    (a few seconds), as two tables: per true channel the share of its events in each detected class, and per class
+    what a gate on it contains."""
+    ui = ctx.ui
+    with ctx.panel("Channel selection", "what the neutron wall and the particle detectors see of each channel"):
+        holder = ui.column().classes("w-full")
+
+        async def build() -> None:
+            from nicegui import run
+
+            holder.clear()
+            with holder:
+                ui.spinner(size="md")
+            try:
+                r = await run.io_bound(ctx.P().snapshot().channel_selection)
+            except ValueError as err:
+                holder.clear()
+                with holder:
+                    ui.label(str(err)).classes("text-sm ps-warn")
+                return
+            holder.clear()
+            with holder:
+                n = r["neutron"]
+                ui.label(f"{n['cells']} cells, {n['solid_angle_msr']:.0f} msr ({100 * n['geometric_efficiency']:.1f}% "
+                         f"of 4π, out to θ = {n['theta_max_deg']:.0f}°); a {n['mean_energy_mev']:.2f} MeV neutron "
+                         f"(the mean in the lab) is seen with {100 * n['intrinsic_at_mean']:.0f}% of those entering, "
+                         f"{100 * n['efficiency_at_mean']:.1f}% of all; cross-talk {100 * n['crosstalk']:.1f}%. "
+                         + "; ".join(f"{100 * v:.0f}% of the {k == 'p' and 'protons' or 'α particles'} reach a "
+                                     f"particle detector" for k, v in r["charged_reached"].items() if v is not None)
+                         + ".").classes("text-sm")
+                cols = len(r["assigned"]) + 1
+                ui.label("Share of each channel's events in each detected class").classes("text-xs ps-muted mt-2")
+                with ui.element("div").classes("w-full").style("overflow-x: auto"):
+                    with ui.grid(columns=cols).classes("gap-x-4 gap-y-1 ps-num text-sm").style(
+                            f"grid-template-columns: repeat({cols}, auto)"):
+                        ui.label("Channel").classes("text-xs ps-muted")
+                        for a in r["assigned"]:
+                            ui.label(a).classes("text-xs ps-muted")
+                        for name, row in zip(r["true"], r["matrix"]):
+                            ui.label(name).classes("font-medium")
+                            for v in row:
+                                ui.label(f"{100 * v:.1f}%" if v > 0 else "·")
+                ui.label("What a gate on each class contains (shares of its events, for the table's cross "
+                         "sections)").classes("text-xs ps-muted mt-2")
+                for cls, c in r["contents"].items():
+                    parts = ", ".join(f"{k} {100 * v:.0f}%" for k, v in sorted(c["from"].items(),
+                                                                               key=lambda kv: -kv[1]))
+                    ui.label(f"{cls}: {_fmt(c['cross_section_mb'])} mb — {parts}").classes("text-xs")
+                for note in r["notes"]:
+                    ui.label(note).classes("text-xs ps-muted")
+
+        with holder:
+            ui.button("Work out the channel selection", icon="play_arrow", on_click=build).props(
+                "dense flat no-caps")
+
+
 def render_answers(ctx) -> None:
     """The answers (refreshed after every edit)."""
     try:
@@ -155,6 +274,12 @@ def render_answers(ctx) -> None:
         ctx.ui.label(f"The plan could not be computed: {err}").classes("ps-bad")
         return
     answers(ctx, pl)
+    if pl.get("fusion"):
+        fusion(ctx, pl["fusion"])
+    if pl.get("residues"):
+        residues(ctx, pl["residues"])
+    if ctx.P().experiment.neutron_wall is not None:
+        selection(ctx)
 
 
 def render(ctx) -> None:
