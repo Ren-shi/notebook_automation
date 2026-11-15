@@ -48,8 +48,9 @@
 >   −20% in H₂ to +7% in Ar, so the effective charge depends on the target and physim's does not. Charge states
 >   (2026-11-15): measured ⁸⁶Kr charges at 2.7 MeV/u (H₂ 25.1 > He 23.2 > N₂ < 20, Kuboki et al. 2014) are in
 >   the same order as the charges the stopping needs (23.3, 22.4, 20.8), but their differences are twice as
->   large; substituting them overshoots (H₂ +15%). **Next:** a target-dependent charge-state model used for
->   every target, tested on all of Bimbot's gases and the solids.
+>   large; substituting them overshoots (H₂ +15%). Formulas (2026-11-15): Schiwietz–Grande 2001 (gas) has no
+>   usable target dependence; Winger 1992's, as a factor on physim's charge, fixes the gases but makes Ni, Ag, Au
+>   13–24% low. None is adopted. The missing piece is in the step from charge to stopping, not the charge alone.
 >   SRIM was run with compound
 >   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
 > - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.

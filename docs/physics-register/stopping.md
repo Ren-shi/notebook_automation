@@ -231,6 +231,31 @@ fit over 1.5–5.3 MeV/u, read at 2.7 MeV/u; scatter about the fit 0.3–0.5):
   Bimbot's gases and the solids before anything changes in the code. For U at 1.4 MeV/u, He gives a lower charge
   than N₂ (Gerhard et al. 2022), so the order between He and N₂ depends on the ion.
 
+**Charge-state formulas tested (2026-11-15; nothing changed in the code).** Published mean-charge formulas for
+⁸⁶Kr at 2.7 MeV/u, against Kuboki's measurement and the charge Bimbot's stopping needs:
+
+| Target | Measured | Needed | Schiwietz–Grande 2001, gas | Schiwietz–Grande 2001, solid | Schiwietz et al. 2004, solid | Winger et al. 1992 | ZBL (physim) |
+|---|---|---|---|---|---|---|---|
+| H₂ | 25.1 | 23.3 | 22.0 | 25.9 | 26.4 | 33.2 | 20.8 |
+| He | 23.2 | 22.4 | 22.0 | 25.7 | 26.1 | 31.2 | 20.8 |
+| N₂ | < 20 | 20.8 | 22.1 | 25.2 | 25.5 | 27.8 | 20.8 |
+| Ar | | 19.8 | 22.1 | 24.9 | 25.0 | 26.0 | 20.8 |
+
+- *Schiwietz–Grande, gas:* reproduces U in N₂ at 1.4 MeV/u (28.4 against 27), but has almost no target dependence
+  and puts H₂ below N₂ for U (27.4 against 28.4; measured 28–29 against 27). Used as physim's q for Kr in Bimbot's
+  gases: H₂ −22% → −12%, but N₂ +4% → +16% and Ar +7% → +20%. Rejected.
+- *The solid formulas* give the charge of ions leaving a foil (25–26, above ZBL's 20.8, which is fitted to stopping)
+  and change by only about 1 unit from H to N. They do not describe gases.
+- *Winger et al.* has a target dependence of about the measured size (H − N 5.4, He − N 3.4, against > 5.1 and > 3.2
+  measured), at solid-like levels. Used directly, stopping is 52–84% too high. Used only as a factor on physim's
+  charge, normalised to N₂, Bimbot's gases go from −22%…+7% to −6%…+11%, but heavy solids break: Kr and Xe in Ni,
+  Ag and Au go from within 4% to 13–24% low, and Ar ions likewise. Rejected.
+
+No published formula gives the measured gas charges, and none whose target dependence carries into the
+Brandt–Kitagawa formula works for gases and solids together. This agrees with the finding above that the stopping
+follows only about half of the measured charge differences: the charge state points the right way, but the step
+from charge to stopping is where the model is missing something.
+
 Validated 2026-10-04; SRIM comparison 2026-11-14; MSTAR 2026-11-15.
 
 ## Known limitations
@@ -259,6 +284,9 @@ Validated 2026-10-04; SRIM comparison 2026-11-14; MSTAR 2026-11-15.
 - H. Kuboki et al., Phys. Rev. ST Accel. Beams **17**, 123501 (2014) (⁸⁶Kr charge states in H₂ and He).
 - P. Scharrer et al., Phys. Rev. Accel. Beams **20**, 043503 (2017); P. Gerhard and M. Maier, HIAT 2022, MO3I3
   (heavy-ion charge states in H₂, He and N₂ gas strippers).
+- G. Schiwietz and P. L. Grande, Nucl. Instr. Meth. B **175–177**, 125 (2001); G. Schiwietz et al., Nucl. Instr.
+  Meth. B **225**, 4 (2004); J. A. Winger, B. M. Sherrill and D. J. Morrissey, Nucl. Instr. Meth. B **70**, 380
+  (1992) (mean-charge formulas).
 - J. Lindhard and M. Scharff, Phys. Rev. **124**, 128 (1961); Mat. Fys. Medd. Dan. Vid. Selsk. **27**, no. 15 (1953).
 - N. Bohr, Mat. Fys. Medd. Dan. Vid. Selsk. **18**, no. 8 (1948); C. Tschalär, Nucl. Instr. Meth. **61**, 141 (1968).
 - V. L. Highland, Nucl. Instr. Meth. **129**, 497 (1975); O. I. Dahl, as given by the Particle Data Group.
