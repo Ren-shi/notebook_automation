@@ -147,6 +147,21 @@ def answers(ctx, pl: dict) -> None:
                      "are not taken off here (a run measures them).").classes("text-xs ps-muted mt-1")
 
 
+def answers_monitor(ctx, pl: dict) -> None:
+    """For fusion-evaporation: the beam monitor's row (its elastic rate and dead time)."""
+    ui = ctx.ui
+    with ctx.panel("Beam monitor", "the particle detectors count the elastically scattered beam"), ui.grid(
+            columns=4).classes("gap-x-6 gap-y-1 items-center ps-num text-sm").style(
+            "grid-template-columns: repeat(4, auto); justify-content: space-between"):
+        for h in ("Detector", "θ (deg)", "Rate (1/s)", "Busy"):
+            ui.label(h).classes("text-xs ps-muted")
+        for d in pl["detectors"]:
+            ui.label(d["detector"]).classes("font-medium")
+            ui.label(f"{d['theta_range'][0]:.0f}–{d['theta_range'][1]:.0f}")
+            ui.label(_fmt(d["rate_per_s"]))
+            ui.label(f"{100 * d['dead_time_fraction']:.2g}%")
+
+
 def residues(ctx, res: dict) -> None:
     """The fusion-evaporation residues (backlog item 75): the compound nucleus, then per exit channel its cross
     section, residues per second and in the run, the beam time for the counts wanted in its strongest line, and
@@ -270,6 +285,16 @@ def selection(ctx) -> None:
 
 def render_answers(ctx) -> None:
     """The answers (refreshed after every edit)."""
+    if ctx.P().experiment.fusion is not None:
+        from .tab_fusion import render_plan
+
+        render_plan(ctx)
+        if ctx.P().experiment.detectors:
+            try:
+                answers_monitor(ctx, ctx.P().plan())
+            except Exception:  # noqa: BLE001 - the monitor's table is not essential
+                pass
+        return
     try:
         pl = ctx.P().plan()
     except Exception as err:  # noqa: BLE001 - say why instead of an empty tab
@@ -292,12 +317,20 @@ def render(ctx) -> None:
     ctx.ui.label("Open each in turn: what the kinematics, the target and the detectors do to the numbers above. "
                  "The same panels are in Physics, at the foot of the rail on the left.").classes("text-xs ps-muted")
     coulex = p.experiment.excitation is not None and bool(p.experiment.gamma_detectors)
+    fusion = p.experiment.fusion is not None
+    # For fusion-evaporation the orbit check is Rutherford's (not the point), and the kinematics and per-strip
+    # rates are the beam monitor's: shown only with one.
+    skip = {"trajectories"} | (set() if p.experiment.detectors else {"kinematics", "rates"}) if fusion else set()
     # A check is built when it is first opened (its figure is computed by then, or a spinner says it is on its
     # way); the ones left open stay open when the tab is rebuilt after an edit.
     opened = ctx.state.setdefault("checks_open", set())
     for tab, title, coulex_only in CHECKS:
-        if coulex_only and not coulex:
+        if (coulex_only and not coulex) or tab in skip:
             continue
+        if fusion:
+            title = {"kinematics": "Kinematics of the beam monitor", "rates": "Rates of the beam monitor",
+                     "spectra": "Predicted spectra: the residues' γ rays, the particles, the neutrons, the recoils"
+                     }.get(tab, title)
         check = ctx.ui.expansion(title, value=tab in opened).classes("w-full ps-card")
         check.on_value_change(lambda e, tab=tab: (opened.add if e.value else opened.discard)(tab))
         ctx.when_opened(check, (lambda tab=tab: ctx.efficiency_panel() if tab == "efficiency" else ctx.block(tab)),

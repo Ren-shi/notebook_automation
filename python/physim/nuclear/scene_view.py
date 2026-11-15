@@ -23,13 +23,15 @@ PALETTES = {
               "foil": "#C9A227", "beam": "#D1495B", "selected": "#F28E2B", "element": "#E15759", "unsafe": "#B07AA1",
               "blocked": "#D62728", "wall": "#9AA3AA", "line": "#22272B", "ejectile": "#1F77B4",
               "recoil": "#2CA02C", "gamma": "#FFB000", "track_beam": "#D1495B", "hit": "#FF3B30",
-              "track_selected": "#FFFFFF"},
+              "track_selected": "#FFFFFF", "neutron_wall": "#2CA02C", "charged_particle_ball": "#1F77B4",
+              "gamma_calorimeter": "#7A7A7A", "recoil_separator": "#8E6BB8", "residues": "#009E73"},
     "dark": {"ground": "#171B1E", "ink": "#E9EBE9", "label": "rgba(23,27,30,0.85)", "active": "#5B8FCC",
              "active2": "#86B0E0", "board": "#4E9A61", "crystal": "#C9A163", "housing": "#A9B2B9", "shield": "#86A894",
              "foil": "#E0BC45", "beam": "#F0707F", "selected": "#FFA94D", "element": "#FF7B7D", "unsafe": "#C99BD0",
              "blocked": "#FF5A52", "wall": "#6F7A82", "line": "#DADDDB", "ejectile": "#6FB3FF",
              "recoil": "#6FE08A", "gamma": "#FFD24D", "track_beam": "#F0707F", "hit": "#FF5A52",
-             "track_selected": "#FFFFFF"},
+             "track_selected": "#FFFFFF", "neutron_wall": "#6FE08A", "charged_particle_ball": "#6FB3FF",
+             "gamma_calorimeter": "#A7B1BA", "recoil_separator": "#B79CF0", "residues": "#5BD08A"},
 }
 
 HEIGHT = 540
@@ -136,6 +138,9 @@ class SceneView:
         solids = _scene.solids(exp)
         self._solids = {s.key: s for s in solids}
         self.extent = _scene.extent_mm(exp, solids)
+        extras = self._ancillaries(exp)
+        if extras:
+            self.extent = max(self.extent, 1.15 * _scene.ancillary_reach_mm(extras))
         try:
             unsafe = self.planner().safety()
         except Exception:  # noqa: BLE001 -- the scene must draw even where the rates cannot be computed
@@ -162,9 +167,59 @@ class SceneView:
                 sc.sphere(_scene._mm(exp.chamber.radius), 32, 16, wireframe=True).material(c["wall"], 0.25)
             for s in solids:
                 self._draw_solid(sc, s, unsafe.get(s.name, ()))
+            self._draw_ancillaries(sc, extras)
         self._paint()
         self._annotate()
         self._limit()
+
+    #: Which ancillary groups are drawn (the page's layer switches change it).
+    hidden_groups: set = set()
+
+    def _ancillaries(self, exp) -> list:
+        """The ancillary detectors and the residue cone of a fusion-evaporation setup
+        (:func:`physim.nuclear.scene.ancillaries`)."""
+        if exp.fusion is None:
+            return []
+        try:
+            cone = self.planner().recoil_cone()["half_angle_deg"]
+        except Exception:  # noqa: BLE001 -- the scene draws without the cone
+            cone = None
+        return [s for s in _scene.ancillaries(exp, cone) if s["group"] not in self.hidden_groups]
+
+    def _draw_ancillaries(self, sc, shapes: list) -> None:
+        """Draw the ancillary shapes: the wall's cells as cylinders, the ball and the calorimeter as wire shells,
+        the separator as its acceptance cone and entrance, the residue cone as a faint cone."""
+        c = self.colours
+        style = f"color: {c['ink']}; font-size: 11px; background: {c['label']}; padding: 0 3px; border-radius: 3px"
+        labelled = set()
+        for s in shapes:
+            colour = c.get(s["group"], c["wall"])
+            if s["shape"] == "cell":
+                with sc.group() as g:
+                    sc.cylinder(s["radius"], s["radius"], s["depth"], 12).rotate(math.pi / 2, 0, 0).move(
+                        0, 0, -s["depth"] / 2).material(colour, 0.75)
+                g.move(*s["centre"]).rotate_R(s["axes"])
+                if "neutron_wall" not in labelled:
+                    labelled.add("neutron_wall")
+                    sc.text("neutron wall", style).move(*[1.12 * x for x in s["centre"]])
+            elif s["shape"] == "shell":
+                r = s["radius"] + s["thickness"] / 2
+                n = max(6, min(24, int(math.sqrt(max(s["segments"], 1)) * 2)))
+                sc.sphere(r, n, max(4, n // 2), wireframe=True).material(colour, 0.35)
+                sc.text("particle ball" if s["group"] == "charged_particle_ball" else "γ calorimeter",
+                        style).move(0, r * 1.05, 0)
+            elif s["shape"] == "separator":
+                d, half = s["distance"], math.radians(s["half_angle"])
+                r = d * math.tan(half)
+                for phi in (0, math.pi / 2, math.pi, 3 * math.pi / 2):
+                    sc.line([0, 0, 0], [r * math.cos(phi), r * math.sin(phi), d]).material(colour)
+                sc.ring(0.0, max(r, 5.0), 32).move(0, 0, d).material(colour, 0.35, side="both")
+                sc.box(3 * max(r, 20.0), 2 * max(r, 20.0), 140.0).move(0, 0, d + 70.0).material(colour, 0.25)
+                sc.text("recoil separator", style).move(0, 1.6 * max(r, 20.0), d + 70.0)
+            elif s["shape"] == "cone":
+                length, half = s["length"], math.radians(s["half_angle"])
+                r = length * math.tan(half)
+                sc.cylinder(r, 0.0, length, 32).rotate(math.pi / 2, 0, 0).move(0, 0, length / 2).material(colour, 0.22)
 
     def _draw_solid(self, sc, s, unsafe) -> None:
         c = self.colours

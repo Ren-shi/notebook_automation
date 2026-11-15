@@ -82,7 +82,8 @@ def test_the_app_serves_every_example(tmp_path):
                 time.sleep(0.5)
         steps = [label for _, label in workbench.STEPS]
         pages = [f"?example={name}" for name in Planner.examples()]
-        pages += [f"?template={key}" for key, _, _ in workbench.TEMPLATES] + [""]
+        pages += [f"?template={key}" for key, _, _ in workbench.TEMPLATES]
+        pages += [f"?template={t[0]}" for t in workbench.FUSION_TEMPLATES if t[0] != "fusion-blank"] + [""]
         for query in pages:
             # Only the tab on screen is built when the page is served; ``prebuild=all`` builds every tab now, so
             # an error in any of them gives a 500 here.
@@ -104,9 +105,22 @@ def test_the_app_serves_every_example(tmp_path):
             assert "Next: check the plan" in body and "Next: take a run" in body, query
             assert "Open an experiment" in body and "menu_book" in body, query
             # The predicted spectra are a check of the Plan; the Data step without a run says what it needs.
-            assert "Predicted spectra: what each detector will record" in body and "No run yet" in body, query
+            # (Fusion-evaporation names its checks for what they show there: the residues' spectra, the beam
+            # monitor's kinematics.)
+            fusion = "fusion" in query
+            spectra = "Predicted spectra: the residues" if fusion else "Predicted spectra: what each detector will record"
+            assert spectra in body and "No run yet" in body, query
             # The Plan tab answers without a button pressed, and its checks are there (backlog 65).
-            assert "Beam time needed" in body and "Kinematics: where the particles go" in body, query
+            kinematics = "Kinematics of the beam monitor" if fusion else "Kinematics: where the particles go"
+            assert "Beam time needed" in body and kinematics in body, query
+            if query == "?prebuild=all":  # no experiment yet: the start page, the kind of experiment first
+                for part in ("What experiment are you planning?", "Coulomb excitation", "Fusion-evaporation",
+                             "Transfer reactions", "Or open an experiment"):
+                    assert part in body, (query, part)
+            if fusion:  # the fusion plan: the channel studied, the residues, the evaporation
+                for part in ("The channel you study", "Residues of the channel table",
+                             "What the compound nucleus boils off", "Ancillary detectors"):
+                    assert part in body, (query, part)
             # The Run tab: the button, the real part, and what is not simulated (backlog 66).
             assert "Event by event" in body and "Not simulated yet" in body, query
             # The Physics tab: every section of the register, with the panels of the old tabs (backlog 70).

@@ -40,6 +40,22 @@ def _group_header(ctx, group: str) -> None:
                             with ui.column().classes("gap-0"):
                                 ui.label(pl.label).classes("text-sm font-medium")
                                 ui.label(pl.why).classes("text-xs ps-muted")
+        elif group == "Ancillary detectors":
+            draft = ctx.D().draft
+            with ui.button("Add", icon="add").props("dense flat"):
+                with ui.menu():
+                    for key, (title, _, _, why) in wb.ANCILLARY_CARDS.items():
+                        if key in draft:
+                            continue
+                        with ui.menu_item(on_click=lambda k=key: ctx.add_ancillary(k)).classes("max-w-sm"):
+                            with ui.column().classes("gap-0"):
+                                ui.label(title).classes("text-sm font-medium")
+                                ui.label(why).classes("text-xs ps-muted")
+                    with ui.menu_item(on_click=ctx.add_detector("forward")).classes("max-w-sm"):
+                        with ui.column().classes("gap-0"):
+                            ui.label("Beam monitor").classes("text-sm font-medium")
+                            ui.label("a small silicon detector counting the elastically scattered beam").classes(
+                                "text-xs ps-muted")
         elif group == "γ-ray detectors":
             with ui.button("Add", icon="add").props("dense flat"):
                 with ui.menu():
@@ -73,6 +89,10 @@ def _card_body(ctx, d: wb.Decision) -> None:
                 ctx.section("", more, d.section, d.values)
             if d.key == "target":
                 ctx.section("Backing (optional)", wb.BACKING_FIELDS, "backing", draft["target"].get("backing", {}))
+    if d.key.startswith("anc:"):
+        name = d.key.split(":", 1)[1]
+        ui.button("Remove", icon="delete", on_click=lambda n=name: ctx.remove_ancillary(n)).props(
+            "dense flat color=negative")
     if d.key.startswith(("detector:", "gamma:")):
         i = int(d.key.split(":")[1])
         gamma = d.key.startswith("gamma:")
@@ -96,6 +116,7 @@ def render(ctx) -> None:
                 ui.icon("lock").classes("ps-warn")
                 ui.label("A run is being taken: the setup is read-only until it ends.").classes("text-sm ps-warn")
     coulex = ctx.D().draft.get("reaction", {}).get("type") == "coulex"
+    fusion = ctx.D().draft.get("reaction", {}).get("type") == "fusion-evaporation"
     shown_groups = set()
     holder = ui.column().classes("w-full gap-1")
     if p.running:
@@ -105,12 +126,18 @@ def render(ctx) -> None:
         groups_present = {d.group for d, _ in cards}
         for d, changed in cards:
             if d.group not in shown_groups:
-                if d.group == "Run conditions" and coulex and "γ-ray detectors" not in groups_present:
+                if d.group == "Run conditions" and (coulex or fusion) and "γ-ray detectors" not in groups_present:
                     _group_header(ctx, "γ-ray detectors")
-                    ui.label("No γ-ray detectors yet: add one to see the γ ray of the excited state.").classes(
+                    ui.label("No γ-ray detectors yet: add one to see the γ ray of the excited state." if coulex else
+                             "No γ-ray detectors yet: add the array to see the residues' γ rays.").classes(
+                        "text-xs ps-muted")
+                if d.group == "Run conditions" and fusion and "Ancillary detectors" not in groups_present:
+                    _group_header(ctx, "Ancillary detectors")
+                    ui.label("No ancillary detector: add a neutron wall, a charged-particle ball, a recoil separator "
+                             "or a γ calorimeter to pick out the channels, or a beam monitor.").classes(
                         "text-xs ps-muted")
                 shown_groups.add(d.group)
-                if d.group in ("Particle detectors", "γ-ray detectors"):
+                if d.group in ("Particle detectors", "γ-ray detectors", "Ancillary detectors"):
                     _group_header(ctx, d.group)
                 else:
                     ui.element("div").classes("mt-2")

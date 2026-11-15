@@ -566,12 +566,35 @@ def limits(experiment, key: str, mode: str = "angle") -> Limits:
 # -- advice ---------------------------------------------------------------------------------------------------------
 
 
+def fusion_advice(experiment) -> list:
+    """For a fusion-evaporation setup, in plain words: what fuses and where the residues go, and what the
+    particle detectors and ancillaries are there for."""
+    out = []
+    if experiment.detectors:
+        names = ", ".join(d.name or f"D{i + 1}" for i, d in enumerate(experiment.detectors))
+        out.append(f"{names} count{'s' if len(experiment.detectors) == 1 else ''} the elastically scattered beam: a "
+                   "monitor of the beam on target. The residues and their γ rays are counted by the γ-ray "
+                   "detectors and the ancillaries.")
+    if experiment.neutron_wall is not None and experiment.recoil_separator is not None:
+        lo = _q(experiment.neutron_wall.theta_min).to("deg") if experiment.neutron_wall.theta_min is not None else 0.0
+        half = _q(experiment.recoil_separator.theta_acceptance).to("deg")
+        if lo < half:
+            out.append(f"The neutron wall starts at {lo:g}°, inside the separator's {half:g}° acceptance: leave "
+                       "its centre open (theta_min) so the residues reach the separator.")
+    if not experiment.gamma_detectors:
+        out.append("No γ-ray detector yet: add the γ-ray array to see the residues' γ rays.")
+    return out
+
+
 def advice(experiment) -> list:
     """Where the kinematics send the particles, in plain words: which side to put particle detectors on, and which
-    detectors nothing can reach."""
+    detectors nothing can reach. For fusion-evaporation, what the particle detectors are for there."""
     from . import data
     from .kinematics import TwoBody
     from .rates import beam_ion, stack
+
+    if experiment.fusion is not None:
+        return fusion_advice(experiment)
 
     ion = beam_ion(experiment)
     a_beam = experiment.beam.A
@@ -599,6 +622,87 @@ def advice(experiment) -> list:
     return out
 
 
+# -- the ancillary detectors of fusion-evaporation ----------------------------------------------------------------
+
+#: Where a recoil separator's entrance is drawn when its setup gives no distance, mm.
+SEPARATOR_DISTANCE_MM = 600.0
+
+
+def _cell_frame(u: np.ndarray) -> np.ndarray:
+    """A right-handed frame (b, a, -u) whose third axis looks from a point in direction ``u`` back at the
+    target, as the γ-ray detectors' solids use."""
+    helper = np.array([0.0, 1.0, 0.0]) if abs(u[1]) < 0.9 else np.array([1.0, 0.0, 0.0])
+    b = np.cross(helper, u)
+    b /= np.linalg.norm(b)
+    a = np.cross(-u, b)
+    return _frame(b, a, -u)
+
+
+def ancillaries(experiment, cone_deg: Optional[float] = None) -> list:
+    """The ancillary detectors of a fusion-evaporation setup as simple shapes for the scene (they are drawn, not
+    checked for overlaps or dragged): dicts with "group" (the setup section, or "residues" for the residue cone),
+    "shape" and sizes in mm. The neutron wall's cells are laid in rings round the beam from its ``theta_min``,
+    ``pitch`` apart, as many as it has; ``cone_deg`` is the residues' cone half-angle, if known."""
+    out = []
+    wall = experiment.neutron_wall
+    if wall is not None:
+        try:
+            model = wall.model()
+            cell = model.cell
+            d = cell.distance_mm if hasattr(cell, "distance_mm") else _mm(wall.distance)
+            pitch = float(model.pitch_mm) if hasattr(model, "pitch_mm") else 2 * cell.radius_mm
+            theta0 = math.radians(_mm(wall.theta_min, 0.0) if wall.theta_min is not None else 0.0)
+            placed, k = 0, 0
+            while placed < wall.cells and k < 200:
+                theta = theta0 + (k + 0.5) * pitch / d
+                if theta >= math.pi / 2:
+                    break
+                n = max(1, int(2 * math.pi * d * math.sin(theta) / pitch))
+                n = min(n, wall.cells - placed)
+                for j in range(n):
+                    phi = 2 * math.pi * (j + 0.5 * (k % 2)) / max(n, 1)
+                    u = np.array([math.sin(theta) * math.cos(phi), math.sin(theta) * math.sin(phi), math.cos(theta)])
+                    out.append({"group": "neutron_wall", "shape": "cell", "centre": (d * u).tolist(),
+                                "axes": _cell_frame(u).tolist(), "radius": cell.radius_mm,
+                                "depth": cell.depth_mm if hasattr(cell, "depth_mm") else 150.0})
+                placed += n
+                k += 1
+        except Exception:  # noqa: BLE001 -- an unfinished wall is not drawn
+            pass
+    ball = experiment.charged_particle_ball
+    if ball is not None:
+        lo = _q(ball.theta_min).to("deg") if ball.theta_min is not None else 0.0
+        hi = _q(ball.theta_max).to("deg") if ball.theta_max is not None else 180.0
+        out.append({"group": "charged_particle_ball", "shape": "shell", "radius": _mm(ball.radius),
+                    "thickness": _mm(ball.thickness, 5.0), "theta": (lo, hi), "segments": ball.elements})
+    cal = experiment.gamma_calorimeter
+    if cal is not None:
+        out.append({"group": "gamma_calorimeter", "shape": "shell", "radius": _mm(cal.radius),
+                    "thickness": _mm(cal.thickness, 50.0), "theta": (0.0, 180.0), "segments": cal.elements})
+    sep = experiment.recoil_separator
+    if sep is not None:
+        out.append({"group": "recoil_separator", "shape": "separator",
+                    "distance": _mm(sep.distance, SEPARATOR_DISTANCE_MM),
+                    "half_angle": _q(sep.theta_acceptance).to("deg")})
+    if experiment.fusion is not None and cone_deg:
+        far = max([SEPARATOR_DISTANCE_MM if sep is None else _mm(sep.distance, SEPARATOR_DISTANCE_MM)] + [200.0])
+        out.append({"group": "residues", "shape": "cone", "half_angle": float(cone_deg), "length": 0.8 * far})
+    return out
+
+
+def ancillary_reach_mm(shapes: list) -> float:
+    """How far from the target the ancillary shapes reach, mm (0 without any)."""
+    far = 0.0
+    for s in shapes:
+        if s["shape"] == "cell":
+            far = max(far, float(np.linalg.norm(s["centre"])) + s["depth"])
+        elif s["shape"] == "shell":
+            far = max(far, s["radius"] + s["thickness"])
+        elif s["shape"] == "separator":
+            far = max(far, s["distance"] + 150.0)
+    return far
+
+
 __all__ = ["BEAM_RADIUS_MM", "BOARD_THICKNESS_MM", "Limits", "MIN_DISTANCE_MM", "Part", "Problem", "Solid",
-           "TARGET_DIAMETER_MM", "advice", "beam_radius_mm", "blocked", "extent_mm", "limits", "move_fields",
+           "TARGET_DIAMETER_MM", "advice", "ancillaries", "ancillary_reach_mm", "beam_radius_mm", "blocked", "extent_mm", "limits", "move_fields",
            "moved", "on_axis", "position_of", "problems", "solids", "target_thickness_mm"]
