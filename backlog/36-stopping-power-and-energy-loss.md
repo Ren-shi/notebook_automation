@@ -45,8 +45,11 @@
 >   fine at 25 MeV/u, the only data. Kr/Xe in Mylar fail because of carbon and oxygen (Xe in carbon −20% at
 >   0.1–1 MeV/u), not hydrogen. Using SRIM 2013's tables was rejected (fitted to the same data, unpublished,
 >   circular). The facts (register, "Why physim is low for Kr in hydrogen"): in one experiment physim goes from
->   −20% in H₂ to +7% in Ar, so the effective charge depends on the target and physim's does not. **Next:** test
->   whether Kr's equilibrium charge state in H₂ is higher than ZBL's solid fit, against measured charge states.
+>   −20% in H₂ to +7% in Ar, so the effective charge depends on the target and physim's does not. Charge states
+>   (2026-11-15): measured ⁸⁶Kr charges at 2.7 MeV/u (H₂ 25.1 > He 23.2 > N₂ < 20, Kuboki et al. 2014) are in
+>   the same order as the charges the stopping needs (23.3, 22.4, 20.8), but their differences are twice as
+>   large; substituting them overshoots (H₂ +15%). **Next:** a target-dependent charge-state model used for
+>   every target, tested on all of Bimbot's gases and the solids.
 >   SRIM was run with compound
 >   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
 > - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.

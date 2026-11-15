@@ -206,6 +206,31 @@ also predicts Ar about 15% below N₂, which the data do not show. So (b) alone 
 2013's tables for these ions was considered and rejected: SRIM 2013 is fitted to data that include Bi1989b, does
 not publish its treatment of hydrogen, and would make the SRIM checks circular. (a) is to be tested first.
 
+**Charge states of Kr in H₂, He and N₂ (2026-11-15).** Explanation (a) tested against measured equilibrium charge
+states, which are independent of the stopping data. Kuboki et al. (2014) measured ⁸⁶Kr at 2.7 MeV/u, inside
+Bimbot's range: mean charge 25.1 in H₂, 23.2 in He, and less than 20 in N₂ (estimated). Gas-stripper work at GSI
+also finds the highest equilibrium charge of U at 1.4 MeV/u in H₂ (29.2 ± 1.2; Scharrer et al. 2017). The charge
+the stopping needs was found by inverting physim's Brandt–Kitagawa ζ for q, gas by gas, from Bimbot's data (linear
+fit over 1.5–5.3 MeV/u, read at 2.7 MeV/u; scatter about the fit 0.3–0.5):
+
+| | H₂ | D₂ | He | N₂ | Ar |
+|---|---|---|---|---|---|
+| Charge the stopping needs | 23.3 | 23.1 | 22.4 | 20.8 | 19.8 |
+| Measured charge (Kuboki et al.) | 25.1 | | 23.2 | < 20 | |
+| physim (ZBL, the same for every target) | 20.8 | 20.8 | 20.8 | 20.8 | 20.8 |
+| physim's stopping ÷ data − 1 | −20% | | −13% | 0% | |
+| … with the measured charge put in its place | +15% | | +7% | ≤ −7% | |
+
+- *Direction and order agree:* the measured charge is highest in H₂, then He, then N₂, the same order as the charge
+  the stopping needs and as physim's shortfall. So the charge state is at least part of the cause.
+- *The size does not:* the measured differences (H₂ − N₂ > 5.1, He − N₂ > 3.2) are at least twice those the stopping
+  needs (2.5 and 1.6), and putting the measured charge into physim's formula overshoots. ZBL's q is a quantity
+  fitted to stopping in solids, not a measured mean charge, so it cannot simply be replaced in one target.
+- *Not settled:* why only about half of the measured charge difference shows up in the stopping. A charge-state
+  model with a target dependence, used for every target with the same screening, has to be tested against all of
+  Bimbot's gases and the solids before anything changes in the code. For U at 1.4 MeV/u, He gives a lower charge
+  than N₂ (Gerhard et al. 2022), so the order between He and N₂ depends on the ion.
+
 Validated 2026-10-04; SRIM comparison 2026-11-14; MSTAR 2026-11-15.
 
 ## Known limitations
@@ -230,6 +255,10 @@ Validated 2026-10-04; SRIM comparison 2026-11-14; MSTAR 2026-11-15.
   (1993) and 90 (2016).
 - J. F. Ziegler, J. P. Biersack and U. Littmark, *The Stopping and Range of Ions in Solids* (Pergamon, 1985).
 - W. Brandt and M. Kitagawa, Phys. Rev. B **25**, 5631 (1982).
+- R. Bimbot et al., heavy-ion stopping in gases (1989), via the IAEA Stopping Power Database (ref_id Bi1989b).
+- H. Kuboki et al., Phys. Rev. ST Accel. Beams **17**, 123501 (2014) (⁸⁶Kr charge states in H₂ and He).
+- P. Scharrer et al., Phys. Rev. Accel. Beams **20**, 043503 (2017); P. Gerhard and M. Maier, HIAT 2022, MO3I3
+  (heavy-ion charge states in H₂, He and N₂ gas strippers).
 - J. Lindhard and M. Scharff, Phys. Rev. **124**, 128 (1961); Mat. Fys. Medd. Dan. Vid. Selsk. **27**, no. 15 (1953).
 - N. Bohr, Mat. Fys. Medd. Dan. Vid. Selsk. **18**, no. 8 (1948); C. Tschalär, Nucl. Instr. Meth. **61**, 141 (1968).
 - V. L. Highland, Nucl. Instr. Meth. **129**, 497 (1975); O. I. Dahl, as given by the Particle Data Group.
