@@ -28,7 +28,8 @@ and the chance that one neutron fires two neighbouring cells (cross-talk)::
 the probability of a first collision on hydrogen inside the cell, times the share of recoil protons above the
 threshold (n–p scattering is isotropic in the CM below about 20 MeV, so the recoil energy is uniform between 0 and
 E). E_p,th is the proton energy whose light equals the threshold (in MeVee), from the light-output curve of
-Cecil et al. σ_H is Gammel's closed form; σ_C comes from ``data/neutron_scintillators.toml``. Carbon only
+Cecil et al. σ_H is Gammel's closed form (within 0.8% of ENDF/B-VIII.0 from 0.5 to 20 MeV); σ_C is the ENDF/B-VIII.0
+total cross section of natural carbon, bin-averaged, from ``data/neutron_scintillators.toml``. Carbon only
 attenuates; double scattering, edge effects and the light of α particles from ¹²C(n,α) are left out.
 
 **Channel selection.** Each true channel emits a fixed number of neutrons, protons, α particles (and γ rays). Each
@@ -37,7 +38,8 @@ a proton: none, as a proton, or as an α). The detected counts are the sum of th
 distribution is a convolution of per-particle distributions (multinomial). An event is assigned to the channel
 whose multiplicities equal the detected ones, or left unassigned. The Monte Carlo draws the same outcomes particle
 by particle from event lists, so it agrees with the analytic matrix within statistics when the same mean
-probabilities are used (:meth:`Detection.averaged`).
+probabilities are used (:meth:`Detection.averaged`, and :func:`gamma_distributions` when the number of γ rays varies
+from event to event). Particle-detector thresholds enter as efficiencies that depend on each particle's energy.
 
 The theory page is ``docs/theory/neutrons.md``.
 """
@@ -107,7 +109,8 @@ def hydrogen_cross_section(energy_mev):
 
 
 def carbon_cross_section(energy_mev):
-    """Total neutron cross section of natural carbon in barns, interpolated in the data file (typical values)."""
+    """Total neutron cross section of natural carbon in barns: ENDF/B-VIII.0 averaged over bins of ±2.9 % in energy
+    (the data file, written by ``scripts/endf_neutron_reference.py``), interpolated linearly in log E."""
     t = _table()["carbon_total"]
     e = np.asarray(energy_mev, dtype=float)
     return np.interp(np.log(np.clip(e, 1e-6, None)), np.log(t["energy_mev"]), t["sigma_b"])
@@ -501,13 +504,26 @@ class NeutronWall:
 
 @dataclass(frozen=True)
 class Channel:
-    """An exit channel: how many neutrons, protons, α particles and γ rays each event emits."""
+    """An exit channel: how many neutrons, protons, α particles and γ rays each event emits.
+
+    ``gammas`` is a fixed number of γ rays per event, or the probabilities of 0, 1, 2, ... γ rays (a tuple, for
+    example from :func:`gamma_distributions`) when the number varies from event to event.
+    """
 
     name: str
     neutrons: int = 0
     protons: int = 0
     alphas: int = 0
-    gammas: int = 0
+    gammas: Union[int, tuple] = 0
+
+    @property
+    def gamma_counts(self) -> np.ndarray:
+        """Probabilities of 0, 1, 2, ... γ rays per event."""
+        if isinstance(self.gammas, (tuple, list, np.ndarray)):
+            return np.asarray(self.gammas, dtype=float)
+        out = np.zeros(int(self.gammas) + 1)
+        out[-1] = 1.0
+        return out
 
     @property
     def multiplicities(self) -> tuple:
@@ -537,7 +553,9 @@ def channels_from(spec: Union[Mapping, Iterable], gammas: Union[int, Mapping, No
         else:
             ch = Channel(key, *value)
         g = gammas.get(ch.name, 0) if isinstance(gammas, Mapping) else gammas
-        out.append(replace(ch, gammas=int(g)) if g is not None else ch)
+        if g is not None:
+            ch = replace(ch, gammas=tuple(float(x) for x in g) if isinstance(g, (tuple, list)) else int(g))
+        out.append(ch)
     names = [c.name for c in out]
     if len(set(names)) != len(names):
         raise ValueError("two channels have the same name")
@@ -755,13 +773,39 @@ def _charged_joint(proton: np.ndarray, alpha: np.ndarray, n_p: int, n_a: int) ->
     return joint
 
 
+def _fake_neutrons(gamma_counts: np.ndarray, fake: float) -> np.ndarray:
+    """Distribution of the fake neutrons from an event's γ rays: Σ_g P(g) Binomial(g, fake)."""
+    out = np.zeros(len(gamma_counts))
+    kernel = np.array([1 - fake, fake])
+    for g, w in enumerate(gamma_counts):
+        if w:
+            out[:g + 1] += w * _convolve_power(kernel, g)
+    return out
+
+
+def gamma_distributions(events: Iterable, channels: Sequence[Channel]) -> list:
+    """The channels with ``gammas`` set to the distribution of γ-ray numbers in their events (as
+    :func:`simulate_selection` counts them: γ rays in the particle list plus the event's ``gammas``), so that
+    :func:`selection_matrix` with :meth:`Detection.averaged` is what the Monte Carlo converges to. Channels with no
+    events keep their own ``gammas``."""
+    channels = list(channels)
+    flat = _flatten(events, channels)
+    out = []
+    for i, ch in enumerate(channels):
+        g = flat.gammas[flat.truth == i]
+        out.append(replace(ch, gammas=tuple((np.bincount(g) / len(g)).tolist())) if len(g) else ch)
+    return out
+
+
 def selection_matrix(channels: Sequence[Channel], detection: Union[Detection, Mapping]) -> SelectionMatrix:
     """The analytic channel-selection matrix.
 
     ``detection`` is one numeric :class:`Detection` for all channels, or a mapping from channel name to one (for
     example from :meth:`Detection.averaged`). Each true neutron gives 0, 1 or 2 counted neutrons, each γ ray a
     fake neutron with :meth:`Detection.gamma_fake`, each proton and α particle (none, p, α); the counts are
-    independent between particles, so their distributions convolve.
+    independent between particles, so their distributions convolve. A channel whose γ-ray number varies
+    (:attr:`Channel.gamma_counts`, from :func:`gamma_distributions`) gets the mixture of the binomial fake-neutron
+    distributions over its γ-ray numbers.
     """
     channels = list(channels)
     index = _channel_index(channels)
@@ -772,9 +816,8 @@ def selection_matrix(channels: Sequence[Channel], detection: Union[Detection, Ma
         det = detection[ch.name] if isinstance(detection, Mapping) else detection
         if not det.is_numeric():
             raise ValueError("the analytic matrix needs numbers; use Detection.averaged(events, channels) first")
-        n_dist = _convolve_power(det.neutron_outcomes(), ch.neutrons)
-        n_dist = np.convolve(n_dist, _convolve_power(np.array([1 - det.gamma_fake(), det.gamma_fake()]),
-                                                     ch.gammas))
+        n_dist = np.convolve(_convolve_power(det.neutron_outcomes(), ch.neutrons),
+                             _fake_neutrons(ch.gamma_counts, det.gamma_fake()))
         pa = _charged_joint(det.proton_outcomes(), det.alpha_outcomes(), ch.protons, ch.alphas)
         for k, pn in enumerate(n_dist):
             if pn == 0:

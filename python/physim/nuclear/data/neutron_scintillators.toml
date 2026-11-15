@@ -13,7 +13,7 @@
 #                    detector actually used
 #
 # [carbon_total] is the neutron total cross section of natural carbon, used only to attenuate the beam of
-# neutrons in the cell (the n-C collisions are taken to give no light).
+# neutrons in the cell and in cross-talk (the n-C collisions are taken to give no light).
 #
 # The n-p cross section is not tabulated here: physim.nuclear.neutrons uses Gammel's closed form.
 
@@ -56,13 +56,37 @@ sources = [
 typical = ["light_output"]
 
 [carbon_total]
-# Neutron energy in MeV and total cross section of natural carbon in barns.
-#
-# Typical values: smooth averages over the resonances between 2 and 8 MeV, rounded, NOT read point by point
-# from an evaluation. They follow the shape of the ENDF/B-VIII.0 evaluation (MF=3, MT=1) to about 15%; the
-# resonances themselves (for example the peak near 2.08 MeV and the dip near 2.82 MeV) are left out. Replace them
-# with values read from ENDF/B-VIII.0 before using the carbon attenuation quantitatively. They change a cell's
-# efficiency by a few percent at most, since carbon only attenuates.
-typical = true
-energy_mev = [0.01, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 14.0, 17.0, 20.0, 25.0, 30.0]
-sigma_b = [4.73, 4.54, 4.29, 4.05, 3.65, 3.20, 2.60, 2.15, 1.75, 1.75, 1.80, 1.20, 1.25, 1.45, 1.50, 1.25, 1.30, 1.30, 1.38, 1.43, 1.40, 1.33]
+# Neutron energy in MeV and total cross section of natural carbon in barns, from ENDF/B-VIII.0 (MF=3, MT=1 of
+# n-006_C_012 and n-006_C_013, weighted 0.9893 and 0.0107), written by scripts/endf_neutron_reference.py --toml.
+# 40 points per decade from 10 keV to 30 MeV; each value is the average of the pointwise cross section over its own
+# bin (a factor 1.029 either side of the energy), so resonances narrower than a bin (the 2.08 MeV peak, the 2.82
+# MeV dip, the structure from 6 to 9 MeV) are spread over the bin with their area kept. Above 20 MeV, where the
+# 13C evaluation stops, 13C takes the 12C values. tests/reference/nuclear/neutron_carbon_endf.csv holds the
+# comparison points.
+typical = false
+source = "ENDF/B-VIII.0 neutron sublibrary (NNDC, https://www.nndc.bnl.gov/endf-b8.0/), C-12 and C-13 (LANL/ORNL, Hale, Young, Fu, Paris, EVAL-AUG15), bin-averaged by scripts/endf_neutron_reference.py"
+energy_mev = [
+    0.01, 0.01059, 0.01122, 0.01189, 0.01259, 0.01334, 0.01413, 0.01496, 0.01585, 0.01679, 0.01778, 0.01884,
+    0.01995, 0.02113, 0.02239, 0.02371, 0.02512, 0.02661, 0.02818, 0.02985, 0.03162, 0.0335, 0.03548, 0.03758,
+    0.03981, 0.04217, 0.04467, 0.04732, 0.05012, 0.05309, 0.05623, 0.05957, 0.0631, 0.06683, 0.07079, 0.07499,
+    0.07943, 0.08414, 0.08913, 0.09441, 0.1, 0.10593, 0.1122, 0.11885, 0.12589, 0.13335, 0.14125, 0.14962, 0.15849,
+    0.16788, 0.17783, 0.18836, 0.19953, 0.21135, 0.22387, 0.23714, 0.25119, 0.26607, 0.28184, 0.29854, 0.31623,
+    0.33497, 0.35481, 0.37584, 0.39811, 0.4217, 0.44668, 0.47315, 0.50119, 0.53088, 0.56234, 0.59566, 0.63096,
+    0.66834, 0.70795, 0.74989, 0.79433, 0.8414, 0.89125, 0.94406, 1, 1.05925, 1.12202, 1.1885, 1.25893, 1.33352,
+    1.41254, 1.49624, 1.58489, 1.6788, 1.77828, 1.88365, 1.99526, 2.11349, 2.23872, 2.37137, 2.51189, 2.66073,
+    2.81838, 2.98538, 3.16228, 3.34965, 3.54813, 3.75837, 3.98107, 4.21697, 4.46684, 4.73151, 5.01187, 5.30884,
+    5.62341, 5.95662, 6.30957, 6.68344, 7.07946, 7.49894, 7.94328, 8.41395, 8.91251, 9.44061, 10, 10.5925, 11.2202,
+    11.885, 12.5892, 13.3352, 14.1254, 14.9624, 15.8489, 16.788, 17.7828, 18.8365, 19.9526, 21.1349, 22.3872,
+    23.7137, 25.1189, 26.6073, 28.1838, 29.8538,
+]
+sigma_b = [
+    4.725, 4.724, 4.721, 4.719, 4.717, 4.714, 4.712, 4.709, 4.706, 4.703, 4.7, 4.696, 4.692, 4.689, 4.685, 4.68,
+    4.676, 4.671, 4.666, 4.66, 4.655, 4.648, 4.642, 4.635, 4.628, 4.62, 4.612, 4.604, 4.594, 4.585, 4.575, 4.565,
+    4.554, 4.542, 4.53, 4.517, 4.503, 4.489, 4.473, 4.457, 4.439, 4.422, 4.403, 4.383, 4.362, 4.34, 4.319, 4.336,
+    4.301, 4.241, 4.212, 4.182, 4.151, 4.118, 4.085, 4.049, 4.011, 3.973, 3.932, 3.89, 3.847, 3.801, 3.753, 3.704,
+    3.653, 3.6, 3.546, 3.489, 3.431, 3.371, 3.309, 3.245, 3.18, 3.113, 3.044, 2.974, 2.903, 2.83, 2.757, 2.682,
+    2.606, 2.53, 2.453, 2.375, 2.298, 2.22, 2.142, 2.066, 1.99, 1.915, 1.847, 1.776, 1.718, 2.126, 1.638, 1.611,
+    1.624, 1.719, 2.173, 2.021, 1.836, 2.452, 2.664, 2.396, 1.971, 2.053, 1.762, 1.396, 1.233, 1.231, 1.095, 1.103,
+    1.472, 0.8409, 0.8134, 1.719, 1.957, 1.201, 1.134, 1.268, 1.166, 1.25, 1.388, 1.389, 1.361, 1.402, 1.331, 1.402,
+    1.48, 1.412, 1.43, 1.483, 1.497, 1.429, 1.404, 1.409, 1.386, 1.362, 1.332, 1.298,
+]

@@ -238,8 +238,10 @@ def selection(ctx) -> None:
                          f"(the mean in the lab) is seen with {100 * n['intrinsic_at_mean']:.0f}% of those entering, "
                          f"{100 * n['efficiency_at_mean']:.1f}% of all; cross-talk {100 * n['crosstalk']:.1f}%. "
                          + "; ".join(f"{100 * v:.0f}% of the {k == 'p' and 'protons' or 'α particles'} reach a "
-                                     f"particle detector" for k, v in r["charged_reached"].items() if v is not None)
-                         + ".").classes("text-sm")
+                                     f"particle detector ({100 * r['charged_counted'][k]:.0f}% above its threshold)"
+                                     for k, v in r["charged_reached"].items() if v is not None)
+                         + f"; {r['gamma']['multiplicity']:.1f} γ rays per event, each a false neutron with "
+                           f"{100 * r['gamma']['false_neutron_per_gamma']:.2f}%.").classes("text-sm")
                 cols = len(r["assigned"]) + 1
                 ui.label("Share of each channel's events in each detected class").classes("text-xs ps-muted mt-2")
                 with ui.element("div").classes("w-full").style("overflow-x: auto"):

@@ -441,6 +441,21 @@ class Response:
         out = e_in - self.stopping.energy_after(e_in, self.thickness, incidence_deg)
         return float(out) if np.ndim(energy) == 0 else out
 
+    def deposited_each(self, energy, incidence_deg) -> np.ndarray:
+        """:meth:`deposited` for arrays of energies and incidence angles, one of each per particle (the same
+        range arithmetic, R(E_out) = R(E_in) − areal density / cos(incidence), with the angle per particle)."""
+        e = np.atleast_1d(np.asarray(energy, dtype=float))
+        cos = np.cos(np.radians(np.asarray(incidence_deg, dtype=float)))
+        log_r, log_e = np.log(self.stopping._range), np.log(self.stopping._e)
+
+        def after(e0, areal):
+            left = self.stopping.range(e0) - areal / cos
+            out = np.exp(np.interp(np.log(np.maximum(left, 1e-300)), log_r, log_e))
+            return np.where(left > 0, out, 0.0)
+
+        e_in = after(e, self.dead_layer) if self.dead_layer else e
+        return e_in - after(e_in, self.thickness)
+
     def punch_through_energy(self, incidence_deg: float = 0.0) -> float:
         """Smallest incident energy that leaves the back of the detector, MeV."""
         path = (self.dead_layer + self.thickness) / math.cos(math.radians(incidence_deg))
