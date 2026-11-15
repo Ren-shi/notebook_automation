@@ -26,9 +26,13 @@ needs_reference = pytest.mark.skipif(not REFERENCE.is_dir(), reason="reference f
 #: (docs/theory/fusion.md and evaporation.md): σ_fus off by up to 43% above 1.1 V_B (physim's capture stops at the
 #: Bass potential's critical ℓ, so σ falls far above the barrier while PACE4's rises; ⁴He 16% at 1.14 V_B); the three
 #: strongest residues not all the same or in order for any of the five systems (³²S, ⁴⁸Ca off by up to 10×); mean
-#: neutron energies 10–24% low.
+#: neutron energies 10–24% low. Against GEMINI++ 3.3.0 (three systems): the three strongest residues not the same,
+#: in order and within 30% for any of them (shares off by up to 65%, ¹⁶O + ¹⁴⁴Sm also out of order); mean neutron
+#: energies 10–17% high (GEMINI++'s neutrons are softer than physim's, PACE4's harder; physim lies between the two codes,
+#: which evaporation_neutron_energy_band checks).
 KNOWN_FAILURES = {"stopping_compounds_vs_srim", "spectra_vs_trim", "stopping_hydrogen_vs_data", "fusion_vs_pace4",
-                  "evaporation_channels_vs_pace4", "evaporation_spectra_vs_pace4"}
+                  "evaporation_channels_vs_pace4", "evaporation_spectra_vs_pace4", "evaporation_channels_vs_gemini",
+                  "evaporation_spectra_vs_gemini"}
 
 
 def statuses(**kw):
@@ -44,7 +48,8 @@ def test_every_capability_has_a_tool_and_a_literature_check():
         if cap in ("Coulomb trajectories", "Detector solid angles and response", "γ-ray Doppler shift and broadening",
                    "Fusion-evaporation residues from a channel table", "Neutron detectors and channel selection"):
             # Exact closed forms are a stronger test than any tool; no tool computes these for arbitrary setups
-            # (for neutron detectors GEANT4 would be the tool, a program per geometry).
+            # (for neutron detectors GEANT4 would be the tool, a program per geometry). The ENDF/B-VIII.0 carbon
+            # check counts as literature: an evaluated library is judged data (like NIST's PSTAR), not a code run.
             assert "literature" in kinds, cap
         else:
             assert kinds == {"tool", "literature"}, cap
@@ -64,7 +69,8 @@ def test_every_check_passes_or_waits_for_its_reference():
 
 def test_literature_checks_run_without_reference_files(tmp_path):
     for r in validation.run(kind="literature", reference=tmp_path):
-        if r.name == "stopping_hydrogen_vs_data":  # measured data kept as a reference file
+        if r.name in ("stopping_hydrogen_vs_data", "fusion_vs_data", "residues_vs_data", "carbon_vs_endf"):
+            # measured or evaluated data kept as reference files
             assert r.status == "pending", r.detail
         elif r.name != "closest_approach_above_barrier":
             assert r.status == "pass", (r.name, r.detail)
@@ -184,6 +190,17 @@ def _break_boost(monkeypatch):
     monkeypatch.setattr(evaporation, "_boost", broken)
 
 
+def _break_fusion_normalisation(monkeypatch):
+    orig = fusion.CompoundNucleus.sigma_mb
+    monkeypatch.setattr(fusion.CompoundNucleus, "sigma_mb", property(lambda self: orig.fget(self) * 1.5))
+
+
+def _break_neutron_energies(monkeypatch):
+    orig = evaporation.Evaporation.mean_energy_mev
+    monkeypatch.setattr(evaporation.Evaporation, "mean_energy_mev",
+                        lambda self, kind: orig(self, kind) * (0.5 if kind == "n" else 1.0))
+
+
 def _break_selection(monkeypatch):
     orig = neutrons.selection_matrix
 
@@ -225,6 +242,11 @@ BREAKS = {
                                           .ResidueEvents.rate: tuple(np.array(_o(self, channel)) * 1.05)),
                       ["residue_counts_vs_luminosity"]),
     "fusion barrier": (_break_barrier, ["fusion_barrier_dutt_puri"]),
+    "fusion excitation function": (lambda m: _scale_method(m, fusion.Fusion, "cross_section_cm", 1.3),
+                                   ["fusion_vs_data"]),
+    "residue cross sections": (_break_fusion_normalisation, ["residues_vs_data"]),
+    "neutron spectrum": (_break_neutron_energies, ["evaporation_neutron_energy_band"]),
+    "carbon cross section": (lambda m: _scale_method(m, neutrons, "carbon_cross_section", 1.01), ["carbon_vs_endf"]),
     "wong": (lambda m: _scale_method(m, fusion.Fusion, "wong_cm", 1.02), ["fusion_closed_forms"]),
     "evaporation kinematics": (_break_boost, ["evaporation_conservation"]),
     "neutron efficiency": (lambda m: _scale_method(m, neutrons.NeutronDetector, "intrinsic_efficiency", 1 + 1e-9),

@@ -55,7 +55,11 @@ $\sigma_C$ is the total cross section of natural carbon from **ENDF/B-VIII.0** (
 30 MeV, each the average of the pointwise cross section over its own bin (a factor 1.029 either side), so a
 resonance narrower than a bin keeps its area but is spread over the bin. `scripts/endf_neutron_reference.py`
 writes both the table and the comparison points `tests/reference/nuclear/neutron_carbon_endf.csv` from the ENDF-6
-files, and `test_carbon_table_is_the_endf_evaluation` holds the table to the evaluation:
+files, and `test_carbon_table_is_the_endf_evaluation` holds the table to the evaluation. The validation suite runs
+the same comparison as `carbon_vs_endf`, a literature check in the physics register: an evaluated library is
+measured data combined and fitted by evaluators (Brown et al., Nucl. Data Sheets 148, 1 (2018)), judged data like
+NIST's PSTAR, not a code run on physim's inputs. The table is made from the same evaluation, so the check guards the
+table and its interpolation rather than testing an independent model:
 
 | Energy range | physim vs ENDF/B-VIII.0 (averaged over ±2.5% / ±10% of E) |
 |---|---|

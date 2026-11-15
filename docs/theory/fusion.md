@@ -107,7 +107,7 @@ energies each, from physim's Bass barrier to about 2 V_B, and saved the excitati
 `tests/reference/nuclear/pace4_fusion_*.csv`. The check `fusion_vs_pace4` holds item 75's target: within 15% above
 the barrier, taken as E_cm ≥ 1.1 V_B (physim's barrier), fixed before the runs. Nearer the barrier the two
 transmissions differ by construction and the points are only reported. Both codes use a Bass potential, so this
-checks the code more than the physics; a measured excitation function is still needed.
+checks the code more than the physics; the measured excitation functions below check the physics.
 
 physim / PACE4 for σ_fus:
 
@@ -126,7 +126,8 @@ physim / PACE4 for σ_fus:
   (⁴⁸Ca) at 2 V_B. physim's capture stops at the critical angular momentum, where the Bass potential loses its
   pocket (ℓ_crit = 53, 67 and 105), so σ_fus falls as π(ℓ_crit + 1)²/k². PACE4's partial waves keep growing (its
   σ_J reaches ℓ = 75, 102 and 154). Spins that high exceed what the compound nuclei can hold without fissioning, so
-  PACE4's σ_fus there is not obviously the better one; a measured excitation function will decide.
+  PACE4's σ_fus there is not obviously the better one. The measured ¹⁶O + Nd data below go up to 1.6 V_B and lie
+  below both codes there (fusion hindrance).
 - **Mean ℓ** (not judged) agrees within 3% for ¹²C + ¹⁵⁰Nd and within 13% for ⁴He and ¹⁶O, and differs by up to
   25% for ³²S and ⁴⁸Ca, for the same reason.
 
@@ -134,6 +135,39 @@ physim / PACE4 for σ_fus:
 pass: Bass barriers against Dutt and Puri (2010) within 0.03 MeV and 0.03 fm, Wong's closed form against the
 partial-wave sum within 1%, the sharp cut-off limit within 1e-6, and the thick-target average against the integral
 within 1%.
+
+## Comparison with measured excitation functions
+
+Two measurements from EXFOR, tabulated values only, are saved in `tests/reference/nuclear/`:
+¹⁶O + ¹⁴²Nd and ¹⁶O + ¹⁵⁰Nd from 0.86 to 1.6 V_B (Visakh et al., Phys. Rev. C 104, 054602 (2021), Table I;
+evaporation residues in the HIRA separator, 15% total errors; `fusion_16O_Nd_literature.csv`), and ¹⁶O + ¹⁵⁴Sm
+from 0.90 to 1.13 V_B (Stokstad et al., Phys. Rev. C 21, 2427 (1980), residues' K X rays, 10% errors;
+`fusion_16O_154Sm_literature.csv`). Fission of the compound nuclei (¹⁵⁸Er, ¹⁶⁶Er, ¹⁷⁰Yb) is negligible here, so the
+residue cross section is the fusion cross section.
+
+The check `fusion_vs_data` fixes its window and tolerance from the physics, before the comparison:
+
+- **Tolerance 20%:** item 75's 15% for Stage 2 combined in quadrature with the measurements' 10–15% errors,
+  rounded up.
+- **From 1.05 V_B** for the spherical ¹⁴²Nd (N = 82), **from 1.15 V_B** for the deformed ¹⁵⁰Nd and ¹⁵⁴Sm (β₂ ≈ 0.3):
+  coupling to the target's rotational states spreads the barrier over a distribution several MeV wide, which a
+  single parabola cannot follow near its top (coupled channels, below).
+- **Up to 1.3 V_B.** Above, Visakh et al. find fusion hindered in both systems: their coupled-channels fits need a
+  larger diffuseness of the nuclear potential than any global one, and they attribute this to dynamical effects. A
+  one-dimensional Bass barrier does not describe that, so the points above are reported, not judged.
+
+physim / measured (V_B is physim's Bass barrier: 59.4, 58.7 and 60.4 MeV):
+
+| System | 0.86–1.05 V_B (reported) | judged window | 1.3–1.6 V_B (reported) |
+|---|---|---|---|
+| ¹⁶O + ¹⁴²Nd | 0.12–0.62 | 0.90–1.02 at 1.05–1.28 V_B (7 points, worst −9.6%) | 1.12, 1.29, 1.40, 1.49, 1.58 |
+| ¹⁶O + ¹⁵⁰Nd | 0.002–0.77 (0.89 at 1.14 V_B) | 0.95–0.98 at 1.17–1.26 V_B (3 points) | 1.03–1.17 |
+| ¹⁶O + ¹⁵⁴Sm | 0.002–0.78 (0.97 at 1.13 V_B) | no point: the data end at 1.13 V_B | — |
+
+The check passes (worst 9.6%, ¹⁴²Nd at 1.05 V_B). Below the barrier physim is 3 to 500 times low: the
+coupled-channels enhancement, larger for the deformed targets, which this model leaves out (next section). Above
+1.3 V_B physim rises as the Bass barrier and Wong's formula do, while the ¹⁴²Nd data flatten at about 760 mb; at
+1.57 V_B physim is 58% high. For ¹⁵⁰Nd it stays within 17%.
 
 ## Where the model stops being valid
 
@@ -154,8 +188,12 @@ within 1%.
   by the pocket of the potential, not by the barrier. The highest spins may fission or end in deep-inelastic
   collisions instead.
 
+- **Well above the barrier.** Measured fusion can fall below the one-dimensional estimate: for ¹⁶O + ¹⁴²Nd physim
+  is 58% high at 1.57 V_B (above). Visakh et al. fit this with a larger diffuseness of the nuclear potential.
+  physim does not warn about it.
+
 Left out: deformation and orientation of the nuclei, coupled channels, incomplete fusion, quasi-fission and the
-fusion hindrance deep below the barrier.
+fusion hindrance deep below and well above the barrier.
 
 ## References
 

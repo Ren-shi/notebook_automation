@@ -167,6 +167,22 @@ corrected.
 | Alignment | B₂ < 0; a₂ = B₂ A₂ the same down a stretched E2 cascade | 1e-9 | `test_alignment_perpendicular_to_the_beam` |
 | Seeded runs | The same seed twice | bit-identical | `test_seeded_runs_are_bit_identical` |
 | Against PACE4 | Channel cross sections and particle spectra (Stage 3), five systems | three strongest in order and within 30%; ⟨ε_n⟩, ⟨ε_p⟩ 10% | `evaporation_channels_vs_pace4`, `evaporation_spectra_vs_pace4` (known failures, see {doc}`evaporation`) |
+| Against GEMINI++ | The same quantities, three systems (GEMINI++ hangs on ³²S and ⁴⁸Ca), physim from GEMINI++'s E* and spin distribution | the same; residues tied within 2 standard errors of GEMINI++'s statistics may swap places | `evaporation_channels_vs_gemini`, `evaporation_spectra_vs_gemini` (known failures) |
+| ⟨ε_n⟩ against both codes | PACE4 and GEMINI++ disagree by 25–35%; physim from PACE4's E* and σ_J | inside their band, widened by 10% at each edge | `evaporation_neutron_energy_band` |
+| Measured residue cross sections | ¹⁶⁵Ho(α,xn) 1n–4n, 6n (Usman 2020, Kormazeva 2022, Gadkari 1997); physim σ_fus × share at each energy | 2n, 3n, 4n where each is the strongest measured channel: within 30% of the band of the three data sets ± their errors; tails reported | `residues_vs_data` |
+| Measured fusion | ¹⁶O + ¹⁴²,¹⁵⁰Nd (Visakh 2021), ¹⁶O + ¹⁵⁴Sm (Stokstad 1980) | 20% from 1.05 / 1.15 V_B to 1.3 V_B | `fusion_vs_data` (see {doc}`fusion`) |
 
 The first and third rows are also checks of the validation suite (`compound_nucleus_hand_calculation`,
-`residue_counts_vs_luminosity` in `physim.nuclear.validation`), which the physics register reads.
+`residue_counts_vs_luminosity` in `physim.nuclear.validation`), which the physics register reads, as are the last
+five rows.
+
+**Measured residue cross sections.** ⁴He + ¹⁶⁵Ho is the well-studied system of item 75: three independent
+stacked-foil activation measurements of the Tm residues, from EXFOR (`evaporation_4He_165Ho_literature.csv`). They
+disagree by up to 1.5× at the (α,4n) peak and in its position (45–50 MeV), so `residues_vs_data` judges physim
+against the band they span, each set interpolated in energy and widened by its own error. It judges only what
+physim claims to model, the compound nucleus's evaporation: each xn channel where it is the strongest measured
+channel (2n at 19.6–31 MeV, 3n at 31.7–41.8 MeV, 4n at 42.6–49.7 MeV; 4n only up to its measured peak, since
+(α,5n) was not measured and takes over above it). Above each peak pre-equilibrium emission, which physim and PACE4
+leave out, feeds the channels with fewer neutrons: physim's 3n at 50 MeV is 0.4–0.5 of the measured value. At the
+35 judged points physim is 1.1–1.6× the Usman values (up to 2.3× Gadkari's, which are the lowest); the worst
+point is 21% above the band (4n at 46.2 MeV), inside the 30% tolerance.

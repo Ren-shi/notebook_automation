@@ -1055,6 +1055,75 @@ def fusion_closed_forms(ref):
     return worst <= 1.0, worst, 25, f"worst {worst:.0%} of its tolerance", plot
 
 
+#: Measured fusion excitation functions are judged from this many times physim's Bass barrier: just above the
+#: barrier for a spherical target; higher for a deformed one, whose rotational states spread the barrier over a
+#: distribution several MeV wide (a one-dimensional barrier cannot follow it there).
+FUSION_DATA_FROM = {"142Nd": 1.05, "150Nd": 1.15, "154Sm": 1.15}
+#: ... up to this many times the barrier. Above it Visakh et al. (2021) find fusion hindered in both ¹⁶O + Nd
+#: systems (they need a larger diffuseness than any global potential has, and attribute it to dynamical effects),
+#: which a one-dimensional Bass barrier does not describe. Points above are reported, not judged.
+FUSION_DATA_TO = 1.3
+#: Allowed ``|physim / measured − 1|``: backlog 75's 15% for Stage 2 combined in quadrature with the measurements'
+#: total errors (15% for Visakh et al., 10% for Stokstad et al.), rounded up.
+FUSION_DATA_TOLERANCE = 0.20
+
+
+@check("Fusion cross section (Bass barrier, Wong)", "literature", "Measured fusion excitation functions: ¹⁶O + "
+       "¹⁴²Nd, ¹⁵⁰Nd (Visakh et al., Phys. Rev. C 104, 054602 (2021), Table I) and ¹⁶O + ¹⁵⁴Sm (Stokstad et al., "
+       "Phys. Rev. C 21, 2427 (1980)), from EXFOR (fusion_*_literature.csv)",
+       f"{FUSION_DATA_TOLERANCE:.0%} from 1.05 V_B (spherical ¹⁴²Nd) or 1.15 V_B (deformed ¹⁵⁰Nd, ¹⁵⁴Sm) to "
+       f"{FUSION_DATA_TO} V_B (physim's Bass barrier); below (coupled channels) and above (fusion hindrance) "
+       "reported, not judged")
+def fusion_vs_data(ref):
+    from .fusion import Fusion
+
+    files = sorted(Path(ref).glob("fusion_*_literature.csv")) if ref is not None else []
+    if not files:
+        return None, math.nan, 0, "fusion_*_literature.csv not found", {}
+    systems: dict = {}
+    for path in files:
+        for r in read_reference(path)[1]:
+            systems.setdefault((r["beam"], r["target"]), []).append(r)
+    worst, n, judged, below, above = 0.0, 0, [], [], []
+    xs, ratio = [], []
+    for (beam, target), rows in systems.items():
+        f = Fusion(beam, target)
+        vb = f.barrier().height_mev
+        lo = FUSION_DATA_FROM.get(target, 1.15)
+        sys_worst, sys_n, sys_below, sys_above = 0.0, 0, [], []
+        for r in rows:
+            e_cm = float(r["e_cm_mev"]) if r.get("e_cm_mev") else float(f.e_cm(float(r["e_lab_mev"])))
+            x = e_cm / vb
+            ours = float(f.cross_section_cm(e_cm))
+            q = ours / float(r["sigma_fus_mb"])
+            if x < lo:
+                sys_below.append((x, q))
+            elif x > FUSION_DATA_TO:
+                sys_above.append((x, q))
+            else:
+                sys_worst = max(sys_worst, abs(q - 1))
+                sys_n += 1
+                xs.append(x)
+                ratio.append(q)
+        n += sys_n
+        worst = max(worst, sys_worst)
+        judged.append(f"{target} {sys_worst:.1%} ({sys_n} points)" if sys_n else
+                      f"{target} no point in the window (data end at {max(x for x, _ in sys_below):.2f} V_B)")
+        if sys_below:
+            qs = [q for _, q in sys_below]
+            below.append(f"{target} {min(qs):.3g}–{max(qs):.2f} at {min(x for x, _ in sys_below):.2f}–"
+                         f"{max(x for x, _ in sys_below):.2f} V_B")
+        if sys_above:
+            qs = [q for _, q in sys_above]
+            above.append(f"{target} {min(qs):.2f}–{max(qs):.2f} at {min(x for x, _ in sys_above):.2f}–"
+                         f"{max(x for x, _ in sys_above):.2f} V_B")
+    detail = ("worst in the window: " + ", ".join(judged) + "; physim/measured below (not judged): "
+              + "; ".join(below) + "; above (not judged): " + ("; ".join(above) or "none"))
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(xs)), "xlabel": "E_cm / V_B (physim's Bass barrier)",
+            "ylabel": "σ_fus, physim / measured"}
+    return worst <= FUSION_DATA_TOLERANCE, worst, n, detail, plot
+
+
 @check("Evaporation Monte Carlo (Hauser–Feshbach)", "tool", "PACE4 4.36.0, 20 000 cascades, five systems from ⁴He + "
        "¹⁶⁵Ho to ⁴⁸Ca + ¹²⁴Sn (pace4_*MeV.csv); physim runs 20 000 events from PACE4's E* and σ_J",
        "the strongest three residues the same as PACE4's, in the same order, each share within 30%")
@@ -1156,6 +1225,246 @@ def evaporation_conservation(ref):
     return worst <= 1.0, worst, run_.events, f"worst ΔE {d_e:.1e} MeV, Δp {d_p:.1e} MeV/c", {}
 
 
+def _gemini_files(ref) -> list:
+    """GEMINI++ reference files ``gemini_<beam>_<target>_<E>MeV.csv``, with (beam, target) from the name."""
+    if ref is None:
+        return []
+    out = [(p, p.stem.split("_")[1], p.stem.split("_")[2]) for p in sorted(Path(ref).glob("gemini_*MeV.csv"))]
+    order = {b: i for i, b in enumerate(("4He", "12C", "16O", "32S", "48Ca"))}
+    return sorted(out, key=lambda t: (order.get(t[1], 99), t[1]))
+
+
+def _kv(text: str) -> dict:
+    return {k.strip(): float(v) for k, v in (kv.split("=") for kv in text.split(","))}
+
+
+def _gemini_evaporation(path) -> tuple:
+    """(header numbers, GEMINI++ residue events by (Z, A)) of one GEMINI++ reference file."""
+    header, rows = read_reference(path)
+    counts = {(int(r["Z"]), int(r["A"])): int(r["events"]) for r in rows}
+    spin = _kv(header["spin"])
+    info = {"excitation_mev": float(header["excitation_mev"]), "sigma_fus_mb": float(header["sigma_fus_mb"]),
+            "l0": spin["l0_hbar"], "diffuseness": spin["diffuseness_hbar"],
+            "mean": _kv(header["mean_cm_energy_mev"]), "multiplicity": _kv(header["multiplicity"]),
+            "events": sum(counts.values())}
+    return info, counts
+
+
+def gemini_spins(info: dict) -> tuple:
+    """GEMINI++'s spin distribution, σ_ℓ ∝ (2ℓ+1) / (1 + exp((ℓ − L0)/Δ)), normalised to its σ_fus (mb)."""
+    l0, dif = info["l0"], info["diffuseness"]
+    ell = np.arange(int(l0 + 12 * dif) + 1)
+    w = (2 * ell + 1) / (1 + np.exp((ell - l0) / dif))
+    return tuple(w / w.sum() * info["sigma_fus_mb"])
+
+
+def _residue_shares(r) -> dict:
+    out: dict = {}
+    for row in r.channel_table():
+        if row["Z"] is not None:
+            out[(row["Z"], row["A"])] = out.get((row["Z"], row["A"]), 0.0) + row["share"]
+    return out
+
+
+@check("Evaporation Monte Carlo (Hauser–Feshbach)", "tool", "GEMINI++ 3.3.0 (in LISE++), Hauser–Feshbach mode, "
+       "⁴He + ¹⁶⁵Ho, ¹²C + ¹⁵⁰Nd (20 000 events) and ¹⁶O + ¹⁴⁴Sm (1500; GEMINI++ hangs on more, and on ³²S and ⁴⁸Ca) "
+       "(gemini_*MeV.csv); physim runs 20 000 events from GEMINI++'s E* and spin distribution",
+       "the strongest three residues the same as GEMINI++'s, in the same order (residues whose GEMINI++ shares agree "
+       "within 2 standard errors count as tied), each share within 30%")
+def evaporation_channels_vs_gemini(ref):
+    files = _gemini_files(ref)
+    if not files:
+        return None, math.nan, 0, "gemini_*MeV.csv not found", {}
+    ok, worst, notes = True, 0.0, []
+    xs, ratio = [], []
+    for path, beam, target in files:
+        info, counts = _gemini_evaporation(path)
+        n = info["events"]
+        gem = {k: c / n for k, c in counts.items()}
+        err = {k: math.sqrt(c) / n for k, c in counts.items()}
+        mine = _residue_shares(physim_evaporation(beam, target, info["excitation_mev"], gemini_spins(info)))
+        top_g = sorted(gem, key=lambda k: -gem[k])[:3]
+        top_m = sorted(mine, key=lambda k: -mine[k])[:3]
+        same = all(abs(gem.get(km, 0.0) - gem[kg]) <= 2 * math.hypot(err.get(km, 1 / n), err[kg])
+                   for km, kg in zip(top_m, top_g))
+        devs = [mine.get(k, 0.0) / gem[k] - 1 for k in top_g]
+        sys_ok = same and all(abs(d) <= 0.30 for d in devs)
+        ok &= sys_ok
+        worst = max(worst, *(abs(d) for d in devs))
+        xs += [f"{_nuclide_label(k)} ({beam})" for k in top_g]
+        ratio += [1 + d for d in devs]
+        notes.append(f"{beam} + {target}: " + ", ".join(
+            f"{_nuclide_label(k)} {gem[k]:.3f}/{mine.get(k, 0.0):.3f}" for k in top_g)
+            + ("" if top_m == top_g else " (physim's order: " + ", ".join(_nuclide_label(k) for k in top_m)
+               + (", tied within statistics" if same else "") + ")")
+            + (" ✓" if sys_ok else " ✗"))
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(xs)), "categorical": True}
+    return bool(ok), worst, 3 * len(files), "shares GEMINI++/physim: " + "; ".join(notes), plot
+
+
+@check("Evaporation Monte Carlo (Hauser–Feshbach)", "tool", "GEMINI++ 3.3.0, mean CM energies of the emitted "
+       "neutrons and protons, the same three systems and runs (gemini_*MeV.csv)", "⟨ε_n⟩ and ⟨ε_p⟩ within 10%; α "
+       "reported, not judged")
+def evaporation_spectra_vs_gemini(ref):
+    files = _gemini_files(ref)
+    if not files:
+        return None, math.nan, 0, "gemini_*MeV.csv not found", {}
+    worst, notes, xs, ratio = 0.0, [], [], []
+    for path, beam, target in files:
+        info, _ = _gemini_evaporation(path)
+        r = physim_evaporation(beam, target, info["excitation_mev"], gemini_spins(info))
+        d = {k: r.mean_energy_mev(k) / info["mean"][k] - 1 for k in ("n", "p", "a")}
+        worst = max(worst, abs(d["n"]), abs(d["p"]))
+        xs += [f"n ({beam})", f"p ({beam})"]
+        ratio += [1 + d["n"], 1 + d["p"]]
+        notes.append(f"{beam}: n {info['mean']['n']:.2f}/{r.mean_energy_mev('n'):.2f} ({d['n']:+.0%}), "
+                     f"p {info['mean']['p']:.2f}/{r.mean_energy_mev('p'):.2f} ({d['p']:+.0%}), α {d['a']:+.0%}")
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(xs)), "categorical": True}
+    return worst <= 0.10, worst, 2 * len(files), "mean CM energy GEMINI++/physim (MeV): " + "; ".join(notes), plot
+
+
+#: How far outside the band spanned by PACE4 and GEMINI++ physim's ⟨ε_n⟩ may lie (relative to the nearer edge).
+NEUTRON_BAND_MARGIN = 0.10
+
+
+@check("Evaporation Monte Carlo (Hauser–Feshbach)", "tool", "PACE4 4.36.0 and GEMINI++ 3.3.0 together: mean CM "
+       "energy of the evaporated neutrons for the three systems both codes ran (pace4_*MeV.csv, gemini_*MeV.csv); "
+       "physim from PACE4's E* and σ_J as in the PACE4 check", "⟨ε_n⟩ inside the band the two codes span, widened by "
+       "10% at each edge: the two codes disagree by 25–35%, so their spread is the size of the model uncertainty, "
+       "and 10% is backlog 75's tolerance against one code")
+def evaporation_neutron_energy_band(ref):
+    gem = {(b, t): p for p, b, t in _gemini_files(ref)}
+    pace = {(b, t): p for p, b, t in _pace4_files(ref, "evaporation")}
+    both = [k for k in pace if k in gem]
+    if not both:
+        return None, math.nan, 0, "no system with both pace4_*MeV.csv and gemini_*MeV.csv", {}
+    worst, ok, notes, xs, ours, mids = 0.0, True, [], [], [], []
+    for beam, target in both:
+        p_info, _ = _pace4_evaporation(pace[(beam, target)])
+        g_info, _ = _gemini_evaporation(gem[(beam, target)])
+        e = physim_evaporation(beam, target, p_info["excitation_mev"], p_info["sigma_j_mb"]).mean_energy_mev("n")
+        lo, hi = sorted((p_info["mean"]["n"], g_info["mean"]["n"]))
+        d = e / hi - 1 if e > hi else (e / lo - 1 if e < lo else 0.0)
+        ok &= abs(d) <= NEUTRON_BAND_MARGIN
+        worst = max(worst, abs(d))
+        xs.append(f"{beam} + {target}")
+        ours.append(e)
+        mids.append(0.5 * (lo + hi))
+        notes.append(f"{beam}: physim {e:.2f} MeV, band {lo:.2f}–{hi:.2f}" + (f" ({d:+.0%} outside)" if d else ""))
+    plot = {"x": xs, "physim": ours, "reference": mids, "categorical": True}
+    return bool(ok), worst, len(both), "; ".join(notes) + f" (worst {worst:.0%} outside the band)", plot
+
+
+#: Evaporation events per beam energy in the comparison with measured residue cross sections.
+RESIDUE_EVENTS = 4000
+#: Allowed deviation of physim's xn cross section from the band of the three measurements (each ± its error):
+#: backlog 75's 30% for the strongest channels.
+RESIDUE_TOLERANCE = 0.30
+#: The channels judged where they are the strongest measured channel (1n is the strongest only below the barrier).
+RESIDUE_JUDGED = ("2n", "3n", "4n")
+
+
+def _measured_curves(rows) -> dict:
+    """{(ref, channel): (energies, σ, relative error)} sorted by energy."""
+    out: dict = {}
+    for r in rows:
+        out.setdefault((r["ref"], r["channel"]), []).append(
+            (float(r["e_lab_mev"]), float(r["sigma_mb"]), float(r["uncertainty_mb"]) / float(r["sigma_mb"])))
+    return {k: tuple(np.array(c) for c in zip(*sorted(v))) for k, v in out.items()}
+
+
+def _measured_band(curves: dict, channel: str, e: float):
+    """(low, high) of the measurements of one channel at energy e: each set interpolated (log σ, linear in E) where
+    it covers e, ± its error; None where no set does."""
+    lo, hi = math.inf, 0.0
+    for (_, ch), (en, sig, rel) in curves.items():
+        if ch != channel or not en[0] <= e <= en[-1]:
+            continue
+        s = float(np.exp(np.interp(e, en, np.log(sig))))
+        u = float(np.interp(e, en, rel))
+        lo, hi = min(lo, s * (1 - u)), max(hi, s * (1 + u))
+    return (lo, hi) if hi > 0 else None
+
+
+@check("Evaporation Monte Carlo (Hauser–Feshbach)", "literature", "Measured residue cross sections ¹⁶⁵Ho(α,xn), "
+       "1n–4n and 6n, 13–66 MeV: Usman et al. 2020, Kormazeva et al. 2022, Gadkari et al. 1997, from EXFOR "
+       "(evaporation_4He_165Ho_literature.csv); physim as the planner computes it: σ_fus × the residue's share of "
+       f"{RESIDUE_EVENTS} evaporation events at each measured energy (thin target)",
+       f"2n, 3n, 4n where each is the strongest measured channel (4n only up to its measured peak: (α,5n) was not "
+       f"measured) and E_cm ≥ {FUSION_ABOVE_BARRIER} V_B: within "
+       f"{RESIDUE_TOLERANCE:.0%} of the band the three measurements span (each ± its error); the tails above each "
+       "peak (pre-equilibrium emission, which physim leaves out), 1n and 6n reported, not judged")
+def residues_vs_data(ref):
+    from .fusion import Fusion
+
+    path = _file(ref, "evaporation_4He_165Ho_literature.csv")
+    if path is None:
+        return None, math.nan, 0, "evaporation_4He_165Ho_literature.csv not found", {}
+    rows = read_reference(path)[1]
+    curves = _measured_curves(rows)
+    f = Fusion("4He", "165Ho")
+    vb = f.barrier().height_mev
+    zc, ac = f.compound_nuclide.Z, f.compound_nuclide.A
+    physim: dict = {}
+
+    def sigma(e: float, channel: str) -> float:
+        if e not in physim:
+            cn = f.compound(e)
+            r = physim_evaporation("4He", "165Ho", cn.excitation_mev, tuple(cn.sigma_l_mb), events=RESIDUE_EVENTS)
+            physim[e] = (cn.sigma_mb, _residue_shares(r))
+        s, shares = physim[e]
+        return s * shares.get((zc, ac - int(channel[:-1])), 0.0)
+
+    at: dict = {}  # (ref, energy) -> {channel: σ}
+    for r in rows:
+        at.setdefault((r["ref"], float(r["e_lab_mev"])), {})[r["channel"]] = float(r["sigma_mb"])
+
+    def strongest(ref_name: str, e: float, ch: str) -> bool:
+        """Whether ch is the strongest channel at e in that data set. Above a channel's measured peak the next
+        channel takes over; where that one was not measured ((α,5n)), the strongest channel is unknown."""
+        here = at[(ref_name, e)]
+        if max(here, key=here.get) != ch:
+            return False
+        if (ref_name, f"{int(ch[:-1]) + 1}n") in curves:
+            return True
+        en, sig, _ = curves[(ref_name, ch)]
+        return e <= en[int(np.argmax(sig))]
+
+    worst, judged, xs, ratio, labels = 0.0, set(), [], [], {}
+    others: dict = {}
+    for r in rows:
+        e, ch = float(r["e_lab_mev"]), r["channel"]
+        if float(f.e_cm(e)) / vb < FUSION_ABOVE_BARRIER:
+            continue
+        ours = sigma(e, ch)
+        if ch in RESIDUE_JUDGED and strongest(r["ref"], e, ch):
+            if (ch, e) in judged:
+                continue
+            judged.add((ch, e))
+            lo, hi = _measured_band(curves, ch, e)
+            d = ours / hi - 1 if ours > hi else (ours / lo - 1 if ours < lo else 0.0)
+            if abs(d) > worst:
+                worst = abs(d)
+                labels["worst"] = f"{ch} at {e:g} MeV: physim {ours:.0f} mb, measured {lo:.0f}–{hi:.0f} mb"
+            xs.append(e)
+            ratio.append(ours / float(r["sigma_mb"]))
+        else:
+            others.setdefault(ch, []).append((e, ours / float(r["sigma_mb"])))
+    per = {}
+    for ch in RESIDUE_JUDGED:
+        es = sorted(e for c, e in judged if c == ch)
+        per[ch] = f"{ch} {es[0]:g}–{es[-1]:g} MeV" if es else f"{ch} never strongest"
+    rest = "; ".join(f"{ch} {min(q for _, q in v):.2g}–{max(q for _, q in v):.2g} ({len(v)} points)"
+                     for ch, v in sorted(others.items()))
+    near50 = [f"{q:.2f} ({e:g} MeV)" for e, q in sorted(others.get("3n", [])) if 49 <= e <= 51]
+    detail = (f"{len(judged)} judged points ({', '.join(per.values())}); worst {worst:.0%} outside the band"
+              + (f" ({labels['worst']})" if labels else "") + "; physim/measured elsewhere (not judged): " + rest
+              + ("; 3n at 49–51 MeV (pre-equilibrium tail): " + ", ".join(near50) if near50 else ""))
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(xs)), "xlabel": "α energy (MeV, lab)",
+            "ylabel": "σ(α,xn), physim / measured, where judged"}
+    return worst <= RESIDUE_TOLERANCE, worst, len(judged), detail, plot
+
+
 @check("Neutron detectors and channel selection", "literature", "Knoll, Radiation Detection and Measurement (4th ed., "
        "ch. 15), recoil-proton scintillator: ε = n_Hσ_H/Σ · (1 − e^(−ΣD)) · (1 − E_B/E_n), EJ-301 cell, 1–8 MeV",
        "1e-12")
@@ -1206,6 +1515,37 @@ def channel_selection_binomial(ref):
             "xlabel": "share, binomial expectation", "ylabel": "share, Monte Carlo"}
     return worst <= 1.0, worst, int(m.matrix.size) + 4, (f"worst Monte Carlo cell {z:.1f} standard errors; closed "
                                                          f"forms {d_closed:.1e}"), plot
+
+
+@check("Neutron detectors and channel selection", "literature", "ENDF/B-VIII.0 total neutron cross section of "
+       "natural carbon (¹²C and ¹³C, NNDC), 0.5–20 MeV, averaged over ±2.5% and ±10% of the energy "
+       "(neutron_carbon_endf.csv). An evaluated library is judged data, like NIST's PSTAR: measurements combined "
+       "and fitted by evaluators, published in Nucl. Data Sheets 148, 1 (2018), not a code run on physim's inputs",
+       "physim's table (bins of ±2.9%) within 0.2% of both averages where the cross section is smooth (below "
+       "1.8 MeV, ±10% below 1.7 MeV); above, within 7% of the ±2.5% average (resonances narrower than a bin) and "
+       "5% of the ±10% average")
+def carbon_vs_endf(ref):
+    from . import neutrons as N
+
+    path = _file(ref, "neutron_carbon_endf.csv")
+    if path is None:
+        return None, math.nan, 0, "neutron_carbon_endf.csv not found", {}
+    rows = [r for r in read_reference(path)[1] if r["quantity"] == "natC_total"]
+    worst, xs, ours, theirs = 0.0, [], [], []
+    for r in rows:
+        e, mean, wide = float(r["energy_mev"]), float(r["mean_b"]), float(r["wide_b"])
+        point = float(N.carbon_cross_section(e))
+        x = np.linspace(0.9 * e, 1.1 * e, 4001)
+        y = np.asarray(N.carbon_cross_section(x), dtype=float)
+        averaged = float(np.sum(0.5 * (y[1:] + y[:-1]) * np.diff(x))) / (0.2 * e)
+        worst = max(worst, abs(point / mean - 1) / (0.002 if e < 1.8 else 0.07),
+                    abs(averaged / wide - 1) / (0.002 if e < 1.7 else 0.05))
+        xs.append(e)
+        ours.append(point)
+        theirs.append(mean)
+    plot = {"x": xs, "physim": ours, "reference": theirs, "xlabel": "neutron energy (MeV)",
+            "ylabel": "σ_tot, natural carbon (b)", "logx": True}
+    return worst <= 1.0, worst, 2 * len(rows), f"worst {worst:.0%} of its tolerance", plot
 
 
 # ---------------------------------------------------------------------------------------------------------------
