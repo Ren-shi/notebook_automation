@@ -43,9 +43,10 @@ PAGES = {
                            ["Fusion-evaporation residues from a channel table",
                             "Fusion cross section (Bass barrier, Wong)", "Evaporation Monte Carlo (Hauser–Feshbach)",
                             "Neutron detectors and channel selection"],
-                           "The compound nucleus against the hand calculation, fusion cross sections and evaporation "
-                           "against PACE4 4.36.0 and the model's exact results, and neutron detectors against closed "
-                           "forms and the binomial expectation."),
+                           "The compound nucleus against the hand calculation; fusion cross sections against PACE4 "
+                           "4.36.0, measured excitation functions and the model's exact results; evaporation against "
+                           "PACE4, GEMINI++ 3.3.0, measured ¹⁶⁵Ho(α,xn) cross sections and exact results; neutron "
+                           "detectors against closed forms, the binomial expectation and ENDF/B-VIII.0 carbon."),
 }
 
 
