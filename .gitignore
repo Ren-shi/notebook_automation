@@ -16,3 +16,5 @@ docs/jupyter_execute/
 ensdf_*.zip
 # Planning notes are kept on the machine, not in the repository.
 /planning/
+# Outside programs (GOSIA) built on this machine for verification; not redistributed with the app.
+/tools/
