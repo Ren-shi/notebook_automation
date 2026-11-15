@@ -1,0 +1,16 @@
+# tool: measured data, IAEA EXFOR database (www-nds.iaea.org/exfor, database version 2026-10-28), entry O1608, subentry O1608005, read through its x4get API
+# produced by: the fe-literature session (Claude Code), retrieved 2026-11-15
+# reference: R. G. Stokstad, Y. Eisen, S. Kaplanis, D. Pelte, U. Smilansky and I. Tserruya, Phys. Rev. C 21, 2427 (1980), table in the paper (EXFOR STATUS TABLE)
+# settings: fusion from the K X rays following the decay of evaporation residues stopped in a catcher foil (Weizmann 14UD Pelletron); 154Sm target 99% enriched,
+#   100-200 ug/cm2 on ~20 ug/cm2 carbon; energies are LAB beam energies as tabulated (EXFOR EN), beam-energy uncertainty 0.15%;
+#   uncertainty_mb is the authors' adopted 10% per point (EXFOR ERR-T), multiplied out here. Values transcribed unchanged from EXFOR.
+#   The same entry has 148Sm, 150Sm and 152Sm (O1608002-004) and the measured xn shares per energy, not transcribed here.
+beam,target,e_lab_mev,sigma_fus_mb,uncertainty_mb,exfor_subentry
+16O,154Sm,75.06,430,43,O1608005
+16O,154Sm,70.05,235,23.5,O1608005
+16O,154Sm,67.54,134,13.4,O1608005
+16O,154Sm,65.04,55.8,5.58,O1608005
+16O,154Sm,63.78,29.4,2.94,O1608005
+16O,154Sm,62.53,15.3,1.53,O1608005
+16O,154Sm,61.28,6.24,0.624,O1608005
+16O,154Sm,60.03,2.21,0.221,O1608005
