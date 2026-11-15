@@ -26,6 +26,17 @@
   21%; physim 1.1–1.6× the Usman 2020 values), while the tails above each peak, fed by pre-equilibrium emission,
   are reported (3n at 50 MeV 0.4–0.5 of measured). The ENDF/B-VIII.0 carbon check is registered (`carbon_vs_endf`,
   literature).
+- Wave 3 (2026-11-15): a published experiment reproduced end to end through the app, the check
+  `reproduction_usman2020` (18 checks in all). Usman et al., NIM B 469, 42 (2020) (⁴He + ¹⁶⁵Ho stacked-foil
+  activation at RIKEN, 26 Ho foils, 1n–4n): each foil as the new example `fusion_tm165` at the foil's energy, the
+  channel table from *Fill from physim*, the residues simulated and σ inferred from them
+  (`physim.nuclear.reproduction`, `scripts/reproduce_usman2020.py`). Above 1.1 V_B the peaks of 2n, 3n, 4n lie
+  within the energy spread + 1 MeV (27.6, 36.9, 47.6 MeV against 25.8, 37.6, 47.1), the strongest channel is right
+  at all 20 foils where the data resolve it, and the strongest three channels are within 30% of the band of the
+  three measurements up to each peak (worst +15%; physim/Usman 0.6–1.6). PACE4 at the same energies misses two of
+  the peaks (2n +2.4, 4n +3.1 MeV) and the strongest channel at 3 foils. Reported as the documented limit: the
+  tails above the peaks (pre-equilibrium), σ(3n)/σ(4n) at 49.6 MeV 0.055 against 0.16–0.27 measured. physim's
+  stopping through the stack order inferred from the energies gives each foil's energy within its spread.
 
 Done for the neutron detectors (2026-11-15):
 - The carbon cross sections are now ENDF/B-VIII.0 (natural carbon from ¹²C and ¹³C, bin-averaged), checked by

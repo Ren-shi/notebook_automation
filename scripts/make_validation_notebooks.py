@@ -78,11 +78,61 @@ def notebook(title: str, capabilities: list, intro: str) -> nbformat.NotebookNod
     return nb
 
 
+def reproduction_notebook() -> nbformat.NotebookNode:
+    """The reproduced fusion-evaporation experiment (backlog 75, D10): the four excitation functions and the
+    comparisons, read from the saved result (rerunning it takes about 1.5 minutes: scripts/reproduce_usman2020.py)."""
+    nb = nbformat.v4.new_notebook()
+    nb.cells = [
+        nbformat.v4.new_markdown_cell(
+            "# Reproduced experiment: ⁴He + ¹⁶⁵Ho, Usman et al. 2020\n\n"
+            "A. R. Usman et al., Nucl. Instrum. Methods B 469, 42 (2020) (EXFOR E2650): ¹⁶⁵Ho(α,xn)Tm by stacked-foil "
+            "activation at the RIKEN AVF cyclotron, 26 Ho foils from 49.6 to 13.2 MeV, reproduced end to end through "
+            "the planner. For each foil the `fusion_tm165` example is set to the foil's energy, its channel table "
+            "filled from physim's own fusion and evaporation (\"Fill from physim\"), the residues simulated, and the "
+            "production cross sections inferred from the residues made (`physim.nuclear.reproduction`). Kormazeva et "
+            "al. 2022 and Gadkari et al. 1997 are the cross-checks; PACE4 4.36.0 ran at the same energies. The "
+            "validation check `reproduction_usman2020` reruns the reproduction and judges it; this page reads the "
+            "saved result, `tests/reference/nuclear/reproduction_usman2020.csv` (`scripts/reproduce_usman2020.py`)."),
+        nbformat.v4.new_code_cell(
+            "from physim.nuclear import reproduction as rp\n\n"
+            "fig = rp.figure()"),
+        nbformat.v4.new_markdown_cell(
+            "physim's band is its statistical error. Judged above 1.1 V_B: the peaks of 2n, 3n and 4n (energy spread "
+            "+ 1 MeV), the strongest channel at each foil where the measurement resolves it, and the strongest three "
+            "channels within 30% of the band of the three measurements up to each channel's peak. Above the peaks "
+            "the measured tails are fed by pre-equilibrium emission, which neither physim nor PACE4 models: "
+            "reported, not judged."),
+        nbformat.v4.new_code_cell(
+            "from IPython.display import Markdown\n\n"
+            "c = rp.compare(rp.saved(), rp.measured())\n"
+            "lines = ['| Comparison | Tolerance | physim | measured | Result |', '|---|---|---|---|---|']\n"
+            "for x in c['peaks']:\n"
+            "    res = ('pass' if x['passed'] else 'fail') if x['judged'] else 'reported'\n"
+            "    lines.append(f\"| {x['channel']} peak | ±{x['tolerance_mev']:.1f} MeV | {x['physim_mev']:.1f} MeV | \"\n"
+            "                 f\"{x['measured_mev']:.1f} MeV | {res} |\")\n"
+            "s = [x for x in c['strongest'] if x['judged']]\n"
+            "lines.append(f\"| strongest channel | the same | {sum(x['passed'] for x in s)} of {len(s)} foils | | \"\n"
+            "             f\"{'pass' if c['ok']['strongest'] else 'fail'} |\")\n"
+            "m = [x for x in c['magnitudes'] if x['judged']]\n"
+            "w = max(m, key=lambda x: abs(x['deviation']))\n"
+            "lines.append(f\"| magnitudes ({len(m)} points) | 30% of the band | worst {w['deviation']:+.0%} \"\n"
+            "             f\"({w['channel']}, {w['e_lab_mev']:g} MeV) | | {'pass' if c['ok']['magnitudes'] else 'fail'} |\")\n"
+            "for x in c['ratio_3n_4n']:\n"
+            "    lines.append(f\"| σ(3n)/σ(4n), {x['ref']} {x['e_lab_mev']:g} MeV | reported | {x['physim']:.3f} | \"\n"
+            "                 f\"{x['measured']:.3f} | pre-equilibrium |\")\n"
+            "Markdown('\\n'.join(lines) + '\\n\\n' + rp.reported(c) + '.')"),
+    ]
+    nb.metadata["kernelspec"] = {"display_name": "Python 3", "language": "python", "name": "python3"}
+    return nb
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     for name, (title, caps, intro) in PAGES.items():
         nbformat.write(notebook(title, caps, intro), OUT / f"{name}.ipynb")
         print("wrote", OUT / f"{name}.ipynb")
+    nbformat.write(reproduction_notebook(), OUT / "reproduction-usman2020.ipynb")
+    print("wrote", OUT / "reproduction-usman2020.ipynb")
 
 
 if __name__ == "__main__":

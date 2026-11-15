@@ -15,4 +15,5 @@ validation/detectors
 validation/rates-and-events
 validation/coulex
 validation/fusion-evaporation
+validation/reproduction-usman2020
 ```

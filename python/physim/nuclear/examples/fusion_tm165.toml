@@ -1,0 +1,86 @@
+schema = "physim.experiment/1"
+title = "Fusion-evaporation: 165Tm from 4He on 165Ho (Usman et al. 2020)"
+description = "The first holmium foil of a published stacked-foil activation experiment, reproduced end to end in physim's validation: A. R. Usman et al., Nucl. Instrum. Methods B 469, 42 (2020), EXFOR E2650. An alpha beam of 5.45e11 per second (87.3 pnA) from the RIKEN AVF cyclotron ran for 2 hours through 26 holmium foils of 12.29 um (10.81 mg/cm2) interleaved with copper and titanium; the energy here (49.96 MeV entering, 49.6 MeV on average in the foil) is that of the first holmium foil. The compound nucleus 169Tm boils off mostly four neutrons at this energy; the thulium residues were counted off line by their decay gamma rays, after the irradiation, so there is no in-beam detector in the experiment: the small silicon detector here is only a stand-in the planner needs. The channel table is physim's own fusion and evaporation (Fill from physim); scripts/reproduce_usman2020.py runs every foil and compares with the paper."
+
+[reaction]
+type = "fusion-evaporation"
+
+[[reaction.channels]]
+residue = "165Tm"
+particles = "4n"
+cross_section = "1435.673184 mb"
+entry_energy = "7.43821 MeV"
+entry_spin = 12.5
+source = "physim (Bass fusion + evaporation)"
+
+[[reaction.channels]]
+residue = "164Tm"
+particles = "5n"
+cross_section = "116.0131461 mb"
+entry_energy = "1.82068 MeV"
+entry_spin = 10
+source = "physim (Bass fusion + evaporation)"
+
+[[reaction.channels]]
+residue = "166Tm"
+particles = "3n"
+cross_section = "74.34586122 mb"
+entry_energy = "10.1017 MeV"
+entry_spin = 15
+source = "physim (Bass fusion + evaporation)"
+
+[[reaction.channels]]
+residue = "165Er"
+particles = "p3n"
+cross_section = "26.71410606 mb"
+entry_energy = "4.59062 MeV"
+entry_spin = 12.5
+source = "physim (Bass fusion + evaporation)"
+
+[[reaction.channels]]
+residue = "162Ho"
+particles = "a3n"
+cross_section = "14.701159 mb"
+entry_energy = "3.32117 MeV"
+entry_spin = 11
+source = "physim (Bass fusion + evaporation)"
+
+[[reaction.channels]]
+residue = "163Ho"
+particles = "a2n"
+cross_section = "7.39258281 mb"
+entry_energy = "8.55781 MeV"
+entry_spin = 12.5
+source = "physim (Bass fusion + evaporation)"
+
+[[reaction.channels]]
+residue = "166Er"
+particles = "p2n"
+cross_section = "4.452351011 mb"
+entry_energy = "9.91004 MeV"
+entry_spin = 14
+source = "physim (Bass fusion + evaporation)"
+
+[beam]
+nuclide = "4He"
+energy = "49.96 MeV"
+current = "87.3 pnA"
+
+[target]
+material = "Ho"
+thickness = "10.81 mg/cm2"
+
+[run]
+beam_time = "2 h"
+
+[[detectors]]
+name = "Monitor"
+shape = "circle"
+theta = "30 deg"
+phi = "0 deg"
+distance = "200 mm"
+radius = "1 mm"
+thickness = "300 um"
+dead_layer = "0.5 um"
+resolution = "50 keV"
+threshold = "1 MeV"
