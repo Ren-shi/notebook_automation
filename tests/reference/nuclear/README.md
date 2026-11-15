@@ -11,6 +11,12 @@ and run by hand, so each file records exactly how it was produced, so that anyon
 - `stopping_measured_hydrogen.csv` is measured data, not a code's output: heavy-ion stopping in hydrogen-rich
   targets from the IAEA Stopping Power Database (`scripts/iaea_stopping_reference.py`), with SRIM's value per point
   for context. Its `tool:` line names the database and version; cite the original papers by `ref_id` and `doi`.
+- `pace4_<system>.csv` and `gemini_<system>.csv` are the evaporation codes PACE4 and GEMINI++ (both shipped with
+  LISE++) for the same fusion-evaporation systems: residue cross sections as rows, E*, σ_fus, multiplicities and mean
+  CM energies of n, p and α in the header. GEMINI++ has no silent mode; `scripts/gemini_reference.py` drives its
+  window through Windows UI Automation (`scripts/gemini_drive.ps1`) on a hidden desktop. GEMINI++ files exist for
+  ⁴He + ¹⁶⁵Ho, ¹²C + ¹⁵⁰Nd and ¹⁶O + ¹⁴⁴Sm (1500 events, see its `note:` line); the LISE++ build hangs on
+  ³²S + ⁹²Mo and ⁴⁸Ca + ¹²⁴Sn (`docs/theory/evaporation.md`).
 - Files here are read by the checks in `physim.nuclear.validation` and the tests (`tests/python/test_nuclear_*.py`), which assert the tolerances stated in the
   physics register. Until a file exists, the matching test is skipped and the register shows 🟡.
 
