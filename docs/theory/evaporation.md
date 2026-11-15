@@ -147,6 +147,8 @@ The tests (`tests/python/test_nuclear_evaporation.py`) check:
 - **Measured xn thresholds.** ⁴He + ¹⁶⁵Ho from physim's own fusion σ_ℓ: the beam energies where 3n overtakes 2n and
   4n overtakes 3n lie within 1 MeV of the mean of three measurements (see "Inside PACE4").
 - **PACE4.** 12C + 150Nd at 70 MeV (E* = 59.3 MeV in ¹⁶²Dy, PACE4's own σ_J): see below.
+- **A reproduced experiment.** Usman et al. 2020, ⁴He + ¹⁶⁵Ho, end to end through the planner: see "Reproduced
+  experiment" below (`reproduction_usman2020` in the validation suite, `test_nuclear_reproduction.py`).
 
 The validation suite (`physim.nuclear.validation`) holds the comparisons for all five systems below, and two exact
 checks: Weisskopf's spectrum as above (χ²/dof 1.1 against the full form, 0.5–8 MeV) and conservation in every
@@ -342,6 +344,59 @@ Above that they are predictions whose accuracy is that of the yrast line. `Evapo
 gives the number for any run. Neutron energies are checked through the xn thresholds of ⁴He + ¹⁶⁵Ho, not through
 PACE4's ⟨ε_n⟩.
 
+### Reproduced experiment: Usman et al. 2020
+
+The validation paper's referee will ask first whether the app reproduces a published experiment end to end. The
+experiment: A. R. Usman et al., Nucl. Instrum. Methods B 469, 42 (2020) (EXFOR E2650), ¹⁶⁵Ho(α,xn)¹⁶⁸⁻ˣTm by
+stacked-foil activation at the RIKEN AVF cyclotron: 5.45 × 10¹¹ α/s (87.3 pnA) for 2.0 h through 26 Ho foils of
+10.81 mg/cm² between Cu and Ti degraders, 49.6 MeV down to 13.2 MeV, the Tm residues counted off line. It is light
+and low-spin (rotational energy at entry 1.7 MeV, inside "The bound"), no fission, one normalization for four
+channels over a whole excitation function, and two independent measurements to judge it by (Kormazeva 2022, Gadkari
+1997).
+
+**Through the app** (`physim.nuclear.reproduction`, `scripts/reproduce_usman2020.py`). Each foil is the example
+setup `fusion_tm165` opened in the planner, with the beam energy set so that its mean energy in the foil is the
+paper's (activation papers tabulate the mean energy; the shift is 0.36–0.83 MeV). *Fill from physim* writes the
+channel table (thick-target fusion over the foil, 20 000 evaporation chains); the residues are simulated from the
+setup as it then stands; and each residue's production cross section is inferred from the residues made in the
+irradiation as the experimenters did, σ = N / (Φ n t) with the paper's beam, foil and time. physim's error is
+statistical (the share's binomial error and the residue simulation's). The off-line decay counting is outside the
+planner, so the comparison is at the level of production cross sections.
+
+![The four excitation functions: physim through the planner, the three measurements and PACE4](../images/reproduction-usman2020.png)
+
+**What is judged**, with the tolerances of backlog 75 fixed before the comparison was run, all above 1.1 V_B
+(nearer the barrier physim's fusion misses coupled channels):
+
+| Comparison | Tolerance | physim | PACE4 (same rules, for context) |
+|---|---|---|---|
+| Peak of 2n | energy spread + 1 MeV (±2.2) | 27.6 MeV against 25.8 ✅ | 28.2 ✗ |
+| Peak of 3n | ±1.9 MeV | 36.9 against 37.6 ✅ | 38.6 ✅ |
+| Peak of 4n | ±1.8 MeV | 47.6 against 47.1 ✅ | 50.2 ✗ |
+| Strongest channel at each foil the data resolve (20 foils) | the same | 20 of 20 ✅ | 17 of 20 |
+| Strongest three channels above 10% of the measured total, up to each channel's peak (20 points) | 30% of the band of the three measurements (± error, ± energy uncertainty) | worst +15% (4n at 46.9 MeV) ✅ | worst +16% |
+
+physim/Usman where judged is 1.1–1.2 for 2n, 0.6–1.4 for 3n and 1.0–1.6 for 4n: physim sits above Usman, inside
+the spread of the three measurements (up to 1.5× at the 4n peak). That band is wide: a common factor between 0.39
+and 1.13 on physim's cross sections would still pass the magnitudes, so the peaks and the order of the channels are
+the sharper part of the test.
+
+**Reported, the documented limit.** Above each channel's peak the measured cross sections fall far more slowly
+than any statistical code gives: 2n at 40–50 MeV is 36–103 mb measured and 0–17 mb in physim, 3n at 49.6 MeV is 0.52
+of Usman's, and σ(3n)/σ(4n) at 49.6 MeV is 0.055 in physim (PACE4 0.065) against 0.18 (Usman), 0.16 (Kormazeva,
+49.7 MeV) and 0.27 (Gadkari, 50.2 MeV). This is pre-equilibrium emission of a fast first neutron, which neither
+code models (backlog 75, "Left out"). 1n peaks on the fusion barrier (physim 19.0 MeV, measured 20.0) and is 2.4×
+high there; above 31 MeV physim has no 1n at all where 2–10 mb are measured, the same pre-equilibrium tail.
+
+**The stack.** The foil order is in the paper, not in EXFOR or the RIKEN progress report, and the paper was not at
+hand. Between successive Ho foils the tabulated energy drops by one Ho foil alone or by one Ho foil and one Cu or
+one Ti foil; physim's stopping fits each gap to one of these within about 0.1 MeV, which gives Ti, Ho, Cu, Ho, Ti,
+then pairs of Ho foils between alternating Cu and Ti. From 50.4 MeV (the energy the progress report gives) through
+that stack, physim's mean energy in every Ho foil is within the paper's energy spread of the tabulated one, low by
+0.03 MeV at the first foil growing to 0.8 MeV at the last (physim loses 2% more energy than the authors over the whole stack).
+Since the order was read off the same energies, this checks the consistency of physim's stopping with the authors',
+not an independent foil order.
+
 ## Speed
 
 About 7 000 events per second on one CPU core for 10⁵ events of ¹²C + ¹⁵⁰Nd, ⁴⁸Ca + ¹²⁴Sn or ³²S + ⁹²Mo, including
@@ -369,6 +424,8 @@ building the tables. The chains of all events advance together, one step at a ti
 - W. Hauser and H. Feshbach, Phys. Rev. 87, 366 (1952): the statistical (Hauser–Feshbach) widths.
 - A. R. Usman et al., Nucl. Instrum. Methods B 469, 42 (2020); E. S. Kormazeva et al., J. Radioanal. Nucl. Chem. 331,
   4259 (2022); M. S. Gadkari et al., Phys. Scr. 55, 147 (1997): the measured ¹⁶⁵Ho(α,xn) excitation functions
+  (Usman 2020 is the reproduced experiment; A. R. Usman et al., RIKEN Accel. Prog. Rep. 53, 184 (2020) gives its
+  beam energy, 50.4 MeV)
   (EXFOR E2650, F1469, D0068).
 - A. Gilbert and A. G. W. Cameron, Can. J. Phys. 43, 1446 (1965): constant temperature + Fermi gas, pairing energies.
 - A. Gavron, Phys. Rev. C 21, 230 (1980): PACE, the Monte Carlo chain this follows.

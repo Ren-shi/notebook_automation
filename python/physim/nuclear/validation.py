@@ -1465,6 +1465,39 @@ def residues_vs_data(ref):
     return worst <= RESIDUE_TOLERANCE, worst, len(judged), detail, plot
 
 
+@check("Evaporation Monte Carlo (Hauser–Feshbach)", "literature", "Reproduced experiment: Usman et al., Nucl. "
+       "Instrum. Methods B 469, 42 (2020), ⁴He + ¹⁶⁵Ho stacked-foil activation at RIKEN (EXFOR E2650), end to end "
+       "through the planner: each of the 26 Ho foils as the fusion_tm165 setup at the foil's energy, the channel "
+       "table filled from physim's fusion and evaporation (Fill from physim, 20 000 chains), the residues simulated "
+       "and σ inferred from the residues made (physim.nuclear.reproduction; saved as reproduction_usman2020.csv); "
+       "Kormazeva 2022 and Gadkari 1997 as cross-checks",
+       "Above 1.1 V_B: the peaks of 2n, 3n, 4n within the energy spread + 1 MeV; the strongest channel the same at "
+       "every foil where the measurement resolves it; the strongest three channels above 10% of the measured total "
+       "within 30% of the band of the three measurements (± error, ± energy uncertainty), up to each channel's "
+       "peak. Reported, not judged: the tails above the peaks (pre-equilibrium emission, which physim leaves out), "
+       "1n, σ(3n)/σ(4n) at 45–50 MeV")
+def reproduction_usman2020(ref):
+    from . import reproduction as rp
+
+    path = _file(ref, rp.REFERENCE_FILE)
+    if path is None:
+        return None, math.nan, 0, f"{rp.REFERENCE_FILE} not found", {}
+    rows = read_reference(path)[1]
+    rep = rp.run(energies=rp.foil_energies(rows))
+    c = rp.compare(rep.rows, rows)
+    judged = [x for k in ("peaks", "strongest", "magnitudes") for x in c[k] if x["judged"]]
+    worst = max(c["worst"]["peaks"], c["worst"]["magnitudes"])
+    wrong = [f"{x['e_lab_mev']:g} MeV (physim {x['physim']}, measured {x['measured']})" for x in c["strongest"]
+             if x["judged"] and not x["passed"]]
+    detail = (rp.summary(c) + (f"; strongest channel wrong at {', '.join(wrong)}" if wrong else "") + ". "
+              + rp.reported(c) + f"; worst {worst:.2f} of the peak and magnitude tolerances")
+    mags = [x for x in c["magnitudes"] if x["judged"]]
+    plot = {"x": [x["e_lab_mev"] for x in mags], "physim": [x["ratio"] for x in mags],
+            "reference": np.ones(len(mags)), "xlabel": "α energy in the foil (MeV, lab)",
+            "ylabel": "σ(α,xn), physim (planner) / Usman 2020, where judged"}
+    return c["passed"], worst, len(judged), detail, plot
+
+
 @check("Neutron detectors and channel selection", "literature", "Knoll, Radiation Detection and Measurement (4th ed., "
        "ch. 15), recoil-proton scintillator: ε = n_Hσ_H/Σ · (1 − e^(−ΣD)) · (1 − E_B/E_n), EJ-301 cell, 1–8 MeV",
        "1e-12")

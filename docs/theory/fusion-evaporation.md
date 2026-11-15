@@ -171,10 +171,11 @@ corrected.
 | ⟨ε_n⟩ against both codes | PACE4 and GEMINI++ disagree by 25–35%; physim from PACE4's E* and σ_J | inside their band, widened by 10% at each edge | `evaporation_neutron_energy_band` |
 | Measured residue cross sections | ¹⁶⁵Ho(α,xn) 1n–4n, 6n (Usman 2020, Kormazeva 2022, Gadkari 1997); physim σ_fus × share at each energy | 2n, 3n, 4n where each is the strongest measured channel: within 30% of the band of the three data sets ± their errors; tails reported | `residues_vs_data` |
 | Measured fusion | ¹⁶O + ¹⁴²,¹⁵⁰Nd (Visakh 2021), ¹⁶O + ¹⁵⁴Sm (Stokstad 1980) | 20% from 1.05 / 1.15 V_B to 1.3 V_B | `fusion_vs_data` (see {doc}`fusion`) |
+| A published experiment, end to end | Usman et al. 2020 (⁴He + ¹⁶⁵Ho stacked-foil activation): each Ho foil as the `fusion_tm165` example, channels from *Fill from physim*, residues simulated, σ inferred from the residues made | above 1.1 V_B: peaks of 2n, 3n, 4n within the energy spread + 1 MeV; strongest channel the same where the data resolve it; strongest three within 30% of the band of the three measurements up to each peak; tails and σ(3n)/σ(4n) reported | `reproduction_usman2020` (see {doc}`evaporation`, "Reproduced experiment") |
 
 The first and third rows are also checks of the validation suite (`compound_nucleus_hand_calculation`,
 `residue_counts_vs_luminosity` in `physim.nuclear.validation`), which the physics register reads, as are the last
-five rows.
+six rows.
 
 **Measured residue cross sections.** ⁴He + ¹⁶⁵Ho is the well-studied system of item 75: three independent
 stacked-foil activation measurements of the Tm residues, from EXFOR (`evaporation_4He_165Ho_literature.csv`). They

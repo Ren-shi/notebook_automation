@@ -16,6 +16,13 @@ For each of the five systems of ``docs/theory/evaporation.md`` it writes two fil
   upward: E_cm, E*, PACE4's Bass barrier and σ_fus, ℓ_grazing, and σ_J (semicolon-separated, J = 0, 1, ...).
   1000 cascades each (σ_fus and σ_J do not depend on the cascades). ``fusion_vs_pace4`` reads these.
 
+And one more for the reproduced experiment (``--only excitation``, backlog 75 D10):
+
+- ``pace4_excitation_4He_165Ho.csv``: the residues of ⁴He + ¹⁶⁵Ho at each Ho foil energy of Usman et al. 2020 (the
+  mean energy in the foil, thin target) and at the energies beyond the stack where physim is also run, 20 000
+  cascades each; one row per energy and residue. ``physim.nuclear.reproduction`` draws it beside physim and the
+  measurements (the figure of ``scripts/reproduce_usman2020.py``); no check judges it.
+
 The beam energies of the excitation functions were chosen once from physim's Bass barrier V_B (E_cm/V_B = 1.0, 1.05,
 1.1, 1.2, 1.3, 1.5, 1.75, 2.0, rounded to whole MeV in the lab) and are fixed here, so a rerun gives the same rows.
 
@@ -46,6 +53,11 @@ SYSTEMS = [
     (("48Ca", 20, 48), ("124Sn", 50, 124), 200.0, [160, 167, 175, 191, 200, 207, 239, 279, 318]),
 ]
 EVAPORATION_CASCADES = 20000
+#: The energies of the excitation-function residues: Usman et al. 2020's foils (EXFOR E2650, mean α energy in each
+#: Ho foil) and the energies beyond the stack of physim.nuclear.reproduction.BEYOND.
+EXCITATION_SYSTEM = (("4He", 2, 4), ("165Ho", 67, 165))
+EXCITATION_ENERGIES = [49.6, 48.1, 46.9, 46.2, 44.6, 43.9, 42.6, 41.8, 40.1, 39.3, 37.9, 37.0, 35.1, 34.2, 32.7, 31.7,
+                       29.6, 28.5, 26.7, 25.6, 23.1, 21.9, 19.6, 18.2, 14.9, 13.2, 51.0, 53.0, 55.0, 57.0, 59.0]
 FUSION_CASCADES = 1000
 
 
@@ -190,10 +202,33 @@ def fusion_file(pace4: Path, beam, target, energies: list) -> Path:
     return path
 
 
+def excitation_file(pace4: Path, beam, target, energies: list) -> Path:
+    rows, version, first = [], None, None
+    for e in sorted(energies):
+        text, out = run(pace4, deck(EVAPORATION_CASCADES, beam[1], beam[2], target[1], target[2], float(e)))
+        first = first or text
+        p = parse(out)
+        version = p["version"]
+        rows += [f"{e:g},{z},{a},{n},{s:g},{p['sigma_fus_mb']:g}"
+                 for z, a, n, s in sorted(p["residues"], key=lambda r: -r[2])]
+        print(f"  {beam[0]} + {target[0]} at {e:g} MeV: sigma_fus = {p['sigma_fus_mb']:g} mb", flush=True)
+    lines = _header(version, f"{beam[0]} + {target[0]} -> compound nucleus {_cn(beam, target)}, residues at the Ho "
+                    "foil energies of Usman et al., NIM B 469, 42 (2020)",
+                    SETTINGS[:1] + [SETTINGS[1] + f"; {EVAPORATION_CASCADES} cascades per energy",
+                                    "beam energies: the paper's mean alpha energy in each Ho foil (thin target), and "
+                                    "51-59 MeV beyond the stack"], first)
+    lines.append("# columns: beam energy (lab MeV), residue Z and A, PACE4's events and σ (mb), σ_fus (mb)")
+    lines.append("beam_energy_mev,Z,A,events,sigma_mb,sigma_fus_mb")
+    lines += rows
+    path = REF / f"pace4_excitation_{beam[0]}_{target[0]}.csv"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("pace4", type=Path, help="path to PACE4.exe")
-    ap.add_argument("--only", choices=("evaporation", "fusion"))
+    ap.add_argument("--only", choices=("evaporation", "fusion", "excitation"))
     args = ap.parse_args(argv)
     for beam, target, e_lab, energies in SYSTEMS:  # strictly one PACE4 process at a time
         if args.only in (None, "evaporation"):
@@ -201,6 +236,9 @@ def main(argv=None) -> int:
             print("  wrote", evaporation_file(args.pace4, beam, target, e_lab).name, flush=True)
         if args.only in (None, "fusion"):
             print("  wrote", fusion_file(args.pace4, beam, target, energies).name, flush=True)
+    if args.only in (None, "excitation"):
+        beam, target = EXCITATION_SYSTEM
+        print("  wrote", excitation_file(args.pace4, beam, target, EXCITATION_ENERGIES).name, flush=True)
     return 0
 
 

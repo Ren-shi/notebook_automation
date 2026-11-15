@@ -16,13 +16,21 @@ and run by hand, so each file records exactly how it was produced, so that anyon
   `docs/theory/evaporation.md`: `pace4_<beam>_<target>_<E>MeV.csv` is the evaporation at one beam energy (20 000
   cascades; E*, σ_fus, σ_J, mean CM energies and multiplicities in the header, the residues as rows), and
   `pace4_fusion_<beam>_<target>.csv` the excitation function (σ_fus, ℓ_grazing and σ_J at 8–10 beam energies from
-  the barrier to about 2 V_B, σ_J semicolon-separated in one column). PACE4 is a Monte Carlo code: a rerun changes
-  the residue counts within statistics, not σ_fus or σ_J.
+  the barrier to about 2 V_B, σ_J semicolon-separated in one column). `pace4_excitation_4He_165Ho.csv` (`--only
+  excitation`) holds the residues of ⁴He + ¹⁶⁵Ho at each Ho foil energy of the reproduced experiment and at
+  51–59 MeV (20 000 cascades each, one row per energy and residue), drawn beside physim in its figure. PACE4 is a
+  Monte Carlo code: a rerun changes the residue counts within statistics, not σ_fus or σ_J.
 - `fusion_*_literature.csv` and `evaporation_*_literature.csv` are measured fusion and residue cross sections
   transcribed from the IAEA EXFOR database (tabulated values only, never digitized plots). Their `tool:` line names
   the database version and entries, `reference:` the papers and tables, and each row its EXFOR subentry. Read by
   the checks `fusion_vs_data` (every `fusion_*_literature.csv`; give each row `e_cm_mev` or `e_lab_mev`) and
-  `residues_vs_data` (`evaporation_4He_165Ho_literature.csv`).
+  `residues_vs_data` and `reproduction_usman2020` (`evaporation_4He_165Ho_literature.csv`).
+- `reproduction_usman2020.csv` is physim's own result, not a reference from outside: the reproduction of Usman
+  et al., NIM B 469, 42 (2020) (⁴He + ¹⁶⁵Ho stacked-foil activation) through the planner, one row per Ho foil and
+  channel (channel table filled by the app, residues made in the irradiation, σ inferred from them, the measured
+  value beside it), written by `scripts/reproduce_usman2020.py` (`physim.nuclear.reproduction`). The check
+  `reproduction_usman2020` reruns the reproduction rather than reading this file; a test keeps the file equal to
+  a rerun (same seed), and the validation notebook *Reproduced experiment* draws it.
 - `neutron_carbon_endf.csv` is an evaluated library, not a code run: neutron cross sections of natural carbon (total, elastic, non-elastic), ¹²C(n,α) and H-1 from ENDF/B-VIII.0 at 0.5–20 MeV, pointwise and averaged over ±2.5 % and ±10 % of the energy, written by `scripts/endf_neutron_reference.py <folder with the ENDF-6 files>`. The same script writes physim's carbon table (`--toml`). Read by the check `carbon_vs_endf` and by `test_nuclear_neutrons.py`.
 - `gemini_<beam>_<target>_<E>MeV.csv` are GEMINI++ runs (shipped with LISE++) for the same fusion-evaporation
   systems as the PACE4 files: residue cross sections as rows, E*, σ_fus, multiplicities and mean

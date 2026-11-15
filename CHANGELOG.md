@@ -45,6 +45,15 @@ workflow builds the wheels, tests them and publishes to PyPI.
     "Models and their validation" lists every fusion-evaporation check with its checker, version, tolerance and
     outcome, picked by capability, so checks added to the suite appear without a change to the report. The report
     now runs only the checks of the models it shows.
+  - A published experiment reproduced end to end through the planner: Usman et al., NIM B 469, 42 (2020),
+    ⁴He + ¹⁶⁵Ho stacked-foil activation (`physim.nuclear.reproduction`, `scripts/reproduce_usman2020.py`, new
+    example `fusion_tm165`). Each of the 26 Ho foils is the example at the foil's energy, with its channels from
+    "Fill from physim", its residues simulated and the production cross sections inferred from them. The new
+    literature check `reproduction_usman2020` passes: the peaks of 2n, 3n and 4n within the energy spread + 1 MeV,
+    the strongest channel right at every foil the data resolve, the strongest channels within 30% of the band of
+    three measurements. The tails above the peaks (pre-equilibrium emission) are reported as the documented limit.
+    PACE4 at the same energies is in `pace4_excitation_4He_165Ho.csv`, and a validation notebook draws all four
+    excitation functions.
 - Heavy-ion stopping from MSTAR 3.12 (Paul and Schinner; the method of ICRU Report 73) for ions from Li to Ar in
   hydrogen, in the ICRU 49 compounds and in their deuterated versions such as CD₂ (`physim.nuclear.mstar`).
   Against 693 measured points in H₂/D₂, polymers and Mylar, the RMS deviation for C–Ar falls from 7–10% to

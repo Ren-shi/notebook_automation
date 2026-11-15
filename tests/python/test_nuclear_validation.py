@@ -69,7 +69,8 @@ def test_every_check_passes_or_waits_for_its_reference():
 
 def test_literature_checks_run_without_reference_files(tmp_path):
     for r in validation.run(kind="literature", reference=tmp_path):
-        if r.name in ("stopping_hydrogen_vs_data", "fusion_vs_data", "residues_vs_data", "carbon_vs_endf"):
+        if r.name in ("stopping_hydrogen_vs_data", "fusion_vs_data", "residues_vs_data", "carbon_vs_endf",
+                      "reproduction_usman2020"):
             # measured or evaluated data kept as reference files
             assert r.status == "pending", r.detail
         elif r.name != "closest_approach_above_barrier":
@@ -190,6 +191,12 @@ def _break_boost(monkeypatch):
     monkeypatch.setattr(evaporation, "_boost", broken)
 
 
+def _break_partial_waves(monkeypatch):
+    # σ_ℓ = 2πƛ²(2ℓ + 1) T_ℓ instead of πƛ²: every partial wave, so σ_fus, twice too large. The evaporation's inputs
+    # (E*, the shape of σ_ℓ) are unchanged, so the reproduction's cached evaporation is reused.
+    _scale_method(monkeypatch, fusion.Fusion, "partial_waves_cm", 2.0)
+
+
 def _break_fusion_normalisation(monkeypatch):
     orig = fusion.CompoundNucleus.sigma_mb
     monkeypatch.setattr(fusion.CompoundNucleus, "sigma_mb", property(lambda self: orig.fget(self) * 1.5))
@@ -245,6 +252,7 @@ BREAKS = {
     "fusion excitation function": (lambda m: _scale_method(m, fusion.Fusion, "cross_section_cm", 1.3),
                                    ["fusion_vs_data"]),
     "residue cross sections": (_break_fusion_normalisation, ["residues_vs_data"]),
+    "reproduced experiment": (_break_partial_waves, ["reproduction_usman2020"]),
     "neutron spectrum": (_break_neutron_energies, ["evaporation_neutron_energy_band"]),
     "carbon cross section": (lambda m: _scale_method(m, neutrons, "carbon_cross_section", 1.01), ["carbon_vs_endf"]),
     "wong": (lambda m: _scale_method(m, fusion.Fusion, "wong_cm", 1.02), ["fusion_closed_forms"]),
@@ -265,6 +273,21 @@ def test_a_broken_formula_fails_its_check(monkeypatch, what):
     breaker(monkeypatch)
     after = {r.name: r.status for r in validation.run(reference=REFERENCE, names=expected)}
     assert after == {name: "fail" for name in expected}, after
+
+
+@needs_reference
+def test_saved_reproduction_is_current():
+    """reproduction_usman2020.csv is what the reproduction gives now (same seed, same numbers), so the reference
+    file, the figure made from it and the check agree."""
+    from physim.nuclear import reproduction
+
+    saved = reproduction.read_result(REFERENCE / reproduction.RESULT_FILE)
+    rows = reproduction.measured(REFERENCE)
+    now = reproduction.run(energies=reproduction.foil_energies(rows)).rows
+    assert [(r["e_lab_mev"], r["channel"]) for r in now] == [(r["e_lab_mev"], r["channel"]) for r in saved]
+    for a, b in zip(now, saved):
+        for k in ("sigma_table_mb", "residues_made", "sigma_mb", "sigma_unc_mb"):
+            assert a[k] == pytest.approx(b[k], rel=1e-5), (a["e_lab_mev"], a["channel"], k)
 
 
 # -- exports ------------------------------------------------------------------------------------------------------
