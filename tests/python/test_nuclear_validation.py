@@ -42,7 +42,7 @@ def test_every_check_passes_or_waits_for_its_reference():
     assert not failed, failed
     pending = {r.name for r in results if r.status == "pending"}
     # Exactly the references still requested from the user (tests/reference/nuclear/pending/).
-    assert pending == {"closest_approach_above_barrier", "rates_vs_lise", "spectra_vs_trim", "coulex_vs_gosia"}
+    assert pending == {"closest_approach_above_barrier", "rates_vs_lise", "spectra_vs_trim"}
     assert "| Capability |" in validation.report(results)
 
 

@@ -672,12 +672,12 @@ def coulex_closed_form(ref):
     return worst <= 1e-6, worst, 4, f"worst {worst:.1e}", plot
 
 
-@check("Coulomb excitation, first-order semiclassical", "tool", "GOSIA (or CLX), first order, ¹⁶O + ⁵⁸Ni at 30 MeV "
-       "(requested in pending/coulex_gosia.md)", "2% in P(θ)")
+@check("Coulomb excitation, first-order semiclassical", "tool", "GOSIA 20110524.14, first order (matrix element ÷10, "
+       "weak coupling), ¹⁶O + ⁵⁸Ni at 30 MeV, five CM angles (coulex_gosia.csv)", "2% in P(θ)")
 def coulex_vs_gosia(ref):
     path = _file(ref, "coulex_gosia.csv")
     if path is None:
-        return None, math.nan, 0, "coulex_gosia.csv not yet produced (GOSIA run requested)", {}
+        return None, math.nan, 0, "coulex_gosia.csv not found", {}
     from .coulex import Coulex
 
     rows = read_reference(path)[1]
