@@ -11,6 +11,11 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Outside programs run out of sight (`physim.external`): GOSIA, SRIM's SR Module and TRIM, PACE4 and GEMINI++
+  start on a hidden Windows desktop with no console window, so nothing shows or takes the focus, and in a job
+  object that stops them and everything they started at the timeout or when physim exits. One runner holds this;
+  a thin module per program feeds it, starts it and collects its output files. The PACE4, GEMINI++ and SRIM
+  reference scripts use it, and the GEMINI++ UI Automation driver moved into the package (`gemini_drive.ps1`).
 - Fusion-evaporation (backlog 75): `[reaction] type = "fusion-evaporation"` plans the residues of a compound
   nucleus, from the exit channels' cross sections to the residues' Doppler-corrected γ rays.
   - Stage 1 (`physim.nuclear.residues`): the channel table (`[[reaction.channels]]`), the compound nucleus's exact

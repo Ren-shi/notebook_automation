@@ -3,9 +3,9 @@
 # Gemini.exe has no silent mode: given a .gemini file on the command line it opens the file in its window and waits.
 # This script presses Execute through Windows UI Automation, waits for the results window, saves the text of every
 # results tab next to the input (<base>.tab<i>.txt), and closes the program. GEMINI++ itself writes <base>.html and
-# <base>.cs4 next to the input when the run finishes. Called by scripts/gemini_reference.py, which starts this script
-# on a separate, invisible Windows desktop, so that GEMINI++'s windows never show or take the focus (UI Automation
-# works within the desktop the script runs on). Started from a normal console, the windows show for a few seconds.
+# <base>.cs4 next to the input when the run finishes. Called by physim.external.gemini, which starts this script on
+# the runner's hidden Windows desktop, so that GEMINI++'s windows never show or take the focus (UI Automation works
+# within the desktop the script runs on). Started from a normal console, the windows show for a few seconds.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File gemini_drive.ps1 -Exe <Gemini.exe> -InputFile <file.gemini>
 param(

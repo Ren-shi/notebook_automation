@@ -2,7 +2,7 @@
 
 GEMINI++ (R. J. Charity) is a second, independent statistical-decay code beside PACE4. LISE++ ships a GUI build of
 version 3.3.0 as ``Gemini.exe``. It has no silent mode: given a ``.gemini`` file on the command line it opens the file
-in its window and waits for Execute. ``scripts/gemini_drive.ps1`` presses Execute through Windows UI Automation (no
+in its window and waits for Execute. ``physim/external/gemini_drive.ps1`` presses Execute through Windows UI Automation (no
 mouse, no user), reads the results window's tabs and closes the program. GEMINI++ itself writes ``<name>.html`` (the
 summary: residue cross sections, mean multiplicities) and ``<name>.cs4`` next to the input. The mean CM energies of
 n, p and α are only in the results window's second tab, which the driver saves as ``<name>.tab1.txt``.
@@ -27,15 +27,17 @@ import argparse
 import datetime as _dt
 import math
 import re
-import shutil
-import subprocess
 import sys
 import tempfile
 from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DRIVER = ROOT / "scripts" / "gemini_drive.ps1"
+sys.path.insert(0, str(ROOT / "python"))
+
+from physim.external import gemini  # noqa: E402
+from physim.external.gemini import GeminiFailed, scratch_install  # noqa: E402
+
 OUT = ROOT / "tests" / "reference" / "nuclear"
 DEFAULT_LISE = Path(r"D:\Program Files\LISEcute\LISEcute")
 DIFFUSENESS = 2.0  # ħ, PACE4's L-diffuseness
@@ -217,110 +219,14 @@ def parse_cm_spectra(path: Path, events: int) -> dict:
             "mean_cm_energy_mev": dict(zip(keys, mean))}
 
 
-HIDDEN_DESKTOP = "physim_gemini"
-
-
-def run_on_hidden_desktop(cmdline: str, timeout_s: float) -> int:
-    """Run a command on a separate Windows desktop of this window station, which is never shown.
-
-    Its windows, and those of the programs it starts (they inherit the desktop), never appear on the user's screen
-    or take the focus, and UI Automation called from that desktop sees them. Returns the exit code."""
-    import ctypes
-    from ctypes import wintypes
-
-    class STARTUPINFOW(ctypes.Structure):
-        _fields_ = [("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR), ("lpDesktop", wintypes.LPWSTR),
-                    ("lpTitle", wintypes.LPWSTR), ("dwX", wintypes.DWORD), ("dwY", wintypes.DWORD),
-                    ("dwXSize", wintypes.DWORD), ("dwYSize", wintypes.DWORD), ("dwXCountChars", wintypes.DWORD),
-                    ("dwYCountChars", wintypes.DWORD), ("dwFillAttribute", wintypes.DWORD),
-                    ("dwFlags", wintypes.DWORD), ("wShowWindow", wintypes.WORD), ("cbReserved2", wintypes.WORD),
-                    ("lpReserved2", ctypes.c_void_p), ("hStdInput", wintypes.HANDLE),
-                    ("hStdOutput", wintypes.HANDLE), ("hStdError", wintypes.HANDLE)]
-
-    class PROCESS_INFORMATION(ctypes.Structure):
-        _fields_ = [("hProcess", wintypes.HANDLE), ("hThread", wintypes.HANDLE),
-                    ("dwProcessId", wintypes.DWORD), ("dwThreadId", wintypes.DWORD)]
-
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    user32.CreateDesktopW.restype = wintypes.HANDLE
-    user32.CreateDesktopW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.c_void_p, wintypes.DWORD,
-                                      wintypes.DWORD, ctypes.c_void_p]
-    kernel32.CreateProcessW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, ctypes.c_void_p, ctypes.c_void_p,
-                                        wintypes.BOOL, wintypes.DWORD, ctypes.c_void_p, wintypes.LPCWSTR,
-                                        ctypes.POINTER(STARTUPINFOW), ctypes.POINTER(PROCESS_INFORMATION)]
-    desktop = user32.CreateDesktopW(HIDDEN_DESKTOP, None, None, 0, 0x01FF, None)  # DESKTOP_ALL_ACCESS
-    if not desktop:
-        raise OSError(ctypes.get_last_error(), "CreateDesktop failed")
-    try:
-        si = STARTUPINFOW(cb=ctypes.sizeof(STARTUPINFOW), lpDesktop=HIDDEN_DESKTOP)
-        pi = PROCESS_INFORMATION()
-        buf = ctypes.create_unicode_buffer(cmdline)
-        if not kernel32.CreateProcessW(None, buf, None, None, False, 0x08000000, None, None,  # CREATE_NO_WINDOW
-                                       ctypes.byref(si), ctypes.byref(pi)):
-            raise OSError(ctypes.get_last_error(), "CreateProcess failed")
-        try:
-            if kernel32.WaitForSingleObject(pi.hProcess, int(timeout_s * 1000)) != 0:
-                kernel32.TerminateProcess(pi.hProcess, 1)
-                return -1
-            code = wintypes.DWORD()
-            kernel32.GetExitCodeProcess(pi.hProcess, ctypes.byref(code))
-            return code.value
-        finally:
-            kernel32.CloseHandle(pi.hThread)
-            kernel32.CloseHandle(pi.hProcess)
-    finally:
-        user32.CloseDesktop(desktop)
-
-
-def _kill_gemini(exe: Path) -> None:
-    """Stop any Gemini.exe left running from the scratch copy (after a hang or a killed driver)."""
-    ps = (f"Get-Process Gemini -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -eq '{exe}' }} "
-          "| Stop-Process -Force")
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True)
-
-
 def run_gemini(exe: Path, folder: Path, name: str, text: str, visible: bool = False) -> None:
-    folder.mkdir(parents=True, exist_ok=True)
-    for old in folder.glob(f"{name}.*"):
-        old.unlink()
-    (folder / f"{name}.gemini").write_text(text, encoding="ascii")
-    log = folder / f"{name}.driver.log"
-    args = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(DRIVER), "-Exe", str(exe),
-            "-InputFile", str(folder / f"{name}.gemini"), "-Tab", "Fusion reaction", "-TimeoutSeconds", "1800",
-            "-LogFile", str(log)]
-    for attempt in range(3):  # a run that failed (window did not come up, program crashed) is started afresh
-        if log.exists():
-            log.unlink()
-        if visible:
-            code = subprocess.run(args, capture_output=True, text=True).returncode
-        else:
-            code = run_on_hidden_desktop(subprocess.list2cmdline(args), timeout_s=2000)
-        _kill_gemini(exe)
-        message = log.read_text(encoding="utf-8-sig").strip() if log.exists() else "(no driver log)"
-        if code == 0 and (folder / f"{name}.html").exists():
-            print("  " + message)
-            return
-        print(f"  attempt {attempt + 1} failed: {message}")
-        if "hung" in message or "exited during the run" in message:
-            break  # GEMINI++'s seed is fixed: the same input fails the same way again
-    raise GeminiFailed(f"GEMINI++ run {name} failed: {message}")
-
-
-class GeminiFailed(RuntimeError):
-    pass
+    """Run GEMINI++ out of sight (physim.external.gemini); its files stay in ``folder``."""
+    out = gemini.run(exe, folder, name, text, tab="Fusion reaction", timeout_s=1800, visible=visible)
+    print("  " + out.log)
 
 
 class EventsLost(GeminiFailed):
     """The run finished, but its outcomes (residues + fission + IMF) do not add up to the events asked for."""
-
-
-def scratch_install(lise: Path, work: Path) -> Path:
-    copy = work / "LISEcute"
-    if not (copy / "Gemini.exe").exists():
-        print(f"copying {lise} -> {copy}")
-        shutil.copytree(lise, copy, dirs_exist_ok=True)
-    return copy / "Gemini.exe"
 
 
 def write_csv(system: dict, res: dict, cm: dict, events: int, l0_fit: float, crit: float, text: str,

@@ -18,15 +18,17 @@ from __future__ import annotations
 
 import csv
 import re
-import shutil
 import statistics
-import subprocess
 import sys
-import tempfile
 from datetime import date
 from pathlib import Path
 
-REF = Path(__file__).resolve().parents[1] / "tests" / "reference" / "nuclear"
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "python"))
+
+from physim.external.srim import Srim  # noqa: E402
+
+REF = ROOT / "tests" / "reference" / "nuclear"
 
 # --- SR Module ----------------------------------------------------------------------------------------------------
 
@@ -60,13 +62,9 @@ def sr_in(z: int, mass: float, density: float, elements: list, e_min: float, e_m
     return "\r\n".join(lines) + "\r\n"
 
 
-def run_sr(work: Path, text: str) -> tuple:
+def run_sr(srim: Srim, text: str) -> tuple:
     """Run SR Module on one SR.IN; (output text, [(E keV, Se, Sn, projected range µm, long. straggling µm)])."""
-    (work / "SR.IN").write_text(text, encoding="ascii", newline="")
-    out = work / "out.txt"
-    out.unlink(missing_ok=True)
-    subprocess.run([str(work / "SRModule.exe")], cwd=work, check=True, timeout=60)
-    body = out.read_text(encoding="latin-1")
+    body = srim.stopping(text, timeout_s=60)
     rows = []
     for line in body.splitlines():
         m = _ROW.match(line)
@@ -78,9 +76,7 @@ def run_sr(work: Path, text: str) -> tuple:
 
 
 def stopping_tables(srim: Path) -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp) / "SR Module"
-        shutil.copytree(srim / "SR Module", work)
+    with Srim(srim) as work:
         version = None
         results = []
         for ion, z, mass, a in IONS:
@@ -129,27 +125,15 @@ TRIM_RUNS = [
 TRIM_OPEN_ONLY = ["TRIM_alpha_on_gold.IN", "TRIM_oxygen_on_lead_array.IN"]
 
 
-def run_trim(work: Path, source: Path) -> list:
-    """Run TRIM unattended on an unchanged copy of ``source``; transmitted energies (MeV), or [] if none."""
-    out = work / "SRIM Outputs" / "TRANSMIT.txt"
-    out.unlink(missing_ok=True)
-    shutil.copyfile(source, work / "TRIM.IN")
-    subprocess.run([str(work / "TRIM.exe")], cwd=work, timeout=3 * 3600)
-    if not out.exists():
-        return []
-    return [float(ln.split()[3]) / 1e6 for ln in out.read_text(encoding="latin-1").splitlines() if ln.startswith("T ")]
+def run_trim(srim: Srim, source: Path) -> list:
+    """Run TRIM unattended, out of sight, on an unchanged copy of ``source``; transmitted energies (MeV), or []."""
+    out = srim.trim(source.read_bytes().decode("latin-1"), timeout_s=3 * 3600).get("TRANSMIT.txt", "")
+    return [float(ln.split()[3]) / 1e6 for ln in out.splitlines() if ln.startswith("T ")]
 
 
 def trim_runs(srim: Path) -> None:
     pending = REF / "trim"
-    with tempfile.TemporaryDirectory() as tmp:
-        work = Path(tmp) / "SRIM"
-        work.mkdir()
-        for name in ("Data", "SRIM Outputs", "SRIM Restore"):
-            shutil.copytree(srim / name, work / name)
-        shutil.copyfile(srim / "TRIM.exe", work / "TRIM.exe")
-        auto = (srim / "TRIMAUTO").read_text(encoding="latin-1").splitlines()
-        (work / "TRIMAUTO").write_text("\r\n".join(["1", *auto[1:]]) + "\r\n", encoding="latin-1", newline="")
+    with Srim(srim) as work:
         rows = []
         for name, ion, material, density, energy, thickness in TRIM_RUNS:
             e = run_trim(work, pending / name)
