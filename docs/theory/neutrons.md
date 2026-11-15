@@ -130,7 +130,9 @@ each particle's kind, lab energy and lab direction. The efficiencies can then be
 and direction (`NeutronWall.detection_probability`). `Detection.averaged` gives the mean outcome probabilities per
 channel over the same events; with these, the analytic matrix is what the Monte Carlo converges to, as long as the
 particles of one event are detected independently. The tests check the agreement within statistics (item 75's
-"Detectors" done-when).
+"Detectors" done-when). The validation suite holds this as `channel_selection_binomial` (every cell within 4.5
+binomial standard errors, 6 × 10⁴ events; worst 1.9) and the efficiency as `neutron_efficiency_knoll` (Knoll's
+closed form, 1e-12).
 
 ## Limits
 

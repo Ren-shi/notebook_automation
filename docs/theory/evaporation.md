@@ -143,18 +143,34 @@ The tests (`tests/python/test_nuclear_evaporation.py`) check:
 - **Fission** takes over in ²²⁴Th, grows with spin, and is absent in ¹⁷²Yb.
 - **PACE4.** 12C + 150Nd at 70 MeV (E* = 59.3 MeV in ¹⁶²Dy, PACE4's own σ_J): see below.
 
+The validation suite (`physim.nuclear.validation`) holds the comparisons for all five systems below, and two exact
+checks: Weisskopf's spectrum as above (χ²/dof 1.1 against the full form, 0.5–8 MeV) and conservation in every
+event.
+
 ### Comparison with PACE4
 
-PACE4 4.36.0 (LISE++) was run in silent mode with its defaults, 20 000 cascades each. Physim used PACE4's E* and
-σ_J, 20 000 events. Shares of the three strongest PACE4 residues, then mean CM energies (MeV):
+PACE4 4.36.0 (LISE++) was run in silent mode with its defaults, 20 000 cascades each, by
+`scripts/pace4_reference.py`, which saves each run as `tests/reference/nuclear/pace4_<beam>_<target>_<E>MeV.csv`
+(rerun on 15 November 2026; the residue shares moved within PACE4's statistics). Physim used PACE4's E* and σ_J,
+20 000 events. Shares of the three strongest PACE4 residues, then mean CM energies (MeV):
 
 | System (E*) | PACE4 | physim | ⟨ε_n⟩ PACE4 / physim | ⟨ε_p⟩ | ⟨ε_α⟩ |
 |---|---|---|---|---|---|
-| ⁴He + ¹⁶⁵Ho, 50 MeV (47.6) | ¹⁶⁵Tm 0.90, ¹⁶⁶Tm 0.051, ¹⁶⁵Er 0.015 | 0.85, 0.041, 0.016 | 2.92 / 2.22 | 9.65 / 9.31 | 17.2 / 17.9 |
-| ¹²C + ¹⁵⁰Nd, 70 MeV (59.3) | ¹⁵⁷Dy 0.76, ¹⁵⁸Dy 0.145, ¹⁵⁶Dy 0.054 | 0.65, 0.142, 0.153 | 2.80 / 2.43 | 9.77 / 9.65 | 17.7 / 17.9 |
-| ¹⁶O + ¹⁴⁴Sm, 90 MeV (52.5) | ¹⁵⁶Yb 0.32, ¹⁵⁷Yb 0.20, ¹⁵³Er 0.14 | 0.20, 0.22, 0.063 | 2.75 / 2.27 | 10.1 / 9.2 | 17.9 / 18.0 |
-| ³²S + ⁹²Mo, 150 MeV (63.4) | ¹²⁰Ba 0.23, ¹²⁰Cs 0.12, ¹¹⁷Cs 0.087 | 0.023, 0.13, 0.002 | 3.16 / 2.84 | 9.36 / 8.49 | 16.8 / 16.0 |
-| ⁴⁸Ca + ¹²⁴Sn, 200 MeV (71.0) | ¹⁶⁶Yb 0.50, ¹⁶⁷Yb 0.40, ¹⁶⁴Er 0.035 | 0.24, 0.28, 0.017 | 3.07 / 2.56 | 10.8 / 10.0 | 18.9 / 18.9 |
+| ⁴He + ¹⁶⁵Ho, 50 MeV (47.6) | ¹⁶⁵Tm 0.90, ¹⁶⁶Tm 0.051, ¹⁶⁵Er 0.015 | 0.85, 0.041, 0.016 | 2.93 / 2.22 | 9.54 / 9.31 | 17.0 / 17.9 |
+| ¹²C + ¹⁵⁰Nd, 70 MeV (59.3) | ¹⁵⁷Dy 0.76, ¹⁵⁸Dy 0.147, ¹⁵⁶Dy 0.053 | 0.65, 0.142, 0.153 | 2.80 / 2.43 | 10.2 / 9.65 | 17.6 / 17.9 |
+| ¹⁶O + ¹⁴⁴Sm, 90 MeV (52.5) | ¹⁵⁶Yb 0.31, ¹⁵⁷Yb 0.20, ¹⁵⁴Er 0.148 | 0.20, 0.22, 0.12 | 2.77 / 2.27 | 10.1 / 9.2 | 17.9 / 18.0 |
+| ³²S + ⁹²Mo, 150 MeV (63.4) | ¹²⁰Ba 0.23, ¹²⁰Cs 0.117, ¹¹⁷Cs 0.088 | 0.023, 0.13, 0.002 | 3.16 / 2.84 | 9.34 / 8.49 | 16.8 / 16.0 |
+| ⁴⁸Ca + ¹²⁴Sn, 200 MeV (71.0) | ¹⁶⁶Yb 0.49, ¹⁶⁷Yb 0.40, ¹⁶⁴Er 0.033 | 0.24, 0.28, 0.017 | 3.08 / 2.56 | 10.6 / 10.0 | 18.8 / 18.9 |
+
+The checks `evaporation_channels_vs_pace4` and `evaporation_spectra_vs_pace4` hold item 75's targets, fixed before
+these runs: the strongest three residues the same as PACE4's, in the same order, each within 30%; ⟨ε_n⟩ and ⟨ε_p⟩
+within 10%. Both fail and are known failures of the suite:
+
+- **Channels: no system passes.** For ⁴He and ¹²C the two strongest residues agree within 20%, but physim's third is
+  the next xn channel (¹⁶⁴Tm, 5n, share 0.081; ¹⁵⁶Dy, 6n, 0.153) instead of PACE4's. For ¹⁶O, physim puts ¹⁵⁷Yb
+  (3n) above ¹⁵⁶Yb (4n) and ¹⁵⁷Tm (p2n) third. For ³²S and ⁴⁸Ca see below.
+- **Energies: protons pass for all five** (worst −9%, ¹⁶O and ³²S). **Neutrons are 10–24% low** in all five (worst
+  ⁴He + ¹⁶⁵Ho, −24%). α energies (not judged) agree within 5%.
 
 What agrees and what does not:
 
@@ -172,10 +188,11 @@ What agrees and what does not:
 - **³²S + ⁹²Mo** (proton-rich ¹²⁴Ce at up to 69 ħ): physim emits too many protons and α particles and too few
   neutrons (multiplicities 2.5, 1.0 and 0.5 against PACE4's 1.9, 0.6 and 1.4).
 
-The test asserts the light-system agreement only: for ¹²C + ¹⁵⁰Nd, the strongest residue the same and within 20%,
-the second within 30% and in order, ⟨ε_p⟩ and ⟨ε_α⟩ within 10%, ⟨ε_n⟩ within 25%. Item 75's target is all three
-strongest channels within 30% and mean n and p energies within 10%. Today physim meets it for protons and for the
-first two channels of light systems, not for neutron energies or for heavy, high-spin systems.
+The unit test (`test_nuclear_evaporation.py`) asserts the light-system agreement only: for ¹²C + ¹⁵⁰Nd, the
+strongest residue the same and within 20%, the second within 30% and in order, ⟨ε_p⟩ and ⟨ε_α⟩ within 10%, ⟨ε_n⟩
+within 25%. Item 75's target, held by the validation suite, is all three strongest channels within 30% and in
+order, and mean n and p energies within 10%. Today physim meets it for protons, and for the first two channels of
+light systems; not for the third channel, neutron energies or heavy, high-spin systems.
 
 ## Speed
 

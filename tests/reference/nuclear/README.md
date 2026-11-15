@@ -11,6 +11,13 @@ and run by hand, so each file records exactly how it was produced, so that anyon
 - `stopping_measured_hydrogen.csv` is measured data, not a code's output: heavy-ion stopping in hydrogen-rich
   targets from the IAEA Stopping Power Database (`scripts/iaea_stopping_reference.py`), with SRIM's value per point
   for context. Its `tool:` line names the database and version; cite the original papers by `ref_id` and `doi`.
+- `pace4_*.csv` are PACE4 4.36.0 runs (in LISE++), all written by `scripts/pace4_reference.py`, which reruns
+  PACE4 in silent mode one deck at a time in a temporary folder. For each of the five systems of
+  `docs/theory/evaporation.md`: `pace4_<beam>_<target>_<E>MeV.csv` is the evaporation at one beam energy (20 000
+  cascades; E*, σ_fus, σ_J, mean CM energies and multiplicities in the header, the residues as rows), and
+  `pace4_fusion_<beam>_<target>.csv` the excitation function (σ_fus, ℓ_grazing and σ_J at 8–10 beam energies from
+  the barrier to about 2 V_B, σ_J semicolon-separated in one column). PACE4 is a Monte Carlo code: a rerun changes
+  the residue counts within statistics, not σ_fus or σ_J.
 - Files here are read by the checks in `physim.nuclear.validation` and the tests (`tests/python/test_nuclear_*.py`), which assert the tolerances stated in the
   physics register. Until a file exists, the matching test is skipped and the register shows 🟡.
 

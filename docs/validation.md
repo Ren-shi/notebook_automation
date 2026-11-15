@@ -14,4 +14,5 @@ validation/rutherford
 validation/detectors
 validation/rates-and-events
 validation/coulex
+validation/fusion-evaporation
 ```

@@ -99,6 +99,42 @@ table. The test evaluates the second form on a fine energy grid; the two agree w
 inside the target, the depth beyond its range counts as giving no fusion. The same average gives the mean
 $\sigma_\ell$ over the target, and $E^*$ at each depth.
 
+## Comparison with PACE4
+
+PACE4 4.36.0 (in LISE++) computes σ_fus and σ_J from its own Bass fusion model (sharp cut-off transmission,
+L-diffuseness 2). `scripts/pace4_reference.py` ran it for the five systems of {doc}`evaporation` at 8–10 beam
+energies each, from physim's Bass barrier to about 2 V_B, and saved the excitation functions in
+`tests/reference/nuclear/pace4_fusion_*.csv`. The check `fusion_vs_pace4` holds item 75's target: within 15% above
+the barrier, taken as E_cm ≥ 1.1 V_B (physim's barrier), fixed before the runs. Nearer the barrier the two
+transmissions differ by construction and the points are only reported. Both codes use a Bass potential, so this
+checks the code more than the physics; a measured excitation function is still needed.
+
+physim / PACE4 for σ_fus:
+
+| System (V_B, physim) | 1.0–1.1 V_B (reported) | 1.1–1.5 V_B | 1.75 V_B | 2 V_B |
+|---|---|---|---|---|
+| ⁴He + ¹⁶⁵Ho (17.1 MeV) | 3.3, 1.33 | 1.16 (1.14 V_B) to 1.05 | 1.04 | 1.04 (0.98 at 2.85 V_B) |
+| ¹²C + ¹⁵⁰Nd (44.7 MeV) | 3.6, 1.25, 1.14 | 1.07 to 1.04 | 1.03 | 0.96 |
+| ¹⁶O + ¹⁴⁴Sm (61.3 MeV) | 4.2, 1.20 | 1.11 to 1.03 | 0.93 | 0.76 |
+| ³²S + ⁹²Mo (84.9 MeV) | 4.1, 1.07 | 1.03 to 0.96 | 0.72 | 0.58 |
+| ⁴⁸Ca + ¹²⁴Sn (114.7 MeV) | (PACE4 0), 1.15, 1.07 | 1.04 to 0.97 | 0.71 | 0.57 |
+
+- **From 1.1 to 1.5 V_B** the codes agree within 7%, except ⁴He + ¹⁶⁵Ho at 1.14 V_B (+16%) and ¹⁶O + ¹⁴⁴Sm at 1.10
+  V_B (+11%). physim's parabolic barriers let partial waves just above the top tunnel; PACE4's sharp cut-off does
+  not. That excess falls with energy, and near the barrier it reaches a factor 3–4.
+- **Far above the barrier, for the heavier beams,** physim falls well below PACE4: −24% (¹⁶O), −42% (³²S) and −43%
+  (⁴⁸Ca) at 2 V_B. physim's capture stops at the critical angular momentum, where the Bass potential loses its
+  pocket (ℓ_crit = 53, 67 and 105), so σ_fus falls as π(ℓ_crit + 1)²/k². PACE4's partial waves keep growing (its
+  σ_J reaches ℓ = 75, 102 and 154). Spins that high exceed what the compound nuclei can hold without fissioning, so
+  PACE4's σ_fus there is not obviously the better one; a measured excitation function will decide.
+- **Mean ℓ** (not judged) agrees within 3% for ¹²C + ¹⁵⁰Nd and within 13% for ⁴He and ¹⁶O, and differs by up to
+  25% for ³²S and ⁴⁸Ca, for the same reason.
+
+`fusion_vs_pace4` therefore fails (worst 43%) and is a known failure of the suite. The model's own exact results
+pass: Bass barriers against Dutt and Puri (2010) within 0.03 MeV and 0.03 fm, Wong's closed form against the
+partial-wave sum within 1%, the sharp cut-off limit within 1e-6, and the thick-target average against the integral
+within 1%.
+
 ## Where the model stops being valid
 
 `Fusion.warnings(E_lab)` reports these:
