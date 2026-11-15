@@ -825,7 +825,14 @@ class NeutronWallSetup:
     """A wall of organic-scintillator cells that counts the evaporated neutrons (``[neutron_wall]``, for a
     fusion-evaporation reaction): ``cells`` identical cylinders ``distance`` from the target, side by side at
     ``pitch``, filling a cone around the beam from ``theta_min``. The fields left out take the typical values of
-    :class:`physim.nuclear.neutrons.NeutronDetector` (an EJ-301 cell, 127 mm across and 150 mm deep, 100 keVee)."""
+    :class:`physim.nuclear.neutrons.NeutronDetector` (an EJ-301 cell, 127 mm across and 150 mm deep, 100 keVee).
+
+    Three fields are for the channel selection (:func:`physim.nuclear.exit_channels.channel_selection`):
+    ``gamma_efficiency``, the share of γ rays entering a cell that give light above its threshold (typical 40 %);
+    ``gamma_multiplicity``, the γ rays per event (default: J/2 from the entry spin J plus
+    :data:`~physim.nuclear.exit_channels.STATISTICAL_GAMMAS` statistical ones); and ``particle_threshold``, the
+    energy a proton or α particle must deposit in a particle detector that sets no ``threshold`` of its own
+    (default :data:`~physim.nuclear.exit_channels.PARTICLE_THRESHOLD_MEV`)."""
 
     cells: int
     distance: QuantityLike
@@ -838,6 +845,9 @@ class NeutronWallSetup:
     theta_min: Optional[QuantityLike] = None
     neutron_as_gamma: Optional[QuantityLike] = None
     gamma_as_neutron: Optional[QuantityLike] = None
+    gamma_efficiency: Optional[QuantityLike] = None
+    gamma_multiplicity: Optional[float] = None
+    particle_threshold: Optional[QuantityLike] = None
 
     SPECS = (
         _Field("cells", "int", required=True, check=lambda n: None if n >= 1 else "must be at least 1"),
@@ -854,6 +864,10 @@ class NeutronWallSetup:
                "must be 0 to 100 %"),
         _Field("gamma_as_neutron", "fraction", check=lambda q: None if 0 <= q.to("%") <= 100 else
                "must be 0 to 100 %"),
+        _Field("gamma_efficiency", "fraction", check=lambda q: None if 0 <= q.to("%") <= 100 else
+               "must be 0 to 100 %"),
+        _Field("gamma_multiplicity", "number", check=lambda x: None if 0 <= x <= 100 else "must be 0 to 100"),
+        _Field("particle_threshold", "energy", check=_non_negative),
     )
 
     def model(self):
@@ -866,7 +880,7 @@ class NeutronWallSetup:
 
         cell = {"distance": text(self.distance, "mm")}
         for name, unit in (("radius", "mm"), ("depth", "mm"), ("threshold", "MeV"), ("neutron_as_gamma", "%"),
-                           ("gamma_as_neutron", "%")):
+                           ("gamma_as_neutron", "%"), ("gamma_efficiency", "%")):
             if getattr(self, name) is not None:
                 cell[name] = text(getattr(self, name), unit)
         if self.material is not None:

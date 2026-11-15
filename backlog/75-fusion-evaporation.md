@@ -11,13 +11,23 @@
   above 1.1 V_B only for ¹²C + ¹⁵⁰Nd; ⁴He + ¹⁶⁵Ho 16% high at 1.14 V_B, and the heavier beams up to 43% low at
   2 V_B, where physim's capture stops at the Bass potential's critical ℓ and PACE4's keeps rising. Not yet compared
   with a measured excitation function.
-- The neutron data file's carbon cross sections are to be checked against ENDF/B-VIII.0.
 - In the validation suite since 2026-11-15: 11 checks over four register rows, PACE4 runs saved by
   `scripts/pace4_reference.py`. The exact and internal checks pass (✅ in the register's literature column); the
   three PACE4 comparisons fail their item-75 tolerances and are known failures: σ_fus (above), the three strongest
-  channels (no system passes; ⁴He and ¹²C fail on the third channel), ⟨ε_n⟩ (10–24% low; ⟨ε_p⟩ passes).
-- Channel selection sorts events into detected classes (0n, 1n, p2n, …) rather than requiring every particle;
-  thresholds of the particle detectors and γ rays firing neutron cells are left out.
+  channels (no system passes; ⁴He and ¹²C fail on the third channel), ⟨ε_n⟩ (10–24% low; ⟨ε_p⟩ passes). The
+  ENDF/B-VIII.0 carbon check below has a reference file and a test, and is still to be registered in the suite.
+
+Done for the neutron detectors (2026-11-15):
+- The carbon cross sections are now ENDF/B-VIII.0 (natural carbon from ¹²C and ¹³C, bin-averaged), checked by
+  `tests/reference/nuclear/neutron_carbon_endf.csv` (`scripts/endf_neutron_reference.py`). The old typical table
+  was 31% low at 3.4 MeV and 24% high at 8.9 MeV, so cell efficiencies move by up to −12% (3.4 MeV) and +6%
+  (8.9 MeV). Gammel's n–p formula agrees with ENDF/B-VIII.0 H-1 within 0.8% from 0.5 to 20 MeV.
+- Channel selection sorts events into detected classes (0n, 1n, p2n, …) rather than requiring every particle, and
+  now applies the particle detectors' thresholds (each detector's `threshold`, else `[neutron_wall]
+  particle_threshold`, default 1 MeV, with dead layer and punch-through) and γ rays firing neutron cells
+  (`gamma_multiplicity`, default J/2 + 4 from the entry spin; `gamma_efficiency`, `gamma_as_neutron`). It returns
+  the analytic matrix of the same events beside the Monte Carlo; the two agree within statistics. Still left out:
+  energy loss in the target, the particle detectors' own p/α identification, γ-ray cross-talk.
 
 ## Why
 Fusion-evaporation is how most nuclei away from stability, and most high-spin states, are made: a heavy-ion beam

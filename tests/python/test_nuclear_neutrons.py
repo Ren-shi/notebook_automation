@@ -1,6 +1,9 @@
 """Neutron detectors and the channel-selection matrix (physim.nuclear.neutrons, backlog item 75)."""
 
+import csv
 import math
+from dataclasses import replace
+from pathlib import Path
 from statistics import NormalDist
 from types import SimpleNamespace
 
@@ -27,9 +30,50 @@ def test_np_cross_section_matches_the_standard(energy, sigma_b):
 
 def test_carbon_cross_section_is_interpolated_from_the_table():
     t = N._table()["carbon_total"]
-    assert t["typical"] is True
+    assert t["typical"] is False and "ENDF/B-VIII.0" in t["source"]
     assert float(N.carbon_cross_section(t["energy_mev"][5])) == pytest.approx(t["sigma_b"][5])
-    assert float(N.carbon_cross_section(14.0)) == pytest.approx(1.30, rel=0.05)
+    assert float(N.carbon_cross_section(14.0)) == pytest.approx(1.33, rel=0.02)
+
+
+# -- the cross sections against ENDF/B-VIII.0 (scripts/endf_neutron_reference.py) ---------------------------------
+
+ENDF = Path(__file__).resolve().parents[1] / "reference" / "nuclear" / "neutron_carbon_endf.csv"
+
+
+def _endf() -> dict:
+    """{quantity: [(energy, point, mean ±2.5 %, wide ±10 %)]} from the reference file."""
+    if not ENDF.exists():
+        pytest.skip("tests/reference/nuclear/neutron_carbon_endf.csv not made yet (scripts/endf_neutron_reference.py)")
+    text = ENDF.read_text(encoding="utf-8").splitlines()
+    head = [ln for ln in text if ln.startswith("#")]
+    assert any(ln.startswith("# tool: ENDF/B-VIII.0") for ln in head) and any("produced by" in ln for ln in head)
+    out: dict = {}
+    for row in csv.DictReader(ln for ln in text if not ln.startswith("#")):
+        out.setdefault(row["quantity"], []).append(
+            tuple(float(row[k]) for k in ("energy_mev", "point_b", "mean_b", "wide_b")))
+    return out
+
+
+def test_carbon_table_is_the_endf_evaluation():
+    """physim's natural-carbon total cross section (the attenuation in a cell and in cross-talk) against
+    ENDF/B-VIII.0 at 0.5–20 MeV. The table holds averages over bins of ±2.9 %, so: within 0.2 % where the cross
+    section is smooth (below 1.8 MeV), within 7 % of the ±2.5 % average everywhere (the resonances between 2 and 11
+    MeV are narrower than a bin), and within 5 % of the ±10 % average (the narrow 2.08 MeV peak is spread over the
+    neighbouring bins)."""
+    rows = _endf()["natC_total"]
+    assert min(r[0] for r in rows) <= 0.5 and max(r[0] for r in rows) >= 20.0
+    for e, point, mean, wide in rows:
+        ours = float(N.carbon_cross_section(e))
+        x = np.linspace(0.9 * e, 1.1 * e, 4001)
+        ours_wide = float(np.trapezoid(N.carbon_cross_section(x), x)) / (0.2 * e)
+        assert ours == pytest.approx(mean, rel=0.002 if e < 1.8 else 0.07), e
+        assert ours_wide == pytest.approx(wide, rel=0.002 if e < 1.7 else 0.05), e
+
+
+def test_np_formula_agrees_with_endf():
+    """Gammel's closed form against the n–p total cross section of ENDF/B-VIII.0 (H-1, MT=1), 0.5–20 MeV."""
+    for e, point, mean, wide in _endf()["H1_total"]:
+        assert float(N.hydrogen_cross_section(e)) == pytest.approx(point, rel=0.01), e
 
 
 def test_light_output_and_its_inverse(cell):
@@ -265,6 +309,45 @@ def test_monte_carlo_with_per_particle_efficiencies_agrees_after_averaging(cell)
     # the averaged neutron efficiency is the wall's efficiency over the events' spectrum
     av = det.averaged(events, CHANNELS)["2n"]
     assert 0.0 < av.neutron_efficiency < wall.geometric_efficiency()
+
+
+def test_a_varying_number_of_gamma_rays_mixes_the_binomials():
+    f = 0.1 * 0.02
+    det = N.Detection(gamma_efficiency=0.1, gamma_as_neutron=0.02)
+    # half the events have no γ ray, half have two: P(1 false neutron) = ½ · 2 f (1 − f)
+    ch = N.channels_from({"n": (1, 0, 0), "2n": (2, 0, 0)}, gammas=(0.5, 0.0, 0.5))
+    assert ch[0].gammas == (0.5, 0.0, 0.5)
+    m = N.selection_matrix(ch, det)
+    assert m.share("n", "n") == pytest.approx(0.5 * 2 * f * (1 - f))
+    assert m.share("n", "2n") == pytest.approx(0.5 * f * f)
+    assert np.allclose(m.matrix.sum(axis=1), 1.0)
+    # a fixed number is the one-point distribution
+    fixed = N.selection_matrix(N.channels_from(["n", "2n"], gammas=8), det)
+    spread = N.selection_matrix(N.channels_from(["n", "2n"], gammas=(0,) * 8 + (1,)), det)
+    assert np.allclose(fixed.matrix, spread.matrix)
+
+
+def test_monte_carlo_agrees_with_the_analytic_matrix_with_thresholds_and_varying_gamma_rays():
+    """Particle-detector thresholds (efficiencies that are zero below an energy) and a γ-ray number that varies from
+    event to event: the analytic matrix from Detection.averaged and gamma_distributions over the same events is
+    what the Monte Carlo converges to."""
+    rng = np.random.default_rng(51)
+    events = N.isotropic_events(CHANNELS, events=60_000, seed=51)
+    for ev in events:
+        ev["gammas"] = int(rng.poisson(10))
+    det = replace(FULL, proton_efficiency=lambda e, d: 0.6 * (np.asarray(e) > 6.0),
+                  alpha_efficiency=lambda e, d: 0.5 * (np.asarray(e) > 13.0), gamma_efficiency=0.2)
+    m = N.selection_matrix(N.gamma_distributions(events, CHANNELS), det.averaged(events, CHANNELS))
+    mc = N.simulate_selection(events, CHANNELS, det, seed=52)
+    assert np.allclose(m.matrix.sum(axis=1), 1.0)
+    assert _within_statistics(mc, m) < 4.5
+    # the threshold removes the slow protons: the averaged efficiency is 0.6 times the share above 6 MeV
+    p = [e for ev in events for k, e, _ in ev["particles"] if k == "p"]
+    assert det.averaged(events, CHANNELS)["p2n"].proton_efficiency == pytest.approx(
+        0.6 * np.mean(np.asarray(p) > 6.0), abs=0.01)
+    # and using a fixed γ number instead of the events' own spread would be visibly wrong for γ-only fakes
+    g = N.gamma_distributions(events, CHANNELS)
+    assert g[0].gamma_counts.sum() == pytest.approx(1.0) and len(g[0].gamma_counts) > 15
 
 
 def test_seeded_runs_are_identical():

@@ -56,7 +56,11 @@ FUSION_FIELDS = [("temperature", "Temperature (default from E*)", "1.5 MeV"),
 NEUTRON_WALL_FIELDS = [("cells", "Cells", "50"), ("distance", "Distance", "510 mm"), ("pitch", "Pitch", "130 mm"),
                        ("theta_min", "From θ", "0 deg"), ("radius", "Cell radius", "63.5 mm"),
                        ("depth", "Cell depth", "150 mm"), ("threshold", "Threshold (electron-equivalent)", "0.1 MeV"),
-                       ("material", "Scintillator", "EJ-301"), ("layout", "Layout", "hexagonal")]
+                       ("material", "Scintillator", "EJ-301"), ("layout", "Layout", "hexagonal"),
+                       ("gamma_efficiency", "γ rays above threshold", "40 %"),
+                       ("gamma_as_neutron", "γ rays called neutrons", "1 %"),
+                       ("gamma_multiplicity", "γ rays per event (default from entry spin)", "J/2 + 4"),
+                       ("particle_threshold", "Particle-detector threshold (if unset)", "1 MeV")]
 CHANNEL_FIELDS = [("particles", "Particles", "4n, p2n, a n"), ("cross_section", "Cross section", "300 mb"),
                   ("entry_spin", "Entry spin (ħ)", "20"), ("source", "Source", "PACE4")]
 DETECTOR_FIELDS = [("name", "Name", "D1"), ("theta", "θ", "45 deg"), ("phi", "φ", "0 deg"),

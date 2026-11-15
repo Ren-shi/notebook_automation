@@ -21,6 +21,7 @@ and run by hand, so each file records exactly how it was produced, so that anyon
 - `fusion_*_literature.csv` and `evaporation_*_literature.csv` are measured fusion and residue cross sections
   transcribed from the IAEA EXFOR database (tabulated values only, never digitized plots). Their `tool:` line names
   the database version and entries, `reference:` the papers and tables, and each row its EXFOR subentry.
+- `neutron_carbon_endf.csv` is an evaluated library, not a code run: neutron cross sections of natural carbon (total, elastic, non-elastic), ¹²C(n,α) and H-1 from ENDF/B-VIII.0 at 0.5–20 MeV, pointwise and averaged over ±2.5 % and ±10 % of the energy, written by `scripts/endf_neutron_reference.py <folder with the ENDF-6 files>`. The same script writes physim's carbon table (`--toml`).
 - Files here are read by the checks in `physim.nuclear.validation` and the tests (`tests/python/test_nuclear_*.py`), which assert the tolerances stated in the
   physics register. Until a file exists, the matching test is skipped and the register shows 🟡.
 
