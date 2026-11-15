@@ -51,6 +51,10 @@
 >   large; substituting them overshoots (H₂ +15%). Formulas (2026-11-15): Schiwietz–Grande 2001 (gas) has no
 >   usable target dependence; Winger 1992's, as a factor on physim's charge, fixes the gases but makes Ni, Ag, Au
 >   13–24% low. None is adopted. The missing piece is in the step from charge to stopping, not the charge alone.
+>   **Parked (2026-11-15):** the planner warns instead (ions with Z > 18 below 10 MeV/u in layers or detectors
+>   containing H or He, `stopping.known_shortfall`). To resume: a theory that computes stopping per charge state
+>   (CasP, or PASS with a chosen charge) fed the measured charges, to see why only half the charge difference
+>   shows in the stopping; heavy ions in carbon (Xe −17%) may share the cause.
 >   SRIM was run with compound
 >   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
 > - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.

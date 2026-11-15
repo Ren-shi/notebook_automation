@@ -34,6 +34,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
   Against 693 measured points in H₂/D₂, polymers and Mylar, the RMS deviation for C–Ar falls from 7–10% to
   4–9%. A new literature check, `stopping_hydrogen_vs_data`, compares heavy-ion stopping with measured data
   from the IAEA Stopping Power Database; it still fails for Kr and Xe in hydrogen-rich targets.
+- A planner warning when an ion heavier than Ar, below 10 MeV/u, crosses a layer or detector containing hydrogen
+  or helium: there physim's stopping is up to 20% below measured data (`stopping.known_shortfall`).
 - The angular correlation between the γ rays of one cascade (backlog 71). Each excitation carries the density
   matrix of its level down the cascade (`physim.nuclear.correlation`): a γ ray is drawn along a direction with
   the probability its level's state gives, and leaves the next level in the state that direction selects, from

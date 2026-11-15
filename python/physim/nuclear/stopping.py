@@ -478,6 +478,22 @@ class Stopping:
         return f"Stopping({self.ion} in {self.material.name})"
 
 
+#: Ions heavier than this, below :data:`SHORTFALL_MAX_MEV_U`, stop more in hydrogen and helium than physim gives.
+SHORTFALL_MIN_Z = 19
+SHORTFALL_MAX_MEV_U = 10.0
+
+
+def known_shortfall(z1: int, material: data.Material, e_per_u: float) -> bool:
+    """Whether a known shortfall applies: an ion heavier than Ar, below ~10 MeV/u, in a material containing H or He.
+
+    physim's effective charge for such ions does not depend on the target, but measured stopping says it does: Kr in
+    H₂ and D₂ is 16–20% below the data at 1.5–5 MeV/u (Bimbot et al. 1989), and Kr and Xe in Mylar 15–18% at
+    1–10 MeV/u. See the physics register (stopping).
+    """
+    return (z1 >= SHORTFALL_MIN_Z and e_per_u < SHORTFALL_MAX_MEV_U
+            and any(z in (1, 2) for z, _, n in material.atoms if n > 0))
+
+
 def radiation_length_g_cm2(material: data.Material) -> float:
     """Radiation length X₀, g/cm² (Dahl's fit, 716.4 A / (Z(Z+1) ln(287/√Z)), combined by mass fractions)."""
     inv = 0.0

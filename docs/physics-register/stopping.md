@@ -264,7 +264,9 @@ Validated 2026-10-04; SRIM comparison 2026-11-14; MSTAR 2026-11-15.
   (see the validation table). Kr and Xe in hydrogen-rich targets are 15–19% below measured data at 1–10 MeV/u.
 - The effective charge of ions heavier than Ar does not depend on the target, but measured stopping says it
   does: below ~10 MeV/u physim is up to 20% low in H₂ and C and a few percent high in N₂ and Ar (see "Why physim
-  is low for Kr in hydrogen").
+  is low for Kr in hydrogen"). The planner warns when an ion heavier than Ar, below 10 MeV/u, crosses a layer or
+  detector containing hydrogen or helium (`stopping.known_shortfall`). The research is parked (2026-11-15);
+  the open questions are listed in backlog 36.
 - Slow heavy ions (below 1 MeV/u, especially Kr and heavier): stopping within ~50%, range within a factor of two.
   Plan with care and check against SRIM. Ziegler's per-ion and per-target low-energy coefficient tables would fix
   this; they are not included (a possible later download).
