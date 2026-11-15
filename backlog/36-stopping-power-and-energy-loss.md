@@ -40,7 +40,10 @@
 >   **Done for Li–Ar (2026-11-15):** MSTAR 3.12 (ICRU 73's method) is ported (`physim.nuclear.mstar`) and used for
 >   ions Li–Ar in hydrogen, ICRU 49 compounds and their deuterated versions (CD₂). RMS against the data for C–Ar:
 >   H₂/D₂ 7.9% → 4.1%, (CH₂)ₙ 10.3% → 8.5%, Mylar 6.9% → 5.9%; Mylar now passes against SRIM, CD₂ still fails.
->   **Open:** Kr and Xe in hydrogen (still 15–19% low; outside MSTAR). SRIM was run with compound
+>   **Open:** Kr and Xe in hydrogen (still 15–19% low; outside MSTAR). Tried 2026-11-15: DPASS 21.06 and
+>   SRIM-96 are as low as physim for Kr in H₂ (−18 to −28%); only SRIM 2013 matches (−8 to −11%); Xe in H₂ is
+>   fine at 25 MeV/u, the only data. Kr/Xe in Mylar fail because of carbon and oxygen (Xe in carbon −20% at
+>   0.1–1 MeV/u), not hydrogen. SRIM was run with compound
 >   correction 1 (Bragg additivity) throughout; SR Module cannot compute SRIM's Core-and-Bond factor.
 > - SRIM's ranges are projected, physim's are path lengths, so they are reported, not judged.
 > - TRIM: every exported TRIM.IN (4 cases and the 2 example setups) ran unchanged. Mean energies within 1% except α

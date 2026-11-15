@@ -138,6 +138,24 @@ Caveats:
 - Kr and Xe are outside MSTAR (Z₁ ≤ 18) and unchanged: in H₂/D₂ and Mylar they are still 15–19% low, against
   SRIM's 10%. They need another source.
 
+**Kr and Xe in hydrogen: candidates (2026-11-15, nothing changed in the code).** Median / RMS of model ÷ measured − 1:
+
+| Data | Points | physim | DPASS 21.06 | SRIM-96 (ZBL) | SRIM 2013 |
+|---|---|---|---|---|---|
+| Kr in H₂/D₂, 1–3 MeV/u (Bimbot et al. 1989) | 12 | −27% / 27% | −28% / 28% | −22% / 22% | −8% / 9% |
+| Kr in H₂/D₂, 3–15 MeV/u | 22 | −16% / 17% | −21% / 21% | −18% / 19% | −11% / 12% |
+| Xe in H₂, 25 MeV/u (He1991, errors 4.7–8.6%) | 2 | +4% | −7% | −7% | −4% |
+| Ar in H₂/D₂, 1–15 MeV/u (for comparison; physim uses MSTAR) | 39 | −2% / 4% | −13% / 14% | −15% / 16% | −6% / 6% |
+
+DPASS (Sigmund and Schinner's binary theory) and SRIM-96 (the published ZBL algorithm) come from the tables in
+ir2-lab/libdedx. MSTAR's H₂/He fit cannot be extrapolated beyond Ar (it gives factors of 50–700 too high). Only
+SRIM 2013, whose treatment of hydrogen targets is not published, matches the Kr data. Xe in H₂ has data only at
+25 MeV/u, where physim is already within the errors.
+
+The Kr and Xe failures in Mylar are not a hydrogen problem: replacing only physim's hydrogen term changes them by
+under 1%, while physim is low in carbon too (Xe in carbon: −20% at 0.1–1 MeV/u, −7% at 1–10 MeV/u, against 212
+measured points; DPASS +5% and 0%, SRIM-96 −9% and −2%).
+
 Validated 2026-10-04; SRIM comparison 2026-11-14; MSTAR 2026-11-15.
 
 ## Known limitations
