@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 
 from physim.nuclear import Experiment, data, export, validation
-from physim.nuclear import coulex, gamma, kinematics, rates, rutherford, stopping
+from physim.nuclear import coulex, evaporation, fusion, gamma, kinematics, neutrons, rates, residues, rutherford
+from physim.nuclear import stopping
 from physim.nuclear.detectors import Geometry
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,8 +22,13 @@ needs_reference = pytest.mark.skipif(not REFERENCE.is_dir(), reason="reference f
 #: Checks where physim disagrees with the reference beyond the stated tolerance. The tolerance stays; the register
 #: shows these as not passing and says why (docs/physics-register/stopping.md and rates-and-events.md):
 #: CD₂ and Mylar stopping for C–Ar and Xe vs SRIM; TRIM's energy spread for slow Xe, and α in Mylar; measured
-#: stopping of Kr in H₂/D₂ and of Kr, Xe in Mylar at 1–10 MeV/u.
-KNOWN_FAILURES = {"stopping_compounds_vs_srim", "spectra_vs_trim", "stopping_hydrogen_vs_data"}
+#: stopping of Kr in H₂/D₂ and of Kr, Xe in Mylar at 1–10 MeV/u. Fusion-evaporation against PACE4 4.36.0
+#: (docs/theory/fusion.md and evaporation.md): σ_fus off by up to 43% above 1.1 V_B (physim's capture stops at the
+#: Bass potential's critical ℓ, so σ falls far above the barrier while PACE4's rises; ⁴He 16% at 1.14 V_B); the three
+#: strongest residues not all the same or in order for any of the five systems (³²S, ⁴⁸Ca off by up to 10×); mean
+#: neutron energies 10–24% low.
+KNOWN_FAILURES = {"stopping_compounds_vs_srim", "spectra_vs_trim", "stopping_hydrogen_vs_data", "fusion_vs_pace4",
+                  "evaporation_channels_vs_pace4", "evaporation_spectra_vs_pace4"}
 
 
 def statuses(**kw):
@@ -35,8 +41,10 @@ def statuses(**kw):
 def test_every_capability_has_a_tool_and_a_literature_check():
     for cap in validation.CAPABILITIES:
         kinds = {c.kind for c in validation.CHECKS if c.capability == cap}
-        if cap in ("Coulomb trajectories", "Detector solid angles and response", "γ-ray Doppler shift and broadening"):
-            # Exact closed forms are a stronger test than any tool; no tool computes these for arbitrary setups.
+        if cap in ("Coulomb trajectories", "Detector solid angles and response", "γ-ray Doppler shift and broadening",
+                   "Fusion-evaporation residues from a channel table", "Neutron detectors and channel selection"):
+            # Exact closed forms are a stronger test than any tool; no tool computes these for arbitrary setups
+            # (for neutron detectors GEANT4 would be the tool, a program per geometry).
             assert "literature" in kinds, cap
         else:
             assert kinds == {"tool", "literature"}, cap
@@ -153,6 +161,41 @@ def _break_spectra(monkeypatch):
     rates._w_table.cache_clear()
 
 
+def _break_compound(monkeypatch):
+    orig = residues.compound
+    monkeypatch.setattr(residues, "compound", lambda *a, **k: dataclasses.replace(
+        orig(*a, **k), excitation=orig(*a, **k).excitation + 0.002))
+
+
+def _break_barrier(monkeypatch):
+    orig = fusion.Fusion.barrier
+    monkeypatch.setattr(fusion.Fusion, "barrier", lambda self, l=0: dataclasses.replace(
+        orig(self, l), height_mev=orig(self, l).height_mev + 0.05))
+
+
+def _break_boost(monkeypatch):
+    orig = evaporation._boost
+
+    def broken(p, frame):
+        out = orig(p, frame)
+        out[:, 0] *= 1 + 1e-6
+        return out
+
+    monkeypatch.setattr(evaporation, "_boost", broken)
+
+
+def _break_selection(monkeypatch):
+    orig = neutrons.selection_matrix
+
+    def broken(channels, detection):
+        m = orig(channels, detection)
+        m.matrix = m.matrix * 0.97
+        m.matrix[:, -1] += 0.03  # 3% of every channel lost to "unassigned"
+        return m
+
+    monkeypatch.setattr(neutrons, "selection_matrix", broken)
+
+
 BREAKS = {
     "masses": (_break_masses, ["masses_vs_lise", "q_values"]),
     "kinematics": (_break_kinematics, ["kinematics_vs_lise", "kinematics_classical_limit"]),
@@ -177,6 +220,16 @@ BREAKS = {
     "coulex": (lambda m: _scale_method(m, coulex.Coulex, "_p", 1.01), ["coulex_closed_form"]),
     "doppler": (lambda m: m.setattr(gamma, "doppler_energy", lambda e0, b, c: e0 * np.sqrt(1 - np.asarray(b) ** 2)
                                     / (1 - 0.999 * np.asarray(b) * np.asarray(c))), ["doppler_lorentz"]),
+    "compound nucleus": (_break_compound, ["compound_nucleus_hand_calculation"]),
+    "residue rates": (lambda m: m.setattr(residues.ResidueEvents, "rate", lambda self, channel=None, _o=residues
+                                          .ResidueEvents.rate: tuple(np.array(_o(self, channel)) * 1.05)),
+                      ["residue_counts_vs_luminosity"]),
+    "fusion barrier": (_break_barrier, ["fusion_barrier_dutt_puri"]),
+    "wong": (lambda m: _scale_method(m, fusion.Fusion, "wong_cm", 1.02), ["fusion_closed_forms"]),
+    "evaporation kinematics": (_break_boost, ["evaporation_conservation"]),
+    "neutron efficiency": (lambda m: _scale_method(m, neutrons.NeutronDetector, "intrinsic_efficiency", 1 + 1e-9),
+                           ["neutron_efficiency_knoll"]),
+    "channel selection": (_break_selection, ["channel_selection_binomial"]),
 }
 
 
@@ -185,14 +238,10 @@ def test_a_broken_formula_fails_its_check(monkeypatch, what):
     if not REFERENCE.is_dir():
         pytest.skip("tool checks need the reference files")
     breaker, expected = BREAKS[what]
-    before = {r.name: r.status for r in validation.run(reference=REFERENCE) if r.name in expected}
-    assert all(s == "pass" for s in before.values()), before
+    before = {r.name: r.status for r in validation.run(reference=REFERENCE, names=expected)}
+    assert before == {name: "pass" for name in expected}, before
     breaker(monkeypatch)
-    after = {}
-    for c in validation.CHECKS:
-        if c.name in expected:
-            r = validation.run(capability=c.capability, kind=c.kind, reference=REFERENCE)
-            after.update({x.name: x.status for x in r if x.name == c.name})
+    after = {r.name: r.status for r in validation.run(reference=REFERENCE, names=expected)}
     assert after == {name: "fail" for name in expected}, after
 
 

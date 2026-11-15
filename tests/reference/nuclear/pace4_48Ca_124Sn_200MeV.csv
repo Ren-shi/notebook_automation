@@ -1,0 +1,30 @@
+# tool: PACE4 4.36.0 in LISE++ (LISEcute), run in silent mode: PACE4.exe -s deck.pace
+# produced by: scripts/pace4_reference.py (Claude Code), 2026-11-15
+# system: 48Ca + 124Sn at 200 MeV (lab) -> compound nucleus Z = 70, A = 172
+# settings: PACE4 defaults as in its example deck; fusion cross section and partial waves from the Bass model
+#   with L-diffuseness 2; level-density parameter a = A/10; ground-state spins of beam and target 0; 20000 cascades
+# input deck (first three lines): 20000    1    1    0    0    1    0   10    0    0    0 | 20   48   50  124  0.0  0.0   0.00000 | 200.00000   0.00000    0    2    0    0 0 3.00
+# excitation_mev: 70.983
+# sigma_fus_mb: 812.242
+# sigma_j_mb: 0.13,0.39,0.66,0.92,1.2,1.4,1.7,2,2.2,2.5,2.8,3,3.3,3.6,3.8,4.1,4.3,4.6,4.9,5.1,5.4,5.7,5.9,6.2,6.4,6.7,7,7.2,7.5,7.8,8,8.3,8.6,8.8,9.1,9.3,9.6,9.9,10,10,11,11,11,11,12,12,12,13,13,13,13,14,14,14,14,15,15,15,15,16,16,16,16,17,17,17,17,18,18,18,18,18,18,18,17,16,15,13,10,7.8,5.7,3.9,2.6,1.6,1,0.65,0.4,0.25,0.15,0.095,0.058,0.036
+# mean_cm_energy_mev: n=3.07864,p=10.634,a=18.8353
+# multiplicity: n=5.43665,p=0.0347,a=0.051
+# cascades: 20000
+Z,A,events,sigma_mb
+70,166,9828,399
+70,167,8006,325
+68,164,660,26.8
+69,167,439,17.8
+68,163,281,11.4
+70,168,256,10.4
+69,166,223,9.06
+70,165,214,8.69
+68,165,51,2.07
+69,168,18,0.731
+68,162,6,0.244
+66,161,5,0.203
+67,164,4,0.162
+68,167,3,0.122
+67,163,3,0.122
+66,162,2,0.0812
+67,165,1,0.0406

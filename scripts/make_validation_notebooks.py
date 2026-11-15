@@ -39,6 +39,13 @@ PAGES = {
                          ["Count rates and beam time", "Monte Carlo spectra"],
                          "Rates against flux × target × cross section × solid angle, and simulated peaks against "
                          "the analytic expectation."),
+    "fusion-evaporation": ("Validation: fusion-evaporation",
+                           ["Fusion-evaporation residues from a channel table",
+                            "Fusion cross section (Bass barrier, Wong)", "Evaporation Monte Carlo (Hauser–Feshbach)",
+                            "Neutron detectors and channel selection"],
+                           "The compound nucleus against the hand calculation, fusion cross sections and evaporation "
+                           "against PACE4 4.36.0 and the model's exact results, and neutron detectors against closed "
+                           "forms and the binomial expectation."),
 }
 
 

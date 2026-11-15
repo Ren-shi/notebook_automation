@@ -7,9 +7,15 @@
 - Stage 3 misses its targets for heavy beams at high spin (³²S + ⁹²Mo, ⁴⁸Ca + ¹²⁴Sn are off by up to 10× against
   PACE4) and gives neutrons 10–25% softer than PACE4; the cause found so far is the spin removed along the chain
   (PACE4's statistical E2 γ rays).
-- Stage 2 is not yet compared with PACE4's or a measured excitation function.
+- Stage 2 against PACE4's excitation functions (five systems, 8–10 energies each, `fusion_vs_pace4`): within 15%
+  above 1.1 V_B only for ¹²C + ¹⁵⁰Nd; ⁴He + ¹⁶⁵Ho 16% high at 1.14 V_B, and the heavier beams up to 43% low at
+  2 V_B, where physim's capture stops at the Bass potential's critical ℓ and PACE4's keeps rising. Not yet compared
+  with a measured excitation function.
 - The neutron data file's carbon cross sections are to be checked against ENDF/B-VIII.0.
-- None of the checks is in `physim.nuclear.validation` yet, so the register's cells are 🟡.
+- In the validation suite since 2026-11-15: 11 checks over four register rows, PACE4 runs saved by
+  `scripts/pace4_reference.py`. The exact and internal checks pass (✅ in the register's literature column); the
+  three PACE4 comparisons fail their item-75 tolerances and are known failures: σ_fus (above), the three strongest
+  channels (no system passes; ⁴He and ¹²C fail on the third channel), ⟨ε_n⟩ (10–24% low; ⟨ε_p⟩ passes).
 - Channel selection sorts events into detected classes (0n, 1n, p2n, …) rather than requiring every particle;
   thresholds of the particle detectors and γ rays firing neutron cells are left out.
 

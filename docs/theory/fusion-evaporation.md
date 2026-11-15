@@ -150,8 +150,8 @@ corrected.
 - The particles are not followed into the particle detectors; those see the elastic scattering as for any setup.
 - The runs of the Run tab hold the particle detectors' events; the residues' γ rays are simulated by the planner,
   not stored with a run.
-- No PACE4 reader yet: the only PACE4 files on this machine are an input deck and a binary event file whose format
-  is not documented.
+- No PACE4 reader in the planner: a channel table from PACE4 is typed in. `scripts/pace4_reference.py` runs PACE4
+  in silent mode and reads its HTML output, but only to write the validation suite's reference files.
 
 ## Checks
 
@@ -166,4 +166,7 @@ corrected.
 | Cascade yields | Feeding and branching, 1/(1 + α) | 1e-9 (analytic), 4σ (Monte Carlo) | `test_cascade_yields_and_feeding` |
 | Alignment | B₂ < 0; a₂ = B₂ A₂ the same down a stretched E2 cascade | 1e-9 | `test_alignment_perpendicular_to_the_beam` |
 | Seeded runs | The same seed twice | bit-identical | `test_seeded_runs_are_bit_identical` |
-| Against PACE4 | Channel cross sections and particle spectra (Stage 3) | — | pending |
+| Against PACE4 | Channel cross sections and particle spectra (Stage 3), five systems | three strongest in order and within 30%; ⟨ε_n⟩, ⟨ε_p⟩ 10% | `evaporation_channels_vs_pace4`, `evaporation_spectra_vs_pace4` (known failures, see {doc}`evaporation`) |
+
+The first and third rows are also checks of the validation suite (`compound_nucleus_hand_calculation`,
+`residue_counts_vs_luminosity` in `physim.nuclear.validation`), which the physics register reads.

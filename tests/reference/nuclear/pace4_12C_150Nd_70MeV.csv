@@ -1,25 +1,26 @@
-# tool: PACE4 4.36.0 in LISE++ (LISEcute), run in silent mode: PACE4.exe -s c12nd150_70.pace
-# produced by: the fe-evaporation session (Claude Code), 2026-11-14
-# system: 12C + 150Nd at 70 MeV (lab) -> 162Dy compound nucleus
-# settings: PACE4 defaults; fusion cross section and partial waves from the Bass model with L-diffuseness 2;
-#   level-density parameter a = A/10; 20000 cascades
-# input deck (first three lines): 20000    1    1    0    0    1    0   10    0    0    0 |     6   12   60  150  0.0  0.0   0.00000 |   70.00000   0.00000    0    2    0    0 0 3.00
+# tool: PACE4 4.36.0 in LISE++ (LISEcute), run in silent mode: PACE4.exe -s deck.pace
+# produced by: scripts/pace4_reference.py (Claude Code), 2026-11-15
+# system: 12C + 150Nd at 70 MeV (lab) -> compound nucleus Z = 66, A = 162
+# settings: PACE4 defaults as in its example deck; fusion cross section and partial waves from the Bass model
+#   with L-diffuseness 2; level-density parameter a = A/10; ground-state spins of beam and target 0; 20000 cascades
+# input deck (first three lines): 20000    1    1    0    0    1    0   10    0    0    0 | 6   12   60  150  0.0  0.0   0.00000 | 70.00000   0.00000    0    2    0    0 0 3.00
 # excitation_mev: 59.317
 # sigma_fus_mb: 1022.87
 # sigma_j_mb: 0.91,2.7,4.6,6.4,8.2,10,12,14,15,17,19,21,23,25,26,28,30,32,34,36,37,39,41,43,44,46,47,48,48,47,45,41,35,29,22,16,11,7.4,4.8,3.1,2,1.2,0.77,0.48,0.3,0.19,0.12
-# mean_cm_energy_mev: n=2.80285,p=9.76873,a=17.6828
-# multiplicity: n=4.84625,p=0.01935,a=0.02215
+# mean_cm_energy_mev: n=2.79971,p=10.1675,a=17.6308
+# multiplicity: n=4.84305,p=0.01955,a=0.02255
+# cascades: 20000
 Z,A,events,sigma_mb
-66,157,15180,776.0
-66,158,2904,149.0
-66,156,1082,55.3
-64,155,233,11.9
-65,157,209,10.7
-64,154,208,10.6
-65,158,168,8.59
+66,157,15166,776
+66,158,2937,150
+66,156,1053,53.8
+64,155,225,11.5
+65,157,222,11.4
+64,154,217,11.1
+65,158,164,8.39
 66,159,7,0.358
-65,159,3,0.153
-64,158,2,0.102
-65,156,2,0.102
-64,156,1,0.0511
-63,154,1,0.0511
+63,155,3,0.153
+64,156,2,0.102
+62,152,2,0.102
+65,159,1,0.0511
+65,156,1,0.0511

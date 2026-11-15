@@ -58,15 +58,16 @@ Second slice: Coulomb excitation (backlog item 43).
 | γ-ray Doppler shift and broadening | ✅ | ✅ | — exact formula instead | ✅ Lorentz boost (1e-12) | [Theory](../theory/coulex.md) | 43 |
 | Coulomb-excitation rates and spectra | ✅ | ✅ | — | ✅ Monte Carlo against analytic rates per channel within 4σ (`coulex_ni58`) | [Theory](../theory/coulex.md) | 43 |
 
-Third slice: fusion-evaporation (backlog item 75). Its checks are tests in `tests/python/`, not yet comparisons
-in `physim.nuclear.validation`, so none of its validation cells is ✅ yet.
+Third slice: fusion-evaporation (backlog item 75). The checks are in `physim.nuclear.validation`, with the PACE4
+runs saved in `tests/reference/nuclear/pace4_*.csv` by `scripts/pace4_reference.py`. The three PACE4 comparisons
+fail their tolerances and are listed as known failures in `test_nuclear_validation.py`.
 
 | Capability | Engine | App | vs tools | vs literature | Page | Backlog |
 |---|---|---|---|---|---|---|
-| Fusion-evaporation residues from a channel table | ✅ | ✅ | — | 🟡 E* and β vs hand calculation (1 keV, 1e-6 c), residues per channel vs σ × luminosity within statistics, Doppler-corrected width vs geometry (`test_nuclear_fusion_evaporation.py`) | [Theory](../theory/fusion-evaporation.md) | 75 |
-| Fusion cross section (Bass barrier, Wong) | ✅ | ✅ | 🟡 PACE4/LISE++ fusion cross sections not compared yet | 🟡 Bass barriers vs Dutt and Puri 2010, Wong's closed form vs the partial-wave sum, classical limit (`test_nuclear_fusion.py`); a measured excitation function requested | [Theory](../theory/fusion.md) | 75 |
-| Evaporation Monte Carlo (Hauser–Feshbach) | ✅ | ✅ | 🟡 PACE4 4.36.0, 5 systems: ⁴He and ¹²C beams within 15% for the two strongest channels; neutrons 10–25% softer; ³²S and ⁴⁸Ca beams off by up to 10× (`docs/theory/evaporation.md`, one case in `test_nuclear_evaporation.py`) | 🟡 Weisskopf's neutron spectrum, conservation per event; measured residue cross sections requested | [Theory](../theory/evaporation.md) | 75 |
-| Neutron detectors and channel selection | ✅ | ✅ | — | 🟡 efficiency closed form, Monte Carlo vs binomial selection (`test_nuclear_neutrons.py`); carbon cross sections to check against ENDF/B-VIII.0 | [Theory](../theory/neutrons.md) | 75 |
+| Fusion-evaporation residues from a channel table | ✅ | ✅ | — exact kinematics instead | ✅ E* and β vs the hand calculation from AME2020 masses (1 keV, 1e-6 c; exact), residues per channel vs σ × luminosity (4 standard errors; worst 0.8); Doppler-corrected width vs geometry in `test_nuclear_fusion_evaporation.py` | [Theory](../theory/fusion-evaporation.md) | 75 |
+| Fusion cross section (Bass barrier, Wong) | ✅ | ✅ | 🟡 PACE4 4.36.0 excitation functions, 5 systems × 8–10 energies, 15% above 1.1 V_B: ¹²C + ¹⁵⁰Nd passes (7%); ⁴He + ¹⁶⁵Ho 16% at 1.14 V_B; ¹⁶O, ³²S, ⁴⁸Ca beams 24%, 42%, 43% low at 1.75–2 V_B (physim's capture stops at the Bass potential's critical ℓ) | ✅ Bass barriers vs Dutt and Puri 2010 (0.03 MeV, 0.03 fm), Wong's closed form vs the partial-wave sum (1%), classical limit (1e-6), thick-target average vs the integral (1%); 🟡 a measured excitation function requested | [Theory](../theory/fusion.md) | 75 |
+| Evaporation Monte Carlo (Hauser–Feshbach) | ✅ | ✅ | 🟡 PACE4 4.36.0, 5 systems, physim from PACE4's E* and σ_J: the strongest three residues in order and within 30% for none (⁴He, ¹²C: the two strongest within 20%, the third is 5n or 6n instead; ³²S off by up to 40×, ⁴⁸Ca by 2×); ⟨ε_p⟩ within 10% for all five (worst −9%), ⟨ε_n⟩ 10–24% low | ✅ Weisskopf's neutron spectrum (χ²/dof 1.1 < 2), energy and momentum conserved in every event; 🟡 measured residue cross sections requested | [Theory](../theory/evaporation.md) | 75 |
+| Neutron detectors and channel selection | ✅ | ✅ | — closed forms instead (GEANT4 would be the tool) | ✅ efficiency vs Knoll's closed form (1e-12), Monte Carlo selection matrix vs the binomial expectation (4.5 standard errors; worst 1.9); 🟡 carbon cross sections to check against ENDF/B-VIII.0 | [Theory](../theory/neutrons.md) | 75 |
 
 Next slices: inelastic scattering through the nuclear interaction, then transfer reactions.
 

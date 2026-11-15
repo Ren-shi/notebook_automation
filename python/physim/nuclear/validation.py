@@ -43,6 +43,10 @@ CAPABILITIES = (
     "Monte Carlo spectra",
     "Coulomb excitation, first-order semiclassical",
     "γ-ray Doppler shift and broadening",
+    "Fusion-evaporation residues from a channel table",
+    "Fusion cross section (Bass barrier, Wong)",
+    "Evaporation Monte Carlo (Hauser–Feshbach)",
+    "Neutron detectors and channel selection",
 )
 
 
@@ -834,15 +838,390 @@ def doppler_lorentz(ref):
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# Fusion-evaporation: the compound nucleus, fusion, evaporation, neutron detectors
+
+#: Bass 1980 barrier heights V_B (MeV, CM) and positions R_B (fm): I. Dutt and R. K. Puri, Phys. Rev. C 81, 064609
+#: (2010), Table II, column "Bass 80" (arXiv:1005.5213).
+BASS80_DUTT_PURI = [
+    ("12C", "17O", 7.79, 8.13), ("4He", "209Bi", 20.30, 11.00), ("48Ca", "48Ca", 51.39, 10.40),
+    ("16O", "144Sm", 61.34, 10.82), ("28Si", "92Zr", 71.21, 10.51), ("16O", "208Pb", 75.92, 11.60),
+    ("40Ca", "90Zr", 99.28, 10.71), ("86Kr", "208Pb", 298.65, 13.15),
+]
+
+#: σ_fus is compared with PACE4 where physim's CM energy is at least this many times physim's Bass barrier. Nearer
+#: the barrier the two transmissions differ by construction (PACE4's sharp cut-off against physim's parabolic
+#: tunnelling), and those points are reported, not judged.
+FUSION_ABOVE_BARRIER = 1.1
+#: Events per system in the evaporation comparisons with PACE4 (PACE4 itself ran 20 000 cascades).
+EVAPORATION_EVENTS = 20000
+
+
+def _pace4_files(ref, kind: str) -> list:
+    """PACE4 reference files: "evaporation" (``pace4_<beam>_<target>_<E>MeV.csv``) or "fusion"
+    (``pace4_fusion_<beam>_<target>.csv``), with (beam, target) from the name."""
+    if ref is None:
+        return []
+    out = []
+    for path in sorted(Path(ref).glob("pace4_*.csv")):
+        parts = path.stem.split("_")
+        if kind == "fusion" and parts[1] == "fusion":
+            out.append((path, parts[2], parts[3]))
+        elif kind == "evaporation" and parts[1] != "fusion" and parts[-1].endswith("MeV"):
+            out.append((path, parts[1], parts[2]))
+    order = {b: i for i, b in enumerate(("4He", "12C", "16O", "32S", "48Ca"))}
+    return sorted(out, key=lambda t: (order.get(t[1], 99), t[1]))
+
+
+_EVAPORATION_CACHE: dict = {}
+
+
+def physim_evaporation(beam: str, target: str, excitation_mev: float, sigma_j_mb: tuple,
+                       events: int = EVAPORATION_EVENTS, seed: int = 1):
+    """physim's evaporation of the compound nucleus of ``beam`` + ``target`` at PACE4's E* and σ_J (cached: the
+    suite runs these comparisons many times)."""
+    from . import evaporation
+
+    key = (beam, target, float(excitation_mev), tuple(sigma_j_mb), int(events), seed)
+    if key not in _EVAPORATION_CACHE:
+        b, t = data.nuclide(beam), data.nuclide(target)
+        _EVAPORATION_CACHE[key] = evaporation.evaporate((b.Z + t.Z, b.A + t.A), float(excitation_mev),
+                                                        sigma_l_mb=list(sigma_j_mb), events=events, seed=seed)
+    return _EVAPORATION_CACHE[key]
+
+
+def _pace4_evaporation(path) -> tuple:
+    """(header numbers, PACE4 shares by (Z, A)) of one evaporation reference file."""
+    header, rows = read_reference(path)
+    total = sum(int(r["events"]) for r in rows)
+    shares = {(int(r["Z"]), int(r["A"])): int(r["events"]) / total for r in rows}
+    info = {"excitation_mev": float(header["excitation_mev"]),
+            "sigma_j_mb": tuple(float(x) for x in header["sigma_j_mb"].split(",")),
+            "mean": {k: float(v) for k, v in (kv.split("=") for kv in header["mean_cm_energy_mev"].split(","))},
+            "multiplicity": {k: float(v) for k, v in (kv.split("=") for kv in header["multiplicity"].split(","))},
+            "events": total}
+    return info, shares
+
+
+def _nuclide_label(za) -> str:
+    return data.nuclide(za).name
+
+
+@check("Fusion-evaporation residues from a channel table", "literature", "Hand calculation from AME2020 nuclear "
+       "masses: E* = √s − M_CN and β = p_b / (E_b + m_t), ¹²C + ¹⁵⁰Nd at 60 MeV, ¹⁶O + ¹⁴⁸Nd at 85 MeV, "
+       "⁴⁸Ca + ¹²⁴Sn at 200 MeV", "1 keV in E*, 1e-6 in β")
+def compound_nucleus_hand_calculation(ref):
+    from . import residues
+
+    worst, names, ours, theirs = 0.0, [], [], []
+    ok = True
+    for beam, target, e in (("12C", "150Nd", 60.0), ("16O", "148Nd", 85.0), ("48Ca", "124Sn", 200.0)):
+        b, t = data.nuclide(beam), data.nuclide(target)
+        mb, mt = b.nuclear_mass_mev, t.nuclear_mass_mev
+        mc = data.nuclide((b.Z + t.Z, b.A + t.A)).nuclear_mass_mev
+        p = math.sqrt(e**2 + 2 * e * mb)
+        total = e + mb + mt
+        e_star = math.sqrt(total**2 - p**2) - mc
+        beta = p / total
+        cn = residues.compound(beam, target, e)
+        d_e, d_b = abs(cn.excitation - e_star), abs(cn.beta - beta)
+        ok &= d_e <= 1e-3 and d_b <= 1e-6
+        worst = max(worst, d_e / 1e-3, d_b / 1e-6)
+        names += [f"E* {beam}", f"β {beam}"]
+        ours += [cn.excitation, cn.beta]
+        theirs += [e_star, beta]
+    plot = {"x": names, "physim": ours, "reference": theirs, "categorical": True}
+    return bool(ok), worst, 6, f"worst {worst:.1e} of the tolerance", plot
+
+
+@check("Fusion-evaporation residues from a channel table", "literature", "Residues per channel against the channel "
+       "table × luminosity, the fusion_dy158 example (2 × 10⁵ events)", "every channel within 4 standard errors; "
+       "the total within 1e-9")
+def residue_counts_vs_luminosity(ref):
+    from . import residues
+    from .experiment import Experiment
+
+    ev = residues.simulate_residues(Experiment.example("fusion_dy158"), events=200_000, seed=11)
+    total_dev = abs(ev.rate()[0] / ev.expected() - 1)
+    worst, xs, ours, theirs = 0.0, [], [], []
+    for label in ev.channels:
+        r, err = ev.rate(label)
+        worst = max(worst, abs(r - ev.expected(label)) / (4 * err))
+        xs.append(label)
+        ours.append(r)
+        theirs.append(ev.expected(label))
+    ok = worst <= 1.0 and total_dev <= 1e-9
+    plot = {"x": xs, "physim": ours, "reference": theirs, "categorical": True}
+    return bool(ok), worst, len(xs), (f"worst channel {worst * 4:.1f} standard errors; total off by "
+                                      f"{total_dev:.1e}"), plot
+
+
+@check("Fusion cross section (Bass barrier, Wong)", "tool", "PACE4 4.36.0 (Bass model, L-diffuseness 2): excitation "
+       "functions of the five systems of theory/evaporation, 8–10 energies each from the barrier to 2 V_B "
+       "(pace4_fusion_*.csv)", f"15% where E_cm ≥ {FUSION_ABOVE_BARRIER} V_B (physim's Bass barrier); nearer the "
+       "barrier reported, not judged")
+def fusion_vs_pace4(ref):
+    from .fusion import Fusion
+
+    files = _pace4_files(ref, "fusion")
+    if not files:
+        return None, math.nan, 0, "pace4_fusion_*.csv not found", {}
+    worst, n, notes, near = 0.0, 0, [], []
+    xs, ratio, l_notes = [], [], []
+    for path, beam, target in files:
+        f = Fusion(beam, target)
+        vb = f.barrier().height_mev
+        sys_worst, sys_l = 0.0, 0.0
+        for r in read_reference(path)[1]:
+            e = float(r["beam_energy_mev"])
+            x = float(f.e_cm(e)) / vb
+            theirs = float(r["sigma_fus_mb"])
+            ours = float(f.cross_section(e))
+            if x < FUSION_ABOVE_BARRIER:
+                near.append(f"{beam} {e:g} MeV ({x:.2f} V_B): {ours:.0f} vs {theirs:.0f} mb")
+                continue
+            d = ours / theirs - 1
+            sys_worst = max(sys_worst, abs(d))
+            n += 1
+            xs.append(x)
+            ratio.append(1 + d)
+            sj = np.array([float(s) for s in r["sigma_j_mb"].split(";")])
+            l_pace = float((np.arange(sj.size) * sj).sum() / sj.sum())
+            l_ours = f.compound(e).mean_l
+            sys_l = max(sys_l, abs(l_ours / l_pace - 1))
+        worst = max(worst, sys_worst)
+        notes.append(f"{beam} + {target} {sys_worst:.1%}")
+        l_notes.append(f"{beam} {sys_l:.0%}")
+    detail = (f"worst above {FUSION_ABOVE_BARRIER} V_B per system: " + ", ".join(notes)
+              + "; near the barrier (not judged): " + "; ".join(near)
+              + "; mean ℓ, worst per system (not judged): " + ", ".join(l_notes))
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(xs)), "xlabel": "E_cm / V_B (physim's Bass barrier)",
+            "ylabel": "σ_fus, physim / PACE4"}
+    return worst <= 0.15, worst, n, detail, plot
+
+
+@check("Fusion cross section (Bass barrier, Wong)", "literature", "Bass 1980 barriers V_B and R_B for 8 systems, "
+       "Dutt and Puri, Phys. Rev. C 81, 064609 (2010), Table II", "0.03 MeV and 0.03 fm (the table's precision)")
+def fusion_barrier_dutt_puri(ref):
+    from .fusion import Fusion
+
+    worst, names, ours, theirs = 0.0, [], [], []
+    for beam, target, vb, rb in BASS80_DUTT_PURI:
+        b = Fusion(beam, target).barrier()
+        worst = max(worst, abs(b.height_mev - vb) / 0.03, abs(b.radius_fm - rb) / 0.03)
+        names.append(f"{beam}+{target}")
+        ours.append(b.height_mev)
+        theirs.append(vb)
+    plot = {"x": theirs, "physim": ours, "reference": theirs, "xlabel": "V_B, Dutt and Puri (MeV)",
+            "ylabel": "V_B (MeV)"}
+    return worst <= 1.0, worst, 2 * len(names), f"worst {worst:.0%} of the tolerance", plot
+
+
+@check("Fusion cross section (Bass barrier, Wong)", "literature", "Exact results of the model: Wong's closed form "
+       "against the fixed-barrier partial-wave sum (3 systems, V_B − 6 to V_B + 40 MeV); the sharp cut-off limit "
+       "πR_B²(1 − V_B/E) at 1.5–3 V_B; the thick-target average against the integral over the energy loss "
+       "(¹⁶O + ²⁰⁸Pb, 90 MeV, 2 mg/cm²)", "1%, 1e-6 and 1%")
+def fusion_closed_forms(ref):
+    from .fusion import Fusion
+    from .stopping import Stopping
+
+    worst = 0.0
+    xs, ours, theirs = [], [], []
+    for system in (("16O", "208Pb"), ("48Ca", "48Ca"), ("28Si", "92Zr")):
+        f = Fusion(*system)
+        b = f.barrier()
+        for de in (-6.0, -3.0, 0.0, 2.0, 5.0, 15.0, 40.0):
+            e = b.height_mev + de
+            total, wong = f.partial_waves_cm(e, l_dependent=False).sum(), float(f.wong_cm(e))
+            worst = max(worst, abs(total / wong - 1) / 0.01)
+            if system == ("16O", "208Pb"):
+                xs.append(de)
+                ours.append(total)
+                theirs.append(wong)
+    f = Fusion("16O", "208Pb")
+    b = f.barrier()
+    for factor in (1.5, 2.0, 3.0):
+        e = factor * b.height_mev
+        geometric = math.pi * b.radius_fm**2 * (1 - b.height_mev / e) * 10.0
+        worst = max(worst, abs(float(f.wong_cm(e)) / geometric - 1) / 1e-6)
+    e_in, t = 90.0, 2.0
+    tt = f.thick_target(e_in, t)
+    stop = Stopping("16O", "208Pb")
+    e = np.linspace(tt.e_out_mev, e_in, 2001)
+    integrand = f.cross_section(e) / stop.stopping_power(e)
+    expected = np.sum(0.5 * (integrand[1:] + integrand[:-1]) * np.diff(e)) / t
+    worst = max(worst, abs(tt.sigma_mb / expected - 1) / 0.01)
+    plot = {"x": xs, "physim": ours, "reference": theirs, "xlabel": "E_cm − V_B (MeV), ¹⁶O + ²⁰⁸Pb",
+            "ylabel": "σ_fus (mb): partial-wave sum against Wong", "logy": True}
+    return worst <= 1.0, worst, 25, f"worst {worst:.0%} of its tolerance", plot
+
+
+@check("Evaporation Monte Carlo (Hauser–Feshbach)", "tool", "PACE4 4.36.0, 20 000 cascades, five systems from ⁴He + "
+       "¹⁶⁵Ho to ⁴⁸Ca + ¹²⁴Sn (pace4_*MeV.csv); physim runs 20 000 events from PACE4's E* and σ_J",
+       "the strongest three residues the same as PACE4's, in the same order, each share within 30%")
+def evaporation_channels_vs_pace4(ref):
+    files = _pace4_files(ref, "evaporation")
+    if not files:
+        return None, math.nan, 0, "pace4_*MeV.csv not found", {}
+    ok, worst, notes = True, 0.0, []
+    xs, ratio = [], []
+    for path, beam, target in files:
+        info, pace = _pace4_evaporation(path)
+        r = physim_evaporation(beam, target, info["excitation_mev"], info["sigma_j_mb"])
+        mine: dict = {}
+        for row in r.channel_table():
+            if row["Z"] is not None:
+                mine[(row["Z"], row["A"])] = mine.get((row["Z"], row["A"]), 0.0) + row["share"]
+        top_p = sorted(pace, key=lambda k: -pace[k])[:3]
+        top_m = sorted(mine, key=lambda k: -mine[k])[:3]
+        devs = [mine.get(k, 0.0) / pace[k] - 1 for k in top_p]
+        same = top_m == top_p
+        sys_ok = same and all(abs(d) <= 0.30 for d in devs)
+        ok &= sys_ok
+        worst = max(worst, *(abs(d) for d in devs))
+        xs += [f"{_nuclide_label(k)} ({beam})" for k in top_p]
+        ratio += [1 + d for d in devs]
+        notes.append(f"{beam} + {target}: " + ", ".join(
+            f"{_nuclide_label(k)} {pace[k]:.3f}/{mine.get(k, 0.0):.3f}" for k in top_p)
+            + ("" if same else " (physim's order: " + ", ".join(_nuclide_label(k) for k in top_m) + ")")
+            + (" ✓" if sys_ok else " ✗"))
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(xs)), "categorical": True}
+    return bool(ok), worst, 3 * len(files), "shares PACE4/physim: " + "; ".join(notes), plot
+
+
+@check("Evaporation Monte Carlo (Hauser–Feshbach)", "tool", "PACE4 4.36.0, mean CM energies of the emitted neutrons "
+       "and protons, the same five systems and runs (pace4_*MeV.csv)", "⟨ε_n⟩ and ⟨ε_p⟩ within 10%; α reported, "
+       "not judged")
+def evaporation_spectra_vs_pace4(ref):
+    files = _pace4_files(ref, "evaporation")
+    if not files:
+        return None, math.nan, 0, "pace4_*MeV.csv not found", {}
+    worst, notes, xs, ratio = 0.0, [], [], []
+    for path, beam, target in files:
+        info, _ = _pace4_evaporation(path)
+        r = physim_evaporation(beam, target, info["excitation_mev"], info["sigma_j_mb"])
+        d = {k: r.mean_energy_mev(k) / info["mean"][k] - 1 for k in ("n", "p", "a")}
+        worst = max(worst, abs(d["n"]), abs(d["p"]))
+        xs += [f"n ({beam})", f"p ({beam})"]
+        ratio += [1 + d["n"], 1 + d["p"]]
+        notes.append(f"{beam}: n {info['mean']['n']:.2f}/{r.mean_energy_mev('n'):.2f} ({d['n']:+.0%}), "
+                     f"p {info['mean']['p']:.2f}/{r.mean_energy_mev('p'):.2f} ({d['p']:+.0%}), "
+                     f"α {d['a']:+.0%}")
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(xs)), "categorical": True}
+    return worst <= 0.10, worst, 2 * len(files), "mean CM energy PACE4/physim (MeV): " + "; ".join(notes), plot
+
+
+@check("Evaporation Monte Carlo (Hauser–Feshbach)", "literature", "Weisskopf's evaporation spectrum: with only "
+       "neutrons, the first neutron from ¹⁶⁸Yb at 30 MeV and spin 0 follows ε σ_inv(ε) ρ(U − ε), 0.5–8 MeV "
+       "(4 × 10⁴ events)", "χ²/dof < 2")
+def evaporation_weisskopf(ref):
+    from . import evaporation as ev
+
+    z, a, e = 70, 168, 30.0
+    sep = (data.nuclide((z, a - 1)).nuclear_mass_mev + data.nuclide((0, 1)).nuclear_mass_mev
+           - data.nuclide((z, a)).nuclear_mass_mev)
+    r = ev.evaporate((z, a), e, spin=0, events=40000, seed=3, decays=("n",))
+    first = r.energy_mev[r.offsets[:-1]]
+    edges = np.arange(0.5, 8.0 + 1e-9, 0.25)
+    counts, _ = np.histogram(first, edges)
+    mid = 0.5 * (edges[1:] + edges[:-1])
+    t = ev.neutron_transmission(mid, a - 1, 20)
+    g = ((2 * np.arange(21) + 1)[:, None] * t).sum(axis=0)  # ε σ_inv(ε) up to a constant
+    rho = ev.level_density(z, a - 1, e - sep - mid, 0)
+    shape = g * rho
+    expected = shape / shape.sum() * counts.sum()
+    chi2 = float(((counts - expected) ** 2 / expected).sum() / (mid.size - 1))
+    plot = {"x": mid, "physim": counts, "reference": expected, "xlabel": "first neutron's energy (MeV)",
+            "ylabel": "events per 0.25 MeV", "logy": True}
+    return chi2 < 2.0, chi2 / 2.0, mid.size, f"χ²/dof = {chi2:.2f}", plot
+
+
+@check("Evaporation Monte Carlo (Hauser–Feshbach)", "literature", "Energy and momentum conservation in every event: "
+       "¹⁶²Dy at 59.3 MeV with a fusion-like spin distribution, 4000 events", "1e-4 MeV of 1.5 × 10⁵ MeV; 1e-6 MeV/c")
+def evaporation_conservation(ref):
+    from . import evaporation as ev
+
+    sigma_l = np.array([(2 * l + 1) / (1 + math.exp((l - 30) / 2.0)) for l in range(50)])
+    run_ = ev.evaporate("162Dy", 59.3, sigma_l_mb=sigma_l, events=4000, seed=7)
+    z, a = run_.compound
+    total = data.nuclide((z, a)).nuclear_mass_mev + run_.excitation_mev
+    m_res = np.array([data.nuclide((int(zz), int(aa))).nuclear_mass_mev
+                      for zz, aa in zip(run_.residue_z, run_.residue_a)])
+    e_res = np.sqrt((run_.recoil_momentum_mev_c**2).sum(axis=1) + (m_res + run_.entry_energy_mev) ** 2)
+    e_emit = np.bincount(run_.event, weights=run_.energy_mev + run_.mass_mev, minlength=run_.events)
+    d_e = float(np.abs(e_emit + e_res - total).max())
+    p_sum = np.stack([np.bincount(run_.event, weights=run_.momentum_mev_c[:, i], minlength=run_.events)
+                      for i in range(3)], axis=1)
+    d_p = float(np.abs(p_sum + run_.recoil_momentum_mev_c).max())
+    worst = max(d_e / 1e-4, d_p / 1e-6)
+    return worst <= 1.0, worst, run_.events, f"worst ΔE {d_e:.1e} MeV, Δp {d_p:.1e} MeV/c", {}
+
+
+@check("Neutron detectors and channel selection", "literature", "Knoll, Radiation Detection and Measurement (4th ed., "
+       "ch. 15), recoil-proton scintillator: ε = n_Hσ_H/Σ · (1 − e^(−ΣD)) · (1 − E_B/E_n), EJ-301 cell, 1–8 MeV",
+       "1e-12")
+def neutron_efficiency_knoll(ref):
+    from . import neutrons as N
+
+    cell = N.NeutronDetector()
+    s = N.material(cell.material)
+    d_cm = cell.depth_mm / 10
+    e_b = cell.proton_threshold()
+    xs, ours, theirs = [], [], []
+    for energy in (1.0, 1.5, 2.5, 4.0, 8.0):
+        sh = s["hydrogen"] * float(N.hydrogen_cross_section(energy)) * 1e-24
+        sc = s["carbon"] * float(N.carbon_cross_section(energy)) * 1e-24
+        xs.append(energy)
+        theirs.append(sh / (sh + sc) * (1 - math.exp(-(sh + sc) * d_cm)) * (1 - e_b / energy))
+        ours.append(float(cell.intrinsic_efficiency(energy)))
+    worst = float(np.max(_rel(ours, theirs)))
+    plot = {"x": xs, "physim": ours, "reference": theirs, "xlabel": "neutron energy (MeV)",
+            "ylabel": "intrinsic efficiency"}
+    return worst <= 1e-12, worst, len(xs), f"worst {worst:.1e}", plot
+
+
+@check("Neutron detectors and channel selection", "literature", "The binomial expectation: closed forms for 3n at "
+       "ε = 0.3, and the event generator's selection matrix (7 channels, cross-talk, γ rays, particle "
+       "misidentification; 6 × 10⁴ events) against the analytic one", "closed forms 1e-12; every Monte Carlo cell "
+       "within 4.5 binomial standard errors")
+def channel_selection_binomial(ref):
+    from . import neutrons as N
+
+    eps = 0.3
+    m3 = N.selection_matrix(N.channels_from(["n", "2n", "3n"]), N.Detection(neutron_efficiency=eps))
+    closed = [(m3.share("3n", "3n"), eps**3), (m3.share("3n", "2n"), 3 * eps**2 * (1 - eps)),
+              (m3.share("3n", "n"), 3 * eps * (1 - eps) ** 2), (m3.share("3n", N.UNASSIGNED), (1 - eps) ** 3)]
+    d_closed = max(abs(a / b - 1) for a, b in closed)
+    channels = N.channels_from(["n", "2n", "3n", "pn", "p2n", "2pn", "αn"], gammas=8)
+    full = N.Detection(neutron_efficiency=0.25, proton_efficiency=0.6, alpha_efficiency=0.4, crosstalk=0.06,
+                       gamma_efficiency=0.1, gamma_as_neutron=0.02, neutron_as_gamma=0.03, proton_as_alpha=0.02,
+                       alpha_as_proton=0.05)
+    events = N.isotropic_events(channels, events=60_000, seed=21)
+    mc = N.simulate_selection(events, channels, full, seed=22)
+    m = N.selection_matrix(channels, full)
+    n = mc.events[:, None]
+    err = np.sqrt(m.matrix * (1 - m.matrix) / n) + 1.0 / n
+    z = float((np.abs(mc.matrix - m.matrix) / err).max())
+    worst = max(z / 4.5, d_closed / 1e-12)
+    plot = {"x": m.matrix.ravel(), "physim": mc.matrix.ravel(), "reference": m.matrix.ravel(),
+            "xlabel": "share, binomial expectation", "ylabel": "share, Monte Carlo"}
+    return worst <= 1.0, worst, int(m.matrix.size) + 4, (f"worst Monte Carlo cell {z:.1f} standard errors; closed "
+                                                         f"forms {d_closed:.1e}"), plot
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # Running and reporting
 
 
-def run(capability: Optional[str] = None, kind: Optional[str] = None, reference: Optional[Path] = None) -> list:
-    """Run the checks (all, or those of one capability and/or kind) and return their :class:`Result`."""
+def run(capability: Optional[str] = None, kind: Optional[str] = None, reference: Optional[Path] = None,
+        names=None) -> list:
+    """Run the checks (all, or those of one capability and/or kind, or the checks named in ``names``) and return
+    their :class:`Result`."""
     ref = reference_dir() if reference is None else Path(reference)
     out = []
     for c in CHECKS:
         if (capability is not None and c.capability != capability) or (kind is not None and c.kind != kind):
+            continue
+        if names is not None and c.name not in names:
             continue
         passed, worst, points, detail, plot = c.run(ref)
         status = "pending" if passed is None else ("pass" if passed else "fail")
