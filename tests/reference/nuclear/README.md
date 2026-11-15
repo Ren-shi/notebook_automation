@@ -18,6 +18,9 @@ and run by hand, so each file records exactly how it was produced, so that anyon
   `pace4_fusion_<beam>_<target>.csv` the excitation function (σ_fus, ℓ_grazing and σ_J at 8–10 beam energies from
   the barrier to about 2 V_B, σ_J semicolon-separated in one column). PACE4 is a Monte Carlo code: a rerun changes
   the residue counts within statistics, not σ_fus or σ_J.
+- `fusion_*_literature.csv` and `evaporation_*_literature.csv` are measured fusion and residue cross sections
+  transcribed from the IAEA EXFOR database (tabulated values only, never digitized plots). Their `tool:` line names
+  the database version and entries, `reference:` the papers and tables, and each row its EXFOR subentry.
 - Files here are read by the checks in `physim.nuclear.validation` and the tests (`tests/python/test_nuclear_*.py`), which assert the tolerances stated in the
   physics register. Until a file exists, the matching test is skipped and the register shows 🟡.
 
