@@ -11,6 +11,7 @@ and run by hand, so each file records exactly how it was produced, so that anyon
 - `stopping_measured_hydrogen.csv` is measured data, not a code's output: heavy-ion stopping in hydrogen-rich
   targets from the IAEA Stopping Power Database (`scripts/iaea_stopping_reference.py`), with SRIM's value per point
   for context. Its `tool:` line names the database and version; cite the original papers by `ref_id` and `doi`.
+- `neutron_carbon_endf.csv` is an evaluated library, not a code run: neutron cross sections of natural carbon (total, elastic, non-elastic), ¹²C(n,α) and H-1 from ENDF/B-VIII.0 at 0.5–20 MeV, pointwise and averaged over ±2.5 % and ±10 % of the energy, written by `scripts/endf_neutron_reference.py <folder with the ENDF-6 files>`. The same script writes physim's carbon table (`--toml`).
 - Files here are read by the checks in `physim.nuclear.validation` and the tests (`tests/python/test_nuclear_*.py`), which assert the tolerances stated in the
   physics register. Until a file exists, the matching test is skipped and the register shows 🟡.
 

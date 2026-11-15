@@ -225,27 +225,85 @@ def physim_channels(experiment, events: int = EVENTS, seed: int = 1, min_share: 
 
 #: Residue events the channel selection follows by default.
 SELECTION_EVENTS = 50_000
+#: Statistical γ rays per event on top of the stretched E2 cascade from the entry spin (typical: about 4 for
+#: fusion-evaporation, from the usual conversion J ≈ 2 (M_γ − 4) between γ-ray multiplicity and spin).
+STATISTICAL_GAMMAS = 4.0
+#: Energy, MeV, a proton or α particle must deposit in a particle detector that sets no threshold of its own
+#: (typical of silicon and CsI arrays for evaporated particles; ``[neutron_wall] particle_threshold``).
+PARTICLE_THRESHOLD_MEV = 1.0
+#: Ion of each charged particle kind, for its energy loss in the detectors.
+_IONS = {"p": "1H", "a": "4He"}
 
 
-def _charged_hit(experiment):
-    """f(energy, directions) → 1 where a particle leaving the target along the direction meets a particle
-    detector's face before any dead material, else 0 (every particle that arrives is counted and identified:
-    thresholds, punch-through and the detector's own identification are left out)."""
-    from .detectors import Array
+class _Charged:
+    """Which particle detector a proton or α particle leaving the target meets first (dead material in front
+    stops it), and whether it deposits more than that detector's threshold: its own ``threshold``, or
+    ``default_mev`` when it sets none. The deposit is after the dead layer and through the thickness (a particle
+    that punches through deposits only part of its energy). Energy lost in the target on the way out is left out."""
 
-    array = Array.from_experiment(experiment)
+    def __init__(self, experiment, default_mev: float):
+        from .detectors import Array
 
-    def hit(energy, direction):
+        self.array = Array.from_experiment(experiment)
+        self.setup = list(experiment.detectors)
+        self.thresholds = [(d.name or g.name, _threshold_mev(d, default_mev), d.threshold is not None)
+                           for d, g in zip(self.setup, self.array.geometries)]
+        self._responses: dict = {}
+
+    def first(self, direction) -> tuple:
+        """(index of the detector met, or −1; incidence on its face, degrees) for each direction."""
         d = np.atleast_2d(np.asarray(direction, dtype=float))
-        if not array.geometries:
-            return np.zeros(len(d))
-        own = np.min([g.distances(d) for g in array.geometries], axis=0)
+        if not self.array.geometries:
+            return np.full(len(d), -1), np.zeros(len(d))
+        dist = np.array([g.distances(d) for g in self.array.geometries])
+        which = np.argmin(dist, axis=0)
+        own = dist[which, np.arange(len(d))]
         ok = np.isfinite(own)
-        for b in array.blockers:
+        for b in self.array.blockers:
             ok &= ~(b.distances(d) < own - 1e-9)
-        return ok.astype(float)
+        normals = np.array([g.n for g in self.array.geometries])[which]
+        unit = d / np.linalg.norm(d, axis=1, keepdims=True)
+        incidence = np.degrees(np.arccos(np.clip(-np.sum(unit * normals, axis=1), -1, 1)))
+        return np.where(ok, which, -1), incidence
 
-    return hit
+    def reached(self, direction) -> np.ndarray:
+        return (self.first(direction)[0] >= 0).astype(float)
+
+    def response(self, i: int, kind: str):
+        from .detectors import Response
+
+        key = (i, kind)
+        if key not in self._responses:
+            self._responses[key] = Response(_IONS[kind], self.setup[i])
+        return self._responses[key]
+
+    def counted(self, kind: str):
+        """f(energy, direction) → 1 where a particle of this kind reaches a detector and deposits more than its
+        threshold, else 0."""
+        def f(energy, direction):
+            which, incidence = self.first(direction)
+            e = np.broadcast_to(np.asarray(energy, dtype=float), which.shape)
+            out = np.zeros(len(which))
+            for i in np.unique(which[which >= 0]):
+                sel = which == i
+                dep = self.response(int(i), kind).deposited_each(e[sel], incidence[sel])
+                out[sel] = dep >= self.thresholds[i][1]
+            return out
+        return f
+
+
+def _threshold_mev(detector, default_mev: float) -> float:
+    from .detectors import _q
+
+    return default_mev if detector.threshold is None else _q(detector.threshold).to("MeV")
+
+
+def _gamma_numbers(entry_spin: np.ndarray, fixed: Optional[float], rng) -> np.ndarray:
+    """γ rays per event: ``fixed`` if the setup gives it, else J/2 + STATISTICAL_GAMMAS from each event's entry spin
+    J; a non-whole mean is rounded up or down at random so that the mean is kept."""
+    mean = np.full(len(entry_spin), float(fixed)) if fixed is not None else entry_spin / 2 + STATISTICAL_GAMMAS
+    low = np.floor(mean)
+    return (low + (rng.random(len(mean)) < mean - low)).astype(int)
 
 
 def channel_selection(experiment, events: int = SELECTION_EVENTS, seed: int = 1) -> dict:
@@ -255,21 +313,29 @@ def channel_selection(experiment, events: int = SELECTION_EVENTS, seed: int = 1)
     protons and α particles with their lab energies and directions. A neutron is counted with the wall's
     efficiency at its energy where it flies into the wall's cone (:meth:`physim.nuclear.neutrons.NeutronWall.
     detection_probability`), fires a neighbour with the wall's cross-talk at the mean neutron energy, and is lost or
-    taken for a γ ray as the cells' pulse-shape discrimination says; a proton or α particle is counted when it
-    meets a particle detector of the setup.
+    taken for a γ ray as the cells' pulse-shape discrimination says. A proton or α particle is counted when it
+    meets a particle detector of the setup and deposits more than the detector's threshold (``threshold``, or
+    ``[neutron_wall] particle_threshold`` for detectors that set none; after the dead layer, and only part of its
+    energy if it punches through). Each event also has γ rays (``[neutron_wall] gamma_multiplicity``, or J/2 +
+    :data:`STATISTICAL_GAMMAS` from its entry spin J); each fires a cell with the wall's geometric efficiency times
+    the cells' ``gamma_efficiency``, and adds a false neutron when the cell calls it a neutron
+    (``gamma_as_neutron``).
 
     Each event is sorted by the counts it shows: its detected class, such as "1n" or "p2n"
     (:func:`physim.nuclear.neutrons.simulate_selection`, with every class up to the most particles a channel emits
-    as a column; an event showing more, through cross-talk, is "unassigned"). With a real wall few events show
-    every neutron, so the classes are what one gates on. Returns the matrix (rows: true channels, columns: the
-    detected classes), its statistical errors, for each class the share of its events from each true channel for
-    the table's cross sections (what a gate on that class contains), and the efficiencies used."""
+    as a column; an event showing more, through cross-talk or false neutrons, is "unassigned"). With a real wall few
+    events show every neutron, so the classes are what one gates on. Returns the matrix (rows: true channels,
+    columns: the detected classes), its statistical errors, the analytic matrix from the same events' mean
+    probabilities (:func:`physim.nuclear.neutrons.selection_matrix`, which the Monte Carlo converges to), for each
+    class the share of its events from each true channel for the table's cross sections (what a gate on that class
+    contains), and the efficiencies, thresholds and γ-ray numbers used."""
     from . import neutrons
     from .residues import LIGHT, simulate_residues
 
     if experiment.fusion is None or experiment.neutron_wall is None:
         raise ValueError("channel selection needs a fusion-evaporation reaction and a [neutron_wall]")
-    wall = experiment.neutron_wall.model()
+    setup = experiment.neutron_wall
+    wall = setup.model()
     ev = simulate_residues(experiment, events, seed)
     table = ev.table
     kinds = list(LIGHT)
@@ -281,6 +347,9 @@ def channel_selection(experiment, events: int = SELECTION_EVENTS, seed: int = 1)
     chans = [neutrons.Channel(true.get((n, pr, a), neutrons.channel_name(n, pr, a)), n, pr, a)
              for a in range(top[2] + 1) for pr in range(top[1] + 1) for n in range(top[0] + 1)]
 
+    rng = np.random.default_rng([seed, 75])
+    fixed = setup.gamma_multiplicity
+    gammas = _gamma_numbers(np.asarray(ev["entry_spin"], dtype=float), fixed, rng)
     part = ev.particles
     th, ph = np.radians(part["theta"]), np.radians(part["phi"])
     dirs = np.stack([np.sin(th) * np.cos(ph), np.sin(th) * np.sin(ph), np.cos(th)], axis=1)
@@ -290,15 +359,24 @@ def channel_selection(experiment, events: int = SELECTION_EVENTS, seed: int = 1)
     event_list = []
     for i in range(len(ev)):
         rows = order[bounds[i]:bounds[i + 1]]
-        event_list.append([(letters[r], float(part["energy"][r]), dirs[r]) for r in rows])
+        event_list.append({"particles": [(letters[r], float(part["energy"][r]), dirs[r]) for r in rows],
+                           "gammas": int(gammas[i])})
 
     is_n = letters == "n"
     mean_n = float(part["energy"][is_n].mean()) if is_n.any() else 2.0
     crosstalk = wall.crosstalk(mean_n)
-    charged = _charged_hit(experiment)
-    detection = neutrons.Detection.from_detector(wall.cell, wall.detection_probability, crosstalk,
-                                                 proton_efficiency=charged, alpha_efficiency=charged)
+    from .detectors import _q
+
+    default_mev = (PARTICLE_THRESHOLD_MEV if setup.particle_threshold is None
+                   else _q(setup.particle_threshold).to("MeV"))
+    charged = _Charged(experiment, default_mev)
+    gamma_cell = neutrons._fraction(wall.cell.gamma_efficiency)
+    detection = neutrons.Detection.from_detector(
+        wall.cell, wall.detection_probability, crosstalk, proton_efficiency=charged.counted("p"),
+        alpha_efficiency=charged.counted("a"), gamma_efficiency=gamma_cell * wall.geometric_efficiency())
     m = neutrons.simulate_selection(event_list, chans, detection, seed=seed)
+    analytic = neutrons.selection_matrix(neutrons.gamma_distributions(event_list, chans),
+                                         detection.averaged(event_list, chans))
     rows = [i for i, name in enumerate(m.true) if name in true.values()]
     names = [m.true[i] for i in rows]
     shown = np.nonzero(m.matrix[rows].max(axis=0) > 0)[0]          # the classes some event shows
@@ -313,16 +391,30 @@ def channel_selection(experiment, events: int = SELECTION_EVENTS, seed: int = 1)
             contents[cls] = {"cross_section_mb": float(per_class[j]),
                              "from": {names[i]: float(w[i] * matrix[i, j] / per_class[j]) for i in range(len(names))
                                       if matrix[i, j] > 0}}
-    charged_share = {k: float(charged(None, dirs[letters == k]).mean()) if (letters == k).any() else None
-                     for k in ("p", "a")}
-    notes = ["Every proton and α particle that meets a particle detector is counted and told apart; thresholds, "
-             "punch-through and the detectors' own identification are left out.",
-             "γ rays that fire a neutron cell are left out (the events do not carry the cascades' γ rays here).",
+    reached, counted = {}, {}
+    for k in ("p", "a"):
+        sel = letters == k
+        reached[k] = float(charged.reached(dirs[sel]).mean()) if sel.any() else None
+        counted[k] = float(charged.counted(k)(part["energy"][sel], dirs[sel]).mean()) if sel.any() else None
+    per_gamma = detection.gamma_fake()
+    listed = ", ".join(f"{n} {t:.3g} MeV" + ("" if own else " (default)") for n, t, own in charged.thresholds)
+    how_many = (f"a fixed {fixed:g}" if fixed is not None
+                else f"J/2 + {STATISTICAL_GAMMAS:g} from the entry spin J")
+    notes = [f"Protons and α particles count when they deposit more than the particle detector's threshold "
+             f"({listed or 'no particle detectors'}); the energy they lose in the target, and the detectors' own "
+             "particle identification, are left out.",
+             f"γ rays: {how_many} per event (mean {gammas.mean():.1f}); each fires a cell with "
+             f"{100 * detection.gamma_efficiency:.1f}% and is called a neutron with "
+             f"{100 * detection.gamma_as_neutron:.1f}%: a false neutron for {100 * per_gamma:.3f}% of the γ rays. "
+             "Time of flight is taken to be part of that γ-as-neutron share.",
              f"Cross-talk is taken at the mean neutron energy ({mean_n:.2f} MeV in the lab)."]
     if skipped:
         notes.append("Channels with deuterons or tritons are left out of the selection: "
                      + ", ".join(ch.label for ch in skipped) + ".")
+    a_rows = [analytic.true.index(n) for n in names]
+    a_cols = [analytic.assigned.index(c) for c in assigned]
     return {"true": names, "assigned": assigned, "matrix": matrix.tolist(), "errors": err.tolist(),
+            "analytic": analytic.matrix[a_rows][:, a_cols].tolist(),
             "events": counts.tolist(), "contents": contents, "cross_sections_mb": sigma,
             "neutron": {"cells": wall.cells, "solid_angle_msr": wall.solid_angle(),
                         "geometric_efficiency": wall.geometric_efficiency(), "theta_max_deg": wall.theta_max(),
@@ -330,8 +422,13 @@ def channel_selection(experiment, events: int = SELECTION_EVENTS, seed: int = 1)
                         "intrinsic_at_mean": float(wall.cell.intrinsic_efficiency(mean_n)),
                         "efficiency_at_mean": float(wall.efficiency(mean_n)), "crosstalk": crosstalk,
                         "misidentification": wall.cell.misidentification},
-            "charged_reached": charged_share, "notes": notes, "n_events": len(ev), "seed": seed}
+            "charged_reached": reached, "charged_counted": counted,
+            "thresholds_mev": {n: t for n, t, _ in charged.thresholds},
+            "gamma": {"multiplicity": float(gammas.mean()), "from_entry_spin": fixed is None,
+                      "fires_a_cell": detection.gamma_efficiency, "false_neutron_per_gamma": per_gamma},
+            "notes": notes, "n_events": len(ev), "seed": seed}
 
 
-__all__ = ["EVENTS", "MIN_SHARE", "SELECTION_EVENTS", "SOURCE", "PhysimChannels", "channel_selection", "fusion_of",
+__all__ = ["EVENTS", "MIN_SHARE", "PARTICLE_THRESHOLD_MEV", "SELECTION_EVENTS", "SOURCE", "STATISTICAL_GAMMAS",
+           "PhysimChannels", "channel_selection", "fusion_of",
            "fusion_summary", "physim_channels", "thick_target"]

@@ -28,7 +28,15 @@ workflow builds the wheels, tests them and publishes to PyPI.
     the fusion and evaporation results (`physim.nuclear.exit_channels`); the setup keeps its shape.
   - Neutron detectors (`physim.nuclear.neutrons`) and an optional `[neutron_wall]`: the Plan tab's channel
     selection shows which detected class (neutrons, protons, α particles seen) each channel's events fall in, and
-    what a gate on each class contains (MCP tool `channel_selection`).
+    what a gate on each class contains (MCP tool `channel_selection`). The selection applies the particle
+    detectors' thresholds (each detector's `threshold`, else `[neutron_wall] particle_threshold`, default 1 MeV,
+    after the dead layer and with punch-through) and γ rays firing neutron cells (`gamma_multiplicity`, default
+    J/2 + 4 from the entry spin, `gamma_efficiency`, `gamma_as_neutron`), and returns the analytic matrix of the
+    same events beside the Monte Carlo.
+  - The neutron data file's carbon cross section is ENDF/B-VIII.0 (natural carbon, bin-averaged;
+    `scripts/endf_neutron_reference.py`), checked against the evaluation in
+    `tests/reference/nuclear/neutron_carbon_endf.csv`. The earlier typical values were up to 31% off (3.4 MeV), which
+    moved a 150 mm cell's efficiency by up to 12%.
 - Heavy-ion stopping from MSTAR 3.12 (Paul and Schinner; the method of ICRU Report 73) for ions from Li to Ar in
   hydrogen, in the ICRU 49 compounds and in their deuterated versions such as CD₂ (`physim.nuclear.mstar`).
   Against 693 measured points in H₂/D₂, polymers and Mylar, the RMS deviation for C–Ar falls from 7–10% to

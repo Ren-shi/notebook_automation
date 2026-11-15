@@ -8,10 +8,20 @@
   PACE4) and gives neutrons 10–25% softer than PACE4; the cause found so far is the spin removed along the chain
   (PACE4's statistical E2 γ rays).
 - Stage 2 is not yet compared with PACE4's or a measured excitation function.
-- The neutron data file's carbon cross sections are to be checked against ENDF/B-VIII.0.
-- None of the checks is in `physim.nuclear.validation` yet, so the register's cells are 🟡.
-- Channel selection sorts events into detected classes (0n, 1n, p2n, …) rather than requiring every particle;
-  thresholds of the particle detectors and γ rays firing neutron cells are left out.
+- None of the checks is in `physim.nuclear.validation` yet, so the register's cells are 🟡 (the ENDF/B-VIII.0
+  neutron check below has a reference file and a test, and is to be registered with the others).
+
+Done for the neutron detectors (2026-11-15):
+- The carbon cross sections are now ENDF/B-VIII.0 (natural carbon from ¹²C and ¹³C, bin-averaged), checked by
+  `tests/reference/nuclear/neutron_carbon_endf.csv` (`scripts/endf_neutron_reference.py`). The old typical table
+  was 31% low at 3.4 MeV and 24% high at 8.9 MeV, so cell efficiencies move by up to −12% (3.4 MeV) and +6%
+  (8.9 MeV). Gammel's n–p formula agrees with ENDF/B-VIII.0 H-1 within 0.8% from 0.5 to 20 MeV.
+- Channel selection sorts events into detected classes (0n, 1n, p2n, …) rather than requiring every particle, and
+  now applies the particle detectors' thresholds (each detector's `threshold`, else `[neutron_wall]
+  particle_threshold`, default 1 MeV, with dead layer and punch-through) and γ rays firing neutron cells
+  (`gamma_multiplicity`, default J/2 + 4 from the entry spin; `gamma_efficiency`, `gamma_as_neutron`). It returns
+  the analytic matrix of the same events beside the Monte Carlo; the two agree within statistics. Still left out:
+  energy loss in the target, the particle detectors' own p/α identification, γ-ray cross-talk.
 
 ## Why
 Fusion-evaporation is how most nuclei away from stability, and most high-spin states, are made: a heavy-ion beam
