@@ -37,6 +37,14 @@ workflow builds the wheels, tests them and publishes to PyPI.
     `scripts/endf_neutron_reference.py`), checked against the evaluation in
     `tests/reference/nuclear/neutron_carbon_endf.csv`. The earlier typical values were up to 31% off (3.4 MeV), which
     moved a 150 mm cell's efficiency by up to 12%.
+  - The report of a fusion-evaporation run has a "Fusion and evaporation" section: σ_fus, the residues and the
+    channel selection, each with the validation checks of its model beside it (a known failure said plainly, with
+    the suite's numbers for the compared system nearest the run's beam and compound nucleus) and the documented
+    limits that apply, flagged where the run falls in their region (near or below the barrier, above 10 MeV/u,
+    Z₁Z₂ near or above the quasi-fission range, fusion spins above 40 ħ, p and α channels in the selection).
+    "Models and their validation" lists every fusion-evaporation check with its checker, version, tolerance and
+    outcome, picked by capability, so checks added to the suite appear without a change to the report. The report
+    now runs only the checks of the models it shows.
 - Heavy-ion stopping from MSTAR 3.12 (Paul and Schinner; the method of ICRU Report 73) for ions from Li to Ar in
   hydrogen, in the ICRU 49 compounds and in their deuterated versions such as CD₂ (`physim.nuclear.mstar`).
   Against 693 measured points in H₂/D₂, polymers and Mylar, the RMS deviation for C–Ar falls from 7–10% to
