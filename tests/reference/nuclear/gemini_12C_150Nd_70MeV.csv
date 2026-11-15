@@ -1,0 +1,29 @@
+# tool: GEMINI++ 3.3.0 of 14-AUG-2026 (GUI build in LISE++ (LISEcute), Gemini.exe), in a scratch copy of the install; Execute pressed through Windows UI Automation by scripts/gemini_drive.ps1 on a hidden desktop (no silent mode exists)
+# produced by: scripts/gemini_reference.py (Claude Code), 2026-11-15
+# system: 12C + 150Nd at 70 MeV (lab) -> compound nucleus Z = 66, A = 162
+# settings: fusion mode at PACE4's lab energy (E* from GEMINI's own AME2016 masses); spin option 0 (critical spin input) with Fermi diffuseness 2 hbar; the integer critical spin (GEMINI takes no
+#   decimals) whose L0 is nearest the half-point of a Fermi fit to PACE4's sigma_J (fit L0 = 32.77); evaporation mode 1 (Hauser-Feshbach);
+#   masses AME2016; IMF emission on (GEMINI default), not enhanced;
+#   20000 events; GEMINI's random seed is fixed (identical inputs give identical results). Multiplicities and mean CM energies from GEMINI's 'C.M. spectra of emitted particles' table
+# input file: [Common] mode=1 AME=true IMF=true IMFenh=false optEvap=1 [Projectile] A=12 Z=6 E=70 num_events=20000 [Target] A=150 Z=60 [Spin] S=0 l0=33 dif=2 [Compound] A=162 Z=66 Ex=59.317 J=30 num_casc=300
+# excitation_mev: 59.317
+# pace4_excitation_mev: 59.317
+# sigma_fus_mb: 1026.39
+# spin: critical_spin_hbar=33.00,l0_hbar=32.85,l0_fit_to_pace4_hbar=32.769,diffuseness_hbar=2,bass_l_hbar=33.12
+# mean_cm_energy_mev: n=2.14,p=8.99,a=16.46
+# multiplicity: n=4.98825,p=0.0087,a=0.0068
+# gamma_energy_per_event_mev: 8.58
+# outcomes: residues=20000,imf=0,fission=0
+# cascades: 20000
+Z,A,events,sigma_mb
+66,157,15103,775.1
+66,156,2373,121.8
+66,158,2205,113.2
+65,157,130,6.672
+64,154,90,4.619
+64,155,41,2.104
+65,158,40,2.053
+66,159,9,0.4619
+65,156,4,0.2053
+64,153,4,0.2053
+64,156,1,0.05132
