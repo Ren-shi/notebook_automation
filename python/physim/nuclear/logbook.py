@@ -1340,7 +1340,8 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
     if pp:
         sec["plan"] += ["<h3>Detectors: coverage, cross sections, rates and beam time</h3>", pp["detectors"],
                         "<h3>Kinematics</h3>", pp["kinematics"], "<h3>Expected peaks</h3>", pp["peaks"],
-                        pp["excitation_plain"], "<h3>Energy loss</h3>", pp["energy_loss"],
+                        pp["excitation_plain"]] + ([pp["fusion_plain"]] if pp.get("fusion_plain") else []) + [
+                        "<h3>Energy loss</h3>", pp["energy_loss"],
                         "<h3>Simulated spectra</h3>", pp["spectra"]]
     elif why_no_plan:
         sec["plan"].append(f"<p>The plan's tables and figures could not be built: {e(why_no_plan)}.</p>")

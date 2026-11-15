@@ -230,3 +230,154 @@ def test_the_app_downloads_the_report():
     data = report_zip(Planner.example("alpha_on_gold"), seed=1, events=20_000)
     names = zipfile.ZipFile(io.BytesIO(data)).namelist()
     assert {"report.html", "tables/detectors.csv", "setup.toml", "figures/spectra.pdf"} <= set(names)
+
+
+# -- fusion-evaporation: the checks that apply and the limits (planning items F14, F15) ------------------------
+
+
+def _fusion_variant(beam=None, energy=None, target=None):
+    """The fusion_dy158 example with another beam, energy or target (one 2n channel when the system changes)."""
+    d = Experiment.example("fusion_dy158").to_dict()
+    if beam:
+        d["beam"]["nuclide"] = beam
+    if energy:
+        d["beam"]["energy"] = energy
+    if target:
+        d["target"]["material"] = target
+    if beam or target:
+        b, t = data.nuclide(d["beam"]["nuclide"]), data.nuclide(d["target"]["material"])
+        d["reaction"]["channels"] = [{"residue": data.nuclide((b.Z + t.Z, b.A + t.A - 2)).name, "particles": "2n",
+                                      "cross_section": "100 mb"}]
+        d.pop("levels", None)
+    return Experiment.from_dict(d)
+
+
+@pytest.fixture(scope="module")
+def fusion_report():
+    return report.build(Experiment.example("fusion_dy158"), seed=1, events=20_000)
+
+
+def test_fusion_checks_are_picked_by_capability(fusion_report):
+    from physim.nuclear import validation
+
+    caps = report.fusion_capabilities(validation.CAPABILITIES)
+    assert set(report.FUSION_MODELS) <= set(caps)
+    checks = fusion_report.fusion["checks"]
+    # Every check of those capabilities, and only those: one added to the suite appears without a change here.
+    assert {c["name"] for c in checks} == {c.name for c in validation.CHECKS if c.capability in caps}
+    rows = {r["capability"]: r for r in fusion_report.register}
+    assert set(caps) <= set(rows)
+    known = report.known_failures()
+    for c in checks:
+        assert c["status"] in ("pass", "pending", "known failure", "fail", "not run here")
+        if c["status"] in ("known failure", "fail"):
+            assert (c["status"] == "known failure") == (c["name"] in known)
+        if c["kind"] == "tool" and c["checker"] == "PACE4":
+            assert c["version"] == "4.36.0"
+    pace = {c["name"]: c for c in checks}["fusion_vs_pace4"]
+    # The PACE4 system nearest the run is the run's own; the suite's numbers for it are quoted, not the others'.
+    assert pace["nearest"]["system"] == "12C + 150Nd" and pace["nearest"]["same"]
+    assert "12C + 150Nd" in pace["nearest"]["quote"] and "48Ca" not in pace["nearest"]["quote"]
+
+
+def test_fusion_section_in_the_report(fusion_report, tmp_path):
+    import html
+
+    page = fusion_report.to_html()
+    section = page[page.index("<h2>Fusion and evaporation"):page.index("<h2>Energy loss")]
+    fus = section[section.index("Fusion cross section"):section.index("<h3>Residues")]
+    assert "σ_fus at the beam energy" in fus and "Checked against" in fus and "PACE4 4.36.0" in fus
+    known = {c["name"] for c in fusion_report.fusion["checks"] if c["status"] == "known failure"}
+    if "fusion_vs_pace4" in known:  # said plainly beside σ_fus, not only in the table at the end
+        assert "Known failure" in fus
+    assert "No coupled-channels fusion below the barrier" in fus  # attached, though not reached at 1.24 V_B
+    res = section[section.index("<h3>Residues"):]
+    assert "illustrative" in res and "The evaporation at high spin" in res
+    assert "⚠" not in section  # the example is inside every limit
+    models = page[page.index("<h2>Models and their validation"):page.index("<h2>Data and references")]
+    assert "Fusion-evaporation checks" in models and "Limits of the fusion-evaporation models" in models
+    for lim in report.LIMITS:
+        assert html.escape(lim["title"]) in models
+    # The app's report holds the same section in its plan.
+    fusion_report.write(tmp_path, figures=False, root=False)
+    text = (tmp_path / "report.html").read_text(encoding="utf-8")
+    assert "<h3>Fusion and evaporation</h3>" in text and "Fusion-evaporation checks" in text
+    assert ">nan<" not in text.lower()
+    assert fusion_report.numbers()["fusion"]["summary"]["sigma_mb"] == pytest.approx(692.5, rel=0.01)
+
+
+def test_fusion_limits_flag_the_runs_they_cover():
+    from physim.nuclear.planner import Planner
+
+    def flags(exp):
+        p = Planner(exp)
+        return {lim["key"]: lim for lim in report._fusion_data(p, exp)["limits"] if lim["flag"]}
+
+    assert flags(_fusion_variant()) == {}
+    below = flags(_fusion_variant(energy="45 MeV"))  # E_cm 41.7 MeV, V_B 44.7 MeV
+    assert set(below) == {"coupled_channels"} and "lower bound" in below["coupled_channels"]["flag"]
+    assert "near the fusion barrier" in flags(_fusion_variant(energy="52 MeV"))["coupled_channels"]["flag"]
+    assert "inside the target" in flags(_fusion_variant(energy="49 MeV"))["coupled_channels"]["flag"]
+    fast = flags(_fusion_variant(beam="4He", energy="50 MeV", target="165Ho"))  # 12.5 MeV/u
+    assert set(fast) == {"incomplete_fusion"}
+    heavy = flags(_fusion_variant(beam="48Ca", energy="200 MeV", target="124Sn"))
+    assert set(heavy) == {"high_spin"} and heavy["high_spin"]["level"] == "note"  # the table is the setup's own
+    qf = flags(_fusion_variant(beam="32S", energy="180 MeV", target="208Pb"))  # Z1Z2 = 1312
+    assert qf["quasi_fission"]["level"] == "note"
+    # The warning stands beside the number it bears on.
+    rep = report.build(_fusion_variant(energy="45 MeV"), events=5_000, validation=False)
+    page = rep.to_html()
+    fus = page[page.index("<h3>Fusion cross section"):page.index("<h3>Residues")]
+    assert "⚠" in fus and "lower bound" in fus
+    # With a neutron wall: the selection matrix, and its simplifications beside it.
+    p = Planner.example("fusion_dy158")
+    p.add_neutron_wall()
+    f = report._fusion_data(p, p.experiment)
+    sel = {lim["key"]: lim for lim in f["limits"]}["selection"]
+    assert sel["flag"] and "α" in sel["flag"]  # p3n and a2n: the particle identification matters
+    rep = report.build(p.experiment, events=5_000, validation=False)
+    assert "<h3>Channel selection" in rep.to_html() and "cross-talk" in rep.to_html()
+
+
+def test_new_checks_appear_with_the_nearest_system():
+    """A check the suite adds (a GEMINI++ comparison, here made up) shows with its version and the suite's numbers
+    for the system nearest the run; a known failure is marked as such; other capabilities stay out."""
+    from physim.nuclear.validation import Result
+
+    gem = Result("Evaporation Monte Carlo (Hauser–Feshbach)", "tool", "evaporation_vs_gemini",
+                 "GEMINI++ 3.3.0, ⁴He + ¹⁶⁵Ho, ¹²C + ¹⁵⁰Nd, ¹⁶O + ¹⁴⁴Sm", "30%", "fail", 0.4, 9,
+                 "shares GEMINI++/physim: 4He + 165Ho: 165Tm 0.84/0.85; 12C + 150Nd: 157Dy 0.76/0.65, "
+                 "158Dy 0.11/0.14; 16O + 144Sm: 157Yb 0.37/0.22")
+    other = Result("Rutherford cross section", "tool", "x", "LISE++ 17", "1%", "pass", 0.1)
+    measured = Result("Fusion cross section (Bass barrier, Wong)", "literature", "fusion_vs_data",
+                      "Measured σ_ER: 16O + 142Nd, 16O + 150Nd (Visakh 2021)", "20%", "pass", 0.5, 30,
+                      "worst per system: 16O + 142Nd 10%, 16O + 150Nd 17%")
+    rows = report.fusion_checks([gem, other, measured], Experiment.example("fusion_dy158"),
+                                known={"evaporation_vs_gemini"})
+    assert [r["name"] for r in rows] == ["fusion_vs_data", "evaporation_vs_gemini"]
+    g = rows[1]
+    assert (g["checker"], g["version"], g["status"]) == ("GEMINI++", "3.3.0", "known failure")
+    assert g["nearest"]["system"] == "12C + 150Nd" and g["nearest"]["same"]
+    assert g["nearest"]["quote"] == "shares GEMINI++/physim: 12C + 150Nd: 157Dy 0.76/0.65, 158Dy 0.11/0.14"
+    d = rows[0]  # no 12C data: the nearest measured system in beam and compound nucleus, its number only
+    assert d["nearest"]["system"] == "16O + 150Nd" and not d["nearest"]["same"]
+    assert d["nearest"]["quote"] == "worst per system: 16O + 150Nd 17%"
+
+
+def test_known_failures_follow_the_suite():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("_validation_tests",
+                                                  Path(__file__).with_name("test_nuclear_validation.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert report.known_failures() == frozenset(mod.KNOWN_FAILURES)
+
+
+def test_other_reactions_have_no_fusion_section():
+    rep = report.build(Experiment.example("coulex_ni58"), events=5_000, validation=False)
+    assert rep.fusion is None and "fusion" not in rep.numbers()
+    parts = rep.parts(dpi=50)
+    assert parts["fusion"] == "" and parts["fusion_plain"] == ""
+    assert "Fusion-evaporation checks" not in parts["models"]
