@@ -1,0 +1,44 @@
+# tool: measured data, IAEA EXFOR database (www-nds.iaea.org/exfor, database version 2026-10-28), entry D6412, subentries D6412002 (142Nd) and D6412003 (150Nd), read through its x4get API
+# produced by: the fe-literature session (Claude Code), retrieved 2026-11-15
+# reference: A. C. Visakh, E. Prasad, P. V. Laveen et al., Phys. Rev. C 104, 054602 (2021), Table I; doi:10.1103/PhysRevC.104.054602
+# settings: evaporation-residue cross sections measured with the Heavy Ion Reaction Analyzer (HIRA, IUAC New Delhi), 15UD Pelletron;
+#   targets 142Nd ~140 ug/cm2 and 150Nd ~162 ug/cm2 (isotopically enriched) on ~38 ug/cm2 carbon; energies are centre-of-mass as tabulated (EXFOR EN-CM);
+#   uncertainty_mb is the authors' total error (statistics and HIRA transmission). sigma_ER is taken as sigma_fus: fission of 158Er and 166Er is negligible here.
+#   Values transcribed unchanged from EXFOR.
+beam,target,e_cm_mev,sigma_fus_mb,uncertainty_mb,exfor_subentry
+16O,142Nd,93.2,766,116,D6412002
+16O,142Nd,89.6,767,116,D6412002
+16O,142Nd,86.0,756,114,D6412002
+16O,142Nd,82.4,746,112,D6412002
+16O,142Nd,78.8,767,115,D6412002
+16O,142Nd,76.1,711,107,D6412002
+16O,142Nd,73.4,675,102,D6412002
+16O,142Nd,70.7,574,87,D6412002
+16O,142Nd,68.0,476,71,D6412002
+16O,142Nd,66.2,365,55,D6412002
+16O,142Nd,64.4,282,42,D6412002
+16O,142Nd,62.6,207,31,D6412002
+16O,142Nd,60.8,143,22,D6412002
+16O,142Nd,59.0,55,8,D6412002
+16O,142Nd,57.2,9,1.4,D6412002
+16O,142Nd,55.4,0.8,0.1,D6412002
+16O,142Nd,53.6,0.03,0.005,D6412002
+16O,150Nd,93.7,1101,166,D6412003
+16O,150Nd,90.1,1103,166,D6412003
+16O,150Nd,86.5,1051,159,D6412003
+16O,150Nd,82.9,1003,152,D6412003
+16O,150Nd,79.3,848,127,D6412003
+16O,150Nd,76.5,740,111,D6412003
+16O,150Nd,73.8,785,119,D6412003
+16O,150Nd,71.1,672,102,D6412003
+16O,150Nd,68.4,538,81,D6412003
+16O,150Nd,66.6,499,75,D6412003
+16O,150Nd,64.8,461,69,D6412003
+16O,150Nd,63.0,391,59,D6412003
+16O,150Nd,61.1,311,47,D6412003
+16O,150Nd,59.3,177,27,D6412003
+16O,150Nd,57.5,71,11,D6412003
+16O,150Nd,55.7,24,4,D6412003
+16O,150Nd,53.9,6.4,1.0,D6412003
+16O,150Nd,52.1,0.9,0.15,D6412003
+16O,150Nd,50.3,0.06,0.001,D6412003

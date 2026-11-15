@@ -11,6 +11,9 @@ and run by hand, so each file records exactly how it was produced, so that anyon
 - `stopping_measured_hydrogen.csv` is measured data, not a code's output: heavy-ion stopping in hydrogen-rich
   targets from the IAEA Stopping Power Database (`scripts/iaea_stopping_reference.py`), with SRIM's value per point
   for context. Its `tool:` line names the database and version; cite the original papers by `ref_id` and `doi`.
+- `fusion_*_literature.csv` and `evaporation_*_literature.csv` are measured fusion and residue cross sections
+  transcribed from the IAEA EXFOR database (tabulated values only, never digitized plots). Their `tool:` line names
+  the database version and entries, `reference:` the papers and tables, and each row its EXFOR subentry.
 - Files here are read by the checks in `physim.nuclear.validation` and the tests (`tests/python/test_nuclear_*.py`), which assert the tolerances stated in the
   physics register. Until a file exists, the matching test is skipped and the register shows 🟡.
 
