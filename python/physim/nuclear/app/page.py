@@ -896,6 +896,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         fields = (("particles", "Particles", "4.5em"), ("cross_section", "σ", "8em"),
                   ("entry_energy", "Entry E*", "6.5em"), ("entry_spin", "Entry J", "3.5em"),
                   ("source", "Source", "minmax(4em, 1fr)"))
+        names = {"particles": "Particles", "cross_section": "Cross section", "entry_energy": "Entry energy",
+                 "entry_spin": "Entry spin", "source": "Source"}
         grid = "4.5em " + " ".join(w for _, _, w in fields) + " 2em"
         with ui.element("div").classes("w-full").style(f"display: grid; grid-template-columns: {grid}; gap: 2px 4px; "
                                                         "align-items: center"):
@@ -906,7 +908,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 ui.label(residues.get(ch.get("particles"), ch.get("residue") or "?")).classes("text-sm font-medium")
                 for field, _, _ in fields:
                     v = ch.get(field)
-                    inp = ui.input(value=_shown(field, v)).props("dense outlined").classes("w-full ps-num")
+                    inp = ui.input(value=_shown(field, v)).props(
+                        f'dense outlined aria-label="{names[field]}"').classes("w-full ps-num")
                     bind(inp, sec, field)
                     field_inputs[(sec, field)] = inp
                     field_shown[(sec, field)] = _shown(field, v) or ""

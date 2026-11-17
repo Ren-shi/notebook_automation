@@ -1536,8 +1536,8 @@ class Planner:
 
     def residue_gamma_spectra(self, events: int = 100_000, seed: int = 1, bin_kev: float = 1.0) -> dict:
         """The fusion-evaporation residues' γ rays (:func:`physim.nuclear.residues.simulate_residue_gammas`): for
-        each γ-ray detector its measured and Doppler-corrected singles spectrum (counts in the run per bin), the
-        strongest lines of the residue table, and the generator's notes. ``{"available": False}`` without a
+        each γ-ray detector (and under "all", all of them together) its measured and Doppler-corrected singles spectrum
+        (counts in the run per bin, also per exit channel under "channels"), the strongest lines of the residue table, and the generator's notes. ``{"available": False}`` without a
         fusion-evaporation reaction or γ-ray detectors. Kept until the setup changes."""
         exp = self.experiment
         if exp.fusion is None or not exp.gamma_detectors:

@@ -398,7 +398,7 @@ def test_planner_tabs_work_for_fusion_evaporation():
     assert p.spectra(events=20_000)["spectra"]
     assert p.gamma_spectra()["available"] is False
     g = p.residue_gamma_spectra(events=10_000)
-    assert g["available"] and set(g["spectra"]) == {"Ge90", "Ge37", "Ge79", "Ge101", "Ge143"}
+    assert g["available"] and set(g["spectra"]) == {"Ge90", "Ge37", "Ge79", "Ge101", "Ge143", "all"}
     assert g["spectra"]["Ge90"]["corrected"].sum() > 0
 
 
@@ -456,15 +456,27 @@ def test_the_app_page_shows_the_residues_and_edits_the_channels():
     pytest.importorskip("nicegui")
     import importlib
 
+    from nicegui import ui
+
     app_tests = importlib.import_module("test_nuclear_app")
 
     async def scenario(user, p, on_loop):
         await user.open("/")
         await user.should_see("Beam time needed", retries=600)
-        await user.should_see("Strongest lines", retries=600)
+        await user.should_see("Line rates: full-energy-peak counts", retries=600)
         assert "162Dy* at E* = " in app_tests._texts(user)
-        await app_tests._open_card(user, "Target and reaction", "Cross section")
-        boxes = app_tests._fields(user, "Cross section")
+        def cross_sections():
+            return [e for e in user.find(kind=ui.input).elements if e.props.get("aria-label") == "Cross section"]
+
+        card = next(e for e in user.find(kind=ui.expansion).elements if "header" in e.slots and any(
+            getattr(c, "text", None) == "Target and reaction" for h in e.slots["header"].children
+            for c in h.descendants()))
+        card.value = True
+        for _ in range(100):
+            await app_tests.asyncio_sleep(0.05)
+            if cross_sections():
+                break
+        boxes = cross_sections()
         assert sorted(str(b.value) for b in boxes) == ["10 mb", "110 mb", "25 mb", "35 mb", "520 mb"]
         four = next(b for b in boxes if str(b.value) == "520 mb")
         app_tests._type(user, four, "400 mb")
