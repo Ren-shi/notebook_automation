@@ -28,6 +28,12 @@ and run by hand, so each file records exactly how it was produced, so that anyon
 - `shellmodel/` holds KSHELL inputs and outputs (²⁸Si/USDB, ⁴⁸Cr/KB3), partition files with their dimensions,
   and the interaction files they use, for testing the shell-model parser and size estimates without running
   KSHELL; its own README records how they were made, the benchmarks they pass and their licence (GPLv3).
+  `shellmodel/benchmarks.csv` lists published calculations with the same Hamiltonians (ANTOINE for ²⁸Si/USDB,
+  the exact ⁴⁸Cr/KB3 energies, M-scheme dimensions), each with its paper and table, for the check
+  `shellmodel_vs_published`, which reads the fixture logs with `physim.nuclear.shellmodel.read_folder`.
+  `shellmodel/si28_ensdf.csv` is ENSDF's ²⁸Si as physim reads it (`LevelScheme.from_ensdf`), kept so that
+  `shellmodel_dimensions` can report the shell model against experiment (rms of the excitation energies, B(E2))
+  as context without the local ENSDF copy.
 - `reproduction_usman2020.csv` is physim's own result, not a reference from outside: the reproduction of Usman
   et al., NIM B 469, 42 (2020) (⁴He + ¹⁶⁵Ho stacked-foil activation) through the planner, one row per Ho foil and
   channel (channel table filled by the app, residues made in the irradiation, σ inferred from them, the measured

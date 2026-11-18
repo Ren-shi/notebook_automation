@@ -47,6 +47,7 @@ CAPABILITIES = (
     "Fusion cross section (Bass barrier, Wong)",
     "Evaporation Monte Carlo (Hauser–Feshbach)",
     "Neutron detectors and channel selection",
+    "Shell-model calculations (KSHELL)",
 )
 
 
@@ -1579,6 +1580,184 @@ def carbon_vs_endf(ref):
     plot = {"x": xs, "physim": ours, "reference": theirs, "xlabel": "neutron energy (MeV)",
             "ylabel": "σ_tot, natural carbon (b)", "logx": True}
     return worst <= 1.0, worst, 2 * len(rows), f"worst {worst:.0%} of its tolerance", plot
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Shell model (KSHELL)
+
+#: Published calculations with the same Hamiltonians as the KSHELL fixtures (see the file's header).
+SHELLMODEL_BENCHMARKS = "shellmodel/benchmarks.csv"
+
+#: ENSDF's ²⁸Si levels and B(E2) below 10 MeV as physim reads them, kept so the context runs without ENSDF.
+SHELLMODEL_ENSDF_SI28 = "shellmodel/si28_ensdf.csv"
+
+#: Published dimensions of full-space calculations: (nucleus, space, Z_val, N_val, 2J or None for the M-scheme
+#: dimension at M = 0, value, source). Positive parity. Exact counts.
+PUBLISHED_SHELL_DIMENSIONS = [
+    ("²⁸Si", "sd", 6, 6, None, 93_710, "Yoshida and Shimizu, PTEP 2022 (arXiv:2105.08256v2), Sec. 2.2"),
+    ("⁴⁸Cr", "fp", 4, 4, None, 1_963_461, "Pittel, Thakur and Sandulescu, IJMPE 17, 122 (2009) (arXiv:0808.1303), "
+     "Sec. 3.1"),
+    ("⁴⁸Cr", "fp", 4, 4, 0, 41_355, "same, Sec. 3.1 and Tables 1, 2"),
+    ("⁴⁸Cr", "fp", 4, 4, 4, 182_421, "same, Sec. 3.1 and Table 2"),
+    ("⁴⁸Cr", "fp", 4, 4, 8, 246_979, "same, Table 2"),
+    ("⁴⁸Cr", "fp", 4, 4, 12, 226_259, "same, Table 2"),
+    ("⁵⁶Ni", "fp", 8, 8, None, 1_087_455_228, "same, Sec. 3.2"),
+    ("⁵⁶Ni", "fp", 8, 8, 0, 15_443_684, "same, Sec. 3.2"),
+]
+
+
+def _printed_step(text: str) -> float:
+    """One unit in the last digit of a number as printed: ``"78.3"`` → 0.1, ``"110"`` → 1."""
+    text = text.strip()
+    return 10.0 ** -len(text.split(".")[1]) if "." in text else 1.0
+
+
+def _shellmodel_value(result, quantity: str, state: str) -> Optional[float]:
+    """physim's value of one benchmark row from a :class:`~physim.nuclear.shellmodel.ShellModelResult`."""
+    from . import shellmodel as sm
+
+    if quantity == "dimension":  # "M=0+": 2M = 0, positive parity
+        m2, parity = state.removeprefix("M=")[:-1], 1 if state.endswith("+") else -1
+        return result.dimensions.get((2 * int(m2), parity))
+    if quantity == "B(E2)":
+        a, b = (sm.parse_label(s) for s in state.split(">"))
+        t = result.transition("E2", a, b)
+        if t is None:
+            return None
+        return t.b_down if t.initial == a else t.b_up
+    s = result.state(*sm.parse_label(state))
+    if s is None:
+        return None
+    return {"energy": s.energy_mev, "Q_s": s.q_s}.get(quantity)
+
+
+@check("Shell-model calculations (KSHELL)", "tool", "Published calculations with the same Hamiltonian, against "
+       "physim's reading of the bundled KSHELL's logs (shellmodel/benchmarks.csv; logs in shellmodel/kshell/): "
+       "²⁸Si/USDB E(0⁺₁), B(E2; 2⁺₁→0⁺₁), B(E2; 4⁺₁→2⁺₁) and Q_s(2⁺₁) with e_p 1.31, e_n 0.46 from ANTOINE (Frycz et "
+       "al., Phys. Rev. C 110, 054326 (2024), arXiv:2404.14506, Tables 2, 3, 5); ⁴⁸Cr/KB3 exact energies of 0⁺₁, "
+       "2⁺₁, 4⁺₁, 6⁺₁, 0⁺₂ (Pittel et al., Int. J. Mod. Phys. E 17, 122 (2009), arXiv:0808.1303, Tables 1, 2); the "
+       "M-scheme dimensions KSHELL printed", "one unit in the last digit the source prints (its rounding, and "
+       "constants such as the oscillator length that it does not state); dimensions exact")
+def shellmodel_vs_published(ref):
+    from . import shellmodel as sm
+
+    path = _file(ref, SHELLMODEL_BENCHMARKS)
+    if path is None:
+        return None, math.nan, 0, f"{SHELLMODEL_BENCHMARKS} not found", {}
+    rows = read_reference(path)[1]
+    results: dict = {}
+    worst, worst_text, labels, ours, theirs, outside = 0.0, "", [], [], [], []
+    for r in rows:
+        folder = path.parent / r["folder"]
+        if folder not in results:
+            results[folder] = sm.read_folder(folder)
+        value, published = _shellmodel_value(results[folder], r["quantity"], r["state"]), float(r["value"])
+        name = f"{r['case']} {r['quantity']} {r['state']}"
+        if value is None:
+            outside.append(f"{name}: not in the logs")
+            worst = math.inf
+            continue
+        allowed = 0.0 if r["quantity"] == "dimension" else _printed_step(r["value"])
+        dev = abs(value - published)
+        frac = (0.0 if dev == 0 else math.inf) if allowed == 0 else dev / allowed
+        if frac > worst:
+            worst, worst_text = frac, f"{name}, {value:.6g} against {r['value']}"
+        if frac > 1:
+            outside.append(f"{name}: physim {value:.6g} against {r['value']} ({r['source']})")
+        labels.append(name)
+        ours.append(value)
+        theirs.append(published)
+    plot = {"x": labels, "physim": ours, "reference": theirs, "categorical": True,
+            "xlabel": "benchmark", "ylabel": "physim / published"}
+    detail = (f"{len(rows)} numbers from {len(results)} sets of logs, "
+              + ("all within one unit of the printed digit" if not outside else "outside: " + "; ".join(outside))
+              + f"; worst {worst:.0%} of the tolerance ({worst_text})")
+    return not outside, worst, len(rows), detail, plot
+
+
+def _si28_ensdf_scheme(path):
+    """A :class:`~physim.nuclear.levels.LevelScheme` from :data:`SHELLMODEL_ENSDF_SI28`."""
+    from .ensdf import spin_parity
+    from .levels import Level, LevelScheme, Value
+
+    header, rows = read_reference(path)
+    scheme = LevelScheme("28Si", reference=header.get("tool", "ENSDF"))
+    for r in rows:
+        if r["kind"] == "level":
+            j, parity, _ = spin_parity(r["jpi"])
+            unc = float(r["unc"]) if r["unc"] else None
+            scheme.levels.append(Level(Value(float(r["value"]), unc, "ensdf"), j, parity, r["jpi"], None))
+    for r in rows:
+        if r["kind"] == "BE2":
+            i, f = int(r["initial"]), int(r["final"])
+            me = math.sqrt(float(r["value"]) * (2 * scheme.levels[i].spin + 1))
+            scheme.set_matrix_element(i, f, "E2", me, source="ensdf")
+    return scheme
+
+
+def shellmodel_si28_vs_ensdf(ref) -> Optional[dict]:
+    """²⁸Si/USDB from the fixtures against ENSDF, as context (shell-model papers report it; it is not a test of
+    physim): every shell-model state matched to a known level by J^π and order, the deviations of the excitation
+    energies and their rms, and B(E2) (e_p 1.31, e_n 0.46) over ENSDF's where ENSDF has one. ``None`` when the
+    fixtures or the ENSDF snapshot are missing."""
+    from . import shellmodel as sm
+
+    base = _file(ref, "shellmodel/kshell/si28_usdb")
+    snap = _file(ref, SHELLMODEL_ENSDF_SI28)
+    if base is None or snap is None:
+        return None
+    energies = sm.read_folder(base / "logs")
+    charged = sm.read_folder(base / "logs_eff_1.31_0.46")
+    scheme = _si28_ensdf_scheme(snap)
+    matches = [m for m in sm.match(energies, scheme) if m.level is not None]
+    excited = [m for m in matches if m.level != 0]
+    level_of = {m.state.key: m.level for m in matches}
+    be2 = []
+    for t in charged.transitions:
+        if t.kind != "E2" or t.diagonal or t.initial not in level_of or t.final not in level_of:
+            continue
+        known = scheme.b(level_of[t.initial], level_of[t.final], "E2")
+        if known:
+            be2.append((sm.label(*t.initial), sm.label(*t.final), t.b_down, known))
+    rms = math.sqrt(sum(m.delta_kev**2 for m in excited) / len(excited)) if excited else math.nan
+    return {"matches": matches, "rms_kev": rms, "excited": len(excited), "be2": be2}
+
+
+def _shellmodel_context_text(ctx: Optional[dict]) -> str:
+    if ctx is None:
+        return "Context against ENSDF not available (no shell-model fixtures or ENSDF snapshot)"
+    devs = ", ".join(f"{m.state.label} {m.delta_kev:+.0f}" for m in ctx["matches"] if m.level != 0)
+    ratios = ", ".join(f"{a}→{b} {ours / known:.2f}" for a, b, ours, known in ctx["be2"])
+    return (f"Context, not judged: ²⁸Si/USDB against ENSDF (shellmodel/si28_ensdf.csv), excitation energies rms "
+            f"{ctx['rms_kev']:.0f} keV over {ctx['excited']} excited states matched by J^π and order (keV: {devs}); "
+            f"B(E2), e_p 1.31, e_n 0.46, over ENSDF's: {ratios}")
+
+
+@check("Shell-model calculations (KSHELL)", "literature", "Published dimensions of full-space calculations, exact "
+       "counts: ²⁸Si sd shell at M = 0 (Yoshida and Shimizu, PTEP 2022, arXiv:2105.08256, Sec. 2.2); ⁴⁸Cr fp shell "
+       "at M = 0 and for J = 0, 2, 4, 6, ⁵⁶Ni at M = 0 and J = 0 (Pittel et al., arXiv:0808.1303, Sec. 3 and "
+       "Table 2), against physim's own count (shellmodel_spaces), which sizes every run. Reported as context, not "
+       "judged: ²⁸Si/USDB excitation energies and B(E2) against ENSDF (rms deviation, as shell-model papers give it)",
+       "exact; the ENSDF comparison is reported, not judged")
+def shellmodel_dimensions(ref):
+    from . import shellmodel_spaces as sp
+
+    spaces = {"sd": sp.SD_SPACE, "fp": sp.FP_SPACE}
+    labels, ours, theirs, wrong = [], [], [], []
+    for nucleus, space, z, n, j2, published, _ in PUBLISHED_SHELL_DIMENSIONS:
+        s = spaces[space]
+        mine = sp.dimensions(s, z, n, 1).get(0, 0) if j2 is None else sp.j_dimension(s, z, n, 1, j2)
+        name = f"{nucleus} " + ("M = 0" if j2 is None else f"J = {j2 // 2}")
+        if mine != published:
+            wrong.append(f"{name}: physim {mine}, published {published}")
+        labels.append(name)
+        ours.append(mine)
+        theirs.append(published)
+    plot = {"x": labels, "physim": ours, "reference": theirs, "categorical": True, "xlabel": "dimension",
+            "ylabel": "physim / published"}
+    detail = (f"{len(labels)} dimensions, " + ("all equal" if not wrong else "different: " + "; ".join(wrong))
+              + ". " + _shellmodel_context_text(shellmodel_si28_vs_ensdf(ref)))
+    return not wrong, 0.0 if not wrong else math.inf, len(labels), detail, plot
 
 
 # ---------------------------------------------------------------------------------------------------------------
