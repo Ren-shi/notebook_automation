@@ -1,0 +1,26 @@
+# format: physim shell-model table 1
+# nuclide: 28Si
+# interaction: USDB
+# space: 0d3/2 0d5/2 1s1/2 outside 16O
+# effective charges: 1.31, 0.46
+# g_l: 1.0, 0.0
+# g_s: 5.585, -3.826
+# program: KSHELL 2019 (Comput. Phys. Commun. 244, 372), physim's Windows build of wave 0
+# reference: physim's KSHELL fixtures, tests/reference/nuclear/shellmodel/README.md (benchmark table: E(0+1), B(E2), Q_s(2+1));
+#   excitation energies from kshell/si28_usdb/logs/summary_Si28_usdb.txt; signed matrix elements and mu(2+1) from the
+#   transit logs in kshell/si28_usdb/logs_eff_1.31_0.46/
+# notes: typed by hand from those files, as a user would type a paper's table. Frycz et al., arXiv:2404.14506 (2024),
+#   Tables 2, 3 and 5 (ANTOINE, USDB, the same charges) give E(0+1) = -135.9 MeV, B(E2; 2+1 -> 0+1) = 78.3 e2fm4,
+#   B(E2; 4+1 -> 2+1) = 110 e2fm4 and Q_s(2+1) = +18.5 e fm2
+kind,state,final,value,unit
+E,0+1,,-135.861,MeV
+Ex,0+1,,0.000,MeV
+T,0+1,,0,
+Ex,2+1,,1.932,MeV
+Q,2+1,,+18.50,e fm2
+mu,2+1,,1.0312,mu_N
+Ex,4+1,,4.607,MeV
+B(E2),2+1,0+1,78.20,e2fm4
+M(E2),2+1,0+1,-19.7738,e fm2
+B(E2),4+1,2+1,110.02,e2fm4
+M(E2),4+1,2+1,-31.4671,e fm2
