@@ -35,6 +35,17 @@ modes give identical eigenvalues. Without it, only `mode_lv_hdd = 0` works.
   `<nucleus>_<interaction>_<p|n>.ptn` (positive or negative parity), and `count_dim.exe`'s output for each
   (`*.count_dim.txt`: M-scheme and J-scheme dimension for every 2M). 14 cases over ckpot, usdb, kb3g, gxpf1a,
   jun45 and sdpf-mu, odd and even, both parities where the space allows.
+- `benchmarks.csv` — the published numbers below as a reference file (case, logs folder, quantity, state,
+  value as printed, unit, source with paper and table), read by the validation check
+  `physim.nuclear.validation.shellmodel_vs_published`. It allows one unit in the last digit the source prints
+  (dimensions exact). Added in wave 2 with the ⁴⁸Cr excited states from the same paper's Table 2 (exact:
+  2⁺₁ −32.148, 4⁺₁ −31.130, 6⁺₁ −29.555, 0⁺₂ −28.564 MeV; KSHELL −32.14801, −31.13038, −29.55518, −28.56458).
+  B(E2; 2⁺₁→0⁺₁), 78.20 against 78.3, is the closest to the limit (99% of it); the other ²⁸Si numbers agree within
+  half a unit. An oscillator length 0.03% longer (B(E2) × 1.0013, Q_s × 1.0006) would put all of them within
+  half a unit; the paper does not state the constants it used.
+- `si28_ensdf.csv` — ENSDF's adopted ²⁸Si levels below 10 MeV and the B(E2) physim derives from them
+  (`LevelScheme.from_ensdf("28Si", max_energy_kev=10000)`, ENSDF file dated 2013-10), so the shell model can be
+  compared with experiment (the check `shellmodel_dimensions` reports it as context) without the local copy.
 - `snt/` — the interaction files those cases use, from the same KSHELL 2019 distribution (GPLv3, see below).
   Note: the comment header of `usdb.snt` says "USDA" (copied from `usda.snt`), but its numbers are USDB's
   (single-particle energies 2.1117, −3.9257, −3.2079 MeV).

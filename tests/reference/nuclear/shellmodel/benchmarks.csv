@@ -1,0 +1,15 @@
+# tool: published shell-model calculations with the same Hamiltonians as physim's KSHELL fixtures: ANTOINE (28Si, USDB), the exact full-fp results quoted by Pittel et al. (48Cr, KB3), and published M-scheme dimensions
+# produced by: copied by hand from the sources in the last column (each table read in the paper's arXiv HTML), 2026-11-18
+# settings: value is the number exactly as the source prints it; the check allows one unit in its last digit (dimensions exact). folder is relative to tests/reference/nuclear/shellmodel/ and is read with physim.nuclear.shellmodel.read_folder. energy: total energy relative to the core (16O for sd, 40Ca for fp), MeV. B(E2): initial>final, e2fm4. Q_s: spectroscopic quadrupole moment, e fm2. dimension: M-scheme dimension at M = 0 and positive parity, as printed in the kshell.exe log. State labels give J (not 2J), parity and the index among the states of that J-pi (0+1 is the lowest 0+). 28Si B(E2) and Q_s use e_p = 1.31, e_n = 0.46 as the paper does (Sec. II.2, its Ref. 49); in the paper 2+obl and 4+obl are the lowest 2+ and 4+ (the ground-state oblate band). Frycz et al.: arXiv:2404.14506v2, Phys. Rev. C 110, 054326 (2024). Pittel et al.: arXiv:0808.1303, Int. J. Mod. Phys. E 17, 122 (2009), "Exact" rows of Tables 1 and 2 (KB3; the paper's Ref. 11 computed them). Yoshida and Shimizu: arXiv:2105.08256v2, Prog. Theor. Exp. Phys. (2022), doi:10.1093/ptep/ptac057, Sec. 2.2 (Implementation: ShellModel.jl)
+case,folder,quantity,state,value,unit,source
+28Si USDB,kshell/si28_usdb/logs,energy,0+1,-135.9,MeV,"Frycz et al. 2024, Table 3 (USDB, diagonalization: ANTOINE)"
+28Si USDB,kshell/si28_usdb/logs_eff_1.31_0.46,B(E2),2+1>0+1,78.3,e2fm4,"Frycz et al. 2024, Table 5 (USDB, Diag., 2+obl -> 0+obl)"
+28Si USDB,kshell/si28_usdb/logs_eff_1.31_0.46,B(E2),4+1>2+1,110,e2fm4,"Frycz et al. 2024, Table 5 (USDB, Diag., 4+obl -> 2+obl)"
+28Si USDB,kshell/si28_usdb/logs_eff_1.31_0.46,Q_s,2+1,18.5,e fm2,"Frycz et al. 2024, Table 2 (USDB, Diag., 2+obl)"
+28Si USDB,kshell/si28_usdb/logs,dimension,M=0+,93710,,"Yoshida and Shimizu 2022, Sec. 2.2 (28Si, full sd shell, M = 0)"
+48Cr KB3,kshell/cr48_kb3,energy,0+1,-32.953,MeV,"Pittel et al. 2009, Table 1 (Exact) and Sec. 3.1"
+48Cr KB3,kshell/cr48_kb3,energy,2+1,-32.148,MeV,"Pittel et al. 2009, Table 2 (Exact)"
+48Cr KB3,kshell/cr48_kb3,energy,4+1,-31.130,MeV,"Pittel et al. 2009, Table 2 (Exact)"
+48Cr KB3,kshell/cr48_kb3,energy,6+1,-29.555,MeV,"Pittel et al. 2009, Table 2 (Exact)"
+48Cr KB3,kshell/cr48_kb3,energy,0+2,-28.564,MeV,"Pittel et al. 2009, Table 2 (Exact)"
+48Cr KB3,kshell/cr48_kb3,dimension,M=0+,1963461,,"Pittel et al. 2009, Sec. 3.1 (full fp-shell space of 48Cr)"

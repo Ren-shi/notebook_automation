@@ -81,6 +81,17 @@ validation notebook *Reproduced experiment*.
 |---|---|---|---|
 | A. R. Usman et al., Nucl. Instrum. Methods B 469, 42 (2020), EXFOR E2650: ⁴He + ¹⁶⁵Ho stacked-foil activation at RIKEN, ¹⁶⁵Ho(α,xn)Tm, 1n–4n at 26 Ho foils from 49.6 to 13.2 MeV (87 pnA, 2.0 h, 10.81 mg/cm²) | Each foil as the `fusion_tm165` example at the foil's mean energy; channel table from *Fill from physim*; residues simulated; σ inferred from the residues made with the paper's beam, foil and time | Residues from a channel table, fusion, evaporation (not the neutron detectors: the residues were counted off line) | ✅ above 1.1 V_B: peaks of 2n, 3n, 4n within the energy spread + 1 MeV (27.6, 36.9, 47.6 MeV against 25.8, 37.6, 47.1); strongest channel right at all 20 foils where the data resolve it; the strongest three channels within 30% of the band of the three measurements up to each peak (20 points, worst +15%; physim/Usman 0.6–1.6). Reported, the documented limit: the tails above each peak (pre-equilibrium emission, which physim and PACE4 leave out), σ(3n)/σ(4n) at 49.6 MeV 0.055 against 0.16–0.27 measured; 1n (peak at the barrier) 2.4× high at its peak, none above 31 MeV. The band is wide: a common factor 0.39–1.13 on physim's cross sections would still pass. physim's stopping through the inferred stack gives every foil's energy within its spread (worst −0.8 MeV) |
 
+Fourth slice: shell-model level schemes. physim does not solve the shell model itself: it drives KSHELL (the
+2019 release of Comput. Phys. Commun. 244, 372, GPLv3, bundled as an outside program), writes its inputs and reads
+its logs. Limits: spaces a laptop can diagonalise (a run may use at most half the free RAM, unless overridden), no
+truncation yet. The benchmarks are in `tests/reference/nuclear/shellmodel/benchmarks.csv` with KSHELL's logs as
+fixtures. The comparison with ENSDF is information, not a test: the shell model is a model, and its rms deviation
+from experiment is reported as the papers report it.
+
+| Capability | Engine | App | vs tools | vs literature | Page | Backlog |
+|---|---|---|---|---|---|---|
+| Shell-model calculations (KSHELL) | ✅ | ⬜ | ✅ KSHELL as physim runs and reads it against published calculations with the same Hamiltonian: ²⁸Si/USDB vs ANTOINE (Frycz et al. 2024: E(0⁺₁), B(E2; 2⁺→0⁺), B(E2; 4⁺→2⁺), Q_s(2⁺₁) with e_p 1.31, e_n 0.46) and ⁴⁸Cr/KB3 vs the exact energies of five states (Pittel et al. 2009), within one unit of the digit each source prints (0.1 MeV, 1 keV, 0.1 e²fm⁴, ...; worst 99%: B(E2; 2⁺→0⁺) 78.20 vs 78.3); M-scheme dimensions exact | ✅ physim's dimension count vs 8 published dimensions of ²⁸Si, ⁴⁸Cr, ⁵⁶Ni (exact). Reported, not judged: ²⁸Si/USDB vs ENSDF, excitation energies rms 320 keV over 7 states matched by J^π and order (largest 0⁺₃ +636 keV, at the prolate band head that Frycz et al. find USDB does not reproduce, and 2⁺₃ +485 keV), B(E2) 1.2–3.1× ENSDF's | — | — |
+
 Next slices: inelastic scattering through the nuclear interaction, then transfer reactions.
 
 ## Foundations: the classical and quantum engine
