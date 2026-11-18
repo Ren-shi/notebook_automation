@@ -8,7 +8,11 @@ knows how to feed it, start it and collect what it writes:
 - ``srim``: SRIM 2013's SR Module (console) and TRIM (a window program run with ``TRIMAUTO`` = 1);
 - ``pace4``: PACE4 from LISE++ in its silent mode (``-s``);
 - ``gemini``: GEMINI++ from LISE++, a window program with no silent mode, whose Execute button is pressed through
-  Windows UI Automation by ``gemini_drive.ps1`` on the hidden desktop.
+  Windows UI Automation by ``gemini_drive.ps1`` on the hidden desktop;
+- ``kshell``: the KSHELL shell-model programs (``kshell.exe``, ``transit.exe``), fed namelist inputs.
+
+``programs`` finds where an outside program lives (an environment variable, ``~/.physim/programs.toml``, the copy
+bundled with the installed planner, the repository's ``tools/`` folder).
 
 The modules return the programs' output files as text; reading the numbers out of them is left to the callers.
 Nothing is written into a program's install folder: runs happen in scratch folders or copies.
