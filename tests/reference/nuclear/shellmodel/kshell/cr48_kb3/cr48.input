@@ -1,0 +1,15 @@
+&input
+  n_block = 8
+  n_eigen = 32
+  fn_int = "kb3.snt"
+  fn_ptn = "Cr48.ptn"
+  mtot = 0
+  n_restart_vec = 48
+  max_lanc_vec = 200
+  maxiter = 1000
+  hw_type = 1
+  is_double_j = .false.
+  fn_save_wave = "cr48m0.wav"
+  eff_charge = 1.5, 0.5
+  mode_lv_hdd = 0
+&end

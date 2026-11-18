@@ -1,0 +1,18 @@
+&input
+  beta_cm = 0.0
+  eff_charge = 1.5, 0.5, 
+  fn_int = "usdb.snt"
+  fn_ptn = "Si28_usdb_p.ptn"
+  fn_save_wave = "Si28_usdb_j8p.wav"
+  gl = 1.0, 0.0, 
+  gs = 5.585, -3.826, 
+  hw_type = 2
+  is_double_j = .true.
+  max_lanc_vec = 200
+  maxiter = 300
+  mode_lv_hdd = 1
+  mtot = 8
+  n_block = 0
+  n_eigen = 2
+  n_restart_vec = 10
+&end

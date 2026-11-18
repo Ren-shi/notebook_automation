@@ -1,0 +1,277 @@
+OpenMP  # of threads= 12
+
+random seed is   3229  2707  1879  3251
+&INPUT
+ FN_INT="usdb.snt                                                                                                                                                                                                                                                        ",
+ FN_PTN="Si28_usdb_p.ptn                                                                                                                                                                                                                                                 ",
+ FN_PTN_INIT="NO_INIT                                                                                                                                                                                                                                                         ",
+ MTOT=8          ,
+ HW_TYPE=2          ,
+ N_EIGEN=2          ,
+ N_RESTART_VEC=10         ,
+ MAX_LANC_VEC=200        ,
+ MAXITER=300        ,
+ IS_DOUBLE_J=T,
+ FN_SAVE_WAVE="Si28_usdb_j8p.wav                                                                                                                                                                                                                                               ",
+ FN_LOAD_WAVE="NO_INIT                                                                                                                                                                                                                                                         ",
+ IS_LOAD_SNAPSHOT=F,
+ BETA_CM=  0.0000000000000000     ,
+ EFF_CHARGE=  1.5000000000000000     , 0.50000000000000000     ,
+ GL=  1.0000000000000000     ,  0.0000000000000000     ,
+ GS=  5.5850000000000000     , -3.8260000000000001     ,
+ E1_CHARGE= 2*0.0000000000000000       ,
+ OP_TYPE_INIT="NO_INIT                                                                                                                                                                                                                                                         ",
+ MASS=0          ,
+ MODE_LV_HDD=1          ,
+ IS_CALC_TBME=F,
+ TOL=  9.9999999999999995E-007,
+ NEIG_LOAD_WAVE=1          ,
+ SS_E_RANGE= 2*-100000000.00000000      ,
+ N_BLOCK=0          ,
+ NV_SHIFT=1          ,
+ NPROCS_REDUCE=1          ,
+ TT_PROJ=-1         ,
+ ADD_RANDINIT=  0.0000000000000000     ,
+ ORBS_RATIO= 36*0          ,
+ /
+compile conf. kwf, kdim, kmbit =  8  8  8
+
+ proton  core  8, orbit: 0s_1/2 0p_3/2 0p_1/2
+ neutron core  8, orbit: 0s_1/2 0p_3/2 0p_1/2
+
+ model space
+   k,  n,  l,  j, tz,  p, 2n+l
+   1   0   2   3  -1   1   2   p 0d_3/2
+   2   0   2   5  -1   1   2   p 0d_5/2
+   3   1   0   1  -1   1   2   p 1s_1/2
+   4   0   2   3   1   1   2   n 0d_3/2
+   5   0   2   5   1   1   2   n 0d_5/2
+   6   1   0   1   1   1   2   n 1s_1/2
+
+set partition Mtotal=  8  partition_file= Si28_usdb_p.ptn
+Max 2*J =  28
+
+pn= 1   # of mbits=            846
+pn= 2   # of mbits=            846
+
+init_partition  time it took was:     0.008 sec
+
+Memory usage in partition        0.11 MB
+M =   8/2  :  parity = +
+
+N. of valence protons and neutrons =   6  6   mass= 28   n,z-core     8    8
+TBME mass dependence (mass/  18)^ -0.30000000
+ hbar_omega: set by 45A^(-1/3)-25A^(-2/3) MeV
+hbar_omega =   12.10802 MeV;     b =    1.85070 fm
+ partition distribution based on counted dim.           1
+ partition distribution based on counted dim.           1
+
+loadbalancing cost max/min       52175.00000       52175.00000
+
+ partition distribution algorithm time:   1.1369993444532156E-004
+ max proton  dim. / a partition                    34
+ max neutron dim. / a partition                    34
+
+total # of partitions               1227  = 10** 3.09
+total m-scheme dimension           52175  = 10** 4.72
+ max. # dim. / a partition                  729
+ max local dim. / proc, average                52175                52175
+
+Memory for one global Lanczos vector:     0.000 GB
+Memory / process is:     0.000 GB x      5 =      0.002 GB
+Total Memory for Lanczos vectors:     0.002 GB
+
+
+max. working area for pn-int.:      0.001GB           2000
+maximum threshold dim. for working area     333
+split partition threshold dim.            333  nsplt_ptn 128
+ # of split partitions        0 /         1227
+init_bp_operator time it took was:     0.002 sec
+
+ max/min # of connected ptns / proc      193313      193313
+
+init_bp_op allocated mem size    0.000720 GB
+
+
+ *** Lanczos start ***
+
+          JJ  lanczos     1    1      40.863568
+time / thread at rank 0    0     0.00509
+time / thread at rank 0    1     0.00538
+time / thread at rank 0    2     0.00538
+time / thread at rank 0    3     0.00538
+time / thread at rank 0    4     0.00539
+time / thread at rank 0    5     0.00538
+time / thread at rank 0    6     0.00540
+time / thread at rank 0    7     0.00539
+time / thread at rank 0    8     0.00539
+time / thread at rank 0    9     0.00539
+time / thread at rank 0   10     0.00538
+time / thread at rank 0   11     0.00539
+max time / a partition    0   0.00209
+ JJ   operate_time      0.006
+          JJ  lanczos     2    2      29.701404
+          JJ  lanczos     3    3      25.141105
+          JJ  lanczos     4    4      22.828784
+          JJ  lanczos     5    5      21.493121
+          JJ  lanczos     6    6      20.736880
+          JJ  lanczos     7    7      20.338959
+          JJ  lanczos     8    8      20.148660
+          JJ  lanczos     9    9      20.048936
+          JJ  lanczos    10   10      20.008091
+          JJ bn converged   11  0.36E-23
+time diag     0.000 sec
+time re-orth     0.009 sec
+          JJ bn converged    1  0.41E-25
+H  lanczos     1    1     -85.768590 1000000.000000
+time / thread at rank 0    0     0.03561
+time / thread at rank 0    1     0.03584
+time / thread at rank 0    2     0.03582
+time / thread at rank 0    3     0.03581
+time / thread at rank 0    4     0.03589
+time / thread at rank 0    5     0.03585
+time / thread at rank 0    6     0.03587
+time / thread at rank 0    7     0.03582
+time / thread at rank 0    8     0.03587
+time / thread at rank 0    9     0.03586
+time / thread at rank 0   10     0.03581
+time / thread at rank 0   11     0.03587
+max time / a partition    0   0.00432
+ H    operate_time      0.036
+          JJ bn converged    1  0.37E-25
+H  lanczos     2    2     -98.392688     -73.280376
+          JJ bn converged    1  0.45E-25
+H  lanczos     3    3    -106.897219     -86.029517
+          JJ bn converged    1  0.44E-25
+H  lanczos     4    4    -112.719942     -94.829441
+          JJ bn converged    1  0.52E-25
+H  lanczos     5    5    -116.937959    -101.821562
+          JJ bn converged    1  0.49E-25
+H  lanczos     6    6    -120.320876    -107.496697
+          JJ bn converged    1  0.54E-25
+H  lanczos     7    7    -123.310277    -112.036243
+          JJ bn converged    1  0.61E-25
+H  lanczos     8    8    -125.905141    -115.526849
+          JJ bn converged    1  0.66E-25
+H  lanczos     9    9    -127.859461    -118.167705
+          JJ bn converged    1  0.76E-25
+H  lanczos    10   10    -129.145909    -120.264024
+          JJ bn converged    1  0.80E-25
+H  lanczos    11   11    -129.905099    -121.940193
+          JJ bn converged    1  0.82E-25
+H  lanczos    12   12    -130.346447    -123.333302
+          JJ bn converged    1  0.85E-25
+H  lanczos    13   13    -130.628648    -124.612417
+          JJ bn converged    1  0.94E-25
+H  lanczos    14   14    -130.837777    -125.868298
+          JJ bn converged    1  0.10E-24
+H  lanczos    15   15    -130.996539    -126.941512
+          JJ bn converged    1  0.11E-24
+H  lanczos    16   16    -131.108759    -127.706385
+          JJ bn converged    1  0.11E-24
+H  lanczos    17   17    -131.179000    -128.191974
+          JJ bn converged    1  0.13E-24
+H  lanczos    18   18    -131.219727    -128.498024
+          JJ bn converged    1  0.14E-24
+H  lanczos    19   19    -131.239709    -128.673124
+          JJ bn converged    1  0.14E-24
+H  lanczos    20   20    -131.248127    -128.763645
+time diag     0.000 sec
+          JJ bn converged    1  0.14E-24
+H  lanczos    21   21    -131.251382    -128.807915
+          JJ bn converged    1  0.15E-24
+H  lanczos    22   22    -131.252668    -128.830527
+          JJ bn converged    1  0.16E-24
+H  lanczos    23   23    -131.253206    -128.843020
+          JJ bn converged    1  0.17E-24
+H  lanczos    24   24    -131.253425    -128.849782
+          JJ bn converged    1  0.19E-24
+H  lanczos    25   25    -131.253505    -128.853044
+          JJ bn converged    1  0.21E-24
+H  lanczos    26   26    -131.253532    -128.854485
+          JJ bn converged    1  0.24E-24
+H  lanczos    27   27    -131.253542    -128.855140
+          JJ bn converged    1  0.29E-24
+H  lanczos    28   28    -131.253545    -128.855448
+          JJ bn converged    1  0.35E-24
+H  lanczos    29   29    -131.253547    -128.855599
+          JJ bn converged    1  0.41E-24
+H  lanczos    30   30    -131.253547    -128.855681
+          JJ bn converged    1  0.49E-24
+H  lanczos    31   31    -131.253547    -128.855729
+          JJ bn converged    1  0.62E-24
+H  lanczos    32   32    -131.253547    -128.855755
+          JJ bn converged    1  0.85E-24
+H  lanczos    33   33    -131.253547    -128.855768
+          JJ bn converged    1  0.12E-23
+H  lanczos    34   34    -131.253547    -128.855775
+          JJ bn converged    1  0.15E-23
+H  lanczos    35   35    -131.253547    -128.855778
+          JJ bn converged    1  0.20E-23
+H  lanczos    36   36    -131.253547    -128.855780
+          JJ bn converged    1  0.27E-23
+H  lanczos    37   37    -131.253547    -128.855781
+          JJ bn converged    1  0.36E-23
+H converged  0.351207E-09  0.591405E-06
+time restart     0.127
+lanczos eigenvalues     1 -131.253547
+lanczos eigenvalues     2 -128.855782
+
+total time it took was:     4.601 sec.      0.001 hours
+
+
+    summary of time, total =     0:00:04
+
+                       time,    ncall, time/ncall,   ratio 
+          total       4.601         1     4.60073   1.0000
+    pre-process       0.045         1     0.04534   0.0099
+        operate       1.646        87     0.01892   0.3579
+     re-orthog.       1.996        87     0.02294   0.4338
+  thick-restart       0.591        40     0.01478   0.1285
+   diag tri-mat       0.002        87     0.00002   0.0005
+           misc       0.320                         0.0696
+
+   I/O LV read        2.373      1051     0.00226   0.5158
+   I/O LV write       0.280       168     0.00167   0.0609
+           tmp        0.036         1     0.03602   0.0078
+
+
+ effective charges   1.500  0.500
+ gl,gs =   1.0000  0.0000  5.5850 -3.8260
+-------------------------------------------------
+   1  <H>:  -131.25355  <JJ>:    20.00000  J:  8/2  prty  1
+                        <TT>:     0.00000  T:  0/2
+ <p Nj>  0.864  4.270  0.867
+ <n Nj>  0.864  4.270  0.867
+   <Qp>    12.793   <Qn>    12.793   <eQ>    25.586
+   <Lp>     1.928   <Ln>     1.928
+   <sp>     0.072   <sn>     0.072
+   <gm>     2.054   <Jz>     4.000
+-------------------------------------------------
+   2  <H>:  -128.85578  <JJ>:    20.00000  J:  8/2  prty  1
+                        <TT>:     0.00000  T:  0/2
+ <p Nj>  0.801  4.443  0.756
+ <n Nj>  0.801  4.443  0.756
+   <Qp>     2.645   <Qn>     2.645   <eQ>     5.290
+   <Lp>     1.935   <Ln>     1.935
+   <sp>     0.065   <sn>     0.065
+   <gm>     2.049   <Jz>     4.000
+-------------------------------------------------
+wave functions save in Si28_usdb_j8p.wav # of wf    2
+time I/O      0.001 GB  /      0.001 sec. =      1.16 GB/s
+
+
+    summary of time, total =     0:00:04
+
+                       time,    ncall, time/ncall,   ratio 
+          total       4.751         2     2.37531   1.0000
+    pre-process       0.045         1     0.04534   0.0095
+        operate       1.675        93     0.01801   0.3525
+     re-orthog.       1.996        87     0.02294   0.4201
+  thick-restart       0.591        40     0.01478   0.1244
+   diag tri-mat       0.002        87     0.00002   0.0005
+           misc       0.442                         0.0930
+
+   I/O LV read        2.373      1051     0.00226   0.4995
+   I/O LV write       0.280       168     0.00167   0.0590
+
