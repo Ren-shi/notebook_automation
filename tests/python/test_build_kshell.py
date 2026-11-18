@@ -218,6 +218,15 @@ def test_gpl_text_is_recognised(tmp_path):
         bk.find_gpl_text(bad, None)
 
 
+def test_the_committed_gpl_text_is_the_default_and_complete():
+    assert bk.find_gpl_text(None, None) == bk.GPL_TEXT
+    text = bk.GPL_TEXT.read_text(encoding="utf-8")
+    assert bk.is_gpl3(text)
+    for part in ("END OF TERMS AND CONDITIONS", "How to Apply These Terms to Your New Programs",
+                 "Public License instead of this License."):
+        assert part in text
+
+
 # --------------------------------------------------------------------------------------------- log comparison
 
 

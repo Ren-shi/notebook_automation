@@ -337,14 +337,18 @@ def is_gpl3(text: str) -> bool:
     return "GNU GENERAL PUBLIC LICENSE" in text and "Version 3, 29 June 2007" in text
 
 
+#: The verbatim GPL v3 text kept in the repository (KSHELL's tarball has none), copied to tools/kshell/COPYING.
+GPL_TEXT = REPO / "installer" / "windows" / "licenses" / "GPL-3.0.txt"
+
+
 def find_gpl_text(explicit: Optional[Path], fc_dir: Optional[Path]) -> Optional[Path]:
-    """A local copy of the GPL v3 text (KSHELL's tarball has none): the given file, the system's common licences
-    (Debian, Ubuntu), or GCC's COPYING3 in the compiler's tree (MSYS2 and some MinGW builds ship it)."""
-    candidates: list[Path] = []
+    """The GPL v3 text: the given file, else the repository's copy; only if that has gone missing, the system's
+    common licences (Debian, Ubuntu) or GCC's COPYING3 in the compiler's tree."""
     if explicit:
-        candidates.append(explicit)
-    candidates += [REPO / "installer" / "windows" / "licenses" / "GPL-3.0.txt",
-                   Path("/usr/share/common-licenses/GPL-3")]
+        if explicit.is_file() and is_gpl3(explicit.read_text(encoding="utf-8", errors="replace")):
+            return explicit
+        raise SystemExit(f"{explicit} is not the GPL v3 text")
+    candidates = [GPL_TEXT, Path("/usr/share/common-licenses/GPL-3")]
     if fc_dir:
         root = fc_dir.parent
         for sub in ("share/licenses", "share/doc", "licenses"):
@@ -356,8 +360,6 @@ def find_gpl_text(explicit: Optional[Path], fc_dir: Optional[Path]) -> Optional[
                 return path
         except OSError:
             continue
-    if explicit:
-        raise SystemExit(f"{explicit} is not the GPL v3 text")
     return None
 
 
@@ -446,8 +448,9 @@ def assemble(out: Path, exes: dict[str, Path], dlls: dict[str, Path], src_root: 
         shutil.copy2(gpl, out / "COPYING")
     else:
         (out / "COPYING.TODO").write_text(
-            "TODO: the GNU GPL v3 text belongs here as COPYING. KSHELL's release has none and no local copy was\n"
-            "found. Rebuild with --gpl-text <file>. installer/windows/build.py does not bundle KSHELL without it.\n",
+            "TODO: the GNU GPL v3 text belongs here as COPYING. KSHELL's release has none and the repository's copy\n"
+            "(installer/windows/licenses/GPL-3.0.txt) was missing. Restore it or rebuild with --gpl-text <file>.\n"
+            "installer/windows/build.py does not bundle KSHELL without it.\n",
             encoding="utf-8")
     if openblas_licence:
         (out / "LICENSE-OpenBLAS.txt").write_text(openblas_licence, encoding="utf-8")
@@ -518,7 +521,7 @@ def build(args) -> Path:
     assemble(out, exes, dlls, root, kshell_tar, diff, version, gpl, openblas_licence)
     say(f"wrote {out}")
     if not gpl:
-        say("WARNING: no GPL v3 text found: tools/kshell/COPYING.TODO written; rebuild with --gpl-text <file>")
+        say(f"WARNING: {GPL_TEXT} missing: tools/kshell/COPYING.TODO written; rebuild with --gpl-text <file>")
     if WINDOWS and not openblas_licence:
         say("WARNING: no OpenBLAS licence text found in the archive")
     return out
@@ -681,7 +684,8 @@ def main(argv=None) -> int:
     ap.add_argument("--build-dir", type=Path, default=REPO / "build" / "kshell")
     ap.add_argument("--fc", default="gfortran", help="the gfortran to use")
     ap.add_argument("--libs", help=f"LAPACK/BLAS link flags on Linux (default {' '.join(LINUX_LIBS)})")
-    ap.add_argument("--gpl-text", type=Path, help="a file with the GPL v3 text, copied as COPYING")
+    ap.add_argument("--gpl-text", type=Path,
+                    help=f"a file with the GPL v3 text, copied as COPYING (default {GPL_TEXT.relative_to(REPO)})")
     ap.add_argument("--jobs", type=int, default=3, help="programs linked at once")
     ap.add_argument("--threads", type=int, help="OMP_NUM_THREADS for the check (default: all)")
     ap.add_argument("--work", type=Path, help="folder for the check's runs (default: a new temporary folder)")
