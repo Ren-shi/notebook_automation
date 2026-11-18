@@ -423,6 +423,50 @@ def test_planner_looks_up_a_scheme_and_plans_a_state(copy_with_ni58):
     assert p.remove_levels("target") and "levels" not in p.to_toml()
 
 
+def test_planner_applies_a_shell_model_result_without_overriding(copy_with_ni58):
+    """Shell-model values fill gaps; ENSDF-derived ones stay unless the user asks; chosen values survive a new
+    look-up with their source; without a scheme the calculated states become the levels."""
+    import dataclasses
+    from pathlib import Path
+
+    from physim.nuclear import shellmodel
+    from physim.nuclear.planner import Planner
+
+    folder = Path(__file__).parents[1] / "reference" / "nuclear" / "shellmodel" / "kshell" / "si28_usdb" / "logs"
+    result = dataclasses.replace(shellmodel.read_folder(folder), nuclide="58Ni")  # 28Si numbers, as if for 58Ni
+    p = Planner.example("coulex_ni58")
+    with pytest.raises(ValueError, match="is for 28Si, but the target nuclide is 58Ni"):
+        p.apply_shell_model("target", dataclasses.replace(result, nuclide="28Si"))
+    assert p.lookup_levels("target", "3 MeV")
+    derived = p.levels()["target"]["matrix_elements"][0]
+    assert derived["source"] == "derived"
+
+    changes = p.apply_shell_model("target", result)
+    t = p.levels()["target"]
+    assert [lv["energy_kev"] for lv in t["levels"]] == [0.0, pytest.approx(1454.21), pytest.approx(2459.21)]
+    first = t["matrix_elements"][0]
+    assert (first["source"], first["value_efm"]) == ("derived", pytest.approx(derived["value_efm"]))
+    q = [m for m in t["matrix_elements"] if m["from"] == m["to"] == 1]
+    assert q and q[0]["source"] == "shell model" and q[0]["q_efm2"] > 0  # 28Si's 2+ is oblate: Q > 0
+    assert any("shell model" in c or "2+" in c for c in changes)
+
+    p.apply_shell_model("target", result, which=["E2"], replace=True)  # the user's explicit choice
+    first = p.levels()["target"]["matrix_elements"][0]
+    assert first["source"] == "shell model"
+    assert abs(first["value_efm"]) == pytest.approx(abs(result.transition("E2", (4, 1, 1), (0, 1, 1)).mred))
+
+    assert p.lookup_levels("target", "3 MeV")  # a new look-up keeps the values chosen, as shell-model values
+    sources = {(m["from"], m["to"]): m["source"] for m in p.levels()["target"]["matrix_elements"]}
+    assert sources[(0, 1)] == "shell model" and sources[(1, 1)] == "shell model"
+
+    assert p.remove_levels("target")
+    p.apply_shell_model("target", result)
+    t = p.levels()["target"]
+    assert [lv["jpi"] for lv in t["levels"]][:3] == ["0+", "2+", "4+"]
+    assert {m["source"] for m in t["matrix_elements"]} == {"shell model"}
+    assert Planner(Experiment.from_toml(p.to_toml())).levels()["target"]["levels"]  # saved and read back
+
+
 def test_planner_reports_a_missing_copy_or_nuclide(copy_with_ni58):
     from physim.nuclear.planner import Planner
 

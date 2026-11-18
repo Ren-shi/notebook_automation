@@ -2048,16 +2048,51 @@ class Planner:
             energies = [lv.energy.value for lv in scheme.levels]
             old_energy = [_q(lv["energy"]).to("keV") for lv in old.get("level", [])]
             for m in old.get("matrix_element", []):
-                if m.get("source") != "user":
+                if m.get("source") not in ("user", "shell model"):  # values someone chose to put in
                     continue
                 try:  # the same pair of levels, found by energy
                     a, b = (energies.index(old_energy[m[k]]) for k in ("from", "to"))
                 except (ValueError, IndexError, KeyError):
                     continue
                 scheme.set_matrix_element(a, b, m.get("multipolarity", "E2"), m["value"], m.get("value_unc"),
-                                          note=m.get("note", ""))
+                                          source=m["source"], note=m.get("note", ""))
         d.setdefault("levels", {})[role] = scheme.to_dict()
         return self._apply(d)
+
+    def apply_shell_model(self, role: str, result, which: Any = "all", replace: bool = False) -> list:
+        """Put chosen values of a shell-model calculation (a :class:`~physim.nuclear.shellmodel.ShellModelResult`)
+        into the level scheme of the beam or the target, with the source ``"shell model"``, through
+        :func:`physim.nuclear.shellmodel.apply` (``which``: ``"all"``, or quantities and states such as
+        ``["E2", "2+1"]``). ENSDF, derived and user values are kept unless ``replace`` is true, which only the user's
+        explicit choice should set. Without a scheme for the role in the setup, one is started from the result: its
+        states become the levels. Returns what changed, one line each."""
+        from . import shellmodel as _shellmodel
+
+        if role not in ("beam", "target"):
+            raise ValueError("role must be 'beam' or 'target'")
+        nuclide = self.level_nuclides()[role]
+        if nuclide is None:
+            raise ValueError(f"the setup has no {role} nuclide yet")
+        if result.nuclide and parse_nuclide(result.nuclide) != parse_nuclide(nuclide):
+            raise ValueError(f"the shell-model result is for {result.nuclide}, but the {role} nuclide is {nuclide}")
+        scheme = self.experiment.levels.get(role)
+        if scheme is None or not scheme.levels:
+            if not result.states:
+                raise ValueError("the shell-model result has no states")
+            # An empty scheme takes the calculated states as its levels, starting from the lowest as the ground state.
+            from .levels import Level, Value
+
+            lowest = min(result.states, key=lambda s: s.energy_mev)
+            scheme = LevelScheme(nuclide, reference=f"shell model ({result.interaction})")
+            scheme.levels = [Level(Value(0.0, None, "shell model", f"{result.interaction}: {lowest.label}"),
+                                   lowest.j2 / 2, lowest.parity, _shellmodel.label(lowest.j2, lowest.parity))]
+            items = [which] if isinstance(which, str) else list(which)
+            which = [*items, "new"]
+        changes = _shellmodel.apply(result, scheme, which, replace=replace)
+        d = self.draft
+        d.setdefault("levels", {})[role] = scheme.to_dict()
+        self._apply(d)
+        return changes
 
     def remove_levels(self, role: str) -> bool:
         """Take a level scheme out of the setup."""
