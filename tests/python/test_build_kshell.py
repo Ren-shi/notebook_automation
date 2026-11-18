@@ -66,6 +66,52 @@ def test_pinned_checksums_are_well_formed():
     assert len(bk.OPENBLAS.sha256) == 64 and bk.OPENBLAS.md5 == "5047115a08a7d39471375a25994108c5"
 
 
+def test_the_vendored_release_is_the_pinned_one():
+    assert bk.VENDORED_KSHELL.is_file()
+    bk.verify(bk.VENDORED_KSHELL, bk.KSHELL)
+    assert bk.get_archive(bk.KSHELL, None, Path("unused"), bk.VENDORED_KSHELL) == bk.VENDORED_KSHELL
+
+
+def test_archives_folder_overrides_the_vendored_copy(tmp_path):
+    local = tmp_path / "local" / "cpc"
+    local.mkdir(parents=True)
+    copy = local / "kshell.tar.gz"
+    copy.write_bytes(bk.VENDORED_KSHELL.read_bytes())
+    assert bk.get_archive(bk.KSHELL, tmp_path / "local", tmp_path / "dl", bk.VENDORED_KSHELL) == copy
+    # a folder without it falls back to the vendored copy; without that either, it is an error, not a download
+    assert bk.get_archive(bk.KSHELL, tmp_path / "dl", tmp_path / "dl", bk.VENDORED_KSHELL) == bk.VENDORED_KSHELL
+    with pytest.raises(SystemExit, match="not found under"):
+        bk.get_archive(bk.KSHELL, tmp_path / "dl", tmp_path / "dl", tmp_path / "missing.tar.gz")
+
+
+def test_a_changed_vendored_copy_is_an_error(tmp_path):
+    bad = tmp_path / "kshell.tar.gz"
+    bad.write_bytes(b"\x1f\x8b not the release")
+    with pytest.raises(ValueError, match="SHA-256"):
+        bk.get_archive(bk.KSHELL, None, tmp_path / "dl", bad)
+
+
+def test_a_web_page_instead_of_the_archive_fails_clearly(tmp_path, monkeypatch):
+    class Page(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(bk.urllib.request, "urlopen", lambda req, timeout: Page(b"<!DOCTYPE html><html>"))
+    with pytest.raises(SystemExit, match="not a .gz archive .* probably a web page"):
+        bk.get_archive(bk.KSHELL, None, tmp_path / "dl", tmp_path / "missing.tar.gz")
+    assert not (tmp_path / "dl" / "kshell.tar.gz").exists()  # nothing half-downloaded is left behind
+
+    def refuse(req, timeout):
+        raise bk.urllib.error.HTTPError(req.full_url, 403, "Forbidden", {}, None)
+
+    monkeypatch.setattr(bk.urllib.request, "urlopen", refuse)
+    with pytest.raises(SystemExit, match="403"):
+        bk.download(bk.KSHELL, tmp_path / "dl")
+
+
 def test_unpack_tar_refuses_paths_outside_the_folder(tmp_path):
     archive = tmp_path / "evil.tar"
     with tarfile.open(archive, "w") as tar:

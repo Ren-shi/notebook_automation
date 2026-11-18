@@ -1,11 +1,12 @@
 """Build KSHELL (the 2019 release published with Comput. Phys. Commun.) for physim's shell-model calculations.
 
-    python scripts/build_kshell.py                         # download, verify, patch, build, check
-    python scripts/build_kshell.py --archives <dir>        # use local copies of the archives instead
+    python scripts/build_kshell.py                         # verify, patch, build, check
+    python scripts/build_kshell.py --archives <dir>        # take the archives from a local folder instead
     python scripts/build_kshell.py --check-only            # run the 28Si check on an existing tools/kshell/
     python scripts/build_kshell.py --compare <dir> <dir>   # compare two folders of KSHELL logs (Linux vs Windows)
 
-Steps: get ``kshell.tar.gz`` (and on Windows the OpenBLAS 0.3.34 binaries) and verify them by checksum; unpack into
+Steps: take ``kshell.tar.gz`` from ``third_party/kshell/`` (vendored: Mendeley Data refuses automated downloads) and
+on Windows download the OpenBLAS 0.3.34 binaries from GitHub, and verify both by checksum; unpack into
 ``build/kshell/``; apply physim's rename patch (below); compile ``kshell.exe``, ``transit.exe`` and
 ``count_dim.exe`` with gfortran (OpenMP, no MPI); and assemble ``tools/kshell/`` with the executables, every DLL
 they need (Windows), the interaction files (``snt/``), the source archive with the patch and this script, the
@@ -64,6 +65,9 @@ KSHELL = Archive(
     "file_downloaded",
     "ce0659c3b39dc8c8ed623f6ebe1e10766445fc72372b6e33e952a578c7227526",
 )
+#: The copy of that release kept in the repository, used unless --archives names another folder. The URL above is
+#: only a last resort: Mendeley Data refuses non-browser clients (403, or a web page instead of the archive).
+VENDORED_KSHELL = REPO / "third_party" / "kshell" / KSHELL.name
 #: OpenBLAS (BSD-3-Clause) for LAPACK/BLAS on Windows. The MD5 is the one published with the release.
 OPENBLAS_VERSION = "0.3.34"
 OPENBLAS = Archive(
@@ -134,26 +138,54 @@ def find_archive(archive: Archive, folders: Iterable[Path]) -> Optional[Path]:
     return None
 
 
+#: The first bytes of the archive types fetched here, to tell an archive from an error page.
+MAGIC = {".gz": b"\x1f\x8b", ".zip": b"PK\x03\x04"}
+
+
 def download(archive: Archive, folder: Path) -> Path:
+    """Fetch the archive and verify it. Fails with a clear message, and leaves nothing behind, when the server
+    refuses or sends something else (a web page instead of the archive)."""
     folder.mkdir(parents=True, exist_ok=True)
     dest = folder / archive.name
     say("downloading", archive.url)
     req = urllib.request.Request(archive.url, headers={"User-Agent": "physim-build"})
-    with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as f:
-        shutil.copyfileobj(r, f)
-    verify(dest, archive)
+    try:
+        with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as f:
+            shutil.copyfileobj(r, f)
+    except OSError as e:  # urllib.error.URLError and HTTPError are OSErrors
+        dest.unlink(missing_ok=True)
+        raise SystemExit(f"downloading {archive.name} failed: {e}. Pass --archives <folder with a copy>.")
+    head = dest.read_bytes()[:4]
+    magic = MAGIC.get(Path(archive.name).suffix)
+    try:
+        if magic and not head.startswith(magic):
+            raise ValueError(f"{archive.url} sent something that is not a {Path(archive.name).suffix} archive "
+                             f"(starts with {head!r}; probably a web page)")
+        verify(dest, archive)
+    except ValueError as e:
+        dest.unlink(missing_ok=True)
+        raise SystemExit(f"{e}. Pass --archives <folder with a copy>.")
     return dest
 
 
-def get_archive(archive: Archive, local: Optional[Path], download_dir: Path) -> Path:
-    folders = [p for p in (local, download_dir) if p]
-    path = find_archive(archive, [p for p in folders if p.is_dir()])
+def get_archive(archive: Archive, local: Optional[Path], download_dir: Path, vendored: Optional[Path] = None) -> Path:
+    """The archive, checked: from --archives when it has a copy, else the vendored copy, else earlier downloads,
+    else the network (the archives' folder, when given, must then have it)."""
+    path = find_archive(archive, [local]) if local and local.is_dir() else None
     if path:
-        say(f"{archive.name}: {path} (checksum ok)")
-        return path
-    if local:
+        pass
+    elif vendored and vendored.is_file():
+        verify(vendored, archive)  # a changed vendored copy is an error, never silently replaced by a download
+        path = vendored
+    elif local:
         raise SystemExit(f"{archive.name} with SHA-256 {archive.sha256} not found under {local}")
-    return download(archive, download_dir)
+    else:
+        if vendored:
+            say(f"WARNING: {vendored} is missing; trying {archive.url}")
+        path = find_archive(archive, [download_dir] if download_dir.is_dir() else []) or download(archive,
+                                                                                                 download_dir)
+    say(f"{archive.name}: {path} (checksum ok)")
+    return path
 
 
 def unpack_tar(path: Path, dest: Path) -> None:
@@ -481,7 +513,7 @@ def build(args) -> Path:
 
     work = args.build_dir.resolve()
     downloads = work / "downloads"
-    kshell_tar = get_archive(KSHELL, args.archives, downloads)
+    kshell_tar = get_archive(KSHELL, args.archives, downloads, VENDORED_KSHELL)
     for sub in ("src", "openblas", "obj"):
         shutil.rmtree(work / sub, ignore_errors=True)
     unpack_tar(kshell_tar, work / "src")
@@ -679,7 +711,9 @@ def check(out: Path, fixtures: Path, work: Optional[Path], threads: Optional[int
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--archives", type=Path, help="folder with local copies of the archives (searched recursively)")
+    ap.add_argument("--archives", type=Path,
+                    help="folder with local copies of the archives (searched recursively); a KSHELL archive found "
+                         "there is used instead of the vendored one, and OpenBLAS is not downloaded")
     ap.add_argument("--out", type=Path, default=REPO / "tools" / "kshell")
     ap.add_argument("--build-dir", type=Path, default=REPO / "build" / "kshell")
     ap.add_argument("--fc", default="gfortran", help="the gfortran to use")

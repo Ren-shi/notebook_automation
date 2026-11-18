@@ -10,12 +10,14 @@ on:
     branches: [main]
     paths:
       - "scripts/build_kshell.py"
+      - "third_party/kshell/**"
       - "tests/python/test_build_kshell.py"
       - "tests/reference/nuclear/shellmodel/kshell/**"
       - ".github/workflows/kshell.yml"
   pull_request:
     paths:
       - "scripts/build_kshell.py"
+      - "third_party/kshell/**"
       - "tests/python/test_build_kshell.py"
       - "tests/reference/nuclear/shellmodel/kshell/**"
       - ".github/workflows/kshell.yml"
