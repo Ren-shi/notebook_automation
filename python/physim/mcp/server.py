@@ -1,8 +1,8 @@
 """The MCP server: the session, and the tools registered on an ``MCPServer`` from the official ``mcp`` package.
 
 ``build_server`` makes a server that a client talks to; ``physim mcp`` runs it over stdin/stdout. The tools
-themselves are plain methods (:mod:`physim.mcp.tools_setup`); this module only registers them, marks which ones
-write files, and turns the planner's exceptions into messages the model can act on.
+themselves are plain methods (:mod:`physim.mcp.tools_setup`, :mod:`physim.mcp.tools_shellmodel`); this module only
+registers them, marks which ones write files, and turns the planner's exceptions into messages the model can act on.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from ..nuclear.experiment import SetupError
 from ..nuclear.runs import RunInProgress
 from .session import Session, ToolProblem
 from .tools_setup import SetupTools
+from .tools_shellmodel import ShellModelTools
 
 INSTRUCTIONS = """\
 physim's experiment planner for nuclear-physics beam time (Rutherford scattering, Coulomb excitation and
@@ -35,6 +36,14 @@ first): read them before going on.
 
 The planner app (physim app) shows the same experiment folders. It does not watch for changes: an experiment
 changed here shows the changes in the app once it is opened there again.
+
+Shell-model calculations: physim drives KSHELL (an outside program) for laptop-sized valence spaces, with no
+truncation. shell_model_options lists the interactions for a nucleus, estimate_shell_model says how big a request
+is, run_shell_model starts a background job (follow it with shell_model_status), shell_model_results gives the
+levels, B(E2), B(M1), Q_s and mu, and import_shell_model reads results run elsewhere. Two rules of the user's:
+a run may use at most half of the RAM free when it starts (allow_over_limit only when the user explicitly says
+so), and shell-model values never replace ENSDF, derived or user values in a level scheme (apply_shell_model's
+replace only when the user explicitly asks).
 """
 
 READS = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
@@ -42,6 +51,9 @@ WRITES = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHi
 #: Tools that overwrite what is there (the setup as a whole), for clients that ask before such calls.
 REPLACES = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False)
 _REPLACING = {"replace_setup"}
+#: Tools that can overwrite or stop something (apply_shell_model with replace=true; cancelling a running job).
+DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False)
+_DESTRUCTIVE = {"apply_shell_model", "cancel_shell_model"}
 
 
 def message(e: BaseException) -> str:
@@ -76,9 +88,10 @@ def build_server(root: Union[str, Path, None] = None, session: Optional[Session]
     session = session or Session(root)
     server = MCPServer("physim-planner", title="physim experiment planner", instructions=INSTRUCTIONS,
                        version=__version__)
-    tools = SetupTools(session)
-    for name, writes in SetupTools.TOOLS:
-        annotations = REPLACES if name in _REPLACING else WRITES if writes else READS
-        server.add_tool(_refusing(getattr(tools, name)), name=name, annotations=annotations)
+    for tools in (SetupTools(session), ShellModelTools(session)):
+        for name, writes in tools.TOOLS:
+            annotations = (REPLACES if name in _REPLACING else DESTRUCTIVE if name in _DESTRUCTIVE
+                           else WRITES if writes else READS)
+            server.add_tool(_refusing(getattr(tools, name)), name=name, annotations=annotations)
     server.session = session  # for tests and scripts: the state behind the tools
     return server

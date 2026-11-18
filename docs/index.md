@@ -25,6 +25,7 @@ guide
 new-ideas
 nuclear-setup
 planner-app
+shell-model
 ```
 
 ```{toctree}
