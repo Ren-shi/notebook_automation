@@ -280,6 +280,44 @@ def test_a_failed_step_puts_the_log_tail_in_the_status(fake, cache, monkeypatch)
     assert "log_tail" not in jobs.status(job)
 
 
+def test_the_final_status_comes_after_the_clean_up(fake, cache, monkeypatch):
+    # A reader that sees a job finished must not find the worker still deleting files in its folder.
+    seen = []
+    remove = kshell.remove_wavefunctions
+
+    def watching(folder):
+        seen.append(jobs._read_json(Path(folder).parent / "status.json")["state"])
+        return remove(folder)
+
+    monkeypatch.setattr(kshell, "remove_wavefunctions", watching)
+    for mode in ("fail_transit", "ok"):
+        monkeypatch.setenv("FAKE_KSHELL_MODE", mode)
+        seen.clear()
+        job = jobs.submit(SI28_REQUEST, install=fake, background=False)
+        assert jobs.status(job)["state"] == (jobs.FAILED if mode == "fail_transit" else jobs.DONE)
+        assert seen and all(state == jobs.RUNNING for state in seen), (mode, seen)
+
+
+def test_a_rerun_waits_for_the_earlier_worker_to_exit(fake, cache, monkeypatch):
+    monkeypatch.setenv("FAKE_KSHELL_MODE", "fail_transit")
+    job = jobs.submit(SI28_REQUEST, install=fake, background=False)
+    folder = cache / job
+    assert jobs.status(job)["state"] == jobs.FAILED
+    # The earlier worker in its last moments: its final status is written, but its process still holds worker.out
+    # (Windows refuses to delete a file another process has open).
+    with open(folder / "worker.out", "wb") as out:
+        lingering = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1.5)"], stdout=out,
+                                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+    st = jobs._read_json(folder / "status.json")
+    st.update(pid=lingering.pid, pid_created=jobs._process_created(lingering.pid))
+    jobs._write_json(folder / "status.json", st)
+
+    monkeypatch.setenv("FAKE_KSHELL_MODE", "ok")
+    assert jobs.submit(SI28_REQUEST, install=fake, background=False) == job
+    assert lingering.poll() is not None, "the rerun started before the earlier worker had exited"
+    assert jobs.status(job)["state"] == jobs.DONE
+
+
 def test_cancel_stops_the_worker_and_its_kshell(fake, cache, tmp_path, monkeypatch):
     pidfile = tmp_path / "kshell.pid"
     monkeypatch.setenv("FAKE_KSHELL_MODE", "sleep")
