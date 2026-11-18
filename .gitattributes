@@ -1,0 +1,2 @@
+# KSHELL fixtures are kept byte for byte: real logs mix CRLF and LF line endings, and parsers are tested on them
+tests/reference/nuclear/shellmodel/** -text

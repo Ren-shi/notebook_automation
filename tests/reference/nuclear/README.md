@@ -25,6 +25,9 @@ and run by hand, so each file records exactly how it was produced, so that anyon
   the database version and entries, `reference:` the papers and tables, and each row its EXFOR subentry. Read by
   the checks `fusion_vs_data` (every `fusion_*_literature.csv`; give each row `e_cm_mev` or `e_lab_mev`) and
   `residues_vs_data` and `reproduction_usman2020` (`evaporation_4He_165Ho_literature.csv`).
+- `shellmodel/` holds KSHELL inputs and outputs (²⁸Si/USDB, ⁴⁸Cr/KB3), partition files with their dimensions,
+  and the interaction files they use, for testing the shell-model parser and size estimates without running
+  KSHELL; its own README records how they were made, the benchmarks they pass and their licence (GPLv3).
 - `reproduction_usman2020.csv` is physim's own result, not a reference from outside: the reproduction of Usman
   et al., NIM B 469, 42 (2020) (⁴He + ¹⁶⁵Ho stacked-foil activation) through the planner, one row per Ho foil and
   channel (channel table filled by the app, residues made in the irradiation, σ inferred from them, the measured
