@@ -12,7 +12,9 @@ records where it came from::
     pt.set_matrix_element(0, 1, "E2", "1.28 eb")   # the user's value takes precedence from now on
 
 Sources: ``"ensdf"`` (as evaluated), ``"derived"`` (computed here from ENSDF values), ``"assumed"`` (a choice made
-because the data do not say, such as a sign) and ``"user"``.
+because the data do not say, such as a sign), ``"user"`` and ``"shell model"`` (a shell-model calculation put in
+by :func:`physim.nuclear.shellmodel.apply`, with real relative signs; it fills gaps and replaces an ENSDF, derived
+or user value only when the user asks).
 
 Conventions: energies in keV, half-lives in seconds, reduced matrix elements ⟨f‖M(Eλ)‖i⟩ in e fm^λ, with
 B(Eλ; i → f) = ⟨f‖M(Eλ)‖i⟩² / (2J_i + 1). ENSDF gives no signs: derived matrix elements are positive, and the
@@ -29,7 +31,9 @@ from . import ensdf
 from .names import parse_nuclide
 from .quantity import Quantity
 
-SOURCES = ("ensdf", "derived", "assumed", "user")
+SOURCES = ("ensdf", "derived", "assumed", "user", "shell model")
+#: Sources :meth:`LevelScheme.derive` keeps: values someone chose to put in.
+CHOSEN = ("user", "shell model")
 #: Electric multipolarities that can carry a matrix element.
 ELECTRIC = ("E1", "E2", "E3")
 
@@ -285,7 +289,7 @@ class LevelScheme:
 
     def derive(self) -> None:
         """Fill in the size of each E1, E2 and E3 matrix element that ENSDF's values determine. Values set by
-        the user are kept. Each transition uses, in order of preference:
+        the user or put in from a shell-model calculation are kept. Each transition uses, in order of preference:
 
         1. ENSDF's B(Eλ) in Weisskopf units: B↓ = B_W × the Weisskopf unit;
         2. the level's half-life with its branching: the γ-ray rate of the transition is
@@ -299,7 +303,7 @@ class LevelScheme:
                 continue
             for mult in ELECTRIC:
                 existing = self._find(t.initial, t.final, mult)
-                if existing is not None and existing.value.source == "user":
+                if existing is not None and existing.value.source in CHOSEN:
                     continue
                 found = self._b_down(t, mult)
                 if found is None:
@@ -398,6 +402,8 @@ class LevelScheme:
                 d["jpi"] = lv.jpi or lv.label
             put(d, "half_life", lv.half_life, "s")
             d["source"] = lv.energy.source
+            if lv.energy.note:
+                d["note"] = lv.energy.note
             out["level"].append(d)
         if self.transitions:
             out["transition"] = []
@@ -441,7 +447,7 @@ class LevelScheme:
             nuclide = None
 
         def value(d: dict, key: str, label: str, kind: Optional[str] = None, unit: str = "",
-                  required: bool = False) -> Optional[Value]:
+                  required: bool = False, note_key: str = "value") -> Optional[Value]:
             if key not in d:
                 if required:
                     problems.append(f"{label}: '{key}' is missing")
@@ -467,7 +473,7 @@ class LevelScheme:
             if unc is not None and (isinstance(unc, bool) or not isinstance(unc, (int, float)) or unc < 0):
                 problems.append(f"{label}: {key}_unc must be a number that is not negative")
                 unc = None
-            return Value(number, unc, source, d.get("note", "") if key == "value" else "")
+            return Value(number, unc, source, str(d.get("note", "")) if key == note_key else "")
 
         def rows(key: str) -> list:
             items = raw.get(key, [])
@@ -479,7 +485,7 @@ class LevelScheme:
         scheme = cls(nuclide or "", reference=raw.get("reference", ""))
         for i, d in enumerate(rows("level")):
             label = f"{where} level {i}"
-            energy = value(d, "energy", label, "energy", "keV", required=True)
+            energy = value(d, "energy", label, "energy", "keV", required=True, note_key="energy")
             jpi = d.get("jpi", "")
             j, parity, _ = ensdf.spin_parity(jpi) if isinstance(jpi, str) else (None, None, False)
             if not isinstance(jpi, str):
@@ -582,5 +588,5 @@ def _num(x: float) -> str:
     return f"{x:.10g}"
 
 
-__all__ = ["ELECTRIC", "ME_UNITS", "SOURCES", "Level", "LevelScheme", "MatrixElement", "Transition", "Value",
+__all__ = ["CHOSEN", "ELECTRIC", "ME_UNITS", "SOURCES", "Level", "LevelScheme", "MatrixElement", "Transition", "Value",
            "components", "fractions", "parse_matrix_element", "quadrupole_factor", "rate_per_b", "weisskopf_unit"]
