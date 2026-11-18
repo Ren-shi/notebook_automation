@@ -8,6 +8,10 @@
 ; "pythonw.exe -m physim app --desktop" from the bundled Python (the planner in its own window, on Edge WebView2,
 ; which Windows 10 and 11 bring; the browser if pywebview is missing), and registers an uninstaller. Installing a
 ; newer version over an older one replaces it.
+;
+; When build.py found a built KSHELL (scripts/build_kshell.py), the bundle has it in tools\kshell\ and it is installed
+; with the rest. THIRD-PARTY-NOTICES.txt, written by build.py, is shown before installing: it names the separately
+; licensed software, including KSHELL (GPL v3, a separate program, source in tools\kshell\source\).
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -38,6 +42,7 @@ OutputBaseFilename=physim-planner-{#AppVersion}-windows-x64-setup
 SetupIconFile={#Bundle}\planner.ico
 UninstallDisplayIcon={app}\planner.ico
 LicenseFile={#Bundle}\LICENSE.txt
+InfoBeforeFile={#Bundle}\THIRD-PARTY-NOTICES.txt
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -50,8 +55,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#Bundle}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
-; An older version's packages would otherwise stay next to the new ones.
+; An older version's packages (or KSHELL build) would otherwise stay next to the new ones.
 Type: filesandordirs; Name: "{app}\python"
+Type: filesandordirs; Name: "{app}\tools\kshell"
 
 [UninstallDelete]
 ; Python writes bytecode caches next to modules it compiles at run time.

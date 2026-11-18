@@ -1,5 +1,7 @@
 """Assemble the Windows planner bundle: the official embeddable Python, the physim wheel with the app's packages,
-and the icon. installer/windows/planner.iss then packs the folder into an installer.
+the icon, and KSHELL for shell-model calculations when tools/kshell/ has been built (scripts/build_kshell.py; a
+separate GPLv3 program, copied to tools/kshell/ in the bundle; without it the bundle is made with a warning).
+installer/windows/planner.iss then packs the folder into an installer.
 
     python installer/windows/build.py --wheel dist/physim_engine-0.1.0-cp39-abi3-win_amd64.whl --out build/planner
 
@@ -21,6 +23,8 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
 
 #: The embeddable distribution from python.org. Its python.exe and pythonw.exe are signed by the Python Software
 #: Foundation, so the bundle contains no unsigned executables of ours.
@@ -104,6 +108,62 @@ def make_icon(path: Path) -> bool:
     return True
 
 
+#: Files a KSHELL folder from scripts/build_kshell.py must have before it is bundled: the programs physim runs,
+#: the build record, and the licence texts (KSHELL is GPLv3, OpenBLAS BSD-3: shipping them without is not allowed).
+KSHELL_REQUIRED = ["kshell.exe", "transit.exe", "VERSION", "COPYING", "README.txt", "source/kshell.tar.gz"]
+
+
+def kshell_problems(folder: Path) -> list[str]:
+    """Why a KSHELL folder cannot be bundled (empty when it can)."""
+    if not folder.is_dir():
+        return [f"{folder} not found (build it with: python scripts/build_kshell.py)"]
+    problems = [f"{name} missing" for name in KSHELL_REQUIRED if not (folder / name).is_file()]
+    if (folder / "libopenblas.dll").is_file() and not (folder / "LICENSE-OpenBLAS.txt").is_file():
+        problems.append("LICENSE-OpenBLAS.txt missing")
+    return problems
+
+
+def bundle_kshell(source: Path, out: Path) -> bool:
+    """Copy KSHELL (a separate GPLv3 program, run as an executable) to <bundle>/tools/kshell/ when it is there and
+    complete; otherwise warn and leave it out (the planner then finds no bundled KSHELL, as before)."""
+    problems = kshell_problems(source)
+    if problems:
+        print("WARNING: KSHELL not bundled: " + "; ".join(problems))
+        return False
+    dest = out / "tools" / "kshell"
+    shutil.copytree(source, dest)
+    print("KSHELL bundled:", (source / "VERSION").read_text(encoding="utf-8").splitlines()[0])
+    return True
+
+
+def write_notices(out: Path, kshell: bool) -> None:
+    """THIRD-PARTY-NOTICES.txt, shown by the installer before it installs (planner.iss, InfoBeforeFile)."""
+    text = ["Third-party software in the physim planner",
+            "===========================================",
+            "",
+            "physim itself is under the MIT licence (the licence page before this one). The installer also contains",
+            "separately licensed software:",
+            "",
+            "Python and the packages the planner uses",
+            "  python\\ is the official embeddable Python from python.org (Python Software Foundation licence,",
+            "  python\\LICENSE.txt) with packages under their own licences (python\\Lib\\site-packages\\*.dist-info).",
+            ""]
+    if kshell:
+        version = (out / "tools" / "kshell" / "VERSION").read_text(encoding="utf-8").splitlines()[0]
+        text += ["KSHELL (tools\\kshell\\), for shell-model calculations",
+                 f"  {version}.",
+                 "  KSHELL is by N. Shimizu, T. Mizusaki, Y. Utsuno and Y. Tsunoda, Comput. Phys. Commun. 244, 372",
+                 "  (2019). It is free software under the GNU General Public License, version 3 or later",
+                 "  (tools\\kshell\\COPYING), and comes WITHOUT ANY WARRANTY. It is a separate program: physim runs",
+                 "  its executables and reads their output, and is not linked with it. The complete source, physim's",
+                 "  small patch to it and the build script are in tools\\kshell\\source\\.",
+                 "  Its run-time libraries are OpenBLAS (BSD licence, tools\\kshell\\LICENSE-OpenBLAS.txt) and the GCC",
+                 "  and MinGW-w64 run-time libraries (GPL v3 with the GCC Runtime Library Exception; MIT/BSD):",
+                 "  see tools\\kshell\\README.txt.",
+                 ""]
+    (out / "THIRD-PARTY-NOTICES.txt").write_text("\n".join(text), encoding="utf-8", newline="\r\n")
+
+
 def check(out: Path) -> None:
     """The bundled Python finds physim and the app's packages in the bundle, and nothing outside it."""
     code = ("import sys, physim, nicegui, plotly, matplotlib, uproot, physim.nuclear.app as a; "
@@ -117,6 +177,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--wheel", type=Path, required=True, help="the physim wheel for win_amd64")
     ap.add_argument("--out", type=Path, default=Path("build/planner"))
+    ap.add_argument("--kshell", type=Path, default=REPO / "tools" / "kshell",
+                    help="the KSHELL folder from scripts/build_kshell.py, bundled when present")
     args = ap.parse_args(argv)
     if sys.version_info[:2] != tuple(int(x) for x in PYTHON_VERSION.split(".")[:2]):
         ap.error(f"run with Python {PYTHON_VERSION.rsplit('.', 1)[0]} (it precompiles the bundled packages)")
@@ -131,7 +193,8 @@ def main(argv=None) -> int:
     prune(site)
     compileall.compile_dir(str(site), quiet=1, workers=0)
     make_icon(out / "planner.ico")
-    shutil.copy(Path(__file__).resolve().parents[2] / "LICENSE", out / "LICENSE.txt")
+    shutil.copy(REPO / "LICENSE", out / "LICENSE.txt")
+    write_notices(out, bundle_kshell(args.kshell, out))
     check(out)
     size = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
     print(f"bundle: {size / 1e6:.0f} MB in {out}")

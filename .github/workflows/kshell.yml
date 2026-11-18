@@ -1,0 +1,119 @@
+name: KSHELL
+
+# Builds KSHELL (the 2019 release physim bundles, with physim's rename patch) with scripts/build_kshell.py on Linux
+# and on Windows, runs the 28Si/USDB case on each and compares it with the fixture logs (energies to 1 keV,
+# B(E2)/B(M1) to 0.1 %). On Windows the check runs with nothing but Windows on the PATH, so a missing DLL fails it.
+# A last job compares the Linux and Windows logs with each other.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/build_kshell.py"
+      - "third_party/kshell/**"
+      - "tests/python/test_build_kshell.py"
+      - "tests/reference/nuclear/shellmodel/kshell/**"
+      - ".github/workflows/kshell.yml"
+  pull_request:
+    paths:
+      - "scripts/build_kshell.py"
+      - "third_party/kshell/**"
+      - "tests/python/test_build_kshell.py"
+      - "tests/reference/nuclear/shellmodel/kshell/**"
+      - ".github/workflows/kshell.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install gfortran, LAPACK and BLAS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gfortran libopenblas-dev liblapack-dev
+      - name: Unit tests of the build script
+        run: |
+          python -m pip install pytest
+          python -m pytest tests/python/test_build_kshell.py -q
+      - name: Build and check
+        run: python scripts/build_kshell.py --work "$RUNNER_TEMP/kshell-check"
+      - name: Summary
+        if: always()
+        run: |
+          { echo '### KSHELL (Linux)'; echo '```'; cat tools/kshell/VERSION; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kshell-check-linux
+          path: ${{ runner.temp }}/kshell-check/*log_*.txt
+
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # MinGW-w64 gfortran (UCRT, as on the development machine) from MSYS2; OpenBLAS comes from the pinned release
+      # zip, which build_kshell.py downloads and verifies. OpenMP (libgomp) is a separate, optional package in MSYS2.
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc-fortran mingw-w64-ucrt-x86_64-libgomp mingw-w64-ucrt-x86_64-binutils
+      - name: Build and check
+        shell: pwsh
+        run: |
+          $bin = Join-Path "${{ steps.msys2.outputs.msys2-location }}" "ucrt64\bin"
+          $env:PATH = "$bin;$env:PATH"  # gfortran's assembler, linker and their DLLs; the check removes it again
+          python scripts\build_kshell.py --fc (Join-Path $bin "gfortran.exe") --work "$env:RUNNER_TEMP\kshell-check"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          "### KSHELL (Windows)`n``````" >> $env:GITHUB_STEP_SUMMARY
+          Get-Content tools\kshell\VERSION -ErrorAction SilentlyContinue >> $env:GITHUB_STEP_SUMMARY
+          Get-ChildItem tools\kshell -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } >> $env:GITHUB_STEP_SUMMARY
+          "``````" >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kshell-check-windows
+          path: ${{ runner.temp }}/kshell-check/*log_*.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kshell-windows
+          path: tools/kshell/
+          retention-days: 14
+
+  compare:
+    name: Linux versus Windows
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: kshell-check-linux
+          path: linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: kshell-check-windows
+          path: windows
+      - name: Compare the logs
+        run: python scripts/build_kshell.py --compare windows linux
