@@ -305,7 +305,7 @@ def test_problems_in_a_level_scheme_are_named():
     text = "\n".join(e.value.problems)
     for expected in ("levels.beam: nuclide 18O is not the beam (16O)",
                      "levels.target level 1: energy", "has no unit",
-                     "source must be one of ensdf, derived, assumed, user, got 'guess'",
+                     "source must be one of ensdf, derived, assumed, user, shell model, got 'guess'",
                      "the first level must be the ground state",
                      "levels.target transition 0: a transition goes from a higher level to a lower one",
                      "levels.target transition 1: 'from' and 'to' must be level numbers",
