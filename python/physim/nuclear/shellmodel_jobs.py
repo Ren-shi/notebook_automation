@@ -81,6 +81,8 @@ LOG_TAIL_LINES = 40
 MAXITER = 300
 #: A queued or running job whose worker is gone, and whose status has not changed for this long, has failed.
 STALE_AFTER_S = 15.0
+#: How long a rerun waits for the process of the job's earlier, finished run to exit.
+WORKER_EXIT_S = 30.0
 
 _KEY = re.compile(r"^[0-9a-f]{16}$")
 
@@ -432,11 +434,42 @@ def list_jobs() -> List[dict]:
 # Submit and cancel
 
 
-def _clear(folder: Path) -> None:
-    """Remove what an earlier, unfinished run left in the job folder."""
+def _wait_for_workers(folder: Path, st: dict, timeout_s: float = WORKER_EXIT_S) -> None:
+    """Wait until the processes of an earlier run of the job in ``folder`` have ended.
+
+    A worker writes its final status just before it exits, so for a moment after a job has failed its process
+    still holds ``worker.out`` (Windows then refuses to delete the file) and may still be tidying up. One that
+    has not ended after ``timeout_s`` is stopped: its job has finished, so nothing is lost."""
+    worker = _read_json(folder / "worker.json") or {}
+    processes = [(st.get("pid"), st.get("pid_created")), (worker.get("pid"), worker.get("created"))]
+    deadline = time.monotonic() + timeout_s
+    while any(_alive(pid, created) and int(pid) != os.getpid() for pid, created in processes):
+        if time.monotonic() > deadline:
+            for pid, created in processes:
+                _terminate(pid, created)
+            break
+        time.sleep(0.05)
+
+
+def _remove(path: Path, attempts: int = 40) -> None:
+    """Delete ``path``, waiting a little while another process (an antivirus scan, an indexer) holds it."""
+    for attempt in range(attempts):
+        try:
+            path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.05)
+
+
+def _clear(folder: Path, st: dict) -> None:
+    """Remove what an earlier, unfinished run left in the job folder, once its processes have ended."""
+    _wait_for_workers(folder, st)
     for name in ("results.json", "status.json", "worker.json", "worker.out", "cancel"):
-        with contextlib.suppress(FileNotFoundError):
-            (folder / name).unlink()
+        _remove(folder / name)
     run = folder / "run"
     if run.exists():
         shutil.rmtree(run, ignore_errors=True)
@@ -467,7 +500,7 @@ def submit(request: ShellModelRequest, *, background: bool = True,
         st = _job_status(folder)
         if st is not None and st.get("state") in ACTIVE:
             return key
-        _clear(folder)
+        _clear(folder, st or {})
     folder.mkdir(parents=True, exist_ok=True)
     _write_request(folder, request, install, key)
     _write_json(folder / "status.json", {
@@ -639,32 +672,49 @@ class _Worker:
         self.status.update(fields, state=state, message=message, updated=_now(), finished=_now())
         _write_json(self.folder / "status.json", self.status)
 
+    def outcome(self, error: BaseException) -> tuple:
+        """(state, message, extra status fields) for a job that ended with ``error``."""
+        step = self.status.get("step", "a step")
+        if isinstance(error, _Cancelled):
+            return CANCELLED, "Cancelled.", {}
+        if isinstance(error, _Refused):
+            return FAILED, str(error), {"refused": "memory", "log_tail": ""}
+        if isinstance(error, ProgramFailed):
+            return FAILED, f"{step} failed: {str(error).splitlines()[0]}", {
+                "log_tail": "\n".join(str(error).splitlines()[-LOG_TAIL_LINES:])}
+        tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))  # the traceback is the log
+        return FAILED, f"{step} failed: {type(error).__name__}: {error}", {
+            "log_tail": "\n".join(tb.rstrip().splitlines()[-LOG_TAIL_LINES:])}
+
     def run(self) -> None:
+        """Run the job. The final status is written last, after the wave functions are gone and while the job lock
+        is still held, so that once a reader sees the job finished, the worker no longer touches its folder (it
+        only tidies the rest of the cache and exits)."""
+        outcome = None
         try:
             self.write()
             with _job_lock(self.folder.parent, lambda: self.write(
                     state=QUEUED, step="waiting for another shell-model job", message="Queued behind another job.")):
-                self.write(state=RUNNING, started=_now(), step="estimating the size", message="Running.")
-                self.calculate()
-        except _Cancelled:
-            self.finish(CANCELLED, "Cancelled.")
-        except _Refused as e:
-            self.finish(FAILED, str(e), refused="memory", log_tail="")
-        except ProgramFailed as e:
-            self.finish(FAILED, f"{self.status.get('step', 'a step')} failed: {str(e).splitlines()[0]}",
-                        log_tail="\n".join(str(e).splitlines()[-LOG_TAIL_LINES:]))
-        except Exception as e:  # anything else: the traceback is the log
-            tb = traceback.format_exc()
-            self.finish(FAILED, f"{self.status.get('step', 'a step')} failed: {type(e).__name__}: {e}",
-                        log_tail="\n".join(tb.rstrip().splitlines()[-LOG_TAIL_LINES:]))
-        finally:
-            if self.run_dir.is_dir():
-                _kshell.remove_wavefunctions(self.run_dir)
+                try:
+                    self.write(state=RUNNING, started=_now(), step="estimating the size", message="Running.")
+                    outcome = self.calculate()
+                except (_Cancelled, Exception) as e:
+                    outcome = self.outcome(e)
+                finally:
+                    if self.run_dir.is_dir():
+                        _kshell.remove_wavefunctions(self.run_dir)
+                    if outcome is not None:
+                        state, message, fields = outcome
+                        self.finish(state, message, **fields)
+        except (_Cancelled, Exception) as e:  # while waiting for the lock
+            if outcome is None:
+                state, message, fields = self.outcome(e)
+                self.finish(state, message, **fields)
         if self.status.get("state") in FINISHED:
             with contextlib.suppress(Exception):
                 clean_cache(keep=(self.folder.name,))
 
-    def calculate(self) -> None:
+    def calculate(self) -> tuple:
         spec_text = _read_request(self.folder)
         request = ShellModelRequest.from_dict(spec_text["request"])
         install = _kshell.install_from(spec_text["kshell"]["folder"])
@@ -747,12 +797,12 @@ class _Worker:
         res.notes = notes + list(res.notes)
         payload = res.to_dict()
         payload["job"] = self.folder.name
-        _write_json(self.folder / "results.json", payload)
         _kshell.remove_wavefunctions(self.run_dir)
         with contextlib.suppress(OSError):
             (self.run_dir / spec.snt).unlink()  # the install has it; the logs name it
-        self.finish(DONE, f"Done: {len(res.states)} states, {len(res.transitions)} transitions.",
-                    step="done", step_index=steps)
+        _write_json(self.folder / "results.json", payload)  # last: results.json alone means done (a cache hit)
+        return DONE, f"Done: {len(res.states)} states, {len(res.transitions)} transitions.", {
+            "step": "done", "step_index": steps}
 
     def check_memory(self, request: ShellModelRequest, j2: int, parity: int, n: int, what: str) -> int:
         """Check the free memory again before a kshell.exe run; returns ``mode_lv_hdd`` for it (0, vectors in
