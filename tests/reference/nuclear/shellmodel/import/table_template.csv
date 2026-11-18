@@ -1,0 +1,46 @@
+# format: physim shell-model table 1
+## A template for typing shell-model numbers from a paper or an email into physim (physim.nuclear.shellmodel_import).
+## Lines starting with ## are comments. Header entries are "# key: value"; an entry continues on lines starting with
+## "#" and two or more spaces. Required: format, nuclide, interaction (any model name). The rest is optional but
+## worth giving: effective charges (e_p, e_n) and g-factors (proton, neutron) say what the E2 and M1 values mean.
+## The numbers below are the 28Si / USDB ones of si28_usdb_table.csv in other units, to show each unit and kind.
+# nuclide: 28Si
+# interaction: USDB
+# space: 0d3/2 0d5/2 1s1/2 outside 16O
+# effective charges: e_p = 1.31, e_n = 0.46
+# g_l: 1.0, 0.0
+# g_s: 5.585, -3.826
+# program: KSHELL
+# reference: TEMPLATE - replace with the paper (authors, journal volume, page (year), table)
+# notes: what a reader should know; repeat this entry for more notes
+## One value per row: kind, state, final (transitions only), value, unit.
+## States are J, parity, index: 0+1, 2+1, 4+2; for odd A 5/2+1, 1/2-2. "2+" alone is the only 2+ state in the file.
+## Kinds and units:
+##   Ex     excitation energy                     MeV, keV
+##   E      absolute energy (as KSHELL prints)   MeV, keV
+##   T      isospin                               (no unit)
+##   Q      spectroscopic quadrupole moment       e fm2, e b
+##   mu     magnetic moment                       mu_N
+##   B(E2)  B(E2; state -> final)                 e2fm4, e2b2, W.u.
+##   B(M1)  B(M1; state -> final)                 mu_N2, W.u.
+##   B(E1)  B(E1; state -> final)                 e2fm2, e2b, W.u.
+##   M(E2)  signed <final||E2||state>             e fm2, e b
+##   M(M1)  signed <final||M1||state>             mu_N
+##   M(E1)  signed <final||E1||state>             e fm
+## Bohr-Mottelson convention: B(i -> f) = <f||M||i>^2 / (2J_i + 1). A transition may be written either way round.
+## Without an M row the sign is unknown and physim keeps the positive root (and says so). Every state a transition
+## names needs an Ex or E row.
+kind,state,final,value,unit
+E,0+1,,-135861,keV
+Ex,0+1,,0,keV
+T,0+1,,0,
+Ex,2+1,,1932,keV
+Q,2+1,,0.1850,e b
+mu,2+1,,1.0312,mu_N
+Ex,4+1,,4607,keV
+## B(E2; 0+1 -> 2+1), i.e. upwards: 5 x B(E2; 2+1 -> 0+1)
+B(E2),0+1,2+1,0.03910,e2b2
+M(E2),2+1,0+1,-0.197738,e b
+B(E2),4+1,2+1,21.78,W.u.
+## <4+1||E2||2+1>, written from the lower state up
+M(E2),2+1,4+1,-31.4671,e fm2
