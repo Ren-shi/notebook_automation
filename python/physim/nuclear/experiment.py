@@ -489,6 +489,9 @@ class Run:
     extra_lines: Optional[list] = None
     #: Shaping time of the γ-ray amplifiers: two signals closer than twice it pile up (none if left out).
     shaping_time: Optional[QuantityLike] = None
+    #: Fusion-evaporation: the exit channel the experiment studies, by its particles ("4n") or its residue
+    #: ("158Dy"). Its strongest line sets the beam time; the largest channel when left out.
+    channel: Optional[str] = None
 
     SPECS = (
         _Field("beam_time", "time", required=True, check=_positive),
@@ -498,6 +501,7 @@ class Run:
         _Field("room_background", "rate", check=_non_negative),
         _Field("extra_lines", "lines"),
         _Field("shaping_time", "time", check=_non_negative),
+        _Field("channel", "str"),
     )
 
 
@@ -897,6 +901,96 @@ class NeutronWallSetup:
         return neutrons.NeutronWall(**wall)
 
 
+def _one_of(*names: str) -> Callable[[str], Optional[str]]:
+    return lambda s: None if s in names else "must be " + " or ".join(f"'{n}'" for n in names)
+
+
+def _percent(q: Quantity) -> Optional[str]:
+    return None if 0 <= q.to("%") <= 100 else "must be 0 to 100 %"
+
+
+@dataclass
+class ChargedParticleBallSetup:
+    """A ball of particle detectors round the target that counts the evaporated protons and α particles
+    (``[charged_particle_ball]``, for a fusion-evaporation reaction): ``elements`` detectors of ``material`` (Si or
+    CsI) at ``radius`` from the target, covering θ from ``theta_min`` to ``theta_max`` (all of it if left out).
+    Described for the scene and the plan; the channel selection does not use it yet."""
+
+    elements: int
+    radius: QuantityLike
+    material: Optional[str] = None
+    thickness: Optional[QuantityLike] = None
+    threshold: Optional[QuantityLike] = None
+    theta_min: Optional[QuantityLike] = None
+    theta_max: Optional[QuantityLike] = None
+
+    SPECS = (
+        _Field("elements", "int", required=True, check=lambda n: None if n >= 1 else "must be at least 1"),
+        _Field("radius", "length", required=True, check=_positive),
+        _Field("material", "str", check=_one_of("Si", "CsI")),
+        _Field("thickness", "length", check=_positive),
+        _Field("threshold", "energy", check=_non_negative),
+        _Field("theta_min", "angle", check=_polar),
+        _Field("theta_max", "angle", check=_polar),
+    )
+
+
+@dataclass
+class RecoilSeparatorSetup:
+    """A recoil separator after the target (``[recoil_separator]``, for a fusion-evaporation reaction), described
+    by what it accepts rather than by its magnets: residues within ``theta_acceptance`` of the beam (and within
+    ``momentum_acceptance``) enter it, ``distance`` downstream of the target. ``kind`` is "gas-filled", "vacuum"
+    or "acceptance". Described for the scene and the plan; its transmission is not computed yet."""
+
+    theta_acceptance: QuantityLike
+    kind: Optional[str] = None
+    distance: Optional[QuantityLike] = None
+    momentum_acceptance: Optional[QuantityLike] = None
+    beam_suppression: Optional[float] = None
+    focal_plane: Optional[str] = None
+
+    SPECS = (
+        _Field("theta_acceptance", "angle", required=True,
+               check=lambda q: None if 0 < q.to("deg") < 90 else "must be between 0 and 90 deg"),
+        _Field("kind", "str", check=_one_of("gas-filled", "vacuum", "acceptance")),
+        _Field("distance", "length", check=_positive),
+        _Field("momentum_acceptance", "fraction", check=_percent),
+        _Field("beam_suppression", "number", check=lambda x: None if x >= 1 else "must be at least 1"),
+        _Field("focal_plane", "str"),
+    )
+
+
+@dataclass
+class GammaCalorimeterSetup:
+    """A shell of scintillators round the target that counts how many γ rays an event gives
+    (``[gamma_calorimeter]``, for a fusion-evaporation reaction): ``elements`` detectors of ``material`` (BGO or
+    NaI) from ``radius`` outwards, ``thickness`` deep; events with at least ``fold_min`` of them firing are kept.
+    Described for the scene and the plan; the fold selection is not computed yet."""
+
+    elements: int
+    radius: QuantityLike
+    material: Optional[str] = None
+    thickness: Optional[QuantityLike] = None
+    efficiency: Optional[QuantityLike] = None
+    fold_min: Optional[int] = None
+
+    SPECS = (
+        _Field("elements", "int", required=True, check=lambda n: None if n >= 1 else "must be at least 1"),
+        _Field("radius", "length", required=True, check=_positive),
+        _Field("material", "str", check=_one_of("BGO", "NaI")),
+        _Field("thickness", "length", check=_positive),
+        _Field("efficiency", "fraction", check=_percent),
+        _Field("fold_min", "int", check=lambda n: None if n >= 1 else "must be at least 1"),
+    )
+
+
+#: The ancillary detectors of a fusion-evaporation setup beside the neutron wall: (section, class, what it does).
+ANCILLARIES = (("charged_particle_ball", ChargedParticleBallSetup, "a charged-particle ball counts evaporated protons "
+                "and α particles"),
+               ("recoil_separator", RecoilSeparatorSetup, "a recoil separator collects the residues"),
+               ("gamma_calorimeter", GammaCalorimeterSetup, "a γ calorimeter counts the γ rays of fusion events"))
+
+
 @dataclass
 class Experiment:
     """A complete setup. Build it in Python, or :meth:`load` it from a setup file."""
@@ -919,6 +1013,10 @@ class Experiment:
     fusion: Optional[FusionEvaporation] = None
     #: The neutron wall, for a fusion-evaporation reaction.
     neutron_wall: Optional[NeutronWallSetup] = None
+    #: The other ancillary detectors of a fusion-evaporation reaction (:data:`ANCILLARIES`).
+    charged_particle_ball: Optional[ChargedParticleBallSetup] = None
+    recoil_separator: Optional[RecoilSeparatorSetup] = None
+    gamma_calorimeter: Optional[GammaCalorimeterSetup] = None
 
     # -- reading ------------------------------------------------------------------------------------------------
 
@@ -929,7 +1027,7 @@ class Experiment:
         if not isinstance(data, dict):
             raise SetupError(["the setup must be a table of sections"])
         known = ("schema", "title", "description", "reaction", "beam", "target", "detectors", "run",
-                 "gamma_detectors", "levels", "chamber", "neutron_wall")
+                 "gamma_detectors", "levels", "chamber", "neutron_wall") + tuple(a[0] for a in ANCILLARIES)
         for key in data:
             if key not in known:
                 hint = difflib.get_close_matches(key, known, n=1)
@@ -1037,7 +1135,9 @@ class Experiment:
 
         detectors: list[Detector] = []
         raw_d = data.get("detectors")
-        if raw_d is None:
+        if reaction == "fusion-evaporation" and (raw_d is None or raw_d == []):
+            pass  # a fusion-evaporation setup needs no particle detector: the γ rays and ancillaries count
+        elif raw_d is None:
             problems.append("no detectors: add at least one [[detectors]] section")
         elif not isinstance(raw_d, list) or not raw_d or not all(isinstance(d, dict) for d in raw_d):
             problems.append("detectors must be written as [[detectors]] sections")
@@ -1083,6 +1183,19 @@ class Experiment:
                     neutron_wall.model().theta_max()
                 except ValueError as e:
                     problems.append(f"neutron_wall: {e}")
+        ancillaries = {}
+        for name, kind, what in ANCILLARIES:
+            if name not in data:
+                continue
+            if reaction != "fusion-evaporation":
+                problems.append(f"{name}: {what}; it needs [reaction] type = \"fusion-evaporation\"")
+            a = _read_section(data[name], kind.SPECS, name, problems)
+            if all(spec.name in a for spec in kind.SPECS if spec.required):
+                ancillaries[name] = kind(**a)
+        ball = ancillaries.get("charged_particle_ball")
+        if ball is not None and ball.theta_min is not None and ball.theta_max is not None and \
+                _q(ball.theta_min).to("deg") >= _q(ball.theta_max).to("deg"):
+            problems.append("charged_particle_ball: theta_min must be below theta_max")
 
         if target is not None and target.position is not None:
             origin = (0.0, 0.0, target.position_mm)
@@ -1099,6 +1212,8 @@ class Experiment:
             problems.append("the [run] section is missing")
         else:
             r = _read_section(data["run"], Run.SPECS, "run", problems)
+            if "channel" in r:
+                _check_studied_channel(r["channel"], reaction, fusion, problems)
             if "beam_time" in r:
                 run = Run(**r)
 
@@ -1106,7 +1221,7 @@ class Experiment:
             raise SetupError(problems)
         return cls(title=title, beam=beam, target=target, detectors=detectors, run=run,
                    description=description, reaction=reaction, excitation=excitation, gamma_detectors=gammas,
-                   levels=levels, chamber=chamber, fusion=fusion, neutron_wall=neutron_wall)
+                   levels=levels, chamber=chamber, fusion=fusion, neutron_wall=neutron_wall, **ancillaries)
 
     @classmethod
     def from_toml(cls, text: str) -> Experiment:
@@ -1150,13 +1265,17 @@ class Experiment:
             target["backing"] = _to_dict(self.target.backing)
         d["target"] = target
         d["run"] = _to_dict(self.run)
-        d["detectors"] = [_to_dict(det) for det in self.detectors]
+        if self.detectors or self.fusion is None:
+            d["detectors"] = [_to_dict(det) for det in self.detectors]
         if self.gamma_detectors:
             d["gamma_detectors"] = [_to_dict(g) for g in self.gamma_detectors]
         if self.chamber is not None:
             d["chamber"] = _to_dict(self.chamber)
         if self.neutron_wall is not None:
             d["neutron_wall"] = _to_dict(self.neutron_wall)
+        for name, _, _ in ANCILLARIES:
+            if getattr(self, name) is not None:
+                d[name] = _to_dict(getattr(self, name))
         if self.levels:
             d["levels"] = {role: scheme.to_dict() for role, scheme in self.levels.items()}
         return d
@@ -1285,6 +1404,48 @@ def main_nuclide(target: Target) -> str:
     """The target's most abundant nuclide (the one a fusion-evaporation reaction fuses with), as AME names it."""
     z, a, _ = max(_data.material(target.material).atoms, key=lambda t: t[2])
     return _data.nuclide((z, a)).name
+
+
+def _check_studied_channel(which: str, reaction: str, fusion, problems: list[str]) -> None:
+    """``[run] channel``: a fusion-evaporation setup's studied channel must be one of its table, named by its
+    particles ("4n", in any order) or its residue ("158Dy")."""
+    if reaction != "fusion-evaporation":
+        problems.append("run: channel is the exit channel a fusion-evaporation experiment studies; it needs "
+                        "[reaction] type = \"fusion-evaporation\"")
+        return
+    if fusion is None or not fusion.channels:
+        return  # the channel table's own problems say what is missing
+    if studied_channel_index(fusion.channels, which) is None:
+        names = ", ".join(ch.particles for ch in fusion.channels)
+        problems.append(f"run: channel '{which}' is not in the channel table ({names})")
+
+
+def studied_channel_index(channels: list, which: Optional[str]) -> Optional[int]:
+    """The index of the channel ``which`` names (its particles in any order, or its residue) in a channel table,
+    or None. With ``which`` None, the channel with the largest cross section."""
+    from .residues import parse_particles
+
+    if not channels:
+        return None
+    if which is None:
+        return max(range(len(channels)), key=lambda i: _q(channels[i].cross_section).canonical)
+    try:
+        key = tuple(sorted(parse_particles(which)))
+    except ValueError:
+        key = None
+    for i, ch in enumerate(channels):
+        if key is not None and tuple(sorted(parse_particles(ch.particles))) == key:
+            return i
+        if ch._residue is not None and _residue_name(which) == ch._residue:
+            return i
+    return None
+
+
+def _residue_name(text: str) -> Optional[str]:
+    try:
+        return _data.nuclide(parse_nuclide(text)).name
+    except ValueError:
+        return None
 
 
 def _read_channels(raw: Any, beam: Optional[Beam], target: Optional[Target], problems: list[str]) -> list:

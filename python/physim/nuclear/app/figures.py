@@ -451,6 +451,130 @@ def figure_residue_gammas(planner: Planner, detector: str, events: int = 100_000
     return fig
 
 
+def figure_fusion_gammas(planner: Planner, detector: str = "all", corrected: bool = True, by_channel: bool = True,
+                         only: Optional[str] = None, log: bool = True, events: int = 100_000, seed: int = 1):
+    """The residues' γ rays in one γ-ray detector, or in all of them ("all"): Doppler-corrected or as measured; the
+    total, and each exit channel in its own colour (``by_channel``), or one channel alone (``only``: a perfect
+    gate on it, the ideal a real selection approaches)."""
+    go = _go()
+    g = planner.residue_gamma_spectra(events, seed)
+    fig = go.Figure()
+    if not g["available"]:
+        fig.add_annotation(text=g["reason"], showarrow=False, x=0.5, y=0.5, xref="paper", yref="paper")
+        return fig
+    s = g["spectra"][detector]
+    key = "corrected" if corrected else "measured"
+    x = 1e3 * np.repeat(s["edges"], 2)[1:-1]
+
+    def add(y, name, colour, width):
+        y = np.repeat(y, 2)
+        fig.add_trace(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines", name=name,
+                                 line=dict(color=colour, width=width)))
+
+    labels = g["channels"]
+    if only is not None:
+        add(s[key], "all channels", "#9AA3AA", 0.8)
+        add(s["channels"][only][key], f"{only} alone", COLORS[labels.index(only) % len(COLORS)], 1.3)
+    else:
+        add(s[key], "total", "#9AA3AA", 1.0)
+        if by_channel:
+            for i, label in enumerate(labels):
+                add(s["channels"][label][key], label, COLORS[i % len(COLORS)], 1.1)
+    for e_kev, _ in g["lines"]:
+        fig.add_vline(x=e_kev, line=dict(color="#888", width=0.6, dash="dot"))
+    fig.update_layout(xaxis=dict(title="γ-ray energy (keV)"),
+                      yaxis=dict(title="counts / keV in the run", type="log" if log else "linear"),
+                      margin=dict(l=55, r=10, t=10, b=40), height=360, legend=dict(orientation="h", y=-0.25, x=0))
+    return fig
+
+
+def figure_evaporation(ev: dict) -> list:
+    """What the compound nucleus boils off (:meth:`physim.nuclear.planner.Planner.evaporation`), as four small
+    figures: the light particles' energies in its frame, how many of each per event, the studied channel's entry
+    states (E* against J), and its residues' recoil (β against θ)."""
+    go = _go()
+    small = dict(margin=dict(l=45, r=8, t=8, b=36), height=210, showlegend=False)
+    colours = {"n": COLORS[2], "p": COLORS[0], "α": COLORS[3], "d": COLORS[4], "t": COLORS[5]}
+    energies = go.Figure()
+    for kind, h in ev["energies"].items():
+        e = np.asarray(h["edges"])
+        y = np.asarray(h["counts"], dtype=float)
+        if y.sum() > 0:
+            y = y / y.max()
+        energies.add_trace(go.Scatter(x=0.5 * (e[1:] + e[:-1]), y=y, mode="lines", name=kind,
+                                      line=dict(color=colours.get(kind, COLORS[6]), width=1.6, shape="hvh")))
+    energies.update_layout(xaxis=dict(title="energy in the CN frame (MeV)"), yaxis=dict(title="relative"),
+                           **dict(small, showlegend=True, legend=dict(orientation="h", y=1.12, x=0)))
+    mult = go.Figure()
+    for kind, m in ev["multiplicity"].items():
+        mult.add_trace(go.Bar(x=list(range(len(m["shares"]))), y=[100 * v for v in m["shares"]], name=kind,
+                              marker_color=colours.get(kind, COLORS[6])))
+    mult.update_layout(xaxis=dict(title="particles per event", dtick=1), yaxis=dict(title="% of events"),
+                       barmode="group", **dict(small, showlegend=True, legend=dict(orientation="h", y=1.12, x=0)))
+    entry = go.Figure(go.Scattergl(x=ev["entry"]["spin"], y=ev["entry"]["excitation_mev"], mode="markers",
+                                   marker=dict(size=3, color=COLORS[0], opacity=0.5)))
+    entry.update_layout(xaxis=dict(title="entry spin J (ħ)"), yaxis=dict(title="entry E* (MeV)"), **small)
+    recoil = go.Figure(go.Scattergl(x=ev["recoil"]["theta_deg"], y=ev["recoil"]["beta"], mode="markers",
+                                    marker=dict(size=3, color=COLORS[2], opacity=0.5)))
+    recoil.add_vline(x=ev["cone"]["half_angle_deg"], line=dict(color="#888", width=1, dash="dot"),
+                     annotation_text="90 %", annotation_position="top right")
+    recoil.update_layout(xaxis=dict(title="residue θ (deg)"), yaxis=dict(title="residue β"), **small)
+    return [energies, mult, entry, recoil]
+
+
+def figure_tof(ev: dict):
+    """The evaporated neutrons' flight times to the neutron wall, with the γ flash."""
+    go = _go()
+    t = ev["tof"]
+    e = np.asarray(t["edges"])
+    fig = go.Figure(go.Scatter(x=0.5 * (e[1:] + e[:-1]), y=t["counts"], mode="lines",
+                               line=dict(color=COLORS[2], width=1.4, shape="hvh")))
+    fig.add_vline(x=t["gamma_flash_ns"], line=dict(color="#888", width=1, dash="dot"), annotation_text="γ flash",
+                  annotation_position="top right")
+    fig.update_layout(xaxis=dict(title=f"time of flight over {t['path_mm']:.0f} mm (ns)"),
+                      yaxis=dict(title="neutrons (sample)"), margin=dict(l=50, r=10, t=10, b=40), height=280,
+                      showlegend=False)
+    return fig
+
+
+def figure_doppler(planner: Planner, energy_kev: float):
+    """The Doppler shift of a line of energy ``energy_kev`` against the angle it is seen at, for the residues'
+    mean speed (first order, E β cos θ), with each γ-ray detector's angle marked."""
+    go = _go()
+    beta = planner.recoil_cone()["beta"]
+    th = np.linspace(0.0, 180.0, 181)
+    fig = go.Figure(go.Scatter(x=th, y=energy_kev * beta * np.cos(np.radians(th)), mode="lines",
+                               line=dict(color=COLORS[1], width=1.6)))
+    for i, gd in enumerate(planner.experiment.gamma_detectors):
+        theta = float(np.degrees(np.arccos(np.clip(gd.direction()[2], -1, 1))))
+        fig.add_trace(go.Scatter(x=[theta], y=[energy_kev * beta * np.cos(np.radians(theta))], mode="markers+text",
+                                 text=[gd.name or f"G{i + 1}"], textposition="top center",
+                                 marker=dict(size=8, color=COLORS[0])))
+    fig.update_layout(xaxis=dict(title="angle of the γ-ray detector (deg)"),
+                      yaxis=dict(title=f"shift of the {energy_kev:.1f} keV line (keV)"),
+                      margin=dict(l=55, r=10, t=10, b=40), height=280, showlegend=False)
+    return fig
+
+
+def figure_band(band: dict):
+    """The studied residue's levels with its strongest transitions, each as wide as its rate."""
+    go = _go()
+    fig = go.Figure()
+    top = max(r["rate_per_s"] for r in band["rows"]) if band["rows"] else 1.0
+    for lv in band["levels"]:
+        fig.add_trace(go.Scatter(x=[0, 1], y=[lv["energy_kev"]] * 2, mode="lines+text", line=dict(color="#555B61"),
+                                 text=[lv["label"], f"{lv['energy_kev']:.0f}"], textposition=["middle left",
+                                                                                               "middle right"]))
+    for k, r in enumerate(band["rows"]):
+        x = 0.35 + 0.3 * (k % 2) * 0.3
+        fig.add_annotation(x=x, y=r["level_kev"] - r["energy_kev"], ax=x, ay=r["level_kev"], xref="x", yref="y",
+                           axref="x", ayref="y", showarrow=True, arrowhead=2,
+                           arrowwidth=1 + 5 * r["rate_per_s"] / top, arrowcolor=COLORS[1])
+    fig.update_layout(xaxis=dict(visible=False, range=[-0.35, 1.35]), yaxis=dict(visible=False),
+                      margin=dict(l=4, r=4, t=4, b=4), height=300, showlegend=False)
+    return fig
+
+
 def figure_alignment(planner: Planner, result: dict):
     """The diagnostic plot of a misplaced target: the corrected peak's centroid against ring, one line per
     crystal, with the transition energy as a dashed line. Flat when the geometry assumed is right."""

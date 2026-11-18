@@ -39,6 +39,15 @@ PENDING_STYLE = """
 
 #: The rail on the left (the experiment, then the stages as numbered steps, each with its state and a line of
 #: status) and the foot of a step.
+KIND_STYLE = """
+.ps-kind:hover { border-color: var(--ps-muted) !important; }
+.ps-kind-on { border-color: var(--ps-fill) !important; box-shadow: inset 0 0 0 1px var(--ps-fill) !important; }
+.ps-kind-chip { display: inline-block; font-family: var(--ps-mono); font-size: 11px; color: var(--ps-muted);
+  border: 1px solid var(--ps-line); border-radius: 4px; padding: 1px 7px; margin-left: 6px;
+  background: var(--ps-surface); }
+.ps-steps-off { opacity: 0.45; pointer-events: none; }
+"""
+
 STEP_STYLE = """
 .ps-nav-col { min-height: calc(100vh - 32px); padding: 4px 2px; }
 .ps-wordmark { font-family: var(--ps-mono); font-size: 16px; font-weight: 600; padding-left: 6px; }
@@ -138,7 +147,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     from .. import workbench as wb
     from ..experiment import Experiment, SetupError
     from . import panel as _panel
-    from . import tab_analysis, tab_data, tab_physics, tab_plan, tab_report, tab_run, tab_setup
+    from . import start as _start
+    from . import tab_analysis, tab_data, tab_fusion, tab_physics, tab_plan, tab_report, tab_run, tab_setup
 
     first, offer_list = _starting_planner(example, template, experiment)
     state = {"planner": first, "events": events, "theme": theme or "light", "open": None, "stage": "setup",
@@ -226,6 +236,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     def draw_scene() -> None:
         """Draw the scene again if what it shows has changed (a drawing takes the tracks off)."""
+        try:
+            layer_switches.refresh()  # the ancillaries to switch on and off may have changed
+        except Exception:  # noqa: BLE001 -- not on the page (another reaction, or not built yet)
+            pass
         view = scene_state["view"]
         if view is None or not view.alive or view.busy:
             return
@@ -428,6 +442,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             return section
         if section in ("target", "backing", "reaction", "neutron_wall") or section.startswith("reaction channel"):
             return "target"
+        if section in wb.ANCILLARY_CARDS:
+            return f"anc:{section}"
         if section.startswith("gamma detector"):
             return f"gamma:{int(section.split()[2]) - 1}"
         if section.startswith("detector"):
@@ -457,7 +473,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     def add_detector(key: str = "side"):
         def run_() -> None:
-            names = [det.get("name") for det in D().draft["detectors"]]
+            names = [det.get("name") for det in D().draft.get("detectors", [])]
             if not locked():
                 staged(D().add_detector(**guide.placement(key, names)), rebuild=True)
         return run_
@@ -470,7 +486,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     def remove_detector(k: int):
         def run() -> None:
-            if len(D().draft["detectors"]) == 1:
+            if len(D().draft["detectors"]) == 1 and D().draft.get("reaction", {}).get("type") != "fusion-evaporation":
                 ui.notify("A setup needs at least one particle detector.", type="warning")
                 return
             if not locked():
@@ -526,22 +542,56 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             return
         finally:
             note.dismiss()
+        show_start(False)
         use(planner)
 
+    async def open_example(name: str) -> None:
+        """A worked example as a new experiment (its own folder, so its edits are kept)."""
+        def make() -> Planner:
+            planner = Planner.example(name)
+            planner.create_experiment(None)
+            planner.rates()
+            return planner
+
+        note = ui.notification("Making the experiment…", spinner=True, timeout=None)
+        try:
+            planner = await run.io_bound(make)
+        except Exception as err:  # noqa: BLE001 - say why instead of failing
+            ui.notify(f"Could not open the example {name}: {err}", type="negative", multi_line=True)
+            return
+        finally:
+            note.dismiss()
+        show_start(False)
+        use(planner)
+
+    def fill_text(made) -> str:
+        """What a fill from physim left out and what the compound nucleus boils off, in a line."""
+        left = ", ".join(f"{k} {100 * v:.1f} %" for k, v in made.left_out.items() if v)
+        mult = " · ".join(f"{k} {v:.2f}" for k, v in made.multiplicity.items() if v)
+        energy = ", ".join(f"{k} {v:.1f} MeV" for k, v in made.mean_energy_mev.items() if v)
+        return (f"From physim's fusion and evaporation ({made.events:,} decay chains): left out {left or 'nothing'}. "
+                f"Mean multiplicities {mult}; mean energies in the CN frame {energy}. "
+                + " ".join(made.warnings))
+
     async def create_experiment(beam: str, energy: str, target: str, thickness: str, measure: str,
-                                template_key: str, name: str) -> None:
+                                template_key: str, name: str, fill: bool = False) -> None:
         def make() -> tuple:
             exp = wb.new_setup(beam, energy, target, thickness or "0.5 mg/cm2", measure,
                                detectors_from=template_key)
             notes = wb.new_setup_notes(exp)
             planner = Planner(exp)
+            summary = None
+            if fill and planner.experiment.fusion is not None:
+                made = planner.physim_channels()
+                planner.fill_channels()
+                summary = fill_text(made)
             planner.create_experiment(name or None)
             planner.rates()
-            return planner, notes
+            return planner, notes, summary
 
         note = ui.notification("Making the experiment…", spinner=True, timeout=None)
         try:
-            planner, notes = await run.io_bound(make)
+            planner, notes, summary = await run.io_bound(make)
         except (SetupError, ValueError, KeyError) as err:
             ui.notify(f"Could not make the experiment: {err}", type="negative", multi_line=True)
             return
@@ -549,6 +599,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             note.dismiss()
         new_dialog.close()
         experiments_dialog.close()
+        state["fill_summary"] = summary
+        show_start(False)
         use(planner)
         for n in notes:
             ui.notify(n, type="warning", multi_line=True, close_button=True)
@@ -822,10 +874,18 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         section("", REACTION_FIELDS, "reaction", reaction)
 
     def channel_table(reaction: dict) -> None:
-        """The fusion-evaporation reaction (backlog item 75): its own fields, then one row per exit channel with its
-        particles, cross section, entry spin and source, the residue they leave, and a button to remove it."""
+        """The fusion-evaporation reaction (backlog item 75): its own fields, then the exit channels as a table, one
+        row per channel (particles, cross section, entry E* and spin, source, the residue they leave, a button to
+        remove it), the channel studied, and what the last fill from physim left out."""
         section("", wb.FUSION_FIELDS, "reaction", reaction)
-        ui.label("Exit channels").classes("ps-section mt-2")
+        with ui.row().classes("w-full items-center mt-2"):
+            ui.label("Exit channels").classes("ps-section")
+            ui.space()
+            ui.button("Fill from physim", icon="calculate", on_click=fill_channels).props(
+                "dense flat no-caps size=sm").tooltip(
+                "Replace the table with physim's own fusion (Bass barrier) and evaporation Monte Carlo: an "
+                "estimate; PACE4 or a measurement is the better source")
+            ui.button("Add", icon="add", on_click=add_channel).props("dense flat no-caps size=sm")
         chans = reaction.get("channels", [])
         if not chans:
             ui.label("No exit channel yet: add one, with its cross section from PACE4 or a measurement.").classes(
@@ -833,36 +893,41 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         residues = {}
         if not D().problems and D().experiment.fusion is not None:
             residues = {ch.particles: ch.residue_name for ch in D().experiment.fusion.channels}
-        for k, ch in enumerate(chans):
-            sec = f"reaction channel {k + 1}"
-            with ui.row().classes("w-full items-center gap-2 no-wrap"):
-                ui.label(residues.get(ch.get("particles"), ch.get("residue") or "?")).classes(
-                    "text-sm font-medium").style("min-width: 4em")
+        fields = (("particles", "Particles", "4.5em"), ("cross_section", "σ", "8em"),
+                  ("entry_energy", "Entry E*", "6.5em"), ("entry_spin", "Entry J", "3.5em"),
+                  ("source", "Source", "minmax(4em, 1fr)"))
+        names = {"particles": "Particles", "cross_section": "Cross section", "entry_energy": "Entry energy",
+                 "entry_spin": "Entry spin", "source": "Source"}
+        grid = "4.5em " + " ".join(w for _, _, w in fields) + " 2em"
+        with ui.element("div").classes("w-full").style(f"display: grid; grid-template-columns: {grid}; gap: 2px 4px; "
+                                                        "align-items: center"):
+            for head in ["Residue"] + [lab for _, lab, _ in fields] + [""]:
+                ui.label(head).classes("text-xs ps-muted")
+            for k, ch in enumerate(chans):
+                sec = f"reaction channel {k + 1}"
+                ui.label(residues.get(ch.get("particles"), ch.get("residue") or "?")).classes("text-sm font-medium")
+                for field, _, _ in fields:
+                    v = ch.get(field)
+                    inp = ui.input(value=_shown(field, v)).props(
+                        f'dense outlined aria-label="{names[field]}"').classes("w-full ps-num")
+                    bind(inp, sec, field)
+                    field_inputs[(sec, field)] = inp
+                    field_shown[(sec, field)] = _shown(field, v) or ""
+                    mark(inp, sec, field)
                 ui.button(icon="delete_outline", on_click=lambda k=k: remove_channel(k)).props(
                     "dense flat round size=sm").tooltip("Remove this channel")
-            section("", wb.CHANNEL_FIELDS, sec, ch)
-        with ui.row().classes("gap-1"):
-            ui.button("Add a channel", icon="add", on_click=add_channel).props("dense flat no-caps size=sm")
-            ui.button("Fill from physim", icon="calculate", on_click=fill_channels).props(
-                "dense flat no-caps size=sm").tooltip(
-                "Replace the table with physim's own fusion (Bass barrier) and evaporation Monte Carlo: an "
-                "estimate; PACE4 or a measurement is the better source")
-        neutron_wall_fields()
-
-    def neutron_wall_fields() -> None:
-        """The neutron wall that tells the exit channels apart (backlog item 75): its fields, or a button to add
-        one."""
-        wall = D().draft.get("neutron_wall")
-        ui.label("Neutron wall").classes("ps-section mt-2")
-        if wall is None:
-            ui.label("No neutron wall: add one to see which channel each event looks like (Plan).").classes(
-                "text-xs ps-muted")
-            ui.button("Add a neutron wall", icon="add", on_click=lambda: None if locked() else staged(
-                D().add_neutron_wall(), rebuild=True)).props("dense flat no-caps size=sm")
-            return
-        section("", wb.NEUTRON_WALL_FIELDS, "neutron_wall", wall)
-        ui.button("Remove the neutron wall", icon="delete_outline", on_click=lambda: None if locked() else staged(
-            D().remove_neutron_wall(), rebuild=True)).props("dense flat no-caps size=sm")
+        if chans:
+            run_ = D().draft.get("run", {})
+            options = {"": "the largest"}
+            options.update({c.get("particles"): f"{c.get('particles')} → {residues.get(c.get('particles'), '?')}"
+                            for c in chans if c.get("particles")})
+            studied = ui.select(options, value=run_.get("channel") or "", label="The channel studied (sets the "
+                                "beam time)", on_change=lambda e: edit("run", "channel", e.value or None,
+                                                                       rebuild=True)).props(
+                "dense outlined").classes("w-full mt-1")
+            mark(studied, "run", "channel")
+        if state.get("fill_summary"):
+            ui.label(state["fill_summary"]).classes("text-xs ps-note p-2 mt-1")
 
     async def fill_channels() -> None:
         if locked():
@@ -878,6 +943,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             ui.notify(str(err), type="negative", multi_line=True)
             return
         note.dismiss()
+        try:
+            state["fill_summary"] = fill_text(D().physim_channels())
+        except Exception:  # noqa: BLE001 -- the table is filled all the same
+            state["fill_summary"] = None
         staged(D().fill_channels(), rebuild=True)
 
     def add_channel() -> None:
@@ -1187,6 +1256,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     # -- key results ------------------------------------------------------------------------------------------
     @ui.refreshable
     def readouts() -> None:
+        if tab_fusion.is_fusion(P()):
+            return  # the fusion plan has its own headline (tab_fusion.headline)
         try:
             r, t, ws = P().rates(), P().trajectories(), P().warnings()
         except Exception:  # noqa: BLE001 -- the strip must never break the page
@@ -1232,6 +1303,16 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         try:
             s = P().selection()
         except Exception:  # noqa: BLE001 -- the strip must never break the page
+            return
+        if tab_fusion.is_fusion(P()):
+            with ui.element("div").classes("ps-readouts"):
+                for title, value, unit, sub in tab_fusion.strip_cells(P(), s):
+                    with ui.element("div").classes("ps-readout"):
+                        ui.label(title).classes("text-xs ps-muted")
+                        with ui.row().classes("items-baseline gap-1 no-wrap"):
+                            ui.label(value).classes("ps-readout-value")
+                            ui.label(unit).classes("text-xs ps-muted ps-num")
+                        ui.label(sub).classes("text-xs ps-muted")
             return
         cells = [("Particles counted", _fmt(s["rate_per_s"]), "/s", "")]
         if s["measured"] != "all":
@@ -1307,6 +1388,13 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             if D()._draft == P()._draft:
                 return P().safety() if numbers_kept() else {}
             return D().safety() if "rates" in D()._cache else {}
+
+        def recoil_cone(self) -> dict:
+            """The residues' cone, for a fusion-evaporation scene: the applied setup's once its numbers are there
+            (the draft's would need its own residue events)."""
+            if D()._draft == P()._draft and numbers_kept():
+                return P().recoil_cone()
+            raise ValueError("not worked out for the draft")
 
     scene_setup = SceneSetup()
 
@@ -1432,6 +1520,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             exact_values(key, fields)
 
         with ui.column().classes("w-full ps-card p-3 gap-1"):
+            if s["kind"] == "experiment" and tab_fusion.is_fusion(P()):
+                tab_fusion.experiment_card(ctx, s)
+                return
             if s["kind"] == "experiment":
                 ui.label("The whole experiment").classes("ps-section")
                 ui.label(s["title"]).classes("text-base font-medium")
@@ -1721,6 +1812,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                               on_click=lambda: scene_full(not scene_state["full"])).props(
                         "dense flat round").tooltip("Back to the page (Esc)" if full
                                                     else "The scene on the whole screen")
+                if P().experiment.fusion is not None:
+                    layer_switches()
+                # (The page's set of hidden ancillary groups, read by the view as it draws.)
+                SceneView.hidden_groups = scene_state.setdefault("hidden", set())
                 view = SceneView(lambda: scene_setup, state["theme"], scene_selected, scene_live, scene_moved,
                                  height="calc(100vh - 175px)" if full else None)
                 view.on_track = scene_track
@@ -1744,8 +1839,33 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             ui.keyboard(on_key=lambda e: scene_full(False) if e.key.escape and e.action.keydown else None)
 
     @ui.refreshable
+    def layer_switches() -> None:
+        """For fusion-evaporation: which ancillaries the scene draws."""
+        from ..experiment import ANCILLARIES
+
+        exp = P().experiment
+        groups = [(k, tab_fusion.ANCILLARY_NAMES[k]) for k in ("neutron_wall", *[a[0] for a in ANCILLARIES])
+                  if getattr(exp, k) is not None] + [("residues", "residue cone")]
+        hidden = scene_state.setdefault("hidden", set())
+
+        def flip(key: str, on: bool) -> None:
+            (hidden.discard if on else hidden.add)(key)
+            view = scene_state.get("view")
+            if view is not None and view.alive:
+                view.draw()
+
+        with ui.row().classes("w-full items-center gap-3").style("flex-wrap: wrap"):
+            ui.label("Show").classes("text-xs ps-muted")
+            for key, label in groups:
+                ui.checkbox(label, value=key not in hidden, on_change=lambda e, k=key: flip(k, e.value)).props(
+                    "dense size=xs").classes("text-xs")
+
+    @ui.refreshable
     def geometry_tables():
         scene_state["tables"] = detectors_of(D()._draft)
+        if D().experiment.fusion is not None and not D().problems:
+            tab_fusion.geometry_tables(ctx)
+            return
         rows = [{"detector": d["name"], "omega": _fmt(d["solid_angle_msr"]),
                  "theta": f"{d['theta_range'][0]:.1f}–{d['theta_range'][1]:.1f}",
                  "phi": f"{d['phi_range'][0]:.1f}–{d['phi_range'][1]:.1f}", "segments": d["segments"]}
@@ -1850,10 +1970,12 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
             ui.button("Simulate", icon="play_arrow", on_click=simulate)
         plot_area = ui.column().classes("w-full")
-        with plot_area:
-            plot(shown("spectra", state["events"], 1), "spectra", events=state["events"], seed=1)
+        if P().experiment.detectors:
+            with plot_area:
+                plot(shown("spectra", state["events"], 1), "spectra", events=state["events"], seed=1)
         gamma_block()
-        residue_gamma_block()
+        if tab_fusion.is_fusion(P()):
+            tab_fusion.spectra(ctx)
 
     def residue_gamma_block() -> None:
         """Fusion-evaporation (backlog item 75): the residues' γ rays in each γ-ray detector, measured and Doppler
@@ -3210,7 +3332,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         gate_form=gate_form, fmt=_fmt, time_text=_time,
         analysis_view=analysis_view, report_view=report_view, show_physics=show_physics, levels_block=levels_block,
         geometry_tables=geometry_tables, explain=explain, reading_box=reading_box, gamma_panel=gamma_panel,
-        go_to=go_to)
+        go_to=go_to, direct=direct,
+        add_ancillary=lambda name: None if locked() else staged(D().add_ancillary(name), rebuild=True),
+        remove_ancillary=lambda name: None if locked() else staged(D().remove_ancillary(name), rebuild=True))
 
     @ui.refreshable
     def experiment_button() -> None:
@@ -3222,20 +3346,24 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             with ui.button(p.name, color=None).props("flat no-caps icon-right=expand_more").classes(
                     "w-full ps-experiment"):
                 with ui.menu():
-                    ui.menu_item("Open an experiment…",
-                                 on_click=lambda: (experiments_list.refresh(), experiments_dialog.open()))
-                    ui.menu_item("New experiment…", on_click=lambda: new_dialog.open())
+                    ui.menu_item("Open an experiment…", on_click=lambda: show_start(True))
+                    ui.menu_item("New experiment…", on_click=lambda: show_start(True))
                     ui.separator()
                     ui.menu_item("Import a setup file…", on_click=lambda: upload_dialog.open())
                     ui.menu_item("Export the setup…", on_click=export_setup)
             ui.label(f"{d['beam'].get('nuclide', '?')} at {d['beam'].get('energy', '?')} on "
                      f"{d['target'].get('material', '?')} {d['target'].get('thickness', '')}".strip()).classes(
                 "text-xs ps-muted").style("padding-left: 6px")
+            try:
+                ui.label(wb.kind_of(p.experiment)[1]).classes("ps-kind-chip")
+            except Exception:  # noqa: BLE001 -- an unfinished setup shows no kind
+                pass
 
     # -- layout -----------------------------------------------------------------------------------------------
     ui.add_css(STYLE)
     ui.add_css(PENDING_STYLE)
     ui.add_css(STEP_STYLE)
+    ui.add_css(KIND_STYLE)
     ui.add_css(record_css(".ps-record"))
     dark = ui.dark_mode(state["theme"] == "dark")
     # The rail on the left: the experiment, the steps (built by main_area), and at its foot the Physics reference
@@ -3287,13 +3415,36 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     "Apply what was changed and close (Ctrl+Enter applies without closing)")
                 ui.button("Cancel", color=None, on_click=cancel_editing).props("flat no-caps").classes(
                     "ps-muted").tooltip("Close without the changes made here")
-    with ui.column().classes("w-full gap-2"):
+    start_box = ui.column().classes("w-full gap-2")
+    start_box.set_visibility(False)
+    with ui.column().classes("w-full gap-2") as work_box:
         with ui.element("div").classes("w-full") as strip_box:
             pending_note()
         state["strip_box"] = strip_box
         main_area()
+
+    def refresh_start() -> None:
+        start_box.clear()
+        with start_box:
+            _start.render(start_ctx)
+
+    def show_start(on: bool) -> None:
+        """The start page in place of the steps (``on``), or the steps again."""
+        state["start_shown"] = on
+        start_box.set_visibility(on)
+        work_box.set_visibility(not on)
+        box = state.get("steps_box")
+        if box is not None:
+            box.classes(add="ps-steps-off") if on else box.classes(remove="ps-steps-off")
+        if on:
+            refresh_start()
+
+    start_ctx = SimpleNamespace(ui=ui, state=state, create_experiment=create_experiment,
+                                open_experiment=open_experiment, open_example=open_example,
+                                import_setup=lambda: upload_dialog.open(), refresh_start=refresh_start,
+                                close_start=None if offer_list else (lambda: show_start(False)))
     if offer_list:
-        experiments_dialog.open()
+        show_start(True)
     if not prebuild:
         refresh_results()  # the numbers on the worker, then the panel, the strip and the stages
     # Ctrl+Enter applies the changes from anywhere on the page, a field being typed in included (its own Enter

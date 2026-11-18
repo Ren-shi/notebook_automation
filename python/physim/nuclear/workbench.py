@@ -90,7 +90,33 @@ SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circl
                 "annular": {"inner_radius", "outer_radius", "rings", "sectors"}}
 
 #: The decision groups, in order.
-GROUPS = ("Beam", "Target and reaction", "Particle detectors", "γ-ray detectors", "Run conditions")
+GROUPS = ("Beam", "Target and reaction", "Particle detectors", "γ-ray detectors", "Ancillary detectors",
+          "Run conditions")
+#: The ancillary detectors of a fusion-evaporation setup, as cards: {section: (title, fields, more fields, what
+#: it is for)}. (The beam monitor is a particle detector.)
+ANCILLARY_CARDS = {
+    "neutron_wall": ("Neutron wall", [("cells", "Cells", "50"), ("distance", "Distance", "510 mm"),
+                                      ("theta_min", "From θ", "4 deg"), ("material", "Scintillator", "EJ-301")],
+                     [f for f in NEUTRON_WALL_FIELDS if f[0] not in ("cells", "distance", "theta_min", "material")],
+                     "liquid-scintillator cells at forward angles: tags the xn channels"),
+    "charged_particle_ball": ("Charged-particle ball",
+                              [("elements", "Elements", "40"), ("radius", "Radius", "60 mm"),
+                               ("material", "Material (Si or CsI)", "CsI"), ("threshold", "Threshold", "2 MeV")],
+                              [("thickness", "Thickness", "3 mm"), ("theta_min", "From θ", "0 deg"),
+                               ("theta_max", "To θ", "180 deg")],
+                              "Si or CsI round the target: tags the p and α channels"),
+    "recoil_separator": ("Recoil separator",
+                         [("kind", "Kind (gas-filled, vacuum, acceptance)", "gas-filled"),
+                          ("theta_acceptance", "Angular acceptance (half-angle)", "3 deg"),
+                          ("momentum_acceptance", "Momentum acceptance", "10 %"), ("distance", "Entrance at", "600 mm")],
+                         [("beam_suppression", "Beam suppression", "1e12"), ("focal_plane", "Focal plane", "DSSD")],
+                         "keeps the residues inside its acceptance, with their mass at the focal plane"),
+    "gamma_calorimeter": ("γ calorimeter",
+                          [("elements", "Elements", "60"), ("radius", "Inner radius", "120 mm"),
+                           ("material", "Material (BGO or NaI)", "BGO"), ("fold_min", "Fold at least", "6")],
+                          [("thickness", "Thickness", "75 mm"), ("efficiency", "Efficiency per γ ray", "70 %")],
+                          "a BGO or NaI shell: keeps the high-fold (high-spin) events"),
+}
 
 #: Starting points for a new experiment's detectors: the examples, named for what they are. (key, label, example)
 #: The first is what the app opens when there is no experiment yet.
@@ -170,7 +196,88 @@ NOT_SIMULATED = (
 
 #: What a new experiment can measure. (key, label)
 MEASUREMENTS = (("elastic", "Elastic scattering"), ("coulex-target", "Coulomb excitation of the target"),
-                ("coulex-beam", "Coulomb excitation of the beam"))
+                ("coulex-beam", "Coulomb excitation of the beam"), ("fusion-evaporation", "Fusion-evaporation"))
+
+#: The fusion-evaporation templates: (key, label, what it holds, example the γ-ray array comes from, ancillaries).
+FUSION_TEMPLATES = (
+    ("fusion-gamma", "γ-ray array only", "5 germanium detectors and a beam monitor, as fusion_dy158",
+     "fusion_dy158", ()),
+    ("fusion-ball", "γ-ray array + charged-particle ball", "germanium + a CsI ball to tag the p and α channels",
+     "fusion_dy158", ("charged_particle_ball",)),
+    ("fusion-wall", "γ-ray array + neutron wall", "germanium + a liquid-scintillator wall at forward angles",
+     "fusion_dy158", ("neutron_wall",)),
+    ("fusion-separator", "γ-ray array + recoil separator", "germanium at the target, residues collected downstream",
+     "fusion_dy158", ("recoil_separator",)),
+    ("fusion-all", "γ-ray array + every ancillary", "the wall, the ball, the separator and a γ calorimeter",
+     "fusion_dy158", ("neutron_wall", "charged_particle_ball", "recoil_separator", "gamma_calorimeter")),
+    ("fusion-blank", "Blank", "no detectors yet: the γ-ray array is added on the Setup step", None, ()),
+)
+
+
+@dataclass(frozen=True)
+class Kind:
+    """A kind of experiment the start page offers."""
+
+    key: str
+    label: str
+    #: What the experiment is, in a sentence or two, and what the planner gives for it.
+    what: str
+    gets: str
+    #: Whether the planner can do it yet (the others are shown greyed, as kinds still to come).
+    live: bool = True
+    #: Its templates (keys of :data:`TEMPLATES` or :data:`FUSION_TEMPLATES`), its worked examples, its
+    #: default beam and target, and the "What to measure" key of :func:`new_setup`.
+    templates: tuple = ()
+    examples: tuple = ()
+    defaults: tuple = ()
+    measure: str = ""
+
+
+#: The kinds of experiment, in the start page's order: the three the planner does, then those still to come.
+KINDS = (
+    Kind("coulex", "Coulomb excitation",
+         "Excite the beam or the target in the Coulomb field, below the barrier. Silicon for the scattered particle, "
+         "germanium for the γ rays.", "B(E2)↑, Qs, excitation probability, γ yields per angle, Doppler correction",
+         templates=("coulex-beam-backward", "coulex-beam-clovers", "coulex-cd-clovers", "blank"),
+         examples=("coulex_ni62_pt194", "coulex_ni62_pt194_clovers", "coulex_ni58"),
+         defaults=("62Ni", "237 MeV", "194Pt", "0.5 mg/cm2"), measure="coulex-target"),
+    Kind("elastic", "Elastic (Rutherford) scattering",
+         "Scatter a beam off a target and count it in silicon: target thickness, beam monitoring, where Rutherford "
+         "holds and where nuclear forces begin.", "dσ/dΩ, rates per strip, energy loss, safe distance, beam time",
+         templates=("elastic-dssd", "elastic-array", "blank"), examples=("alpha_on_gold", "oxygen_on_lead_array"),
+         defaults=("4He", "5.5 MeV", "197Au", "0.5 mg/cm2"), measure="elastic"),
+    Kind("fusion-evaporation", "Fusion-evaporation",
+         "Fuse beam and target into a hot compound nucleus that boils off neutrons, protons and α particles; study "
+         "the residues' γ rays, picked out by what was evaporated.",
+         "channel cross sections, residue yields, γ-line rates, channel selection",
+         templates=tuple(t[0] for t in FUSION_TEMPLATES), examples=("fusion_dy158", "fusion_tm165"),
+         defaults=("12C", "60 MeV", "150Nd", "1 mg/cm2"), measure="fusion-evaporation"),
+    Kind("transfer", "Transfer reactions", "(d,p), (t,p) and the like.", "", live=False),
+    Kind("lifetimes", "Lifetimes (RDDS, DSAM)", "Plunger and line-shape measurements.", "", live=False),
+    Kind("inelastic", "Inelastic scattering", "Nuclear excitation above the barrier.", "", live=False),
+)
+
+
+def kind_of(experiment) -> tuple:
+    """The kind of an experiment, from its reaction: (key of :data:`KINDS`, the short label the app shows under
+    its name). Coulomb excitation says which nucleus is excited."""
+    if experiment.reaction == "fusion-evaporation":
+        return "fusion-evaporation", "Fusion-evaporation"
+    if experiment.reaction == "coulex":
+        excite = getattr(experiment.excitation, "excite", None) or "target"
+        return "coulex", "Coulex · " + ("beam" if excite in ("projectile", "beam") else excite)
+    return "elastic", "Elastic"
+
+
+def template_label(key: str) -> tuple:
+    """A template's (label, what it holds), for :data:`TEMPLATES` and :data:`FUSION_TEMPLATES`."""
+    for t in FUSION_TEMPLATES:
+        if t[0] == key:
+            return t[1], t[2]
+    for k, label, example in TEMPLATES:
+        if k == key:
+            return label, (example or "one detector, chosen from the kinematics")
+    raise KeyError(key)
 
 
 @dataclass
@@ -265,6 +372,10 @@ def _target(p) -> Decision:
                  f"(straggling {guide._energy(lay['straggling_fwhm_mev'])} FWHM)"]
         if len(el) > 1:
             parts.append(f"{guide._energy(sum(x['loss_mev'] for x in el[1:]))} more in the backing")
+        if p.experiment.fusion is not None:
+            f = p.fusion()
+            lo, hi = f["excitation_range_mev"]
+            parts.append(f"σ_fus {guide._fmt(f['sigma_thick_mb'])} mb, E* {lo:.1f}–{hi:.1f} MeV")
         if p.experiment.excitation is not None:
             g = p.gamma()
             if g.get("available"):
@@ -345,6 +456,14 @@ def _run(p) -> Decision:
                                                      if r.get("counts_wanted") else "")
 
     def consequence():
+        if p.experiment.fusion is not None:
+            study = p.plan()["study"]
+            if study and study["line"] and study["beam_time_s"] is not None:
+                enough = study["beam_time_s"] <= p.rates()["beam_time_s"]
+                return (f"{study['channel']} → {study['residue']} needs {guide._duration(study['beam_time_s'])} for "
+                        f"{r.get('counts_wanted')} counts in its {study['line']['energy_kev']:.1f} keV line: the beam "
+                        f"time is {'enough' if enough else 'too short'}")
+            return "set the γ-ray detectors and the counts wanted for the beam time"
         t = p.rates()
         what = {"all": "counts", "excitations": "excitations", "coincidences": "coincidences"}[t["measured"]]
         timed = [x for x in t["rows"] if x["beam_time_s"] is not None]
@@ -360,13 +479,72 @@ def _run(p) -> Decision:
                     r)
 
 
+def _ancillary(p, name: str) -> Decision:
+    """The card of an ancillary detector: what it is, and what physim makes of it."""
+    title, fields, more, _ = ANCILLARY_CARDS[name]
+    a = p.draft[name]
+
+    def state() -> str:
+        if name == "neutron_wall":
+            return (f"{a.get('cells', '?')} {a.get('material', 'EJ-301')} cells at {a.get('distance', '?')}"
+                    + (f", from {a['theta_min']}" if a.get("theta_min") else ""))
+        if name == "charged_particle_ball":
+            return f"{a.get('elements', '?')} {a.get('material', 'CsI')} elements at {a.get('radius', '?')}"
+        if name == "recoil_separator":
+            return f"{a.get('kind', 'gas-filled')}, ±{a.get('theta_acceptance', '?')} acceptance"
+        return f"{a.get('elements', '?')} {a.get('material', 'BGO')} elements, fold ≥ {a.get('fold_min', '?')}"
+
+    def consequence() -> str:
+        exp = p.experiment
+        if name == "neutron_wall":
+            m = exp.neutron_wall.model()
+            return (f"{100 * m.geometric_efficiency():.1f} % of 4π, out to θ {m.theta_max():.0f}°; the channel "
+                    "selection on the Plan uses it")
+        if name == "recoil_separator":
+            acc = ancillary_numbers(p).get("recoil_separator", {})
+            if acc:
+                return (f"{100 * acc['all']:.0f} % of the residues fly inside its acceptance (by angle only; its "
+                        "transmission is not computed yet)")
+        return "drawn in the scene; the channel selection does not use it yet"
+
+    return Decision(f"anc:{name}", "Ancillary detectors", title, _try(state), _try(consequence), name, fields, more,
+                    a)
+
+
+def ancillary_numbers(planner) -> dict:
+    """What can be said of the ancillaries from the simulated residues without their own physics: for a recoil
+    separator, the share of all residues and of each channel's inside its angular acceptance ({"all": share,
+    "channels": {label: share}}). Empty without a recoil separator."""
+    import numpy as np
+
+    exp = planner.experiment
+    if exp.fusion is None or exp.recoil_separator is None:
+        return {}
+    from .experiment import _q
+
+    half = _q(exp.recoil_separator.theta_acceptance).to("deg")
+    ev = planner.residue_events()
+    inside = np.asarray(ev["theta"]) <= half
+    weight = np.asarray(ev["weight"])
+    channel = np.asarray(ev["channel"])
+    total = weight.sum()
+    per = {}
+    for k, label in enumerate(ev.channels):
+        w = weight[channel == k]
+        per[label] = float(w[inside[channel == k]].sum() / w.sum()) if w.sum() > 0 else 0.0
+    return {"recoil_separator": {"all": float(weight[inside].sum() / total) if total > 0 else 0.0,
+                                 "channels": per, "half_angle_deg": half}}
+
+
 def decisions(planner) -> list:
     """The setup panel's cards, in the order the decisions are made (see :data:`GROUPS`)."""
     p = planner
     rows = _try(lambda: {r["detector"]: r for r in p.rates()["rows"]}, {})
     out = [_beam(p), _target(p)]
-    out += [_detector(p, i, rows) for i in range(len(p.draft["detectors"]))]
+    out += [_detector(p, i, rows) for i in range(len(p.draft.get("detectors", [])))]
     out += [_gamma_detector(p, i) for i in range(len(p.draft.get("gamma_detectors", [])))]
+    if p.draft.get("reaction", {}).get("type") == "fusion-evaporation":
+        out += [_ancillary(p, name) for name in ANCILLARY_CARDS if name in p.draft]
     out.append(_run(p))
     return out
 
@@ -464,7 +642,7 @@ def status_strip(planner) -> list:
     """The parts of the status strip, left to right: {"key" (the card it opens), "label", "text"}."""
     p = planner
     d = p.draft
-    n_p, n_g = len(d["detectors"]), len(d.get("gamma_detectors", []))
+    n_p, n_g = len(d.get("detectors", [])), len(d.get("gamma_detectors", []))
     dets = f"{n_p} particle" + (f" + {n_g} γ" if n_g else "")
     runs = p.runs()
     if p.run is not None:
@@ -502,9 +680,22 @@ def _span(seconds: float) -> str:
 
 def _plan_line(p) -> tuple:
     """(the line under Plan, done, warn) from the rates: the beam time the counts wanted need against the beam
-    time planned, or the highest rate when no counts are asked for."""
+    time planned, or the highest rate when no counts are asked for. For fusion-evaporation, the studied
+    channel's beam time."""
     r = p.rates()
+    if p.experiment.fusion is not None:
+        study = p.plan().get("study")
+        needed = study["beam_time_s"] if study else None
+        if needed is None:
+            return "set the counts wanted", False, False
+        if needed != needed or needed == float("inf"):
+            return f"{study['channel']}: never reached", False, True
+        enough = needed <= r["beam_time_s"]
+        return (f"{study['channel']}: {_span(needed)} needed" + ("" if enough else f", {_span(r['beam_time_s'])} "
+                                                                  "planned"), enough, not enough)
     rows = r["rows"]
+    if not rows:
+        return "", False, False
     timed = [x for x in rows if x.get("beam_time_s") is not None]
     if r.get("counts_wanted") and timed:
         needed = max(x["beam_time_s"] for x in timed)
@@ -527,11 +718,15 @@ def steps(planner) -> list:
     (the rates, the runs' summaries, the analysis kept with the run) and simulates nothing."""
     p = planner
     d = p.draft
-    n_p, n_g = len(d["detectors"]), len(d.get("gamma_detectors", []))
+    n_p, n_g = len(d.get("detectors", [])), len(d.get("gamma_detectors", []))
     ws = _try(p.warnings, [])
     errors = sum(w.level == "error" for w in ws) + len(p.problems)
     warnings = sum(w.level == "warning" for w in ws)
     setup = f"{n_p} particle" + (f" + {n_g} γ" if n_g else "")
+    if d.get("reaction", {}).get("type") == "fusion-evaporation":
+        short = {"neutron_wall": "wall", "charged_particle_ball": "ball", "recoil_separator": "RS",
+                 "gamma_calorimeter": "cal"}
+        setup = " · ".join([f"{n_g} γ"] + [v for k, v in short.items() if k in d] + (["monitor"] if n_p else []))
     if errors:
         setup += f" · {errors} error{'s' * (errors != 1)}"
     elif warnings:
@@ -632,9 +827,12 @@ def template(key: str):
     see :func:`new_setup`."""
     from .experiment import Experiment
 
+    fusion = next((t for t in FUSION_TEMPLATES if t[0] == key), None)
+    if fusion is not None:
+        return new_setup("12C", "60 MeV", "150Nd", "1 mg/cm2", "fusion-evaporation", detectors_from=key)
     found = next((t for t in TEMPLATES if t[0] == key), None)
     if found is None:
-        raise KeyError(f"no template {key!r}; the templates are {[t[0] for t in TEMPLATES]}")
+        raise KeyError(f"no template {key!r}; the templates are {[t[0] for t in TEMPLATES + FUSION_TEMPLATES]}")
     if found[2] is None:
         return new_setup("4He", "5.5 MeV", "Au")
     return Experiment.example(found[2])
@@ -670,11 +868,13 @@ def new_setup(beam: str, energy: str, target: str, thickness: str = "0.5 mg/cm2"
          "run": {"beam_time": beam_time, "counts_wanted": 1000},
          "reaction": {"type": "elastic"},
          "detectors": [place]}
-    if detectors_from and detectors_from != "blank":
+    if detectors_from and detectors_from != "blank" and measure != "fusion-evaporation":
         source = template(detectors_from).to_dict()
         d["detectors"] = source["detectors"]
         if source.get("gamma_detectors"):
             d["gamma_detectors"] = source["gamma_detectors"]
+    if measure == "fusion-evaporation":
+        return _new_fusion_setup(d, detectors_from)
     exp = Experiment.from_dict(copy.deepcopy(d))
     notes = []
     if measure in ("coulex-target", "coulex-beam"):
@@ -692,6 +892,43 @@ def new_setup(beam: str, energy: str, target: str, thickness: str = "0.5 mg/cm2"
                          "the reaction to Coulomb excitation and enter the state's energy and B(E2) in the Target "
                          "and reaction card.")
     exp._new_setup_notes = notes  # read by new_setup_notes
+    return exp
+
+
+def _new_fusion_setup(d: dict, detectors_from: Optional[str]):
+    """A new fusion-evaporation setup: the channel the excitation energy favours as a placeholder (Fill from
+    physim in the reaction's card replaces it), and the detectors of a fusion template (:data:`FUSION_TEMPLATES`):
+    its γ-ray array and beam monitor, and its ancillaries."""
+    from .experiment import Experiment
+    from .planner import Planner
+
+    found = next((t for t in FUSION_TEMPLATES if t[0] == detectors_from), None)
+    if found is None:
+        found = FUSION_TEMPLATES[-1] if detectors_from in (None, "blank", "fusion-blank") else FUSION_TEMPLATES[0]
+    _, _, _, example, ancillaries = found
+    d.pop("detectors", None)
+    if example is not None:
+        source = Experiment.example(example).to_dict()
+        if source.get("detectors"):
+            d["detectors"] = source["detectors"]
+        if source.get("gamma_detectors"):
+            d["gamma_detectors"] = source["gamma_detectors"]
+    d["run"]["counts_wanted"] = 10000
+    if not d.get("detectors"):
+        # A placeholder monitor while the reaction is still elastic; it goes once the setup is fusion-evaporation.
+        d["detectors"] = [guide.placement("forward")]
+        drop_monitor = True
+    else:
+        drop_monitor = False
+    p = Planner(Experiment.from_dict(copy.deepcopy(d)))
+    p.set("reaction", "type", "fusion-evaporation")
+    draft = p.draft
+    if drop_monitor:
+        draft.pop("detectors", None)
+    for name in ancillaries:
+        draft[name] = dict(Planner.ANCILLARY_DEFAULTS[name])
+    exp = Experiment.from_dict(copy.deepcopy(draft))
+    exp._new_setup_notes = []
     return exp
 
 
@@ -795,7 +1032,9 @@ def states(scheme, multipolarity: str = "E2", limit: int = 30) -> dict:
 _SUPERSCRIPT = {2: "²", 4: "⁴", 6: "⁶", 8: "⁸"}
 
 
-__all__ = ["card_setup", "changes", "draft_decisions", "COMPOUND", "GROUPS", "MEASUREMENTS", "NATURAL", "NOT_SIMULATED", "PHYSICS", "PHYSICS_FOR", "physics_for",
+__all__ = ["ANCILLARY_CARDS", "ancillary_numbers", "card_setup", "changes", "draft_decisions", "COMPOUND",
+           "FUSION_TEMPLATES", "GROUPS", "KINDS", "Kind",
+           "kind_of", "template_label", "MEASUREMENTS", "NATURAL", "NOT_SIMULATED", "PHYSICS", "PHYSICS_FOR", "physics_for",
            "STAGES", "STEPS", "TEMPLATES", "Decision", "checks", "decisions", "elements", "mass_numbers",
            "most_abundant", "new_setup", "new_setup_notes", "next_step", "split_nuclide", "states", "status_strip",
            "steps", "template"]

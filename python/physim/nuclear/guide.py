@@ -369,7 +369,7 @@ STEPS = (
          ("report",)),
 )
 
-#: The two kinds of experiment the first step offers, with the example each starts from.
+#: The kinds of experiment the first step offers, with the example each starts from.
 GOALS = {
     "elastic": ("Rutherford (elastic) scattering",
                 "Scattered beam particles and recoils: cross sections, target thickness and composition, or "
@@ -377,6 +377,9 @@ GOALS = {
     "coulex": ("Coulomb excitation",
                "Excite a low-lying state electromagnetically, below the Coulomb barrier, and detect its γ ray with "
                "the scattered particle: B(E2) values and collectivity.", "coulex_ni58"),
+    "fusion-evaporation": ("Fusion-evaporation",
+                           "Fuse beam and target into a compound nucleus that evaporates neutrons, protons and α "
+                           "particles; the residues' γ rays, picked out by what was evaporated.", "fusion_dy158"),
 }
 
 
@@ -446,7 +449,31 @@ def reading(planner, tab: str) -> list:
     return fn(planner) if fn else []
 
 
+def _fusion_geometry(p) -> list:
+    """How to read the scene of a fusion-evaporation setup."""
+    exp = p.experiment
+    out = ["The scene shows the experiment to scale: the beam (red) comes in along the axis and fuses in the target "
+           "at the origin. The γ-ray detectors are the crystals drawn in bronze; they see the residues' γ rays."]
+    parts = []
+    if exp.charged_particle_ball is not None:
+        parts.append("the charged-particle ball round the target counts the evaporated protons and α particles")
+    if exp.neutron_wall is not None:
+        parts.append("the neutron wall at forward angles counts the neutrons")
+    if exp.gamma_calorimeter is not None:
+        parts.append("the γ calorimeter counts how many γ rays each event gives")
+    if exp.recoil_separator is not None:
+        parts.append("the recoil separator downstream keeps the residues inside its acceptance")
+    if parts:
+        text = "; ".join(parts)
+        out.append(text[0].upper() + text[1:] + ".")
+    out.append("The residues fly forward in a narrow cone (green). Turn the view with the mouse to check nothing "
+               "blocks another detector or the beam; the tables beside the scene give each group's numbers.")
+    return out
+
+
 def _geometry(p) -> list:
+    if p.experiment.fusion is not None:
+        return _fusion_geometry(p)
     g = p.geometry()
     dets = g["detectors"]
     if not dets:

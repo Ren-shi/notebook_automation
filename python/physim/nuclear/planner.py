@@ -581,7 +581,10 @@ class Planner:
         if kept and old == "fusion-evaporation":
             # The residues' level schemes go with the channel table, and come back with it.
             residue_levels = {role: s for role, s in d.get("levels", {}).items() if role not in ("beam", "target")}
-            self._stashed_fusion = dict(kept, _levels=residue_levels, _wall=d.pop("neutron_wall", None))
+            from .experiment import ANCILLARIES
+
+            self._stashed_fusion = dict(kept, _levels=residue_levels, _wall=d.pop("neutron_wall", None),
+                                        _ancillaries={a[0]: d.pop(a[0]) for a in ANCILLARIES if a[0] in d})
         elif kept and old != value:
             self._stashed_excitation = kept
         if value == old:
@@ -597,6 +600,7 @@ class Planner:
             wall = stash.pop("_wall", None)
             if wall:
                 d["neutron_wall"] = wall
+            d.update(stash.pop("_ancillaries", {}))
             d["reaction"] = {"type": value, **stash}
             if levels:
                 d.setdefault("levels", {}).update(levels)
@@ -760,7 +764,7 @@ class Planner:
     def add_detector(self, **fields) -> bool:
         """Append a detector with the given fields (as in a setup file)."""
         d = self.draft
-        d["detectors"].append(dict(fields))
+        d.setdefault("detectors", []).append(dict(fields))
         return self._apply(d)
 
     def remove_detector(self, which) -> bool:
@@ -951,17 +955,22 @@ class Planner:
         if self.experiment.fusion is not None:
             from .residues import warnings as fusion_warnings
 
+            plain = self._plain_fusion()
             for text in fusion_warnings(self.experiment, self.residues()):
+                if plain is not None and "below the Coulomb barrier" in text:
+                    continue  # the fusion model's own (Bass) barrier warning below says it
                 level = "warning" if ("below the Coulomb barrier" in text or "needs E*" in text
                                       or "placeholder" in text) else "note"
                 out.append(Warning(level, "physics", text))
-            plain = self._plain_fusion()
             for text in (plain or {}).get("warnings", []):
                 level = "warning" if ("below the fusion barrier" in text or "quasi-fission" in text) else "note"
                 out.append(Warning(level, "physics", text))
         for text in self._rates().warnings():
             level = "warning" if any(k in text for k in ("pile-up", "not Rutherford", "Mott", "stops inside",
                                                          "records nothing", "beam path", "blocks", "hides")) else "note"
+            if self.experiment.fusion is not None and ("not Rutherford" in text or "Coulomb barrier" in text):
+                # Fusion is meant to happen: for a beam monitor's elastic counts this is a note, not a fault.
+                level, text = "note", "For the beam monitor: " + text[:1].lower() + text[1:]
             source = "rates" if ("counts" in text or "collects" in text or "records" in text) else "physics"
             out.append(Warning(level, source, text))
         out += [Warning("warning", "physics", t) for t in self._stopping_shortfalls()]
@@ -1158,10 +1167,27 @@ class Planner:
         needed = max(timed, key=lambda d: d["beam_time_s"]) if timed else None
         residues = self.residues() if exp.fusion is not None else None
         fusion = self._plain_fusion() if exp.fusion is not None else None
+        needed_s = needed["beam_time_s"] if needed else None
+        study = None
+        if residues is not None and residues["rows"]:
+            # Fusion-evaporation: the beam time is the one the studied channel's strongest line needs.
+            i = self.studied_channel()
+            row = residues["rows"][i if i is not None and i < len(residues["rows"]) else 0]
+            line = row["lines"][0] if row["lines"] else None
+            study = {"index": residues["rows"].index(row), "channel": row["channel"], "residue": row["residue"],
+                     "cross_section_mb": row["cross_section_mb"], "share": row["share"],
+                     "rate_per_s": row["rate_per_s"], "beam_time_s": row["beam_time_s"],
+                     "line": (None if line is None else
+                              {"energy_kev": line["energy_kev"], "label": line["label"],
+                               "detected_per_s": line["detected_per_s"]}),
+                     "chosen": exp.run.channel is not None}
+            needed, needed_s = None, row["beam_time_s"]
         return {"measured": t["measured"], "counts_wanted": t["counts_wanted"], "beam_time_s": t["beam_time_s"],
-                "beam_time_needed_s": needed["beam_time_s"] if needed else None,
+                "beam_time_needed_s": needed_s,
                 "limiting_detector": needed["detector"] if needed else None,
-                "enough": (needed["beam_time_s"] <= t["beam_time_s"]) if needed else None,
+                "enough": (needed_s <= t["beam_time_s"]) if needed_s is not None else None,
+                # Fusion-evaporation: the channel studied, whose strongest line sets the beam time.
+                "study": study,
                 "particles_per_second": t["particles_per_second"], "dead_time_s": dead,
                 "live_fraction": 1 / (1 + dead * total_rate), "detectors": detectors, "gamma_detectors": gammas,
                 "coincidences": matrix, "gamma_efficiency": t["gamma_efficiency"],
@@ -1348,10 +1374,170 @@ class Planner:
         d.pop("neutron_wall", None)
         return self._apply(d)
 
+    #: What an ancillary detector of a fusion-evaporation setup starts with when it is added.
+    ANCILLARY_DEFAULTS = {
+        "neutron_wall": {"cells": 50, "distance": "510 mm", "theta_min": "4 deg"},
+        "charged_particle_ball": {"elements": 40, "radius": "60 mm", "material": "CsI", "threshold": "2 MeV"},
+        "recoil_separator": {"theta_acceptance": "3 deg", "kind": "gas-filled", "distance": "600 mm",
+                             "momentum_acceptance": "10 %"},
+        "gamma_calorimeter": {"elements": 60, "radius": "120 mm", "material": "BGO", "thickness": "75 mm",
+                              "fold_min": 6},
+    }
+
+    def add_ancillary(self, name: str, **fields) -> bool:
+        """Give a fusion-evaporation setup an ancillary detector: "neutron_wall", "charged_particle_ball",
+        "recoil_separator" or "gamma_calorimeter" (:data:`ANCILLARY_DEFAULTS` where no fields are given)."""
+        if name not in self.ANCILLARY_DEFAULTS:
+            raise KeyError(f"unknown ancillary {name!r}; known: {', '.join(self.ANCILLARY_DEFAULTS)}")
+        d = self.draft
+        d[name] = dict(fields) or dict(self.ANCILLARY_DEFAULTS[name])
+        return self._apply(d)
+
+    def remove_ancillary(self, name: str) -> bool:
+        d = self.draft
+        d.pop(name, None)
+        return self._apply(d)
+
+    def studied_channel(self) -> Optional[int]:
+        """The index of the exit channel a fusion-evaporation setup studies (``[run] channel``, else the largest
+        cross section), or None for another reaction."""
+        exp = self.experiment
+        if exp.fusion is None:
+            return None
+        from .experiment import studied_channel_index
+
+        return studied_channel_index(exp.fusion.channels, exp.run.channel)
+
+    def band(self, index: Optional[int] = None, lines: int = 12) -> dict:
+        """The studied residue (``index``: a channel of the table, else the studied one) as the run sees it: its
+        strongest γ-ray transitions with their rates in the γ-ray detectors (from
+        :func:`physim.nuclear.residues.residue_table`), the lifetime of the level each leaves, and B(E2)↓ in
+        Weisskopf units where the level scheme determines it (its half-life, branching and conversion, by
+        :meth:`physim.nuclear.levels.LevelScheme.derive`). Known values, beside the rates: nothing here is
+        measured by the run. Kept until the setup changes."""
+        exp = self.experiment
+        if exp.fusion is None:
+            raise ValueError("the setup is not a fusion-evaporation reaction")
+        i = self.studied_channel() if index is None else index
+        key = ("band", i, lines)
+        if key in self._cache:
+            return self._cache[key]
+        from .residues import residue_scheme, residue_table
+
+        ch = exp.fusion.channels[i]
+        residue = ch.residue_name
+        scheme = residue_scheme(exp, residue)
+        if scheme is None:
+            out = {"available": False, "residue": residue, "channel": ch.particles,
+                   "reason": f"No level scheme of {residue}: neither the setup nor the local ENSDF copy has one."}
+            self._cache[key] = out
+            return out
+        table = residue_table(exp, lines=lines)
+        row = table["rows"][i]
+        rates = {round(x["energy_kev"], 1): x["detected_per_s"] for x in row["lines"]}
+        derived = copy.deepcopy(scheme)
+        derived.derive()
+        rows = []
+        for t in derived.transitions:
+            e = round(t.energy.value, 1)
+            if e not in rates:
+                continue
+            up, low = derived.levels[t.initial], derived.levels[t.final]
+            b = me = None
+            if t.multipolarity in ("", "E2") or "E2" in t.multipolarity:
+                b = derived.b_weisskopf(t.initial, t.final, "E2")
+                me = derived.matrix_element(t.initial, t.final, "E2")
+            rel = (2 * me.unc / me.value) if (me is not None and me.unc and me.value) else None
+            tau = up.half_life.value / math.log(2) if up.half_life is not None else None
+            rows.append({"initial": up.label or up.jpi, "final": low.label or low.jpi,
+                         "level_kev": up.energy.value, "energy_kev": t.energy.value, "rate_per_s": rates[e],
+                         "multipolarity": t.multipolarity, "tau_ps": None if tau is None else 1e12 * tau,
+                         "b_e2_wu": b, "b_e2_unc_wu": None if (b is None or rel is None) else b * rel})
+        rows = sorted(sorted(rows, key=lambda r: -r["rate_per_s"])[:10], key=lambda r: r["level_kev"])
+        rates = {round(r["energy_kev"], 1): r["rate_per_s"] for r in rows}
+        levels = sorted({(r["level_kev"], r["initial"]) for r in rows} | {
+            (derived.levels[t.final].energy.value, derived.levels[t.final].label or derived.levels[t.final].jpi)
+            for t in derived.transitions if round(t.energy.value, 1) in rates})
+        out = {"available": True, "residue": residue, "channel": row["channel"], "rows": rows,
+               "levels": [{"energy_kev": e, "label": lab} for e, lab in levels],
+               "reference": scheme.reference, "from_setup": residue in exp.levels}
+        self._cache[key] = out
+        return out
+
+    def residue_events(self, events: int = 20_000, seed: int = 1):
+        """A sample of the fusion-evaporation events (:func:`physim.nuclear.residues.simulate_residues`): the
+        residues, their recoil and the particles they evaporated. Kept until the setup changes."""
+        if self.experiment.fusion is None:
+            raise ValueError("the setup is not a fusion-evaporation reaction")
+        key = ("residue_events", events, seed)
+        if key not in self._cache:
+            from .residues import simulate_residues
+
+            self._cache[key] = simulate_residues(self.experiment, events, seed)
+        return self._cache[key]
+
+    def recoil_cone(self) -> dict:
+        """Where the residues go: the half-angle holding 90 % of them, their mean speed and its spread."""
+        ev = self.residue_events()
+        theta, beta = np.asarray(ev["theta"]), np.asarray(ev["beta"])
+        return {"half_angle_deg": float(np.percentile(theta, 90)), "beta": float(np.mean(beta)),
+                "beta_spread": float(np.std(beta))}
+
+    def evaporation(self, points: int = 1500) -> dict:
+        """What the compound nucleus boils off, from :meth:`residue_events`: each light particle's energy
+        spectrum in the compound nucleus's frame, the number of each kind per event, and for the studied channel
+        the entry states (E*, J) and the residues' recoil (θ, β), as samples of at most ``points`` events. With a
+        neutron wall, the neutrons' flight times to it."""
+        from .residues import LIGHT_LABEL
+
+        ev = self.residue_events()
+        kinds = list(LIGHT_LABEL)
+        part = ev.particles
+        energies = {}
+        edges = np.linspace(0.0, 30.0, 61)
+        for k, name in enumerate(kinds):
+            e = np.asarray(part["energy_cm"])[np.asarray(part["kind"]) == k]
+            if len(e):
+                counts, _ = np.histogram(e, bins=edges)
+                energies[LIGHT_LABEL[name]] = {"edges": edges.tolist(), "counts": counts.tolist(),
+                                               "mean_mev": float(np.mean(e))}
+        n_events = len(ev)
+        multiplicity = {}
+        for k, name in enumerate(kinds):
+            per = np.bincount(np.asarray(part["event"])[np.asarray(part["kind"]) == k], minlength=n_events)
+            if per.any():
+                multiplicity[LIGHT_LABEL[name]] = {"mean": float(per.mean()),
+                                                   "shares": (np.bincount(per) / n_events).tolist()}
+        i = self.studied_channel()
+        label = ev.channels[i] if i is not None and i < len(ev.channels) else None
+        mask = ev.select(label)
+        rng = np.random.default_rng(1)
+        idx = np.flatnonzero(mask)
+        if len(idx) > points:
+            idx = rng.choice(idx, points, replace=False)
+        out = {"energies": energies, "multiplicity": multiplicity, "channel": label,
+               "entry": {"spin": np.asarray(ev["entry_spin"])[idx].tolist(),
+                         "excitation_mev": np.asarray(ev["entry_excitation"])[idx].tolist()},
+               "recoil": {"theta_deg": np.asarray(ev["theta"])[idx].tolist(),
+                          "beta": np.asarray(ev["beta"])[idx].tolist()},
+               "cone": self.recoil_cone()}
+        wall = self.experiment.neutron_wall
+        if wall is not None:
+            from .neutrons import time_of_flight
+
+            cell = wall.model().cell
+            e_n = np.asarray(part["energy"])[np.asarray(part["kind"]) == kinds.index("n")]
+            if len(e_n):
+                t = time_of_flight(e_n, cell.flight_path_mm())
+                counts, t_edges = np.histogram(t, bins=np.linspace(0.0, max(80.0, float(np.percentile(t, 99))), 81))
+                out["tof"] = {"edges": t_edges.tolist(), "counts": counts.tolist(),
+                              "gamma_flash_ns": float(cell.gamma_flash()), "path_mm": float(cell.flight_path_mm())}
+        return out
+
     def residue_gamma_spectra(self, events: int = 100_000, seed: int = 1, bin_kev: float = 1.0) -> dict:
         """The fusion-evaporation residues' γ rays (:func:`physim.nuclear.residues.simulate_residue_gammas`): for
-        each γ-ray detector its measured and Doppler-corrected singles spectrum (counts in the run per bin), the
-        strongest lines of the residue table, and the generator's notes. ``{"available": False}`` without a
+        each γ-ray detector (and under "all", all of them together) its measured and Doppler-corrected singles spectrum
+        (counts in the run per bin, also per exit channel under "channels"), the strongest lines of the residue table, and the generator's notes. ``{"available": False}`` without a
         fusion-evaporation reaction or γ-ray detectors. Kept until the setup changes."""
         exp = self.experiment
         if exp.fusion is None or not exp.gamma_detectors:
@@ -1368,13 +1554,19 @@ class Planner:
             names = list(dict.fromkeys(c.name.rsplit(" ", 1)[0] if c.element is not None else c.name
                                        for c in g.crystals))
             spectra = {}
-            for name in names:
+            labels = list(g.events.channels)
+            for name in names + [None]:
                 measured, _ = g.spectrum(name, corrected=False, bins=edges)
                 corrected, _ = g.spectrum(name, corrected=True, bins=edges)
-                spectra[name] = {"measured": measured, "corrected": corrected, "edges": edges,
-                                 "counts": g.counts(name)}
+                per = {label: {"measured": g.spectrum(name, corrected=False, channel=label, bins=edges)[0],
+                               "corrected": g.spectrum(name, corrected=True, channel=label, bins=edges)[0]}
+                       for label in labels}
+                spectra[name or "all"] = {"measured": measured, "corrected": corrected, "edges": edges,
+                                          "counts": g.counts(name) if name else float(measured.sum()),
+                                          "channels": per}
             self._cache[key] = {"available": True, "spectra": spectra, "gamma_detectors": names, "lines": lines,
-                                "notes": g.notes, "n_gammas": len(g), "beta": g.beta_nominal}
+                                "notes": g.notes, "n_gammas": len(g), "beta": g.beta_nominal,
+                                "channels": labels}
         return self._cache[key]
 
     def tracks(self, n: int = 30, select: str = "all", weighted: bool = True, seed: int = 1,

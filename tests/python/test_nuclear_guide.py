@@ -68,7 +68,7 @@ def test_guided_steps():
     assert [s["step"].key for s in guide.steps_for(Planner.example("coulex_ni58"))] == [
         "goal", "beam", "target", "detectors", "gamma", "rates", "spectra", "report"]
     assert all(t in TABS for s in guide.STEPS for t in s.tabs)
-    assert set(guide.GOALS) == {"elastic", "coulex"}
+    assert set(guide.GOALS) == {"elastic", "coulex", "fusion-evaporation"}
     assert all(ex in Planner.examples() for _, _, ex in guide.GOALS.values())
 
     def problems(planner):
