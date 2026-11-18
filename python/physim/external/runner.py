@@ -27,7 +27,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Optional, Sequence, Union
+from typing import Iterator, Mapping, Optional, Sequence, Union
 
 HIDDEN_DESKTOP = "physim_hidden"
 
@@ -69,15 +69,19 @@ class ProgramFailed(RuntimeError):
 
 
 def run(args: Sequence[PathLike], cwd: PathLike, *, timeout_s: float, stdin_text: Optional[str] = None,
-        stdin_file: Optional[PathLike] = None, encoding: str = "latin-1", exclusive: Optional[str] = None) -> Run:
+        stdin_file: Optional[PathLike] = None, encoding: str = "latin-1", exclusive: Optional[str] = None,
+        env: Optional[Mapping[str, str]] = None) -> Run:
     """Run ``args`` in ``cwd`` out of sight and wait for it, at most ``timeout_s`` seconds.
 
     ``stdin_text`` or ``stdin_file`` is the program's standard input (else it reads an empty stream). ``exclusive``
     names a program of which only one copy may run at a time on this machine (across processes): the call waits for
-    the copy already running. The return code is the program's; this does not raise for a failed run."""
+    the copy already running. ``env`` holds environment variables set for the program on top of this process's own
+    environment (the program otherwise inherits this process's environment unchanged). The return code is the
+    program's; this does not raise for a failed run."""
     if stdin_text is not None and stdin_file is not None:
         raise ValueError("give stdin_text or stdin_file, not both")
     args = [str(a) for a in args]
+    environment = _environment(env)
     with contextlib.ExitStack() as stack:
         if exclusive:
             stack.enter_context(_machine_lock(exclusive))
@@ -88,13 +92,27 @@ def run(args: Sequence[PathLike], cwd: PathLike, *, timeout_s: float, stdin_text
         out, err = tmp / "stdout.txt", tmp / "stderr.txt"
         start = time.monotonic()
         if sys.platform == "win32":
-            code, hidden = _run_windows(args, Path(cwd), stdin_file, out, err, timeout_s)
+            code, hidden = _run_windows(args, Path(cwd), stdin_file, out, err, timeout_s, environment)
         else:
-            code, hidden = _run_posix(args, Path(cwd), stdin_file, out, err, timeout_s), False
+            code, hidden = _run_posix(args, Path(cwd), stdin_file, out, err, timeout_s, environment), False
         elapsed = time.monotonic() - start
         return Run(args=args, returncode=code, timed_out=code is None, elapsed_s=elapsed,
                    stdout=out.read_text(encoding=encoding, errors="replace"),
                    stderr=err.read_text(encoding=encoding, errors="replace"), hidden_desktop=hidden)
+
+
+def _environment(extra: Optional[Mapping[str, str]]) -> Optional[dict]:
+    """This process's environment with ``extra`` set on top (None: inherit it unchanged). Names compare without
+    case on Windows, as Windows does."""
+    if not extra:
+        return None
+    merged = dict(os.environ)
+    for name, value in extra.items():
+        if sys.platform == "win32":
+            for k in [k for k in merged if k.upper() == name.upper()]:
+                del merged[k]
+        merged[str(name)] = str(value)
+    return merged
 
 
 # --- one copy at a time ---------------------------------------------------------------------------------------------
@@ -137,13 +155,14 @@ def _machine_lock(name: str) -> Iterator[None]:
 # --- POSIX ----------------------------------------------------------------------------------------------------------
 
 
-def _run_posix(args: list, cwd: Path, stdin_file, out: Path, err: Path, timeout_s: float) -> Optional[int]:
+def _run_posix(args: list, cwd: Path, stdin_file, out: Path, err: Path, timeout_s: float,
+               env: Optional[dict] = None) -> Optional[int]:
     import signal
     import subprocess
     with contextlib.ExitStack() as stack:
         fin = stack.enter_context(open(stdin_file, "rb")) if stdin_file else subprocess.DEVNULL
         fout, ferr = stack.enter_context(open(out, "wb")), stack.enter_context(open(err, "wb"))
-        p = subprocess.Popen(args, cwd=cwd, stdin=fin, stdout=fout, stderr=ferr, start_new_session=True)
+        p = subprocess.Popen(args, cwd=cwd, stdin=fin, stdout=fout, stderr=ferr, start_new_session=True, env=env)
         try:
             return p.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
@@ -226,7 +245,8 @@ def _hidden_desktop() -> bool:
     return bool(_desktop)
 
 
-def _run_windows(args: list, cwd: Path, stdin_file, out: Path, err: Path, timeout_s: float):
+def _run_windows(args: list, cwd: Path, stdin_file, out: Path, err: Path, timeout_s: float,
+                 env: Optional[dict] = None):
     import msvcrt
     import subprocess
     api = _api()
@@ -257,12 +277,17 @@ def _run_windows(args: list, cwd: Path, stdin_file, out: Path, err: Path, timeou
             pi = api["PROCESS_INFORMATION"]()
             cmdline = ctypes.create_unicode_buffer(subprocess.list2cmdline(args))
             flags = 0x08000000 | 0x00000004  # CREATE_NO_WINDOW | CREATE_SUSPENDED (joins the job before it runs)
+            block = None
+            if env is not None:  # a Unicode environment block: NAME=value entries, sorted, each ending in a NUL
+                flags |= 0x00000400  # CREATE_UNICODE_ENVIRONMENT
+                text = "".join(f"{k}={v}\0" for k, v in sorted(env.items(), key=lambda kv: kv[0].upper())) + "\0"
+                block = ctypes.create_unicode_buffer(text, len(text))
             with _create_guard:
                 for h in handles:
                     os.set_handle_inheritable(h, True)
                 try:
-                    ok = k32.CreateProcessW(None, cmdline, None, None, True, flags, None, str(cwd), ctypes.byref(si),
-                                            ctypes.byref(pi))
+                    ok = k32.CreateProcessW(None, cmdline, None, None, True, flags, block, str(cwd),
+                                            ctypes.byref(si), ctypes.byref(pi))
                     error = ctypes.get_last_error()
                 finally:
                     for h in handles:
