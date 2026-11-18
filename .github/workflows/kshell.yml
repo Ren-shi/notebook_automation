@@ -64,13 +64,14 @@ jobs:
         with:
           python-version: "3.12"
       # MinGW-w64 gfortran (UCRT, as on the development machine) from MSYS2; OpenBLAS comes from the pinned release
-      # zip, which build_kshell.py downloads and verifies.
+      # zip, which build_kshell.py downloads and verifies. OpenMP (libgomp) is a separate, optional package in MSYS2.
       - uses: msys2/setup-msys2@v2
         id: msys2
         with:
           msystem: UCRT64
           update: false
-          install: mingw-w64-ucrt-x86_64-gcc-fortran mingw-w64-ucrt-x86_64-binutils
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc-fortran mingw-w64-ucrt-x86_64-libgomp mingw-w64-ucrt-x86_64-binutils
       - name: Build and check
         shell: pwsh
         run: |
