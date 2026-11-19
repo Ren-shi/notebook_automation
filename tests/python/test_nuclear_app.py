@@ -131,6 +131,11 @@ def test_the_app_serves_every_example(tmp_path):
             for panel in ("Explain: Two-body kinematics", "Explain: Energy loss and straggling",
                           "Explain: Coulomb trajectories"):
                 assert panel in body, (query, panel)
+            # Beside each level scheme, the Shell model panel (a page built whole builds it though it is closed).
+            if "coulex" in query:
+                for part in ("Shell model: calculate or import the levels of", "Or import results run elsewhere",
+                             "Before running", "Run KSHELL"):
+                    assert part in body, (query, part)
     finally:
         proc.terminate()
         proc.wait(timeout=30)

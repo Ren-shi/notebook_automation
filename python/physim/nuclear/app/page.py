@@ -149,6 +149,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     from . import panel as _panel
     from . import start as _start
     from . import tab_analysis, tab_data, tab_fusion, tab_physics, tab_plan, tab_report, tab_run, tab_setup
+    from . import tab_shellmodel
 
     first, offer_list = _starting_planner(example, template, experiment)
     state = {"planner": first, "events": events, "theme": theme or "light", "open": None, "stage": "setup",
@@ -2544,6 +2545,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 if table:
                     ui.button("Remove", icon="delete", on_click=remove_levels(role)).props(
                         "dense flat no-caps color=negative")
+            if nuclide is not None:  # beside the scheme: calculate or import its levels with the shell model
+                tab_shellmodel.block(ctx, role, nuclide)
             if not table:
                 continue
             ui.label(table["reference"]).classes("text-xs ps-muted")
