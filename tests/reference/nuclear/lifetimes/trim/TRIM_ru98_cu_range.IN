@@ -1,0 +1,28 @@
+==> SRIM-2013.00 This file controls TRIM Calculations.
+Ion: Z1 ,  M1,  Energy (keV), Angle,Number,Bragg Corr,AutoSave Number.
+    44   97.9053   92455.976   0.00   5000 1     5000
+Cascades(1=No;2=Full;3=Sputt;4-5=Ions;6-7=Neutrons), Random Number Seed, Reminders
+                      1                                   1       0
+Diskfiles (0=no,1=yes): Ranges, Backscatt, Transmit, Sputtered, Collisions(1=Ion;2=Ion+Recoils), Special EXYZ.txt file
+                          1       0           0       0               0                               0
+Target material : Number of Elements & Layers
+"98Ru beta into Cu 15.0 mg/cm2 (ranges)"                1               1
+PlotType (0-5); Plot Depths: Xmin, Xmax(Ang.) [=0 0 for Viewing Full Target]
+       5                         0         167411
+Target Elements:    Z   Mass(amu)
+Atom 1 = Cu =         29   63.546
+Layer   Layer Name /               Width Density    Cu(29)
+Numb.   Description                (Ang) (g/cm3)    Stoich
+ 1      "Cu"                        167410.7  8.9600 1.000000
+0  Target layer phases (0=Solid, 1=Gas)
+0
+Target Compound Corrections (Bragg)
+1
+Individual target atom displacement energies (eV)
+      25
+Individual target atom lattice binding energies (eV)
+       3
+Individual target atom surface binding energies (eV)
+    2.00
+Stopping Power Version (1=2011, 0=2011)
+ 0

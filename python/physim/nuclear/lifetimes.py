@@ -449,7 +449,10 @@ class Kernel(Protocol):
 
     ``times_ps``: (nt,) increasing lab times since the state was formed, from 0, out to where the recoils have
     stopped; after the last time each recoil keeps its last value. ``beta_cos``: (nt, n) β·cos θ of n recoils at each
-    time, θ from the beam axis, the same recoil in each column (0 once it has stopped). An optional attribute
+    time, θ from the beam axis, the same recoil in each column (0 once it has stopped); the recoils are taken as
+    moving along the beam. Or, for recoils with their own directions (``transport.Kernel``), a method
+    ``beta_cos(theta_deg, phi_deg)`` giving (nt, n) β·cos(angle between the recoil's velocity and a detector at
+    (θ, φ)), with an array ``beta`` (nt, n) of their speeds: their sideways motion then counts. An optional attribute
     ``weights`` (n,) weights the recoils (equal weights without it)."""
 
     times_ps: np.ndarray
@@ -474,20 +477,37 @@ def exponential_kernel(beta0: float, alpha_ps: float, times_ps=None) -> SampledK
     return SampledKernel(t, (beta0 * np.exp(-t / alpha_ps))[:, None])
 
 
-def _kernel_arrays(kernel) -> tuple:
+def _directional(kernel) -> bool:
+    """Whether the kernel gives each recoil's own direction (a method ``beta_cos(theta, phi)`` and ``beta``)."""
+    return callable(kernel.beta_cos)
+
+
+def _kernel_arrays(kernel, theta_deg: float = 0.0) -> tuple:
+    """(times (nt,), speeds β (nt, n), β·cos(angle to a detector at ``theta_deg`` from the beam) (nt, n), weights).
+    For an array kernel the recoils move along the beam: β is |β cos θ_recoil| and the projection is
+    β cos θ_recoil · cos θ_detector. A directional kernel gives the projection itself and the full speed."""
     t = np.asarray(kernel.times_ps, dtype=float)
-    bc = np.asarray(kernel.beta_cos, dtype=float)
-    if bc.ndim == 1:
-        bc = bc[:, None]
-    if t.ndim != 1 or len(t) < 1 or bc.shape[0] != len(t):
+    if _directional(kernel):
+        proj = np.asarray(kernel.beta_cos(float(theta_deg), 0.0), dtype=float)
+        beta = np.asarray(kernel.beta, dtype=float)
+        if proj.ndim == 1:
+            proj, beta = proj[:, None], beta[:, None]
+        if beta.shape != proj.shape:
+            raise ValueError("the kernel's beta and beta_cos must have the same shape (nt, recoils)")
+    else:
+        beta = np.asarray(kernel.beta_cos, dtype=float)
+        if beta.ndim == 1:
+            beta = beta[:, None]
+        proj = beta * math.cos(math.radians(float(theta_deg)))
+    if t.ndim != 1 or len(t) < 1 or beta.shape[0] != len(t):
         raise ValueError("the kernel needs times_ps (nt,) and beta_cos (nt, recoils)")
     if np.any(np.diff(t) <= 0) or t[0] < 0:
         raise ValueError("the kernel's times must start at or after 0 and increase")
     w = getattr(kernel, "weights", None)
-    w = np.ones(bc.shape[1]) if w is None else np.asarray(w, dtype=float)
-    if w.shape != (bc.shape[1],) or np.any(w < 0) or w.sum() <= 0:
+    w = np.ones(beta.shape[1]) if w is None else np.asarray(w, dtype=float)
+    if w.shape != (beta.shape[1],) or np.any(w < 0) or w.sum() <= 0:
         raise ValueError("the kernel's weights must be one non-negative number per recoil")
-    return t, bc, w / w.sum()
+    return t, beta, proj, w / w.sum()
 
 
 def _emission_weights(lam, f, p, t) -> tuple:
@@ -512,7 +532,7 @@ def dsam_attenuation(tau_ps: float, kernel) -> float:
     """F(τ): the mean β·cos θ of the recoils at the moment of emission over its value at formation, for one level
     with mean life τ (in the frame of the kernel's lab times; time dilation, below 0.2% for β < 6%, is left out).
     β·cos θ is taken linear between the kernel's times and integrated exactly against the decay law."""
-    t, bc, w = _kernel_arrays(kernel)
+    t, _, bc, w = _kernel_arrays(kernel, 0.0)  # β·cos to the beam axis
     lam, f, p = _cascade([tau_ps], None, [1.0])
     mean = bc @ w
     if mean[0] == 0:
@@ -557,19 +577,29 @@ _MATRIX_LIMIT = 4_000_000
 _MATRICES: dict = {}
 
 
-def _kernel_matrix(kernel, t, bc, w, cos: float, x_edges: np.ndarray) -> tuple:
+def _ratio(beta: np.ndarray, proj: np.ndarray) -> np.ndarray:
+    """E/E₀ = √(1 − β²)/(1 − β cos ψ), ψ the angle between the recoil's velocity and the γ ray."""
+    return np.sqrt(1.0 - beta * beta) / (1.0 - proj)
+
+
+def _kernel_matrix(kernel, t, beta, proj, w, theta_deg: float, x_edges: np.ndarray) -> tuple:
     """The kernel binned once, independent of τ (AhKin's idea): (intervals, bins) the share of each interval's
     emissions in each bin of E/E₀, and the bins of the recoils as they are at the first and the last time. The last
     few are kept, so a fit that calls :func:`lineshape` for many τ bins the kernel once (kernels are taken as
-    unchanging)."""
-    key = (id(kernel), id(kernel.times_ps), id(kernel.beta_cos), cos, x_edges.tobytes())
+    unchanging). Keyed on the detector's cos θ for an array kernel, and on θ for a directional one (whose
+    projection is not a function of cos θ alone)."""
+    if _directional(kernel):
+        key = (id(kernel), id(kernel.times_ps), id(kernel.beta), "theta", float(theta_deg), x_edges.tobytes())
+    else:
+        key = (id(kernel), id(kernel.times_ps), id(kernel.beta_cos), "cos", math.cos(math.radians(float(theta_deg))),
+               x_edges.tobytes())
     hit = _MATRICES.get(key)
     if hit is not None and hit[0] is kernel:
         return hit[1]
-    ratio = np.sqrt(1.0 - bc * bc) / (1.0 - bc * cos)  # (nt, recoils): E/E₀
+    ratio = _ratio(beta, proj)  # (nt, recoils): E/E₀
     lo = np.minimum(ratio[:-1], ratio[1:]).ravel()
     hi = np.maximum(ratio[:-1], ratio[1:]).ravel()
-    groups = np.repeat(np.arange(len(t) - 1), bc.shape[1])
+    groups = np.repeat(np.arange(len(t) - 1), beta.shape[1])
     weights = np.tile(w, len(t) - 1)
     matrix = _spread(lo, hi, weights, x_edges, groups, len(t) - 1)
     first = _spread(ratio[0], ratio[0], w, x_edges)[0]
@@ -585,12 +615,14 @@ def lineshape(e0_kev, taus_ps, feeding, populations, kernel, theta_deg, edges_ke
     each row the share of that level's γ rays in each energy bin (a row sums to 1 when the bins cover the line).
     ``e0_kev`` is one energy, or one per level. No detector response: fold it in afterwards.
 
-    The emission times follow the cascade (module docstring) and the kernel gives β·cos θ_recoil at each time; the
-    γ ray has E₀ √(1 − (β cos)²)/(1 − β cos · cos θ) (the recoil's sideways motion is left out, which matters only
-    near 90°). Between two kernel times each recoil's energy is spread evenly between its values at the two
+    The emission times follow the cascade (module docstring) and the kernel gives the recoils' velocities at each
+    time; the γ ray has E₀ √(1 − β²)/(1 − β cos ψ), ψ the angle between the recoil's velocity and the detector. An
+    array kernel's recoils move along the beam (β cos ψ = β cos θ_recoil · cos θ; their sideways motion is left out,
+    which matters only near 90°); a directional kernel (``transport.Kernel``) gives β cos ψ for the detector at
+    (θ, φ = 0) with each recoil's own direction. Between two kernel times each recoil's energy is spread evenly between its values at the two
     times, with the decays of that interval. The kernel's binning does not depend on τ and is kept for the next
     call, so a fit over τ is fast."""
-    t, bc, w = _kernel_arrays(kernel)
+    t, beta, proj, w = _kernel_arrays(kernel, theta_deg)
     lam, f, p = _cascade(taus_ps, feeding, populations)
     edges = np.asarray(edges_kev, dtype=float)
     if edges.ndim != 1 or len(edges) < 2 or np.any(np.diff(edges) <= 0):
@@ -598,7 +630,6 @@ def lineshape(e0_kev, taus_ps, feeding, populations, kernel, theta_deg, edges_ke
     e0 = np.broadcast_to(np.asarray(e0_kev, dtype=float), lam.shape)
     if np.any(e0 <= 0):
         raise ValueError("the γ-ray energy must be positive")
-    cos = math.cos(math.radians(float(theta_deg)))
     shares, _, after = _emission_weights(lam, f, p, t)
     out = np.full((len(lam), len(edges) - 1), np.nan)
     for i in range(len(lam)):
@@ -607,10 +638,10 @@ def lineshape(e0_kev, taus_ps, feeding, populations, kernel, theta_deg, edges_ke
         x = edges / e0[i]
         early, late = 1.0 - after[i, 0], after[i, -1]  # before the first time, after the last
         if (len(t) - 1) * (len(edges) - 1) <= _MATRIX_LIMIT:
-            matrix, first, last = _kernel_matrix(kernel, t, bc, w, cos, x)
+            matrix, first, last = _kernel_matrix(kernel, t, beta, proj, w, float(theta_deg), x)
             out[i] = shares[i] @ matrix + early * first + late * last
             continue
-        ratio = np.sqrt(1.0 - bc * bc) / (1.0 - bc * cos)
+        ratio = _ratio(beta, proj)
         lo = np.minimum(ratio[:-1], ratio[1:]).ravel()
         hi = np.maximum(ratio[:-1], ratio[1:]).ravel()
         out[i] = _spread(lo, hi, (shares[i][:, None] * w[None, :]).ravel(), x)[0]
