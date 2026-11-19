@@ -166,6 +166,9 @@ class GammaEvents:
         return len(self.columns["event"])
 
     def __getitem__(self, name: str) -> np.ndarray:
+        """A column by name. ``distance_um`` and ``stopper_ps`` are stored in :attr:`columns` only for a setup with
+        a ``[lifetime]`` section; for any other setup they are not in :attr:`columns`, and reading them here gives
+        NaN for every γ ray (no plunger). Read them through ``events[name]``, not ``events.columns[name]``."""
         if name in _NAN_WITHOUT_PLUNGER and name not in self.columns:
             # Kept only for setups with a [lifetime] section; without one, NaN (no plunger).
             return np.full(len(self), np.nan)
