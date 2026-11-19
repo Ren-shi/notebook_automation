@@ -69,7 +69,7 @@ def test_every_check_passes_or_waits_for_its_reference():
 
 def test_literature_checks_run_without_reference_files(tmp_path):
     for r in validation.run(kind="literature", reference=tmp_path):
-        if r.name in ("stopping_hydrogen_vs_data", "fusion_vs_data", "residues_vs_data", "carbon_vs_endf",
+        if r.name in ("stopping_hydrogen_vs_data", "stopping_heavy_vs_data", "fusion_vs_data", "residues_vs_data", "carbon_vs_endf",
                       "reproduction_usman2020"):
             # measured or evaluated data kept as reference files
             assert r.status == "pending", r.detail

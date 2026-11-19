@@ -146,6 +146,59 @@ def test_interpolation_for_untabulated_elements(z):
     np.testing.assert_allclose(rebuilt, st._per_electron("pstar", z, e), rtol=0.07)
 
 
+def test_slow_heavy_ions_stop_in_proportion_to_their_speed():
+    # Below the speed where ZBL's effective-charge fit holds, both the extrapolated effective-charge stopping and
+    # the (scaled) Lindhard–Scharff floor go as v, so S_e(E) ∝ √E.
+    s = Stopping("143Sm", "Au")
+    e_min = st.lowest_effective_charge_energy(62) * s.mass_u
+    assert 0.08 < e_min / s.mass_u < 0.11  # MeV/u: v_r = 0.13 v₀ Z₁^(2/3) for Sm
+    lo = np.array([0.01, 0.04, 0.16]) * e_min
+    np.testing.assert_allclose(s.stopping_power(lo, "electronic") / np.sqrt(lo),
+                               s.stopping_power(lo[0], "electronic") / math.sqrt(lo[0]), rtol=0.02)
+    # No step where the effective-charge fit takes over.
+    e = e_min * np.array([0.999, 1.001])
+    a, b = s.stopping_power(e, "electronic")
+    assert b / a == pytest.approx(1.0, abs=0.01)
+    # The floor: 0.8 × Lindhard–Scharff joined to the full charge.
+    assert Stopping.LINDHARD_SCHARFF_SCALE == 0.8
+
+
+def test_zbl_screening_length():
+    # Nearly neutral: 0.8 / Z₁^(1/3); fully stripped: 0. Larger than Brandt–Kitagawa's for a slow heavy ion.
+    for z in (18, 54):
+        c = z ** (1 / 3)
+        assert float(st._zbl_screening_length(z, np.array(0.0))) == pytest.approx(0.8 / c)
+        assert float(st._zbl_screening_length(z, np.array(1.0))) == pytest.approx(0.0, abs=1e-12)
+        bk = 2 * 0.24005 / (c * (1 - 1 / 7))
+        assert float(st._zbl_screening_length(z, np.array(0.0))) > bk
+    assert st.effective_charge(54, 0.3) == pytest.approx(0.180, abs=0.002)
+
+
+@pytest.mark.skipif(not (REFERENCE / "stopping_measured_heavy.csv").exists(), reason="no measured heavy-ion stopping")
+def test_slow_heavy_ions_against_measured_stopping():
+    """The IAEA database's measured electronic stopping of ions from Ar to U in elemental solids: the median of
+    physim / measured per ion class and energy band (the validation check stopping_heavy_vs_data), and the cases of
+    the lifetime experiments (heavy ions in heavy targets below 1 MeV/u), which the effective-charge model with
+    Brandt–Kitagawa's screening and unscaled Lindhard–Scharff had 16% low (0.1–1 MeV/u) and 24% high (below 0.1)."""
+    rows = [r for r in csv.DictReader(ln for ln in open(REFERENCE / "stopping_measured_heavy.csv", encoding="utf-8")
+                                      if not ln.startswith("#"))]
+    cache, cells = {}, {}
+    for r in rows:
+        z, a, e_u = int(r["z1"]), int(r["a1"]), float(r["e_mev_u"])
+        s = cache.setdefault((z, a, r["target"]), Stopping(data.nuclide((z, a)).name, r["target"]))
+        ratio = s.stopping_power(e_u * s.mass_u, "electronic") / float(r["stopping_mev_mg_cm2"])
+        cls = "Ar-Ni" if z <= 28 else ("Cu-Ag" if z <= 47 else "I-U")
+        band = "<0.1" if e_u < 0.1 else ("0.1-1" if e_u < 1 else "1-10")
+        cells.setdefault((cls, band), []).append(ratio)
+        if z >= 53 and int(r["z2"]) >= 47 and e_u < 1:
+            cells.setdefault(("I-U heavy targets", band), []).append(ratio)
+    tol = {"<0.1": 0.25, "0.1-1": 0.12, "1-10": 0.08}
+    for (cls, band), v in cells.items():
+        assert abs(np.median(v) - 1) < tol[band], (cls, band, np.median(v), len(v))
+    assert abs(np.median(cells[("I-U heavy targets", "<0.1")]) - 1) < 0.05
+    assert abs(np.median(cells[("I-U heavy targets", "0.1-1")]) - 1) < 0.12
+
+
 def test_lindhard_scharff_low_velocity_stopping():
     # 10 keV protons in gold: 11.2 eV/(1e15 atoms/cm²) from LS; NIST gives 15.2 (LS is a ~30% estimate there).
     per_atom = st.lindhard_scharff(1, 79, 0.010 / 1.007276467)

@@ -9,8 +9,11 @@ Backlog item 36 · module `physim.nuclear.stopping` · tests `tests/python/test_
   same velocity.
 - **Other elements:** interpolated per electron between tabulated neighbours, linearly in ln I.
 - **Other compounds:** Bragg additivity.
-- **Heavy ions:** effective-charge scaling of proton stopping (Brandt–Kitagawa with Ziegler's ionisation fit). At
-  low velocity, the larger of that and Lindhard–Scharff joined to full-charge stopping.
+- **Heavy ions:** effective-charge scaling of proton stopping (Brandt–Kitagawa's form, with Ziegler, Biersack and
+  Littmark's fits for the ionised fraction and, since 2026-11-19, for the screening length). Below the speed where
+  that fit holds (relative speed max(v₀, 0.13 v₀ Z₁^(2/3)), about 13 keV/u for Ar and 90 keV/u for Sm) it is
+  proportional to the speed from its value there (ZBL's rule); at low velocity the larger of that and
+  0.8 × Lindhard–Scharff joined to full-charge stopping (the 0.8 since 2026-11-19, fitted to measured data).
 - **Ions from Li to Ar in hydrogen and in ICRU 49 compounds** (since 2026-11-15): MSTAR 3.12 (Paul and Schinner,
   the method of ICRU Report 73), `physim.nuclear.mstar`. It scales ICRU 49 α stopping by fits to measured data:
   S = S_α(4E) · F(Z₁, E) · Z₁²/4, with separate fits for solids, for H₂ and He gas, and per ion for other gases.
@@ -31,9 +34,11 @@ This choice was made with the user (2026-10-04): own models plus the ICRU 49 tab
 ## Assumptions and range of validity
 
 - Above about 1 MeV/u everything is good to a few percent for p and α, and about 10% for heavy ions.
-- Below that, accuracy depends on the ion (see the validation table). Slow heavy ions (Kr, Xe below 1 MeV/u) are
-  uncertain by tens of percent, and so are established codes: LISE++'s own three models differ from each other by
-  up to 48% for Xe there.
+- Below that, accuracy depends on the ion (see the validation table). Slow heavy ions in elemental solids (Ar to U,
+  3620 measured points): the median deviation is within 3% for Ar–Ag and −10% for I–U at 0.1–1 MeV/u; below
+  0.1 MeV/u within ±5% in mid and heavy targets (Ti–Pb) but about +20% in light ones (C–Si). Single points scatter
+  by tens of percent there, and so do established codes: LISE++'s own three models differ from each other by up to
+  48% for Xe, and SRIM 2013 is 7–16% below the data for ions from Cu up below 0.1 MeV/u.
 - Untabulated elements near and below the Bragg peak (about 0.1–0.5 MeV/u for protons) can be off by 10–40%:
   their shell structure is not captured.
 - Gas targets use NIST's gas-phase values. Channelling, charge-state distributions and target damage are ignored.
@@ -55,10 +60,11 @@ them interpolated) and 7 ions.
 | Range vs LISE++ | same | p/α: 3.5%, 6%, 21%. C–Ar: 5%, 15%, 39%. Kr/Xe: 9%, 53%, 100% | pass | `test_against_lise_atima` |
 | Energy after a fifth of the range vs LISE++ | same | p/α: 0.5%, 1.2%, 5.3%. C–Ar: 0.8%, 4.8%, 11.5%. Kr/Xe: 2.2%, 6%, 19% | pass | `test_against_lise_atima` |
 | Straggling (FWHM) ≥ 30 MeV/u vs LISE++ | same | 25% | pass | `test_straggling_against_lise_at_high_energy` |
-| Stopping power vs SRIM 2013 (SR Module), 5 ions (⁴He, ¹²C, ¹⁶O, ⁴⁰Ar, ¹³²Xe) × Au, Si × 0.1–10 MeV/u, 50 points | SRIM (`stopping_srim.csv`) | the LISE++ stopping bands above | pass (worst 90% of a band: Xe in Au at 1 MeV/u, −10.7% against 12%) | `stopping_vs_srim` |
-| Stopping power vs SRIM 2013, compounds: same ions × Mylar, CD₂, CsI, 75 points | same; compound correction 1 (Bragg additivity) | the same bands (no compound allowance; see below) | **fail, CD₂ only** (with MSTAR, 2026-11-15): ¹²C/¹⁶O 0.1 MeV/u +26%/+27% (25%), ¹²C/¹⁶O/⁴⁰Ar 1 MeV/u −16%/−15%/−17% (11%), Xe 1 MeV/u −20% (12%). Mylar (worst Xe 1 MeV/u −11.8%), CsI and all ⁴He pass. Before MSTAR: CD₂ ⁴⁰Ar 0.1 MeV/u +39%, Mylar ⁴⁰Ar 0.1 MeV/u +25.4% | `stopping_compounds_vs_srim` (a known failure in `test_nuclear_validation.py`) |
+| Stopping power vs SRIM 2013 (SR Module), 5 ions (⁴He, ¹²C, ¹⁶O, ⁴⁰Ar, ¹³²Xe) × Au, Si × 0.1–10 MeV/u, 50 points | SRIM (`stopping_srim.csv`) | the LISE++ stopping bands above, except Kr/Xe ≥ 10 MeV/u: 11% (SRIM is 7% above the measured stopping of I and Xe in light targets at 5–10 MeV/u, physim 5% below) | pass (worst 97% of a band: Xe in Si at 10 MeV/u, −10.6% against 11%; Xe in Au at 1 MeV/u −9.7%) | `stopping_vs_srim` |
+| Stopping power vs SRIM 2013, compounds: same ions × Mylar, CD₂, CsI, 75 points | same; compound correction 1 (Bragg additivity) | the same bands (no compound allowance; see below) | **fail, CD₂ only** (with MSTAR, 2026-11-15): ¹²C/¹⁶O 0.1 MeV/u +26%/+27% (25%), ¹²C/¹⁶O/⁴⁰Ar 1 MeV/u −16%/−15%/−17% (11%), Xe 1 MeV/u −19% (12%); since 2026-11-19 also Xe 10 MeV/u in Mylar −10.3% (10%). CsI and all ⁴He pass. Before MSTAR: CD₂ ⁴⁰Ar 0.1 MeV/u +39%, Mylar ⁴⁰Ar 0.1 MeV/u +25.4% | `stopping_compounds_vs_srim` (a known failure in `test_nuclear_validation.py`) |
 | Range vs SRIM | same | not judged | SRIM gives the projected range, physim the path length (CSDA); they differ by up to a factor 2 for slow ions in Au, and by 1–12% at 10 MeV/u | reported in the checks' detail |
-| Electronic stopping vs measurements: C, O, Ar, Kr, Xe in H₂, D₂, (CH₂)ₙ polymers, Mylar, 0.1–15 MeV/u, 744 points | IAEA Stopping Power Database (`stopping_measured_hydrogen.csv`, `scripts/iaea_stopping_reference.py`) | median deviation per target group, ion and energy band inside the LISE++ stopping band above (the existing bands, not set from these data) | **fail** in 3 of 21 cells: Kr in H₂/D₂ 1–10 MeV/u −19.0% (12%, 34 points), Xe in Mylar −17.5% and Kr in Mylar −14.5% at 1–10 MeV/u (12%, 3 points each), all outside MSTAR's range. RMS for C–Ar with MSTAR (before; SRIM): H₂/D₂ 4.1% (7.9%; 7.5%), (CH₂)ₙ 8.5% (10.3%; 9.4%), Mylar 5.9% (6.9%; 4.6%). SRIM by the same rule fails only C in H₂ (+10 to +14%) |
+| Electronic stopping vs measurements: C, O, Ar, Kr, Xe in H₂, D₂, (CH₂)ₙ polymers, Mylar, 0.1–15 MeV/u, 744 points | IAEA Stopping Power Database (`stopping_measured_hydrogen.csv`, `scripts/iaea_stopping_reference.py`) | median deviation per target group, ion and energy band inside the LISE++ stopping band above (the existing bands, not set from these data) | **fail** in 3 of 21 cells: Kr in H₂/D₂ 1–10 MeV/u −21.1% (12%, 34 points), Xe in Mylar −16.2% and Kr in Mylar −12.2% at 1–10 MeV/u (12%, 3 points each), all outside MSTAR's range (before 2026-11-19: −19.0%, −17.5%, −14.5%). RMS for C–Ar with MSTAR (before; SRIM): H₂/D₂ 4.1% (7.9%; 7.5%), (CH₂)ₙ 8.5% (10.3%; 9.4%), Mylar 5.9% (6.9%; 4.6%). SRIM by the same rule fails only C in H₂ (+10 to +14%) |
+| Electronic stopping of slow heavy ions vs measurements: 21 ions from Ar to U in 12 elemental solids (C to Pb), 5 keV/u–10 MeV/u, 3620 points | IAEA Stopping Power Database (`stopping_measured_heavy.csv`, `scripts/iaea_heavy_ion_reference.py`), SRIM 2013 per point for context | median per ion class (Ar–Ni, Cu–Ag, I–U) and band: 25% below 0.1 MeV/u, 12% at 0.1–1, 8% at 1–10 | pass (since 2026-11-19; worst 80% of a band, I–U 0.1–1 MeV/u −9.6%); see "Slow heavy ions in solids" | `stopping_heavy_vs_data`, `test_slow_heavy_ions_against_measured_stopping` |
 | MSTAR port | MSTAR 3.12's own values for ¹²C in water (solid fit with target correction) and air (gas fit for C), 0.07–10 MeV/u, as extracted from the original Fortran in libdEdx's tests | 0.1% | pass (≤ 0.03%) | `test_heavy_ions_in_icru49_compounds_follow_mstar` |
 | MSTAR handoff above 50 MeV/u; CD₂ as polyethylene | Exact: MSTAR below 50 MeV/u, unchanged above 200; electrons per gram 0.8745 | 1e-12; 0.1% | pass | `test_mstar_hands_over_smoothly_at_high_energy`, `test_deuterated_compound_stops_like_its_parent_per_electron` | `stopping_hydrogen_vs_data` (a known failure) |
 
@@ -267,14 +273,55 @@ Validated 2026-10-04; SRIM comparison 2026-11-14; MSTAR 2026-11-15.
   is low for Kr in hydrogen"). The planner warns when an ion heavier than Ar, below 10 MeV/u, crosses a layer or
   detector containing hydrogen or helium (`stopping.known_shortfall`). The research is parked (2026-11-15);
   the open questions are listed in backlog 36.
-- Slow heavy ions (below 1 MeV/u, especially Kr and heavier): stopping within ~50%, range within a factor of two.
-  Plan with care and check against SRIM. Ziegler's per-ion and per-target low-energy coefficient tables would fix
-  this; they are not included (a possible later download).
+- Slow heavy ions (below 1 MeV/u): the medians are within 10% of measured stopping (above), but in light targets
+  (C–Si) below 0.1 MeV/u ions from Ar to Ag come out about 20–30% high, and Au–U at 0.2–2 MeV/u 10–20% low. A
+  target-dependent effective charge (per-element Fermi velocities and ZBL's per-ion screening factors) would be the
+  next step; not included.
 - Straggling below ~10 MeV/u differs from LISE++ by up to a factor 2–4 (slow-ion and charge-exchange straggling
   are not modelled).
 - Untabulated elements near the Bragg peak (see above).
 - Implemented in Python with NumPy (about 0.1 s to build a table per ion and material, then vectorised); the event
   generator (item 39) may move the hot path to Rust.
+
+## Slow heavy ions in solids (2026-11-19)
+
+Found by the lifetime work (`nuclear/transport.py`, PR 120): physim's electronic stopping of ⁹⁸Ru in Cu and ¹⁴³Sm
+in Au was 1.2–4 times SRIM's below 1 MeV/u, which scales DSAM slowing-down times directly. Measured data show that
+much of that gap is SRIM's: for ions from Cu up below 0.1 MeV/u SRIM 2013 is 7–16% below the measurements (median).
+physim was wrong in two places, both largest for the heaviest ions:
+
+- *At low speed* Lindhard–Scharff (the larger branch there) was 15–35% high for I to U.
+- *At 0.1–1 MeV/u* the effective charge was too small: Brandt–Kitagawa's statistical screening length is shorter
+  than ZBL's empirical one for a nearly neutral ion, and I–U came out 16% low.
+
+The fix uses ZBL's screening length, ZBL's velocity-proportional rule below the speed where the effective-charge fit
+holds, and Lindhard–Scharff × 0.8 as the floor (0.75–0.85 fit about as well). Against 3620 measured points (21 ions
+from Ar to U in 12 elemental solids, IAEA database, `stopping_measured_heavy.csv`), median physim / measured − 1:
+
+| Ions | Band (MeV/u) | Points | before | now | SRIM 2013 |
+|---|---|---|---|---|---|
+| Ar–Ni | < 0.1 | 120 | +0% | +19% | +5% |
+| Ar–Ni | 0.1–1 | 572 | −4% | +1% | −1% |
+| Ar–Ni | 1–10 | 542 | −3% | −1% | −2% |
+| Cu–Ag | < 0.1 | 59 | +8% | +15% | −16% |
+| Cu–Ag | 0.1–1 | 484 | −6% | +2% | −4% |
+| Cu–Ag | 1–10 | 488 | −3% | −1% | −1% |
+| I–U | < 0.1 | 57 | +19% | +7% | −8% |
+| I–U | 0.1–1 | 691 | −16% | −10% | −1% |
+| I–U | 1–10 | 607 | −8% | −6% | +2% |
+
+The RMS of ln(physim / measured) over all points falls from 0.175 to 0.152. By target, the new model is better in
+mid (Ti–Ge) and heavy (Ag–Pb) targets at every speed: I–U in heavy targets below 0.1 MeV/u +24% → −1%, at
+0.1–1 MeV/u −16% → −11%. It is worse in light targets (C–Si) below 0.1 MeV/u for Ar–Ag: Ar–Ni −13% → +22%
+(22 points), Cu–Ag +9% → +30% (28 points). The effective charge with ZBL's screening length is too large there for
+a nearly neutral ion; recoils slow down mostly in heavy backings and stoppers, so that trade was taken, and a
+target-dependent effective charge is left for later. With physim's stopping, ⁹⁸Ru (β 4.5%) in Cu now has a range 7%
+shorter than with SRIM's, and ¹⁴³Sm (β 1.6%) in Au 19% (before 9% and 29%;
+`test_physim_stopping_against_srim_for_the_recoils`).
+
+The old Lindhard–Scharff join tended to the full-charge stopping Z₁² S_p at high speed, so it had been the larger
+branch for Kr and Xe in light targets near 10 MeV/u. That is gone. Xe in Si at 10 MeV/u is now 10.6% below SRIM,
+and SRIM is 7% above the measurements there. Kr in H₂/D₂ (a known failure) moves from −19% to −21%.
 
 ## References
 
@@ -282,6 +329,8 @@ Validated 2026-10-04; SRIM comparison 2026-11-14; MSTAR 2026-11-15.
   (1993) and 90 (2016).
 - J. F. Ziegler, J. P. Biersack and U. Littmark, *The Stopping and Range of Ions in Solids* (Pergamon, 1985).
 - W. Brandt and M. Kitagawa, Phys. Rev. B **25**, 5631 (1982).
+- IAEA Stopping Power Database (H. Paul; https://www-nds.iaea.org/stopping/), measured heavy-ion stopping in
+  elemental solids; the original papers are cited per point by `ref_id` and `doi` in `stopping_measured_heavy.csv`.
 - R. Bimbot et al., heavy-ion stopping in gases (1989), via the IAEA Stopping Power Database (ref_id Bi1989b).
 - H. Kuboki et al., Phys. Rev. ST Accel. Beams **17**, 123501 (2014) (⁸⁶Kr charge states in H₂ and He).
 - P. Scharrer et al., Phys. Rev. Accel. Beams **20**, 043503 (2017); P. Gerhard and M. Maier, HIAT 2022, MO3I3

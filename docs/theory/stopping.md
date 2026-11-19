@@ -61,8 +61,21 @@ with velocities in units of the Bohr velocity $v_0$ and the constants as in ZBL'
 Here $v_r$ is the ion's speed relative to the target electrons. The target Fermi velocity $v_F$ is set to 1 for
 all targets, since per-element values are not tabulated here.
 
-At low velocity this charge collapses. There the larger of it and **Lindhard–Scharff** stopping is used, joined to
-the full-charge stopping as $1/S = 1/S_\text{LS} + 1/(Z_1^2 S_p)$, with
+The screening length is ZBL's empirical one rather than Brandt–Kitagawa's statistical one (which is shorter for a
+nearly neutral ion, and gave I–U 16% low at 0.1–1 MeV/u against measured data):
+
+$$
+\Lambda = \max\!\left(\frac{0.8 - q\,\min(1.2,\ 0.6 + Z_1/30)}{Z_1^{1/3}},\ \Lambda_1(q)\right),
+$$
+
+where $\Lambda_1$ is a plateau $B = \min(0.43, \max(0.32, 0.12 + 0.025 Z_1))/Z_1^{1/3}$ between a rise from $q = 0.2$
+and a fall to 0 at full stripping, as in ZBL's code. The fit holds down to the speed at which
+$v_r = \max(v_0,\ 0.13\,v_0 Z_1^{2/3})$ (about 13 keV/u for Ar, 90 keV/u for Sm); below it the stopping is taken as
+proportional to the speed from its value there (ZBL's rule).
+
+At low velocity the larger of that and **Lindhard–Scharff** stopping scaled by 0.8 is used, joined to the full-charge
+stopping as $1/S = 1/(0.8\,S_\text{LS}) + 1/(Z_1^2 S_p)$. The 0.8 is fitted to measured stopping of ions from Ar to U
+in elemental solids at 5–200 keV/u, where Lindhard–Scharff alone is 15–35% high for the heaviest ions. Here
 
 $$
 S_\text{LS} = 8\pi e^2 a_0\,\frac{Z_1^{7/6} Z_2}{\left(Z_1^{2/3} + Z_2^{2/3}\right)^{3/2}}\,\frac{v}{v_0}

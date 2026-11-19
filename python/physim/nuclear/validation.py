@@ -345,11 +345,18 @@ def _energy_band(e_u: float) -> str:
     return "0.1-1" if e_u < 1 else ("1-10" if e_u < 10 else ">=10")
 
 
+#: The LISE++ bands, except Kr and Xe at 10 MeV/u and above: 11% against SRIM, which is 7% above measured stopping of
+#: I and Xe in light targets at 5–10 MeV/u (stopping_measured_heavy.csv), where physim is 5% below it.
+SRIM_STOPPING_TOLERANCE = {**STOPPING_TOLERANCE, ("stopping", "Kr,Xe", ">=10"): 0.11}
+
+
 def _stopping_vs_srim(ref, targets: tuple) -> tuple:
-    """Total stopping power (electronic + nuclear) against SR Module, judged by the LISE++ bands of
-    STOPPING_TOLERANCE. SRIM's ranges are projected ranges, which are shorter than physim's path-length (CSDA)
-    ranges where ions scatter (light ions in heavy targets, slow ions), so they are reported, not judged."""
+    """Total stopping power (electronic + nuclear) against SR Module, judged by the LISE++ bands
+    (SRIM_STOPPING_TOLERANCE). SRIM's ranges are projected ranges, which are shorter than physim's path-length
+    (CSDA) ranges where ions scatter (light ions in heavy targets, slow ions), so they are reported, not judged."""
     from .stopping import Stopping
+
+    tolerance = SRIM_STOPPING_TOLERANCE
 
     path = _file(ref, "stopping_srim.csv")
     if path is None:
@@ -368,15 +375,15 @@ def _stopping_vs_srim(ref, targets: tuple) -> tuple:
         key = ("stopping", _ion_class(nuc.Z), _energy_band(e_u))
         worst[key] = max(worst.get(key, 0.0), abs(d))
         t = r["target"]
-        if abs(d) / STOPPING_TOLERANCE[key] > per_target.get(t, (0.0,))[0]:
-            per_target[t] = (abs(d) / STOPPING_TOLERANCE[key], f"{r['ion']} {e_u:g} MeV/u {d:+.1%}")
+        if abs(d) / tolerance[key] > per_target.get(t, (0.0,))[0]:
+            per_target[t] = (abs(d) / tolerance[key], f"{r['ion']} {e_u:g} MeV/u {d:+.1%}")
         if e_u >= 10:
             dr = float(s.range(e)) / rho * 10 / float(r["projected_range_um"]) - 1
             range_10[t] = max(range_10.get(t, 0.0), abs(dr))
         xs.append(e_u)
         ratio.append(1 + d)
-    failures = {k: round(v, 3) for k, v in worst.items() if v > STOPPING_TOLERANCE[k]}
-    worst_frac = max(v / STOPPING_TOLERANCE[k] for k, v in worst.items())
+    failures = {k: round(v, 3) for k, v in worst.items() if v > tolerance[k]}
+    worst_frac = max(v / tolerance[k] for k, v in worst.items())
     detail = ("all bands inside their tolerance" if not failures else f"outside: {failures}") + (
         f" (worst {worst_frac:.0%} of a band's tolerance); worst per target: "
         + ", ".join(f"{t} {w[1]}" for t, w in per_target.items())
@@ -388,7 +395,8 @@ def _stopping_vs_srim(ref, targets: tuple) -> tuple:
 
 
 @check("Stopping power and range", "tool", "SRIM 2013 SR Module: 5 ions (⁴He to ¹³²Xe) × Au, Si × 0.1–10 MeV/u "
-       "(stopping_srim.csv)", "the LISE++ bands for stopping power (STOPPING_TOLERANCE); ranges reported, not judged")
+       "(stopping_srim.csv)", "the LISE++ bands for stopping power (STOPPING_TOLERANCE; Kr, Xe ≥ 10 MeV/u: 11%, SRIM "
+       "being above measured data there); ranges reported, not judged")
 def stopping_vs_srim(ref):
     return _stopping_vs_srim(ref, ("Au", "Si"))
 
@@ -453,6 +461,63 @@ def stopping_hydrogen_vs_data(ref):
     plot = {"x": xs, "physim": ratio, "reference": np.ones(len(ratio)), "xlabel": "energy (MeV/u)",
             "ylabel": "electronic stopping, physim / measured", "logx": True}
     return not fails, worst, len(rows), detail, plot
+
+
+#: Bands of the heavy-ion check: median deviation from measured stopping allowed per ion class and energy band.
+HEAVY_DATA_TOLERANCE = {"<0.1": 0.25, "0.1-1": 0.12, "1-10": 0.08}
+
+
+def _heavy_class(z: int) -> str:
+    return "Ar-Ni" if z <= 28 else ("Cu-Ag" if z <= 47 else "I-U")
+
+
+def _heavy_band(e_u: float) -> str:
+    return "<0.1" if e_u < 0.1 else ("0.1-1" if e_u < 1 else "1-10")
+
+
+@check("Stopping power and range", "literature", "Measured electronic stopping of ions from Ar to U (21 elements) in 12 "
+       "elemental solids from C to Pb, 5 keV/u–10 MeV/u, from the IAEA Stopping Power Database "
+       "(stopping_measured_heavy.csv): slow heavy recoils in targets, backings and plunger stoppers",
+       "median deviation per ion class (Ar–Ni, Cu–Ag, I–U) and energy band within 25% below 0.1 MeV/u, 12% at "
+       "0.1–1 MeV/u, 8% at 1–10 MeV/u (HEAVY_DATA_TOLERANCE)")
+def stopping_heavy_vs_data(ref):
+    from .stopping import Stopping
+
+    path = _file(ref, "stopping_measured_heavy.csv")
+    if path is None:
+        return None, math.nan, 0, "stopping_measured_heavy.csv not found", {}
+    rows = read_reference(path)[1]
+    cache: dict = {}
+    cells: dict = {}
+    srim_cells: dict = {}
+    by_target: dict = {}
+    xs, ratio = [], []
+    for r in rows:
+        z, a, e_u = int(r["z1"]), int(r["a1"]), float(r["e_mev_u"])
+        s = cache.setdefault((z, a, r["target"]), Stopping(data.nuclide((z, a)).name, r["target"]))
+        meas = float(r["stopping_mev_mg_cm2"])
+        d = float(s.stopping_power(e_u * s.mass_u, part="electronic")) / meas - 1
+        key = (_heavy_class(z), _heavy_band(e_u))
+        cells.setdefault(key, []).append(d)
+        if r["srim_mev_mg_cm2"]:
+            srim_cells.setdefault(key, []).append(float(r["srim_mev_mg_cm2"]) / meas - 1)
+        group = "light" if int(r["z2"]) <= 14 else ("mid" if int(r["z2"]) <= 32 else "heavy")
+        by_target.setdefault((group, key[1]), []).append(d)
+        xs.append(e_u)
+        ratio.append(1 + d)
+    med = {k: float(np.median(v)) for k, v in cells.items()}
+    frac = {k: abs(m) / HEAVY_DATA_TOLERANCE[k[1]] for k, m in med.items()}
+    fails = {k: m for k, m in med.items() if abs(m) > HEAVY_DATA_TOLERANCE[k[1]]}
+    cell = lambda k: f"{k[0]} {k[1]} MeV/u {med[k]:+.1%} ({len(cells[k])})"  # noqa: E731
+    detail = (("all cells inside their band" if not fails else "outside: " + ", ".join(cell(k) for k in fails))
+              + f" (worst {max(frac.values()):.0%} of a band); medians: " + ", ".join(cell(k) for k in sorted(med))
+              + "; by target (C–Si light, Ti–Ge mid, Ag–Pb heavy): " + ", ".join(
+                  f"{g} {b} {float(np.median(v)):+.1%}" for (g, b), v in sorted(by_target.items()))
+              + "; SRIM 2013 medians (context): " + ", ".join(
+                  f"{k[0]} {k[1]} {float(np.median(v)):+.1%}" for k, v in sorted(srim_cells.items())))
+    plot = {"x": xs, "physim": ratio, "reference": np.ones(len(ratio)), "xlabel": "energy (MeV/u)",
+            "ylabel": "electronic stopping, physim / measured", "logx": True}
+    return not fails, max(frac.values()), len(rows), detail, plot
 
 
 @check("Stopping power and range", "literature", "NIST PSTAR/ASTAR CSDA ranges (ICRU 49), p and α in C, Si, Au, "
