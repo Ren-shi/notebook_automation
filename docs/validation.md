@@ -16,4 +16,5 @@ validation/rates-and-events
 validation/coulex
 validation/fusion-evaporation
 validation/reproduction-usman2020
+validation/lifetimes
 ```

@@ -126,6 +126,51 @@ def reproduction_notebook() -> nbformat.NotebookNode:
     return nb
 
 
+def lifetimes_notebook() -> nbformat.NotebookNode:
+    """Lifetime measurements (backlog 73, wave 2D): the generic page, plus the ⁹⁸Ru attenuation curves and the ⁸³Y
+    line shape with AhKin's and the measured one."""
+    nb = notebook(
+        "Validation: lifetime measurements (RDDS and DSAM)",
+        ["Lifetimes: recoil distance (RDDS)", "Lifetimes: Doppler-shift attenuation (DSAM)"],
+        "The plunger's decay curves and Bateman's equations against their closed forms, the deorientation in vacuum "
+        "against Radeck et al.'s Table I, the recoil transport against TRIM, the DSAM attenuation against its exact "
+        "result for stopping proportional to speed, and DSAM line shapes against APCAD's and AhKin's examples "
+        "(shape only, not a lifetime fit). The DDCM against NaPyTau, the closure tests and the three published "
+        "experiments wait for simulated spectra and the lifetime analysis (wave 3C). The two line-shape comparisons "
+        "fail their tolerances; why is on the register page `docs/physics-register/lifetimes.md`.")
+    nb.cells += [
+        nbformat.v4.new_markdown_cell(
+            "## Deorientation in vacuum, ⁹⁸Ru 2⁺₁\n\nRadeck et al.'s Table I parameters: the attenuation of the "
+            "unshifted γ rays, G_k at the stopper, and of the shifted ones, G̃_k averaged over the decays in flight "
+            "(their Eq. 7), against the target-to-stopper distance."),
+        nbformat.v4.new_code_cell(
+            "r = next(x for x in results if x.name == 'deorientation_ru98')\n"
+            "fig, ax = plt.subplots(figsize=(6.5, 3.2))\n"
+            "for k, colour in ((2, '#d62728'), (4, '#1f77b4')):\n"
+            "    c = r.plot['curves'][k]\n"
+            "    ax.plot(r.plot['x'], c['unshifted'], color=colour, label=f'G{k} (unshifted)')\n"
+            "    ax.plot(r.plot['x'], c['shifted'], '--', color=colour, label=f'G̃{k} (shifted)')\n"
+            "ax.set_xlabel('distance (µm)')\n"
+            "ax.set_ylabel('attenuation')\n"
+            "ax.legend(fontsize=8)\n"
+            "fig.tight_layout()"),
+        nbformat.v4.new_markdown_cell(
+            "## The ⁸³Y line shape\n\nAhKin's example at its τ = 0.1313 ps: the measured line, AhKin's best line "
+            "and physim's with AhKin's inputs (its stopping table, cascade, detector and resolution)."),
+        nbformat.v4.new_code_cell(
+            "r = next(x for x in results if x.name == 'dsam_lineshape_vs_ahkin')\n"
+            "fig, ax = plt.subplots(figsize=(6.5, 3.2))\n"
+            "ax.step(r.plot['x'], r.plot['reference'], where='mid', color='#444444', label='measured')\n"
+            "ax.plot(r.plot['x'], r.plot['ahkin'], color='#1f77b4', label='AhKin')\n"
+            "ax.plot(r.plot['x'], r.plot['physim'], color='#d62728', label='physim')\n"
+            "ax.set_xlabel('energy (keV)')\n"
+            "ax.set_ylabel('counts per channel')\n"
+            "ax.legend(fontsize=8)\n"
+            "fig.tight_layout()"),
+    ]
+    return nb
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     for name, (title, caps, intro) in PAGES.items():
@@ -133,6 +178,8 @@ def main() -> None:
         print("wrote", OUT / f"{name}.ipynb")
     nbformat.write(reproduction_notebook(), OUT / "reproduction-usman2020.ipynb")
     print("wrote", OUT / "reproduction-usman2020.ipynb")
+    nbformat.write(lifetimes_notebook(), OUT / "lifetimes.ipynb")
+    print("wrote", OUT / "lifetimes.ipynb")
 
 
 if __name__ == "__main__":
