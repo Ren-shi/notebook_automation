@@ -346,6 +346,24 @@ def test_cancel_stops_the_worker_and_its_kshell(fake, cache, tmp_path, monkeypat
     assert jobs.cancel(job)["state"] == jobs.CANCELLED  # cancelling twice is harmless
 
 
+def test_results_written_before_the_final_status_read_as_done_and_finished(cache):
+    # The worker writes results.json, then its final status.json. A reader in between (as jobs.wait was in CI) sees
+    # status.json still running: the status must already be the finished one, with its finish time.
+    folder = cache / "fedcba9876543210"
+    folder.mkdir(parents=True)
+    jobs._write_json(folder / "status.json", {"job": folder.name, "state": jobs.RUNNING, "step": "read results",
+                                              "step_index": 8, "steps": 9, "started": "2026-01-01T00:00:00+00:00",
+                                              "finished": None, "pid": os.getpid()})
+    jobs._write_json(folder / "results.json", {"job": folder.name})
+    st = jobs.status(folder.name)
+    assert st["state"] == jobs.DONE and st["step"] == "done"
+    assert st["step_index"] == st["steps"] == 9
+    assert st["finished"] and st["finished"] >= st["started"]
+    # The worker's own final status, once written, is what is read.
+    jobs._write_json(folder / "status.json", {**st, "state": jobs.DONE, "finished": "2026-01-01T00:01:00+00:00"})
+    assert jobs.status(folder.name)["finished"] == "2026-01-01T00:01:00+00:00"
+
+
 def test_a_worker_that_vanished_is_reported_as_failed(cache):
     folder = cache / "0123456789abcdef"
     folder.mkdir(parents=True)

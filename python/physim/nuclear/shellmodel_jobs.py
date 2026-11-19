@@ -340,7 +340,16 @@ def _job_status(folder: Path) -> Optional[dict]:
         st = {"job": folder.name, "state": DONE, "message": "Done (results from the cache)."}
     if st.get("state") in ACTIVE:
         if has_results:
-            st.update(state=DONE, message="Done.")
+            # The worker writes results.json first and its final status just after: between the two, the results
+            # say the job is done, so the status says what the worker is about to write (finished when the
+            # results were written, the last step reached).
+            st.update(state=DONE, message="Done.", step="done")
+            if st.get("steps"):
+                st["step_index"] = st["steps"]
+            if not st.get("finished"):
+                with contextlib.suppress(OSError):
+                    when = (folder / "results.json").stat().st_mtime
+                    st["finished"] = datetime.fromtimestamp(when, timezone.utc).isoformat(timespec="seconds")
             return st
         worker = _read_json(folder / "worker.json") or {}
         alive = _alive(st.get("pid"), st.get("pid_created")) if st.get("pid") else False
