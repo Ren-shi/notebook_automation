@@ -8,6 +8,10 @@ and run by hand, so each file records exactly how it was produced, so that anyon
   request.
 - `trim/` holds the TRIM.IN files (written by `physim.nuclear.export`) that produced `straggling_trim.csv`; a test
   keeps them identical to what the exporter writes today.
+- `stopping_measured_heavy.csv` is measured data too: electronic stopping of 21 ions from Ar to U in 12 elemental
+  solids (C to Pb) at 5 keV/u–10 MeV/u, 3620 points from the IAEA Stopping Power Database, with SRIM 2013's value
+  per point for context (`scripts/iaea_heavy_ion_reference.py`). Read by the check `stopping_heavy_vs_data` and
+  `test_slow_heavy_ions_against_measured_stopping`. Cite the original papers by `ref_id` and `doi`.
 - `stopping_measured_hydrogen.csv` is measured data, not a code's output: heavy-ion stopping in hydrogen-rich
   targets from the IAEA Stopping Power Database (`scripts/iaea_stopping_reference.py`), with SRIM's value per point
   for context. Its `tool:` line names the database and version; cite the original papers by `ref_id` and `doi`.

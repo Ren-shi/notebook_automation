@@ -20,7 +20,7 @@ Files:
   starting energy), the stopping TRIM slowed them with.
 
 The transport test runs physim's Monte Carlo with SRIM's stopping (from `srim_stopping.csv`) in place of physim's, so
-that it and TRIM differ only in how they scatter. With physim's own stopping the ranges are shorter (by about 10% for
-⁹⁸Ru in Cu and 30% for ¹⁴³Sm in Au): physim's electronic stopping of slow heavy ions (below about 0.1 MeV/u it
-follows Lindhard–Scharff) is 1.4–4 times SRIM's there, which `test_physim_stopping_against_srim_for_the_recoils`
-pins.
+that it and TRIM differ only in how they scatter. With physim's own stopping the ranges are shorter (by about 7% for
+⁹⁸Ru in Cu and 19% for ¹⁴³Sm in Au; `test_physim_stopping_against_srim_for_the_recoils` pins this). physim's
+electronic stopping of slow heavy ions is above SRIM's at low speed, but SRIM is itself 7–16% below measured data
+there (`../../stopping_measured_heavy.csv`; the register's stopping page, "Slow heavy ions in solids").

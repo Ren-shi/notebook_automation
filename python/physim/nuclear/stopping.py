@@ -156,21 +156,47 @@ def _nuclear_zbl(z1: int, m1: float, z2: int, m2: float, e_mev: ArrayLike) -> np
 
 
 def effective_charge(z1: int, e_per_u: ArrayLike, v_fermi: float = 1.0) -> np.ndarray:
-    """Fractional effective charge ζ of a heavy ion (Brandt–Kitagawa, with Ziegler's fit for the ionised fraction).
+    """Fractional effective charge ζ of a heavy ion (Brandt–Kitagawa's form, with Ziegler, Biersack and Littmark's
+    fits for the ionised fraction and the screening length).
 
-    q is the ionised fraction from the ion's speed relative to the target electrons (Ziegler, Biersack and
-    Littmark 1985); the screening term adds the partial charge seen by close collisions. ``v_fermi`` is the target's
-    Fermi velocity in units of v₀; 1 is used for all targets (the per-element values are not tabulated here).
+    q is the ionised fraction from the ion's speed relative to the target electrons, never taken below the speed of
+    ZBL's fit (y_r ≥ 0.13 and v_r ≥ v₀; see :func:`lowest_effective_charge_energy`); the screening term adds the
+    partial charge seen by close collisions, with ZBL's empirical screening length Λ(q, Z₁), which is larger than
+    Brandt–Kitagawa's statistical one for a nearly neutral ion and fits measured heavy-ion stopping better
+    (``stopping_measured_heavy.csv``). ``v_fermi`` is the target's Fermi velocity in units of v₀; 1 is used for all
+    targets (the per-element values are not tabulated here).
     """
     vf = v_fermi
     v = _beta(np.asarray(e_per_u, dtype=float)) / ALPHA
     with np.errstate(divide="ignore", invalid="ignore"):
         vr = np.where(v >= vf, v * (1 + vf**2 / (5 * v**2)), 0.75 * vf * (1 + 2 * v**2 / (3 * vf**2) - v**4 / (15 * vf**4)))
-    yr = np.maximum(0.13, vr / z1 ** (2.0 / 3.0))
+    yr = np.maximum(np.maximum(0.13, vr / z1 ** (2.0 / 3.0)), 1.0 / z1 ** (2.0 / 3.0))
     a = -0.803 * yr**0.3 + 1.3167 * yr**0.6 + 0.38157 * yr + 0.008983 * yr**2
     q = np.clip(1.0 - np.exp(-np.minimum(a, 50.0)), 0.0, 1.0)
-    lam = 2 * 0.24005 * (1 - q) ** (2.0 / 3.0) / (z1 ** (1.0 / 3.0) * (1 - (1 - q) / 7))
+    lam = _zbl_screening_length(z1, q)
     return q + (1 - q) / (2 * vf**2) * np.log1p((4 * lam * vf / 1.919) ** 2)
+
+
+def _zbl_screening_length(z1: int, q: np.ndarray) -> np.ndarray:
+    """ZBL's screening length Λ of a partly stripped ion (in Bohr radii), as a function of its ionised fraction q:
+    the larger of (0.8 − q min(1.2, 0.6 + Z₁/30)) / Z₁^(1/3) and a plateau B = min(0.43, max(0.32, 0.12 + 0.025 Z₁))
+    / Z₁^(1/3) that falls to 0 at full stripping (Ziegler, Biersack and Littmark 1985)."""
+    c = z1 ** (1.0 / 3.0)
+    b = min(0.43, max(0.32, 0.12 + 0.025 * z1)) / c
+    l0 = (0.8 - q * min(1.2, 0.6 + z1 / 30.0)) / c
+    rise, fall = max(0.0, 0.9 - 0.025 * z1), max(0.0, 1.0 - 0.025 * min(16.0, z1))
+    l1 = np.where(q < 0.2, 0.0, np.where(q < rise, b * (q - 0.2) / abs(rise - 0.2000001),
+                                         np.where(q < fall, b, b * (1.0 - q) / (0.025 * min(16.0, z1)))))
+    return np.maximum(l1, l0)
+
+
+def lowest_effective_charge_energy(z1: int, v_fermi: float = 1.0) -> float:
+    """Energy per nucleon (MeV/u) below which ZBL's effective-charge fit does not hold: the speed at which the ion's
+    speed relative to the target electrons is max(v₀, 0.13 v₀ Z₁^(2/3)). Below it the stopping is taken as
+    proportional to the speed (ZBL's rule), from its value there."""
+    vr_min = max(1.0, 0.13 * z1 ** (2.0 / 3.0))
+    v_min = 0.5 * (vr_min + math.sqrt(max(0.0, vr_min**2 - 0.8 * v_fermi**2)))
+    return _U_MEV * (1.0 / math.sqrt(1.0 - (v_min * ALPHA) ** 2) - 1.0)
 
 
 def lindhard_scharff(z1: int, z2: int, e_per_u: ArrayLike) -> np.ndarray:
@@ -338,12 +364,25 @@ class Stopping:
             return _per_electron("pstar", z2, e_u * 1.007276467)
         if z1 == 2:
             return _per_electron("astar", z2, e_u * 4.001506179)
-        # Effective-charge scaling of the proton at the same velocity; at low velocity, where that fails, the larger
-        # of it and Lindhard–Scharff joined to full-charge stopping (1/S = 1/S_LS + 1/(Z₁² S_p)).
+        # Effective-charge scaling of the proton at the same velocity; below the speed where ZBL's effective-charge
+        # fit holds, proportional to the speed from its value there (ZBL's rule). At low velocity, the larger of that
+        # and Lindhard–Scharff (scaled by LINDHARD_SCHARFF_SCALE) joined to full-charge stopping
+        # (1/S = 1/S_LS + 1/(Z₁² S_p)).
         sp = _per_electron("pstar", z2, e_u * 1.007276467)
         scaled = (z1 * effective_charge(z1, e_u)) ** 2 * sp
-        slow = 1.0 / (z2 / lindhard_scharff(z1, z2, e_u) + 1.0 / (z1**2 * sp))
+        e_min = lowest_effective_charge_energy(z1)
+        low = e_u < e_min
+        if np.any(low):
+            at_min = np.array([e_min])
+            s_min = (z1 * effective_charge(z1, at_min)) ** 2 * _per_electron("pstar", z2, at_min * 1.007276467)
+            scaled = np.where(low, s_min * np.sqrt(np.minimum(e_u, e_min) / e_min), scaled)
+        slow = 1.0 / (z2 / (self.LINDHARD_SCHARFF_SCALE * lindhard_scharff(z1, z2, e_u)) + 1.0 / (z1**2 * sp))
         return np.maximum(scaled, slow)
+
+    #: Lindhard–Scharff's low-velocity stopping is scaled by this for ions heavier than He: fitted to measured
+    #: stopping of ions from Ar to U in elemental solids at 5–200 keV/u (``stopping_measured_heavy.csv``, IAEA
+    #: database), where Lindhard–Scharff alone is 15–35% high for the heaviest ions; 0.75–0.85 fit about as well.
+    LINDHARD_SCHARFF_SCALE = 0.8
 
     def _atoms_per_unit(self) -> dict:
         out: dict = {}

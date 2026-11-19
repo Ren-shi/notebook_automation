@@ -532,10 +532,11 @@ def test_the_trim_inputs_are_what_the_script_writes():
 
 
 def test_physim_stopping_against_srim_for_the_recoils():
-    """Recorded, not a transport check: physim's electronic stopping of these slow heavy recoils is well above SRIM's
-    (Lindhard–Scharff at low speed), so with physim's own stopping the ranges are shorter than TRIM's. This test
-    pins the size of the difference, so that a change to the stopping shows up here."""
-    for species, material, energy, low, high in ((RU, CU, E_RU, 0.85, 0.97), (SM, AU, E_SM, 0.62, 0.78)):
+    """Recorded, not a transport check: physim's electronic stopping of these slow heavy recoils is above SRIM's at
+    low speed, where SRIM is itself below measured stopping (stopping_measured_heavy.csv: SRIM's median is 7–16%
+    low for ions from Cu up below 0.1 MeV/u), so with physim's own stopping the ranges are shorter than TRIM's. This
+    test pins the size of the difference, so that a change to the stopping shows up here."""
+    for species, material, energy, low, high in ((RU, CU, E_RU, 0.89, 0.97), (SM, AU, E_SM, 0.76, 0.85)):
         ratio = stopping(species, material).range(energy) / srim_stopping(species, material).range(energy)
         assert low < ratio < high, (species, ratio)
 

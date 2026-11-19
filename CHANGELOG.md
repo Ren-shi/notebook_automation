@@ -94,6 +94,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- Stopping of slow heavy ions in solids: the effective charge uses ZBL's screening length, the stopping below the
+  speed where its fit holds is proportional to the speed (ZBL's rule), and the Lindhard–Scharff floor is scaled by
+  0.8. Against 3620 measured points (Ar to U in 12 elemental solids, IAEA database, the new
+  `stopping_measured_heavy.csv` and check `stopping_heavy_vs_data`) the median for I–U goes from +19% to +7% below
+  0.1 MeV/u and from −16% to −10% at 0.1–1 MeV/u; in light targets (C–Si) below 0.1 MeV/u Ar–Ag ions are now about
+  20–30% high (see the register).
 - The plan's particle–γ coincidences took the angular correlation of the `[reaction]` state alone, in first
   order, while the simulated events follow the whole level scheme to all orders; and the table was sampled too
   coarsely (4 points each way over a particle detector, 9 over a crystal face: single factors up to 9% off).
