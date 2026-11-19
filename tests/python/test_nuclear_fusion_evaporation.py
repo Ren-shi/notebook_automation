@@ -184,7 +184,7 @@ def test_seeded_runs_are_bit_identical(exp):
     gb = simulate_residue_gammas(exp, seed=5, residue_events=b)
     assert len(ga) > 100
     for k in ga.columns:
-        assert np.array_equal(ga.columns[k], gb.columns[k]), k
+        assert np.array_equal(ga.columns[k], gb.columns[k], equal_nan=True), k
 
 
 # -- the γ rays: Doppler correction, cascade, alignment -----------------------------------------------------------

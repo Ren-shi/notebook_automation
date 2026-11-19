@@ -227,15 +227,48 @@ def test_runs_within_half_the_free_ram(tmp_path, monkeypatch):
     assert any("RAM" in n for n in run.summary["notes"])
 
 
-def test_distance_is_stored_and_passed_when_set(tmp_path):
+def test_distance_is_stored_and_passed_when_set(tmp_path, monkeypatch):
+    import functools
+
+    from physim.nuclear import residues
+
+    # The 50Cr plunger with the bottom of its yrast band typed in from ENSDF (NDS 157, 1 (2019)), so the test needs
+    # no local ENSDF copy: 2+ 783.31 keV (T½ 9.08 ps), 4+ 1881.42 keV (T½ 2.2 ps).
+    d = Experiment.example("fusion_cr50_plunger").to_dict()
+    d.setdefault("levels", {})["50Cr"] = {
+        "nuclide": "50Cr",
+        "level": [{"energy": "0 keV", "jpi": "0+", "source": "ensdf"},
+                  {"energy": "783.31 keV", "jpi": "2+", "half_life": "9.08 ps", "source": "ensdf"},
+                  {"energy": "1881.42 keV", "jpi": "4+", "half_life": "2.2 ps", "source": "ensdf"}],
+        "transition": [{"from": 1, "to": 0, "energy": "783.3 keV", "intensity": 100, "multipolarity": "E2"},
+                       {"from": 2, "to": 1, "energy": "1098.1 keV", "intensity": 100, "multipolarity": "E2"}]}
+    d["reaction"]["channels"] = [ch for ch in d["reaction"]["channels"] if ch["residue"] == "50Cr"]
+    plunger = Experiment.from_dict(d)
+    distance = plunger.lifetime.distances[1].to("um")              # 42 um, one of the setup's own
+    made = []                                                      # the γ rays the run's generator made
+    original = residues.simulate_residue_gammas
+
+    @functools.wraps(original)                                     # keeps the signature fusion_runs inspects
+    def spy(*args, **kwargs):
+        g = original(*args, **kwargs)
+        made.append(g)
+        return g
+
+    monkeypatch.setattr(residues, "simulate_residue_gammas", spy)
+    folder = ExperimentFolder.create(plunger, root=tmp_path)
+    run = _take(fusion_runs.start(folder, duration="0.02 s", budget="0.02 s", distance_um=distance))
+    assert run.summary["distance_um"] == distance and run.distance_um == distance
+    assert json.loads((run.folder / "summary.json").read_text(encoding="utf-8"))["distance_um"] == distance
+    assert run.label.endswith(f"-{distance:g}um")
+    assert made and all(np.all(g["distance_um"] == distance) for g in made)
+    stored = fusion_runs.load(run.folder).gammas()
+    assert len(stored["stopped"]) > 0 and stored["stopped"].any()   # some γ rays from residues in the stopper
+
+    # A distance on a setup without a plunger is refused.
+    monkeypatch.setattr(residues, "simulate_residue_gammas", original)
     folder = ExperimentFolder.create(Experiment.example(EXAMPLE), root=tmp_path)
-    if not fusion_runs._takes_distance():
-        with pytest.raises(ValueError, match="distance_um"):
-            fusion_runs.start(folder, duration="0.5 s", distance_um=50.0)
-        return
-    run = _take(fusion_runs.start(folder, duration="0.5 s", budget="0.5 s", distance_um=50.0))
-    assert run.summary["distance_um"] == 50.0 and run.distance_um == 50.0
-    assert run.label.endswith("-50um")
+    with pytest.raises(ValueError, match="plunger"):
+        _take(fusion_runs.start(folder, duration="0.02 s", budget="0.02 s", distance_um=50.0))
 
 
 def test_needs_a_fusion_setup_with_gamma_detectors(tmp_path):

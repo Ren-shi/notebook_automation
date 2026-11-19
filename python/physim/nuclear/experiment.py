@@ -625,18 +625,30 @@ class FusionEvaporation:
     σ/J of the compound nucleus's distribution of magnetic substates about the beam (its spin is perpendicular to
     the beam; 0.3 if left out). ``side_feeding`` is the share of the γ-ray cascades that enter the known levels
     below the top one (25 % if left out).
+
+    For lifetime measurements, every cascade reaches its first known level through a rotational side-feeding band
+    (the LINESHAPE model): ``side_feeding_levels`` E2 transitions (a whole number, 5 if left out; 0 makes the
+    feeding prompt) with the quadrupole moment ``side_feeding_q`` (in barns, "6 b" if left out). A longer band, or
+    a smaller quadrupole moment, makes the side feeding slower.
     """
 
     channels: list = field(default_factory=list)
     temperature: Optional[QuantityLike] = None
     alignment: Optional[float] = None
     side_feeding: Optional[QuantityLike] = None
+    side_feeding_q: Optional[QuantityLike] = None
+    side_feeding_levels: Optional[int] = None
 
     SPECS = (
         _Field("temperature", "energy", check=_positive),
         _Field("alignment", "number", check=lambda x: None if 0 < x <= 2 else "must be above 0 and at most 2"),
         _Field("side_feeding", "fraction", check=lambda q: None if 0 <= q.to("%") <= 100
                else "must be between 0 and 100 %"),
+        # A quadrupole moment is an area: barns, the units of a cross section.
+        _Field("side_feeding_q", "cross_section", check=lambda q: None if 0 < q.to("b") <= 100
+               else "must be a quadrupole moment above 0 and at most 100 b, e.g. \"6 b\""),
+        _Field("side_feeding_levels", "int", check=lambda x: None if 0 <= x <= 50
+               else "must be a whole number of transitions from 0 to 50"),
     )
 
 
