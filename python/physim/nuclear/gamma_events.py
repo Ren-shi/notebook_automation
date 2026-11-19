@@ -56,8 +56,8 @@ from .events import Events, simulate
 from .gamma import cascade_excitation, excitation_of, excitation_order, other_excitation, start_levels
 from .kinematics import TwoBody
 from .quantity import Quantity
-from .rates import (Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels, exit_energy, stack, stopping,
-                    tilt_deg)
+from .rates import (Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels, exit_energy, recoil_stack,
+                    stack, stopping, tilt_deg)
 from .response import FWHM_PER_SIGMA, Response, compton_edge
 
 #: Lines of the room background and their typical relative strengths (counts, not intensities): ⁴⁰K, the
@@ -86,10 +86,24 @@ GAMMA_COLUMNS = {
     "theta": "lab polar angle of the γ ray, degrees",
     "phi": "lab azimuth of the γ ray, degrees",
     "beta": "speed of the emitting nucleus at emission, units of c",
+    "stopped": "the emitting nucleus was at rest (the unshifted component of a lifetime measurement)",
+    "segment": "segment of the emitter's path it decayed in (index into GammaEvents.segments; their number: beyond)",
+    "time_ps": "lab time of the decay after the reaction, ps (0 without lifetimes)",
+    "vacuum_ps": "the nucleus's own time in vacuum before the decay, ps (what deorientation acts over)",
+    "stopper_ps": "the nucleus's own time at reaching the foil after the plunger's gap, ps (inf: never; NaN: no "
+                  "plunger)",
+    "distance_um": "the plunger's target-to-stopper distance the γ ray was made at, µm, without the offset (NaN: no "
+                   "plunger; 0 is a real 0 µm)",
     "corrected_projectile": "measured energy corrected as if the scattered beam had emitted it, MeV",
     "corrected_recoil": "measured energy corrected as if the target recoil had emitted it, MeV",
     "weight": "rate this coincidence stands for, per second",
 }
+
+
+#: Columns that are NaN without a plunger. They are stored only for a setup with a ``[lifetime]`` section (NaN for
+#: DSAM); for any other setup ``GammaEvents[name]`` gives NaN without storing it, so the events of setups without a
+#: lifetime section keep exactly their columns.
+_NAN_WITHOUT_PLUNGER = ("distance_um", "stopper_ps")
 
 
 def _unit(v: np.ndarray) -> np.ndarray:
@@ -141,11 +155,20 @@ class GammaEvents:
     notes: list = field(default_factory=list)
     #: The γ-ray amplifiers' shaping time (s), for pile-up; 0 for none.
     shaping_time_s: float = 0.0
+    #: The plunger's target-to-stopper distance (µm, without the offset) the γ rays were made at; None without a
+    #: plunger.
+    distance_um: Optional[float] = None
+    #: The names of the segments of the emitter's path the ``segment`` column counts (the stack's layers, or for a
+    #: lifetime measurement the recoil stack: "target", "gap", "stopper", ...).
+    segments: list = field(default_factory=list)
 
     def __len__(self) -> int:
         return len(self.columns["event"])
 
     def __getitem__(self, name: str) -> np.ndarray:
+        if name in _NAN_WITHOUT_PLUNGER and name not in self.columns:
+            # Kept only for setups with a [lifetime] section; without one, NaN (no plunger).
+            return np.full(len(self), np.nan)
         return self.columns[name]
 
     @property
@@ -490,9 +513,18 @@ def _distribution(a_kq: dict, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
     return total
 
 
-def _table_weights(tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: np.ndarray):
+def _deoriented_coefficients(a_kq: dict, g_k: Optional[dict], rows) -> dict:
+    """Coefficients a_kq with each rank k scaled by G_k of the γ rays ``rows`` (deorientation); unchanged without."""
+    if not g_k:
+        return a_kq
+    return {key: (v * g_k[key[0]][rows] if key[0] in g_k else v) for key, v in a_kq.items()}
+
+
+def _table_weights(tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: np.ndarray,
+                   g_k: Optional[dict] = None):
     """(4π W of each γ ray along directions of the orbit's frame, from its transition's coefficient table at its
-    event's CM angle; the largest value any table reaches): the distribution :func:`_aimed` aims with."""
+    event's CM angle, each rank k scaled by the γ ray's G_k when deorientation is given; the largest value any table
+    reaches, which |G_k| ≤ 1 cannot raise): the distribution :func:`_aimed` aims with."""
     largest = max(float(np.max(sum(np.abs(v) for v in coeff.values()))) for _, coeff, _ in tables.values())
 
     def weigh(sel: np.ndarray, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
@@ -504,6 +536,7 @@ def _table_weights(tables: dict, initial: np.ndarray, final: np.ndarray, theta_c
             a_kq = {key: np.interp(theta_cm[sel][mine], grid, v.real) + 1j * np.interp(theta_cm[sel][mine], grid,
                                                                                          v.imag)
                     for key, v in coeff.items()}
+            a_kq = _deoriented_coefficients(a_kq, g_k, sel[mine])
             w[mine] = _distribution(a_kq, theta[mine], phi[mine])
         return w
 
@@ -589,7 +622,8 @@ def _aimed(rng, weigh, largest: float, theta_cm: np.ndarray, phi_ej: np.ndarray,
 
 
 def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em: _Emitter, rows: np.ndarray,
-           base: np.ndarray, k_rep: int, plain: bool, first_cascade: int = 0, aimed: bool = True) -> dict:
+           base: np.ndarray, k_rep: int, plain: bool, first_cascade: int = 0, aimed: bool = True,
+           distance_um: Optional[float] = None) -> dict:
     """The γ rays of one nucleus: from the particle rows ``rows`` of ``ev`` on whose orbits it was excited (each
     standing for the rate ``base``) to what the crystals record. Returns the γ-ray columns before the Doppler
     correction, and "info" for the notes."""
@@ -653,15 +687,37 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
         n = len(rows)
 
     # -- lifetimes: the emitter slows down in the target and its backing before it decays (backlog item 73) ------
-    taus = _mean_lives(experiment, cex, initial)
     stopped = np.zeros(n, dtype=bool)
-    if taus is not None and np.any(taus > 0):
+    segment = np.full(n, len(layers), dtype=np.int64)   # without lifetimes: after the stack, at the exit speed
+    time_ps = np.zeros(n)
+    vacuum_ps = np.zeros(n)
+    stopper_ps = np.full(n, np.nan)
+    g_k = None
+    lifetime = getattr(experiment, "lifetime", None)
+    if lifetime is not None:
+        # A lifetime measurement (plunger or DSAM): the emitter's path is the recoil stack, the times are drawn in
+        # the nucleus's own frame from τ (half-life, or B(Eλ↓)) and the slowing follows lifetimes' conventions.
+        taus = None
+        d = _plunger_decays(experiment, em, cex, initial, cascade, start, m_emitter, distance_um)
+        if d is not None:
+            taus = d["taus"]
+            stopped, segment, time_ps, vacuum_ps = d["stopped"], d["segment"], d["time_ps"], d["vacuum_ps"]
+            stopper_ps = d["stopper_ps"]
+            beta = d["beta"]
+            gam = 1 / np.sqrt(1 - beta**2)
+            velocity = d["direction"] * beta[:, None]
+            g_k = d["g_k"]
+    else:
+        taus = _mean_lives(experiment, cex, initial)
+    if lifetime is None and taus is not None and np.any(taus > 0):
         lrng = np.random.default_rng(em.seeds[1])
         draws = lrng.exponential(1.0, n) * taus
         # A level fed from above starts its own clock when the level above decays: the times add up the cascade.
         t_decay = _cumulative_by(cascade, draws)
-        e_at, stopped = _slowing(experiment, layers, start["depth"], start["direction"], emitter, start["energy"],
-                                 t_decay, m_emitter)
+        s = _slowed(experiment, layers, start["depth"], start["direction"], emitter, start["energy"], t_decay,
+                    m_emitter)
+        e_at, stopped = s.energy, s.stopped
+        segment, time_ps = s.segment.astype(np.int64), t_decay * 1e12
         gam = 1 + np.maximum(e_at, 0.0) / m_emitter
         beta = np.sqrt(np.maximum(1 - 1 / gam**2, 0.0))
         velocity = start["direction"] * beta[:, None]
@@ -680,7 +736,7 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
     if cex is not None and not cex.isotropic:
         # The γ rays of one cascade share their directions (the correlation between successive γ rays): each is
         # drawn from the state the γ rays before it left, and only the last of a cascade is aimed.
-        known, deferred = _correlated(cex, exc_theta, taken, first, rng, aimed)
+        known, deferred = _correlated(cex, exc_theta, taken, first, rng, aimed, g_k)
         last = np.flatnonzero(np.isnan(known[:, 0]))
         drawn = np.flatnonzero(~np.isnan(known[:, 0]))
         which_d, reached_d, lab_d = _from_rest(known[drawn], theta_cm[drawn], phi_ej[drawn], velocity[drawn],
@@ -710,7 +766,7 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
         tables = {pair: (em.single if cex is None else cex).coefficient_table(*pair) for pair in pairs}
         hit = None
         if aimed and n:
-            weigh, largest = _table_weights(tables, initial, final, theta_cm)
+            weigh, largest = _table_weights(tables, initial, final, theta_cm, g_k)
             hit = _aimed(rng, weigh, largest, theta_cm, phi_ej, velocity, beta, gam, origin, flip, centres,
                          normals, radii)
         if hit is not None:
@@ -724,7 +780,8 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
             local = np.zeros((n, 3))
             for pair in pairs:
                 m = (initial == pair[0]) & (final == pair[1]) if cex is not None else np.ones(n, dtype=bool)
-                local[m] = _rest_directions(tables[pair], theta_cm[m], rng)
+                local[m] = _rest_directions(tables[pair], theta_cm[m], rng,
+                                            None if g_k is None else {k: v[m] for k, v in g_k.items()})
             which, reached, lab = _from_rest(local, theta_cm, phi_ej, velocity, beta, gam, origin, flip, centres,
                                              normals, radii)
             nvel = _unit(velocity)
@@ -733,7 +790,8 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
             reached = np.flatnonzero(reached)
     rows, beta = rows[reached], beta[reached]
     cascade, initial, final, e0s = cascade[reached], initial[reached], final[reached], e0s[reached]
-    stopped = stopped[reached]
+    stopped, segment, time_ps, vacuum_ps = stopped[reached], segment[reached], time_ps[reached], vacuum_ps[reached]
+    stopper_ps = stopper_ps[reached]
     weight = base[reached] / k_rep
     deposited = np.zeros(len(rows))
     measured = np.zeros(len(rows))
@@ -767,12 +825,15 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
     rows, which, lab, energy_lab, beta = rows[keep], which[keep], lab[keep], energy_lab[keep], beta[keep]
     weight, deposited, measured, counted = weight[keep], deposited[keep], measured[keep], counted[keep]
     cascade, initial, final, e0s = cascade[keep], initial[keep], final[keep], e0s[keep]
-    stopped = stopped[keep]
+    stopped, segment, time_ps, vacuum_ps = stopped[keep], segment[keep], time_ps[keep], vacuum_ps[keep]
+    stopper_ps = stopper_ps[keep]
     return {"particle": rows, "cascade": cascade + first_cascade, "initial": initial, "final": final,
             "nucleus": np.full(len(rows), em.nucleus, dtype=np.int64), "crystal": which, "energy0": e0s,
             "energy_lab": energy_lab, "deposited": deposited, "measured": measured, "counted": counted,
             "theta": np.degrees(np.arccos(np.clip(lab[:, 2], -1, 1))),
             "phi": np.degrees(np.arctan2(lab[:, 1], lab[:, 0])), "beta": beta, "stopped": stopped, "weight": weight,
+            "segment": segment, "time_ps": time_ps, "vacuum_ps": vacuum_ps, "stopper_ps": stopper_ps,
+            "distance_um": np.full(len(rows), np.nan if distance_um is None else float(distance_um)),
             "info": {"excited_rows": excited_rows, "summed": summed, "done": done,
                      "lifetimes": taus is not None and bool(np.any(taus > 0)), "chains": excited_rows * k_rep}}
 
@@ -810,7 +871,7 @@ def other_rows(experiment, ev: Events, solution, count_once: bool, seed: int) ->
 def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_events: Optional[Events] = None,
                     bin_kev: float = 1.0, gammas_per_event: int = 10, plain: bool = False,
                     rates: Optional[Rates] = None, count_once: bool = False, aimed: bool = True,
-                    other: bool = True) -> GammaEvents:
+                    other: bool = True, distance_um: Optional[float] = None) -> GammaEvents:
     """Generate the particle events (or take ``particle_events``) and follow the γ ray of every excited event to
     the crystals. The same setup and seed give the same γ rays.
 
@@ -833,7 +894,27 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
 
     Only the γ rays that reach a crystal are drawn (a thinning that leaves their number and their directions
     as their distribution has them, at a small part of the work); ``aimed=False`` draws every direction over
-    the whole sphere and keeps those that meet a crystal, the slow way to the same γ rays in distribution."""
+    the whole sphere and keeps those that meet a crystal, the slow way to the same γ rays in distribution.
+
+    **Lifetime measurements** (a ``[lifetime]`` section). Each emitter follows the recoil's path
+    (:func:`~physim.nuclear.rates.recoil_stack`): for a plunger (``method`` "rdds") the target, a vacuum gap of
+    ``distance_um`` (plus the setup's offset; by default the setup's first distance) and the stopper or degraders;
+    for DSAM the target and its backing. The level's mean life τ comes from
+    :func:`~physim.nuclear.lifetimes.level_taus` (its half-life, else its B(Eλ↓), for one state the setup's B(E2)
+    with its spins); a decay time is drawn in the nucleus's own frame (adding up the cascade), turned into lab time
+    (:func:`~physim.nuclear.transport.lab_time`) and the emitter is followed to it
+    (:func:`~physim.nuclear.transport.slow`; straight for a plunger, with the ZBL scattering for DSAM). The γ ray
+    leaves with the speed and direction the emitter then has: shifted in flight before the stopper, degraded after
+    a degrader, unshifted at rest. The columns ``distance_um``, ``stopped``, ``segment`` (index into
+    :attr:`GammaEvents.segments`; its length for a decay beyond the last, −1 out the front), ``time_ps`` (lab time
+    of the decay) and ``vacuum_ps`` (the nucleus's own time in vacuum before it) say where each γ ray came from.
+    With ``lifetime.deorientation`` the γ ray's angular distribution is attenuated by
+    G_k(t) = α_k + (1 − α_k) e^(−Γ_k t) (:func:`~physim.nuclear.lifetimes.deorientation`), t its time in vacuum:
+    the alignment fades in flight and is frozen once the nucleus is in matter. In a cascade each γ ray takes G_k at
+    its own time in vacuum on the alignment the cascade passes down unperturbed (an approximation: the hyperfine
+    interaction of each level is not followed). Converted steps of a cascade add no time (as before). Without a
+    ``[lifetime]`` section nothing of this changes the events (backlog item 73: half-lives alone, the stack's
+    layers, lab times)."""
     exc = experiment.excitation
     if exc is None:
         raise ValueError("the setup has no excited state ([reaction] type = \"coulex\")")
@@ -858,8 +939,21 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
                             excite="recoil" if exc.excite == "target" else "ejectile"),
                     (seed + 1_000_003, seed + 4_000_003, seed + 2_000_003))
     rows = np.flatnonzero(np.isin(c["channel"], excited_channels))
+    lifetime = getattr(experiment, "lifetime", None)
+    chosen = ""
+    if lifetime is not None and lifetime.method == "rdds":
+        if distance_um is None:
+            if not lifetime.distances_um:
+                raise ValueError("the plunger has no distances: give distance_um")
+            distance_um = lifetime.distances_um[0]
+            chosen = " (no distance given: the setup's first)"
+        if distance_um < 0:
+            raise ValueError(f"the distance must not be negative, not {distance_um} um")
+        distance_um = float(distance_um)
+    else:
+        distance_um = None
     parts = [_chain(experiment, ev, layers, crystals, bare, main, rows, c["weight"][rows], k_rep, plain,
-                    aimed=aimed)]
+                    aimed=aimed, distance_um=distance_um)]
 
     # -- the other nucleus of the collision, when the setup has its level scheme -----------------------------------
     other = other_excitation(experiment) if other else None
@@ -873,9 +967,12 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
                               excite="recoil" if other.excite == "target" else "ejectile"),
                       (seed + 6_000_011, seed + 7_000_003, seed + 8_000_009))
         parts.append(_chain(experiment, ev, layers, crystals, bare, em, o_rows, o_base, k_rep, plain,
-                            first_cascade=parts[0]["info"]["chains"], aimed=aimed))
+                            first_cascade=parts[0]["info"]["chains"], aimed=aimed, distance_um=distance_um))
     info = [p.pop("info") for p in parts]
     cols = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
+    if lifetime is None:  # kept for lifetime setups only (NaN through GammaEvents[name] otherwise)
+        for name in _NAN_WITHOUT_PLUNGER:
+            cols.pop(name)
     rows = cols["particle"]
 
     # -- the Doppler correction from what the detectors know -------------------------------------------------
@@ -895,7 +992,24 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
                      f"rejected {done.get('suppressed', 0)}.")
     if summed:
         notes.append(f"{summed} pairs of γ rays of one cascade summed in a crystal.")
-    if info[0]["lifetimes"]:
+    segments = [s.name for s in recoil_stack(experiment, distance_um)] if lifetime is not None else \
+        [lay.name for lay in layers]
+    if lifetime is not None and lifetime.method == "rdds":
+        stopped = parts[0]["stopped"]
+        notes.append(f"Plunger at {distance_um:g} µm{chosen} (plus the offset of {lifetime.offset_um:g} µm): each "
+                     "emitter flies through the target and the gap into the "
+                     f"{segments[-1]} and decays after a time drawn from its level's lifetime in its own frame "
+                     "(time dilation included); "
+                     f"{stopped.mean() if len(stopped) else 0.0:.1%} of the γ rays kept come from nuclei at rest "
+                     "(the unshifted component)."
+                     + (" Deorientation in vacuum attenuates each γ ray's angular distribution by G_k at its time "
+                        "in vacuum, frozen once the nucleus is in matter." if lifetime.deorientation else ""))
+    elif lifetime is not None:
+        stopped = parts[0]["stopped"]
+        notes.append("DSAM: each emitter slows down and scatters (ZBL Monte Carlo) in the target and backing and "
+                     "decays after a time drawn from its level's lifetime in its own frame; "
+                     f"{stopped.mean() if len(stopped) else 0.0:.1%} of the γ rays kept come from nuclei at rest.")
+    elif info[0]["lifetimes"]:
         stopped = parts[0]["stopped"]
         notes.append(f"Lifetimes: each emitter slows down in the target and backing and decays after its level's "
                      f"lifetime; {stopped.mean():.1%} of the γ rays kept come from nuclei that had stopped.")
@@ -919,7 +1033,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     shaping = _q(experiment.run.shaping_time).to("s") if experiment.run.shaping_time is not None else 0.0
     return GammaEvents(cols, ev, crystals, int(seed), e0, emitter, bg["window_s"], bg["dead_time_s"],
                        bg["live_fraction"], bg["singles_rate"], bg["singles_spectrum"], bg["singles_edges"],
-                       bg["particle_rate"], notes, shaping)
+                       bg["particle_rate"], notes, shaping, distance_um, segments)
 
 
 def crystals_of(experiment, plain: bool = False) -> tuple:
@@ -1077,10 +1191,177 @@ def _slowing(experiment, layers: list, depth, dirs, species: str, energy, t_deca
     through the rest of the stack, then flies at its exit energy; one that stops first decays at rest. Returns
     (energy at the decay, whether it had stopped). The direction is kept (no angular straggling) and ``t_decay`` is
     taken as lab time: :func:`.transport.slow` without scattering."""
-    segments = [transport.Segment(lay.material, lay.thickness, name=lay.name) for lay in layers]
-    s = transport.slow(segments, species, mass_mev, energy, transport._into_stack(dirs, tilt_deg(experiment)), depth,
-                       np.asarray(t_decay, dtype=float) * 1e12)
+    s = _slowed(experiment, layers, depth, dirs, species, energy, t_decay, mass_mev)
     return s.energy, s.stopped
+
+
+def _slowed(experiment, layers: list, depth, dirs, species: str, energy, t_decay, mass_mev: float):
+    """:func:`_slowing`'s :class:`~.transport.Slowed` (with the segment of each decay)."""
+    segments = [transport.Segment(lay.material, lay.thickness, name=lay.name) for lay in layers]
+    return transport.slow(segments, species, mass_mev, energy, transport._into_stack(dirs, tilt_deg(experiment)),
+                          depth, np.asarray(t_decay, dtype=float) * 1e12)
+
+
+def _level_taus_ps(scheme) -> np.ndarray:
+    """The mean life (ps) of each level of ``scheme`` from :func:`~physim.nuclear.lifetimes.level_taus` (its
+    half-life, else its B(Eλ↓)); 0 for a level without one (it decays at once)."""
+    from .gamma import level_names
+    from .lifetimes import level_taus
+
+    found = level_taus(scheme)
+    return np.array([found.get(name, (0.0, ""))[0] for name in level_names(scheme.levels)], dtype=float)
+
+
+def _plunger_decays(experiment, em: _Emitter, cex, initial: np.ndarray, cascade: np.ndarray, start: dict,
+                    mass_mev: float, distance_um: Optional[float]) -> Optional[dict]:
+    """The decay of each γ ray's level in a lifetime measurement: the emitter follows the recoil stack
+    (:func:`~physim.nuclear.rates.recoil_stack`), its decay time is drawn in its own frame from τ and added up the
+    cascade, turned into lab time and the emitter slowed to it (scattering for DSAM). Returns the speed, the lab
+    direction, stopped, segment, lab time, time in vacuum and the deorientation G_k per γ ray (None without
+    deorientation), and the τ of each γ ray's level (ps; 0 for a level without one, which decays where it is
+    made); None without γ rays."""
+    lifetime = experiment.lifetime
+    scheme = cex.scheme if cex is not None else em.single.scheme
+    n = len(initial)
+    if not n:
+        return None
+    taus = _level_taus_ps(scheme)[initial]
+    segments = recoil_stack(experiment, distance_um)
+    tilt = tilt_deg(experiment)
+    u = transport._into_stack(start["direction"], tilt)
+    lrng = np.random.default_rng(em.seeds[1])
+    # Proper (own-frame) times: a level fed from above starts its clock when the level above decays.
+    proper = _cumulative_by(cascade, lrng.exponential(1.0, n) * taus)
+    lab = transport.lab_time(segments, em.name, mass_mev, start["energy"], u, start["depth"], proper)
+    dsam = lifetime.method == "dsam"
+    s = transport.slow(segments, em.name, mass_mev, start["energy"], u, start["depth"], lab, scatter=dsam,
+                       rng=np.random.default_rng(em.seeds[1] + 17) if dsam else None)
+    direction = transport._into_stack(s.direction, -tilt) if (dsam and tilt) else (
+        s.direction if dsam else start["direction"])
+    vacuum, foil = _vacuum_ps(segments, em.name, mass_mev, start["energy"], u, start["depth"], s)
+    g_k = None
+    if lifetime.deorientation is not None:
+        from .lifetimes import deorientation
+
+        dor = lifetime.deorientation
+        g_k = deorientation(vacuum, dor.alpha, dor.gamma_per_ps)
+        g_k = {k: np.atleast_1d(np.asarray(v, dtype=float)) for k, v in g_k.items()}
+    return {"beta": np.asarray(s.beta, dtype=float), "direction": np.asarray(direction, dtype=float),
+            "stopped": np.asarray(s.stopped, dtype=bool), "segment": np.asarray(s.segment, dtype=np.int64),
+            "time_ps": np.asarray(lab, dtype=float), "vacuum_ps": vacuum, "stopper_ps": foil, "g_k": g_k,
+            "taus": taus}
+
+
+def _vacuum_ps(segments: list, species: str, mass_mev: float, energy, u: np.ndarray, depth, slowed) -> tuple:
+    """(the nucleus's own time (ps) in vacuum before its decay: in each gap of the stack it reaches, and after it
+    has left the stack by the back, along its straight path (the decay position from ``slowed``, the speed in a gap
+    that of the recoil leaving the matter before it); and its own time (ps) at reaching the foil after the first
+    gap: inf if it never does, NaN without a gap). Backward recoils count none."""
+    n = len(np.atleast_1d(energy))
+    out = np.zeros(n)
+    has_gap = any(s.material is None for s in segments)
+    foil = np.full(n, np.inf if has_gap else np.nan)
+    u = np.asarray(u, dtype=float).reshape(-1, 3)
+    cos_n = np.broadcast_to(u[:, 2], (n,))
+    fwd = cos_n > 0
+    if slowed.position_um is None or not fwd.any():
+        return out, foil
+    z_dec = slowed.position_um[:, 2]
+    depth = np.broadcast_to(np.asarray(depth, dtype=float), (n,))
+    # Where each recoil starts, µm along the normal from the front of the stack.
+    widths = [s.gap_um if s.material is None else s.thickness_mg_cm2 * 10.0 / s.material.density_g_cm3
+              for s in segments]
+    fronts = np.r_[0.0, np.cumsum(widths)]
+    z0 = np.zeros(n)
+    before = 0.0  # matter (mg/cm²) before the segment
+    for j, s in enumerate(segments):
+        if s.material is None:
+            continue
+        here = (depth >= before) & ((depth <= before + s.thickness_mg_cm2) | (j == len(segments) - 1))
+        here &= z0 == 0
+        z0[here] = fronts[j] + (depth[here] - before) * 10.0 / s.material.density_g_cm3
+        before += s.thickness_mg_cm2
+    gaps = [j for j, s in enumerate(segments) if s.material is None] + [len(segments)]
+    first = gaps[0]
+    for j in gaps:
+        if j == len(segments):
+            # After the stack: at the speed and in the direction of the decay (a scattered recoil has turned).
+            reach = fwd & (slowed.segment == j)
+            beta = np.asarray(slowed.beta, dtype=float)
+            length = np.inf
+            cos_n = np.where(reach, np.asarray(slowed.direction, dtype=float).reshape(-1, 3)[:, 2], cos_n)
+            reach &= cos_n > 0
+        else:
+            # The matter before the gap, followed 1 ns (long gone): the recoils that left it by the back, their
+            # exit speed, and from where each then is, the own time it had at the back face.
+            pre = transport.slow(segments[:j], species, mass_mev, energy, u, depth, 1000.0)
+            reach = fwd & (pre.segment == j)
+            beta = np.asarray(pre.beta, dtype=float)
+            length = segments[j].gap_um
+        if not reach.any():
+            continue
+        r = np.flatnonzero(reach)
+        b = np.maximum(beta[r], 1e-12)
+        per_um = np.sqrt(1 - b**2) / (cos_n[r] * b * transport.C_UM_PS)   # own time per µm along the normal
+        along = np.clip(z_dec[r] - (fronts[j] - z0[r]), 0.0, length)
+        out[r] += along * per_um
+        if j == first and j < len(segments):
+            beyond = pre.position_um[r, 2] - (fronts[j] - z0[r])
+            foil[r] = pre.proper_ps[r] - beyond * per_um + length * per_um
+    if slowed.proper_ps is not None:  # never more than the time to the decay (scattered paths are not straight)
+        out = np.minimum(out, np.maximum(np.nan_to_num(np.asarray(slowed.proper_ps, dtype=float), posinf=np.inf), 0.0))
+    return out, foil
+
+
+#: The rank-k tensor bases of density matrices, kept by (2J + 1, k).
+_TENSORS: dict = {}
+
+
+def _tensor_basis(dim: int, k: int) -> np.ndarray:
+    """The orthonormal basis T_kq (q = −k..k) of rank-k operators on spin J = (dim − 1)/2, as a (2k + 1, dim,
+    dim) array: (T_kq)_{m m'} = (−1)^{J−m'} ⟨J m J −m' | k q⟩ (Tr T_kq† T_kq' = δ_qq')."""
+    if (dim, k) not in _TENSORS:
+        from .angular import clebsch_gordan
+
+        j = (dim - 1) / 2
+        ms = [j - a for a in range(dim)]
+        t = np.zeros((2 * k + 1, dim, dim))
+        for iq, q in enumerate(range(-k, k + 1)):
+            for a, m in enumerate(ms):
+                for b, mp in enumerate(ms):
+                    if abs(m - mp - q) > 1e-9:
+                        continue
+                    t[iq, a, b] = (-1) ** round(j - mp) * clebsch_gordan(j, m, j, -mp, k, q)
+        _TENSORS[(dim, k)] = t
+    return _TENSORS[(dim, k)]
+
+
+def _attenuate(rho: np.ndarray, g_k: dict) -> np.ndarray:
+    """Density matrices (n, d, d) with their rank-k parts scaled by G_k (one value per matrix, k = 2, 4; other ranks
+    as they are): ρ → ρ + Σ_k (G_k − 1) Σ_q Tr(T_kq† ρ) T_kq."""
+    rho = np.asarray(rho)
+    dim = rho.shape[-1]
+    out = rho.astype(complex, copy=True)
+    for k, g in g_k.items():
+        if k > dim - 1:
+            continue
+        t = _tensor_basis(dim, k)
+        c = np.einsum("qab,nab->nq", t, rho)          # T real: T† = Tᵀ, Tr(Tᵀ ρ) = Σ T_ab ρ_ab
+        out += (np.asarray(g, dtype=float) - 1.0)[:, None, None] * np.einsum("nq,qab->nab", c, t)
+    return out
+
+
+class _Deoriented:
+    """Density matrices (an array or a :class:`_Lazy`) attenuated by G_k row by row, worked out when asked for."""
+
+    def __init__(self, rho, g_k: dict):
+        self.rho, self.g_k = rho, g_k
+
+    def __len__(self) -> int:
+        return len(self.rho)
+
+    def __getitem__(self, rows) -> np.ndarray:
+        return _attenuate(self.rho[rows], {k: np.atleast_1d(v[rows]) for k, v in self.g_k.items()})
 
 
 def _sum_cascades(cascade, which, deposited, measured, counted, keep, kind, energy_lab, crystals) -> int:
@@ -1113,14 +1394,15 @@ def _sum_cascades(cascade, which, deposited, measured, counted, keep, kind, ener
     return done
 
 
-def _rest_directions(table: tuple, theta_cm: np.ndarray, rng) -> np.ndarray:
+def _rest_directions(table: tuple, theta_cm: np.ndarray, rng, g_k: Optional[dict] = None) -> np.ndarray:
     """Unit vectors in the orbit's frame drawn from a transition's distribution W(θ, φ), its coefficients a_kq
     (``table`` from :meth:`~physim.nuclear.orientation.Excitation.coefficient_table`) interpolated at each event's
-    CM angle; by acceptance against Σ |a_kq|."""
+    CM angle (each rank k scaled by G_k, given per event, for deorientation); by acceptance against Σ |a_kq|."""
     grid, coeff, _ = table
     n = len(theta_cm)
     a_kq = {key: np.interp(theta_cm, grid, v.real) + 1j * np.interp(theta_cm, grid, v.imag)
             for key, v in coeff.items()}
+    a_kq = _deoriented_coefficients(a_kq, g_k, slice(None))
     bound = sum(np.abs(v) for v in a_kq.values())  # W × 4π ≤ Σ |a_kq|, since |Y_kq| ≤ √((2k+1)/4π)
     local = np.zeros((n, 3))
     todo = np.ones(n, dtype=bool)
@@ -1234,7 +1516,8 @@ def angular_allowed(ji: float, jf: float, lam: int) -> bool:
     return triangle(float(ji), int(lam), float(jf))
 
 
-def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng, aimed: bool) -> tuple:
+def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng, aimed: bool,
+                g_k: Optional[dict] = None) -> tuple:
     """The directions of the γ rays of each cascade, with the correlation between them (backlog item 71): each
     excitation starts in the density matrix the collision leaves its first level in, at its CM angle; each γ ray
     is drawn from the current state and leaves the next level oriented by its direction
@@ -1244,6 +1527,13 @@ def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng,
     the last γ ray of each cascade when ``aimed``; and for those, [(their γ-ray indices, emission, density
     matrices)] to aim them with)."""
     from .correlation import unobserved
+
+    def deoriented(rho, gammas: np.ndarray):
+        """The emitting states of the γ rays ``gammas`` with deorientation (G_k at each one's time in vacuum); the
+        state passed down the cascade stays unperturbed."""
+        if not g_k:
+            return rho
+        return _Deoriented(rho, {k: v[gammas] for k, v in g_k.items()})
 
     src, ini, fin, emit = taken
     order = np.argsort(src, kind="stable")
@@ -1269,7 +1559,7 @@ def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng,
         for (lev, f_lev) in sorted(set(zip(ini[alone].tolist(), fin[alone].tolist()))):
             k = np.flatnonzero(alone & (ini == lev) & (fin == f_lev))
             deferred.append((gamma_of[k], _emission_of(cex, lev, f_lev),
-                             _Lazy(cex.density_table(lev), theta_cm[src[k]])))
+                             deoriented(_Lazy(cex.density_table(lev), theta_cm[src[k]]), gamma_of[k])))
     # The state of every other excitation still decaying: {level: (excitations, ascending; density matrices)}.
     state = {}
     need = np.zeros(len(first), dtype=bool)
@@ -1319,10 +1609,13 @@ def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng,
         if gives:
             final_ones = is_last[k]
             if aimed and final_ones.any():
-                deferred.append((gamma_of[k[final_ones]], em_, sub[final_ones]))
+                deferred.append((gamma_of[k[final_ones]], em_,
+                                 deoriented(sub[final_ones], gamma_of[k[final_ones]])))
             draw = ~final_ones if aimed else np.ones(len(k), dtype=bool)
             if draw.any():
-                known[gamma_of[k[draw]]] = em_.sample(sub[draw], rng)
+                emitting_rho = deoriented(sub[draw], gamma_of[k[draw]])
+                known[gamma_of[k[draw]]] = em_.sample(emitting_rho[np.arange(len(emitting_rho))]
+                                                      if isinstance(emitting_rho, _Deoriented) else emitting_rho, rng)
             # Only the excitations that go on need the state their γ ray leaves; a last γ ray may still be
             # followed by converted steps, whose state is not needed.
             go_on = ~final_ones
@@ -1389,7 +1682,8 @@ def _sample_deferred(deferred: list, last: np.ndarray, n: int, rng) -> np.ndarra
     where[last] = np.arange(len(last))
     out = np.zeros((len(last), 3))
     for g_idx, em_, rho in deferred:
-        out[where[g_idx]] = em_.sample(rho[np.arange(len(rho))] if isinstance(rho, _Lazy) else rho, rng)
+        out[where[g_idx]] = em_.sample(rho[np.arange(len(rho))] if isinstance(rho, (_Lazy, _Deoriented)) else rho,
+                                       rng)
     return out
 
 
