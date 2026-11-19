@@ -35,14 +35,19 @@ needs_reference = pytest.mark.skipif(not REFERENCE.is_dir(), reason="reference f
 #: APCAD's example the first-order centroid shift is 17% larger (physim's ¹²⁰Sn leave the 10 mg/cm² Cu backing
 #: where Geant4's stopping keeps them; the widths agree); against AhKin's ⁸³Y line the shift is inside AhKin's 1σ
 #: band but the line is 25% wider (physim's scattering turns the residues sideways, AhKin follows the velocity
-#: along the beam only), so its χ² against the measured line is above AhKin's band.
+#: along the beam only), so its χ² against the measured line is above AhKin's band. The ¹⁴³Sm DSAM reproduction
+#: (Rajbanshi et al. 2018): the spectra simulated with physim's stopping and fitted with SRIM's, as the paper did,
+#: give lifetimes 3–27% above the paper's (physim's stopping slows ¹⁴³Sm in Au faster: its range is 19% shorter);
+#: seven of the nine levels stay within the tolerance, the two upper limits come out above their limits.
 KNOWN_FAILURES = {"stopping_compounds_vs_srim", "spectra_vs_trim", "stopping_hydrogen_vs_data", "fusion_vs_pace4",
                   "evaporation_channels_vs_pace4", "evaporation_spectra_vs_pace4", "evaporation_channels_vs_gemini",
-                  "evaporation_spectra_vs_gemini", "dsam_lineshape_vs_apcad", "dsam_lineshape_vs_ahkin"}
+                  "evaporation_spectra_vs_gemini", "dsam_lineshape_vs_apcad", "dsam_lineshape_vs_ahkin",
+                  "dsam_sm143_reproduction"}
 
-#: Lifetime checks written in wave 3C, when simulated plunger and DSAM spectra and the lifetime analysis exist.
-LIFETIME_WAVE_3C = {"rdds_ddcm_vs_napytau", "rdds_closure", "rdds_ru98_reproduction", "rdds_cr50_reproduction",
-                    "dsam_closure", "dsam_sm143_reproduction"}
+#: Lifetime checks on simulated runs (wave 3C) that read files of tests/reference/nuclear/lifetimes/ (the published
+#: values, the simulated areas NaPyTau analysed, SRIM's stopping).
+LIFETIME_SIMULATED = {"rdds_closure", "rdds_ru98_reproduction", "rdds_cr50_reproduction", "dsam_closure",
+                      "dsam_sm143_reproduction"}
 
 
 def statuses(**kw):
@@ -72,9 +77,8 @@ def test_every_check_passes_or_waits_for_its_reference():
     # Known disagreements the register reports as such (not ✅); a fix must remove them from KNOWN_FAILURES.
     assert set(failed) == set(KNOWN_FAILURES), failed
     pending = {r.name for r in results if r.status == "pending"}
-    # Exactly the references still requested from the user (tests/reference/nuclear/pending/), and the lifetime
-    # checks that wait for wave 3C.
-    assert pending == {"closest_approach_above_barrier", "rates_vs_lise"} | LIFETIME_WAVE_3C
+    # Exactly the references still requested from the user (tests/reference/nuclear/pending/).
+    assert pending == {"closest_approach_above_barrier", "rates_vs_lise"}
     assert "| Capability |" in validation.report(results)
 
 
@@ -82,9 +86,9 @@ def test_literature_checks_run_without_reference_files(tmp_path):
     for r in validation.run(kind="literature", reference=tmp_path):
         if r.name in ("stopping_hydrogen_vs_data", "stopping_heavy_vs_data", "fusion_vs_data", "residues_vs_data", "carbon_vs_endf",
                       "reproduction_usman2020", "rdds_one_level_analytic", "rdds_two_levels_bateman",
-                      "deorientation_ru98", "dsam_exponential_analytic") or r.name in LIFETIME_WAVE_3C:
-            # measured or evaluated data kept as reference files (the lifetime closed forms and published
-            # parameters are files of tests/reference/nuclear/lifetimes/ too), or checks still to be written
+                      "deorientation_ru98", "dsam_exponential_analytic") or r.name in LIFETIME_SIMULATED:
+            # measured or evaluated data kept as reference files (the lifetime closed forms, published values and
+            # parameters are files of tests/reference/nuclear/lifetimes/ too)
             assert r.status == "pending", r.detail
         elif r.name != "closest_approach_above_barrier":
             assert r.status == "pass", (r.name, r.detail)
@@ -370,6 +374,23 @@ def test_dsam_line_shape_disagreements_are_the_documented_ones():
     assert ": inside;" in ahkin, ahkin
     ours, theirs = (float(v) for v in re.search(r"rms width ([0-9.]+) against ([0-9.]+) keV", ahkin).groups())
     assert 1.18 < ours / theirs < 1.32, ahkin
+
+
+@needs_reference
+def test_sm143_reproduction_disagrees_as_documented():
+    """The ¹⁴³Sm known failure: SRIM-stopping fits above the simulated (the paper's) lifetimes by what the stopping
+    difference makes, the levels with values within the tolerance, the two upper limits above theirs
+    (docs/physics-register/lifetimes.md)."""
+    from physim.nuclear import lifetime_reproduction as lr
+
+    r = lr.sm143(REFERENCE)
+    lo, hi, mean = r["srim_over_simulated"]
+    assert 1.10 < mean < 1.30 and lo > 0.95 and hi < 1.40, r["srim_over_simulated"]
+    values = [k for k, v in r["levels"].items() if v["kind"] == "value"]
+    limits = [k for k, v in r["levels"].items() if v["kind"] == "upper"]
+    assert len(values) == 7 and len(limits) == 2
+    assert all(r["levels"][k]["passed"] for k in values)
+    assert not any(r["levels"][k]["passed"] for k in limits)
 
 
 def test_lifetime_pictures():

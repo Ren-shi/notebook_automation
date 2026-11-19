@@ -1,6 +1,6 @@
 schema = "physim.experiment/1"
 title = "Three-foil plunger after fusion-evaporation: 50Cr"
-description = "The differential (three-foil) plunger measurement of C. Beckers et al., Nucl. Instrum. Methods A 1042, 167418 (2022), commissioning the CoCoDiff plunger at Cologne: 24Mg(32S,4p2n)50Cr at 100 MeV on a self-supporting 0.6 mg/cm2 24Mg target. The residues fly across a gap to a 4.4 mg/cm2 tantalum degrader (beta about 3.9 % before it, 1.5 % after), then across a second gap to a 6.5 mg/cm2 tantalum foil that stops them. Eleven germanium detectors: five at 142.3 deg and six at 45 deg. The paper used nine pairs of distances, 17 to 750 um to the degrader and 40 to 335 um between the foils; the setup keeps one gap between the foils (100 um here), and the distances other than 17, 42, 62, 122 and 750 um are illustrative. The channel cross sections, beam current, detector distances and beam time are illustrative too, not from the paper: replace the channels with your own PACE4 run. A small silicon detector at 30 deg counts the elastically scattered beam as a monitor, as in the other fusion examples (not in the paper)."
+description = "The differential (three-foil) plunger measurement of C. Beckers et al., Nucl. Instrum. Methods A 1042, 167418 (2022), commissioning the CoCoDiff plunger at Cologne: 24Mg(32S,4p2n)50Cr at 100 MeV on a self-supporting 0.6 mg/cm2 24Mg target. The residues fly across a gap to a 4.4 mg/cm2 tantalum degrader (beta about 3.9 % before it, 1.5 % after), then across a second gap to a 6.5 mg/cm2 tantalum foil that stops them. Eleven germanium detectors: five at 142.3 deg and six at 45 deg. The paper used nine pairs of distances, 17 to 750 um to the degrader and 40 to 335 um between the foils; the setup keeps one gap between the foils (100 um here), and the distances other than 17, 42, 62, 122 and 750 um are illustrative. The level scheme of 50Cr is the yrast band to 6+, with the paper's mean lives of the 2+ (12.2 ps) and 4+ (2.4 ps) and ENSDF's for the 6+ (the paper does not give it). The validation's reproduction (physim.nuclear.lifetime_reproduction.cr50) varies the second gap with the first, as the paper did. The channel cross sections, beam current, detector distances and beam time are illustrative too, not from the paper: replace the channels with your own PACE4 run. A small silicon detector at 30 deg counts the elastically scattered beam as a monitor, as in the other fusion examples (not in the paper)."
 
 [reaction]
 type = "fusion-evaporation"
@@ -188,3 +188,61 @@ thickness = "4.4 mg/cm2"
 material = "Ta"
 thickness = "6.5 mg/cm2"
 gap = "100 um"
+
+[levels]
+
+[levels.50Cr]
+nuclide = "50Cr"
+reference = "yrast band of 50Cr: energies from ENSDF (adopted levels of 50Cr); the 2+1 and 4+1 mean lives from C. Beckers et al., NIM A 1042, 167418 (2022), Table 1 (12.2(4) and 2.4(3) ps, entered as user values); the 6+1 half-life from ENSDF (0.80(23) ps)"
+
+[[levels.50Cr.level]]
+energy = "0 keV"
+jpi = "0+"
+source = "ensdf"
+
+[[levels.50Cr.level]]
+energy = "783.31 keV"
+jpi = "2+"
+half_life = "8.4564e-12 s"
+half_life_unc = 2.77e-13
+source = "user"
+note = "mean life 12.2(4) ps from Beckers et al. 2022; energy from ENSDF"
+
+[[levels.50Cr.level]]
+energy = "1881.42 keV"
+jpi = "4+"
+half_life = "1.6636e-12 s"
+half_life_unc = 2.08e-13
+source = "user"
+note = "mean life 2.4(3) ps from Beckers et al. 2022; energy from ENSDF"
+
+[[levels.50Cr.level]]
+energy = "3164.06 keV"
+jpi = "6+"
+half_life = "8e-13 s"
+half_life_unc = 2.3e-13
+source = "ensdf"
+
+[[levels.50Cr.transition]]
+from = 1
+to = 0
+energy = "783.3 keV"
+intensity = 100
+multipolarity = "E2"
+source = "ensdf"
+
+[[levels.50Cr.transition]]
+from = 2
+to = 1
+energy = "1098.1 keV"
+intensity = 100
+multipolarity = "E2"
+source = "ensdf"
+
+[[levels.50Cr.transition]]
+from = 3
+to = 2
+energy = "1282.5 keV"
+intensity = 100
+multipolarity = "E2"
+source = "ensdf"

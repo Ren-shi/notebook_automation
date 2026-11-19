@@ -4,6 +4,7 @@
     python scripts/lifetime_reference.py ahkin <AhKin build folder>
     python scripts/lifetime_reference.py apcad <APCADStopSim folder>
     python scripts/lifetime_reference.py napytau <NaPyTau checkout> --python <python with numpy and scipy>
+    python scripts/lifetime_reference.py napytau-simulated <NaPyTau checkout> --python <python with numpy and scipy>
 
 ``analytic`` needs nothing but numpy and imports nothing from physim, so its numbers are independent of the code
 they check. The other three take an outside program's files (never shipped with physim; see the README in the
@@ -24,6 +25,9 @@ need. CI only reads the files written here.
   lines) converted to CSV, with the setup that made them.
 - ``napytau/``: NaPyTau's DDCM answers on ``rdds_one_level.csv`` (central values; its uncertainty propagation gives
   meaningless numbers and is not used).
+- ``napytau/ddcm_simulated.csv`` (``napytau-simulated``, wave 3C): the peak areas of a simulated plunger run of the
+  ⁹⁸Ru example without deorientation (``physim.nuclear.lifetime_reproduction.napytau_input``; this one imports
+  physim, it is physim's own simulation that both programs analyse) and NaPyTau's τ(x) on them.
 """
 
 from __future__ import annotations
@@ -219,6 +223,69 @@ def napytau(repo: Path, python: str) -> None:
     print("napytau: written to", OUT / "napytau")
 
 
+NAPYTAU_SIMULATED_DRIVER = r'''
+import json, sys
+import numpy as np
+sys.path.insert(0, sys.argv[1])
+from napytau.core.tau import calculate_tau_i_values
+from napytau.core.polynomials import calculate_polynomial_coefficients_for_fit
+from napytau.import_export.model.dataset import DataSet
+from napytau.import_export.model.datapoint import Datapoint
+from napytau.import_export.model.datapoint_collection import DatapointCollection
+from napytau.import_export.model.relative_velocity import RelativeVelocity
+from napytau.util.model.value_error_pair import ValueErrorPair as V
+c = json.loads(sys.stdin.read())
+scale = 299792458.0 / 299.792458  # distances scaled so that NaPyTau's t = d / (beta c) comes out in ps
+pts = [Datapoint(distance=V(d * scale, 0.0), calibration=V(1.0, 0.0), shifted_intensity=V(s, es),
+                 unshifted_intensity=V(u, eu)) for d, s, u, es, eu in zip(c["d"], c["s"], c["u"], c["es"], c["eu"])]
+ds = DataSet(relative_velocity=V(RelativeVelocity(c["beta"]), 0.0), datapoints=DatapointCollection(pts))
+out = {}
+for deg in c["degrees"]:
+    coef = calculate_polynomial_coefficients_for_fit(ds, deg)
+    out[str(deg)] = [float(x) for x in calculate_tau_i_values(ds, coef)]
+print(json.dumps(out))
+'''
+
+
+def napytau_simulated(repo: Path, python: str) -> None:
+    """NaPyTau on physim's own simulated plunger spectra: the ⁹⁸Ru example (no deorientation) simulated at its
+    distances, the peak areas at the 41.5° ring (physim's peak fits), normalised at each distance by I_u + I_s, the
+    distances with the 8 µm offset added (NaPyTau has none); its τ(x) for polynomials of degree 2, 3 and 4."""
+    sys.path.insert(0, str(ROOT / "python"))
+    from physim.nuclear import lifetime_reproduction as lr
+
+    sim = lr.napytau_input()
+    u, s = np.asarray(sim["unshifted"]), np.asarray(sim["shifted"])
+    eu, es = np.asarray(sim["err_unshifted"]), np.asarray(sim["err_shifted"])
+    total = u + s
+    case = {"d": [d + sim["offset_um"] for d in sim["distances_um"]], "u": (u / total).tolist(),
+            "s": (s / total).tolist(), "eu": (eu / total).tolist(), "es": (es / total).tolist(),
+            "beta": sim["beta"], "degrees": list(lr.NAPYTAU_DEGREES)}
+    res = subprocess.run([python, "-I", "-c", NAPYTAU_SIMULATED_DRIVER, str(repo)], input=json.dumps(case),
+                         capture_output=True, text=True, check=True)
+    taus = json.loads(res.stdout)
+    commit = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    rows = [(float(d), float(a), float(b), float(c), float(e), *[float(taus[str(k)][i]) for k in lr.NAPYTAU_DEGREES])
+            for i, (d, a, b, c, e) in enumerate(zip(sim["distances_um"], u, s, eu, es))]
+    _write_csv(OUT / "napytau" / "ddcm_simulated.csv",
+               ["distance_um", "unshifted", "shifted", "err_unshifted", "err_shifted",
+                *[f"napytau_tau_deg{k}_ps" for k in lr.NAPYTAU_DEGREES]],
+               [f"source: NaPyTau (github.com/h-mayr/NaPyTau_Public, commit {commit}, EUPL-1.2), its core functions, on",
+                "  physim's simulated plunger run of coulex_ru98_plunger without deorientation (lifetime_reproduction.",
+                f"  napytau_input: {sim['particles']} reactions, seed {sim['seed']}, {sim['gammas_per_event']} γ rays per",
+                f"  event, ²⁴Mg recoils, the {sim['ring_deg']:g}° ring); peak areas from physim's peak fits. NaPyTau got",
+                "  the intensities over I_u + I_s and the distances plus the offset; one polynomial of each degree over",
+                "  all distances, tau_i per distance. Its uncertainties are not usable.",
+                f"beta: {sim['beta']:.6f}",
+                "  (from the shifted peak's centroids at 41.5 and 138.5 degrees)",
+                f"offset_um: {sim['offset_um']:g}",
+                f"tau_ps: {sim['tau_ps']:.6f}",
+                "  (the simulated mean life of the 2+1, proper time)",
+                f"written: by scripts/lifetime_reference.py napytau-simulated on {date.today().isoformat()}"],
+               rows)
+    print("napytau-simulated: written to", OUT / "napytau" / "ddcm_simulated.csv")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="what", required=True)
@@ -226,6 +293,8 @@ def main(argv=None) -> int:
     a = sub.add_parser("ahkin"); a.add_argument("build", type=Path)
     a = sub.add_parser("apcad"); a.add_argument("folder", type=Path)
     a = sub.add_parser("napytau"); a.add_argument("repo", type=Path); a.add_argument("--python", required=True)
+    a = sub.add_parser("napytau-simulated"); a.add_argument("repo", type=Path)
+    a.add_argument("--python", required=True)
     args = ap.parse_args(argv)
     if args.what == "analytic":
         analytic()
@@ -233,8 +302,10 @@ def main(argv=None) -> int:
         ahkin(args.build)
     elif args.what == "apcad":
         apcad(args.folder)
-    else:
+    elif args.what == "napytau":
         napytau(args.repo, args.python)
+    else:
+        napytau_simulated(args.repo, args.python)
     return 0
 
 

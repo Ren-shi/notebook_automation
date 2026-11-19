@@ -806,26 +806,43 @@ def ddcm(distances_um, unshifted, shifted, errors, beta, feeder_unshifted=None, 
 
 def ddcm_three_foil(distances_um, fully_shifted, reduced_shifted, unshifted, errors, beta, beta_reduced,
                     feeder_fully_shifted=None, feeder_reduced_shifted=None, feeder_unshifted=None, alpha=1.0,
-                    polynomial="piecewise", *, gated: bool = False, norm=None, alpha_error: float = 0.0,
-                    offset_um: float = 0.0, offset_error_um: float = 0.0, beta_error: float = 0.0,
-                    beta_reduced_error: float = 0.0, region_um=None, weighted: bool = True,
-                    proper: bool = True, fit: str = "joint") -> TauResult:
+                    polynomial="piecewise", *, gated: bool = False, stopper_gated=None, points: str = "both",
+                    norm=None, alpha_error: float = 0.0, offset_um: float = 0.0, offset_error_um: float = 0.0,
+                    beta_error: float = 0.0, beta_reduced_error: float = 0.0, region_um=None,
+                    weighted: bool = True, proper: bool = True, fit: str = "joint") -> TauResult:
     """The DDCM for a differential (three-foil) plunger: target, a gap x₁, a degrader that slows the recoil from β
     to β′, a gap x₂, a stopper (Beckers et al., NIM A 1042, 167418 (2022), Eqs. 13–14; CoCoDiff, ⁵⁰Cr). Each pair
     of distances gives three peaks: fully shifted (decays in the first gap), reduced shifted (in the second) and
     unshifted (in the stopper), and so two points of one decay curve:
 
-    - at the degrader, t₁ = x₁/(βc): decays after it, I_rs + I_u, against decays before it, I_fs;
-    - at the stopper, t₂ = x₁/(βc) + x₂/(β′c): decays after it, I_u, against decays before it, I_fs + I_rs.
+    - at the degrader ("t₁" part), t₁ = x₁/(βc): decays after it, I_rs + I_u, against decays before it, I_fs;
+    - at the stopper ("t₂" part), t₂ = x₁/(βc) + x₂/(β′c): decays after it, I_u, against decays before it,
+      I_fs + I_rs.
 
     Both are put on one axis by renormalising the second gap by v/v′: x_eff = x₁ + x₂ β/β′, flown at β. Then the
-    2n points go through :func:`ddcm` (singles with the feeder's three components and ``alpha``, or ``gated``).
+    points go through the DDCM (singles with the feeder's three components and ``alpha``, or ``gated``).
+
+    **Gates (Beckers' Eq. 13).** In coincidence with the direct feeder B the two parts need different gates:
+    τ(t₁) = {B_fs, A_rs+us} / d{B_fs, A_fs}/dt and τ(t₂) = {B_fs+rs, A_us} / d{B_fs+rs, A_fs+rs}/dt. Gated on B_fs
+    the stopper point {B_fs, A_fs+rs} depends on t₁ as well as t₂, so it is on no single decay curve; gated on
+    B_fs+rs the degrader point counts A fed by B after t₁. So with ``gated``, the main intensities are the
+    transition's components gated on the feeder's fully shifted component (the t₁ part) and ``stopper_gated`` =
+    (fs, rs, u, (σ_fs, σ_rs, σ_u)) its components gated on the feeder's fully and reduced shifted components (the
+    t₂ part); or analyse one part with ``points`` = "degrader" (main intensities gated on B_fs) or "stopper"
+    (main intensities gated on B_fs+rs). Both parts together are one curve, {B_0^t, A_0^t}, only when the two
+    gates take all of their components' events; with partial gates (to keep out a neighbour) analyse the parts
+    apart and average them, as Beckers et al. did. Singles need no such care: each point depends on its own time.
+    ``points`` also selects the parts for singles.
+
     ``distances_um``: (n, 2) pairs (x₁, x₂). ``errors``: (σ_fs, σ_rs, σ_u), plus the feeder's three. The
-    normalisation at each pair is the transition's I_fs + I_rs + I_u (or ``norm``). Budget: ``beta_error`` and
-    ``beta_reduced_error`` (velocity), ``offset_error_um`` (on x₁), ``alpha_error``."""
+    normalisation at each pair is the transition's I_fs + I_rs + I_u (or ``norm``; gated data are taken as given
+    without it). Budget: ``beta_error`` and ``beta_reduced_error`` (velocity), ``offset_error_um`` (on x₁),
+    ``alpha_error``."""
     pairs = np.asarray(distances_um, dtype=float)
     if pairs.ndim != 2 or pairs.shape[1] != 2:
         raise ValueError("give the distances as (n, 2) pairs: target–degrader and degrader–stopper")
+    if points not in ("both", "degrader", "stopper"):
+        raise ValueError("points is 'both', 'degrader' or 'stopper'")
     n = len(pairs)
     fs = _arr(fully_shifted, n, "fully_shifted")
     rs = _arr(reduced_shifted, n, "reduced_shifted")
@@ -836,18 +853,39 @@ def ddcm_three_foil(distances_um, fully_shifted, reduced_shifted, unshifted, err
     sfs, srs, su = (_arr(e, n, "errors") for e in errs[:3])
     if not 0 < beta_reduced < beta:
         raise ValueError("the degrader slows the recoil: 0 < β′ < β")
+    if stopper_gated is not None and not gated:
+        raise ValueError("stopper_gated is the t₂ part of gated data (gated=True)")
+    if gated and points == "both" and stopper_gated is None:
+        raise ValueError("gated on the direct feeder, the degrader and stopper points need different gates "
+                         "(Beckers et al., Eq. 13): give stopper_gated (the components gated on the feeder's fully "
+                         "and reduced shifted components), or analyse one part with points='degrader' or 'stopper'")
+    if stopper_gated is not None and points != "both":
+        raise ValueError("stopper_gated is for points='both'; for one part give its own gated intensities")
     if norm is not None:
         nrm = _arr(norm, n, "norm")
     elif gated:
         nrm = np.ones(n)
     else:
         nrm = fs + rs + uu
-    # The 2n points: (after, before) at the degrader, then at the stopper.
-    after = np.concatenate([rs + uu, uu])
-    before = np.concatenate([fs, fs + rs])
-    s_after = np.concatenate([np.hypot(srs, su), su])
-    s_before = np.concatenate([sfs, np.hypot(sfs, srs)])
-    nrm2 = np.concatenate([nrm, nrm])
+    # The t₂ part's intensities: the second gated set, or the same ones.
+    fs2, rs2, uu2, sfs2, srs2, su2 = fs, rs, uu, sfs, srs, su
+    if stopper_gated is not None:
+        fs2, rs2, uu2, e2 = stopper_gated
+        fs2, rs2, uu2 = (_arr(x, n, "stopper_gated") for x in (fs2, rs2, uu2))
+        if len(e2) != 3:
+            raise ValueError("stopper_gated is (fs, rs, u, (σ_fs, σ_rs, σ_u))")
+        sfs2, srs2, su2 = (_arr(x, n, "stopper_gated errors") for x in e2)
+    use_d, use_s = points in ("both", "degrader"), points in ("both", "stopper")
+    parts = [p for p, on in (("degrader", use_d), ("stopper", use_s)) if on]
+
+    def pick(deg, sto):
+        return np.concatenate(([deg] if use_d else []) + ([sto] if use_s else []))
+
+    after = pick(rs + uu, uu2)
+    before = pick(fs, fs2 + rs2)
+    s_after = pick(np.hypot(srs, su), su2)
+    s_before = pick(sfs, np.hypot(sfs2, srs2))
+    nrm2 = pick(nrm, nrm)
     feeder = None
     if feeder_unshifted is not None or feeder_reduced_shifted is not None:
         if gated:
@@ -860,7 +898,7 @@ def ddcm_three_foil(distances_um, fully_shifted, reduced_shifted, unshifted, err
             sbrs, sbu = _arr(errs[4], n, "errors"), _arr(errs[5], n, "errors")
         else:
             sbrs, sbu = np.sqrt(np.maximum(np.abs(brs), 1.0)), np.sqrt(np.maximum(np.abs(bu), 1.0))
-        feeder = (np.concatenate([brs + bu, bu]), np.concatenate([np.hypot(sbrs, sbu), sbu]))
+        feeder = (pick(brs + bu, bu), pick(np.hypot(sbrs, sbu), sbu))
     data = {"u": after / nrm2, "s": before / nrm2, "su": s_after / nrm2, "ss": s_before / nrm2}
     if feeder is not None:
         data.update(bu=feeder[0] / nrm2, sbu=feeder[1] / nrm2)
@@ -868,31 +906,35 @@ def ddcm_three_foil(distances_um, fully_shifted, reduced_shifted, unshifted, err
         bfs = _arr(feeder_fully_shifted, n, "feeder_fully_shifted")
         brs_plot = (np.zeros(n) if feeder_reduced_shifted is None
                     else _arr(feeder_reduced_shifted, n, "feeder_reduced_shifted"))
-        data["bs"] = np.concatenate([bfs, bfs + brs_plot]) / nrm2
+        data["bs"] = pick(bfs, bfs + brs_plot) / nrm2
     x1, x2 = pairs[:, 0], pairs[:, 1]
 
     def t_of(off, b, b_red=beta_reduced, distances=None):
         if distances is not None:  # region limits, given as effective distances at β
             return _flight(distances, b, off, 1.0, proper)
-        x_eff = np.concatenate([x1, x1 + x2 * b / b_red])
-        return _flight(x_eff, b, off, 1.0, proper)
+        return _flight(pick(x1, x1 + x2 * b / b_red), b, off, 1.0, proper)
 
     def reduced_velocity(run) -> float:
-        if beta_reduced_error <= 0:
+        if beta_reduced_error <= 0 or not use_s:
             return 0.0
         hi = run(b_red=beta_reduced + beta_reduced_error)[0]["tau"]
         lo = run(b_red=max(beta_reduced - beta_reduced_error, 1e-6))[0]["tau"]
         return 0.5 * abs(hi - lo)
 
-    d_eff = np.concatenate([x1, x1 + x2 * beta / beta_reduced])
+    d_eff = pick(x1, x1 + x2 * beta / beta_reduced)
     res = _ddcm_result(t_of, d_eff, data, float(alpha), gated, polynomial, None, region_um, weighted, fit, beta=beta,
                        beta_error=beta_error, offset_um=offset_um, offset_error_um=offset_error_um,
                        alpha_error=alpha_error, method="DDCM three-foil", extra_velocity=reduced_velocity)
+    foils = [p for p in parts for _ in range(n)]
     for k, row in enumerate(res.per_distance):
-        row["foil"] = "degrader" if k < n else "stopper"
+        row["foil"] = foils[k]
         row["pair"] = [float(x1[k % n]), float(x2[k % n])]
+    res.params["points"] = points
     res.notes.append("Three-foil DDCM: the second gap is renormalised by v/v′ (x_eff = x₁ + x₂ β/β′), so the "
                      "degrader and stopper points lie on one decay curve.")
+    if gated:
+        res.notes.append("Gated on the direct feeder as Beckers et al.'s Eq. 13: the degrader points on its fully "
+                         "shifted component, the stopper points on its fully and reduced shifted components.")
     return res
 
 

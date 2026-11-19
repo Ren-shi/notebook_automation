@@ -1836,16 +1836,14 @@ def shellmodel_dimensions(ref):
 # The references are in tests/reference/nuclear/lifetimes/ (its README gives their provenance): closed forms
 # (analytic/), TRIM for the recoil transport (trim/), APCAD's and AhKin's DSAM examples (apcad/, ahkin/), NaPyTau's
 # DDCM (napytau/) and the published experiments (published/). The recoils' stopping against measured data is the
-# check stopping_heavy_vs_data (Stopping power and range), not repeated here. The checks that need simulated
-# plunger spectra and the lifetime analysis (DDCM against NaPyTau, τ recovered from simulated runs, the three
-# published experiments) are written in wave 3C and wait until then.
+# check stopping_heavy_vs_data (Stopping power and range), not repeated here. The DDCM against NaPyTau, τ recovered
+# from simulated runs (closure) and the three published experiments simulate and analyse with
+# physim.nuclear.lifetime_reproduction (wave 3C), at run sizes of seconds each.
 
 RDDS = "Lifetimes: recoil distance (RDDS)"
 DSAM = "Lifetimes: Doppler-shift attenuation (DSAM)"
 #: The lifetime references' folder, inside the reference folder.
 LIFETIME_REFERENCE = "lifetimes"
-#: The detail of the checks that wait for wave 3C.
-WAVE_3C = "waits for simulated plunger and DSAM spectra and the lifetime analysis (waves 2A–2C); written in wave 3C"
 
 
 def _lifetime_file(ref, name: str) -> Optional[Path]:
@@ -2147,47 +2145,136 @@ def dsam_transport_vs_trim(ref):
     return _transport_vs_trim(ref, "sm143_au")
 
 
-# -- what waits for wave 3C ---------------------------------------------------------------------------------------
+# -- the lifetime analysis on simulated runs, and the published experiments (wave 3C) ----------------------------
+
+#: NaPyTau against physim's DDCM in NaPyTau's procedure: τ(x) at each distance within this (relative).
+NAPYTAU_TOLERANCE = 0.01
 
 
-@check(RDDS, "tool", "NaPyTau (Cologne's DDCM, reimplemented; lifetimes/napytau/): physim's DDCM on the same "
-       "simulated plunger spectra", "τ within 1% of NaPyTau's (its central values; its uncertainties are not usable)")
+@check(RDDS, "tool", "NaPyTau (Cologne's DDCM, reimplemented; commit in lifetimes/napytau/ddcm_simulated.csv) on the "
+       "peak areas of a simulated plunger run of the ⁹⁸Ru example (no deorientation, ring 41.5°, 11 distances; "
+       "lifetime_reproduction.napytau_input): physim's DDCM in NaPyTau's procedure (one polynomial of degree 2, 3, 4 "
+       "through the shifted points, unweighted, no time dilation) on the same areas, τ(x) at every distance",
+       "τ within 1% of NaPyTau's (its central values; its uncertainties are not usable)")
 def rdds_ddcm_vs_napytau(ref):
-    return None, math.nan, 0, WAVE_3C, {}
+    from . import lifetime_reproduction as lr
+
+    res = lr.ddcm_vs_napytau(ref)
+    if res is None:
+        return _missing("napytau/ddcm_simulated.csv")
+    worst = res["worst"]
+    deg = max(lr.NAPYTAU_DEGREES)
+    per = res["per_degree"]
+    points = sum(v["points"] for v in per.values())
+    detail = (f"τ(x) at {points} distance×degree points, worst {worst:.1e} relative ("
+              + ", ".join(f"degree {d}: {v['worst']:.1e}" for d, v in per.items())
+              + f"); physim's own DDCM (joint fit, quadratic pieces) on the same areas {res['joint_tau_ps']:.2f} ± "
+              f"{res['joint_stat_ps']:.2f} ps for the simulated {res['tau_ps']:.2f} ps")
+    plot = {"x": res["distances_um"], "physim": per[deg]["physim"], "reference": per[deg]["napytau"],
+            "xlabel": f"distance (µm), polynomial degree {deg}", "ylabel": "τ(x) (ps)", "logx": True}
+    return worst <= NAPYTAU_TOLERANCE, worst / NAPYTAU_TOLERANCE, points, detail, plot
 
 
-@check(RDDS, "literature", "Closure: τ recovered by the decay-curve fit and the DDCM from simulated plunger runs of "
-       "known τ (one level, and fed from above)", "within the fit's uncertainty (2σ)")
+@check(RDDS, "literature", "Closure: τ recovered from simulated plunger runs of known τ: one level (the ⁹⁸Ru example's "
+       "2⁺₁, 8.36 ps, no deorientation; the areas of lifetimes/napytau/ddcm_simulated.csv) by the decay-curve fit and "
+       "the DDCM, and fed from above (the ⁵⁰Cr example's 2⁺₁, 12.2 ps, fed by its 4⁺₁; a seeded three-foil fusion "
+       "run, lifetime_reproduction.cr50) by the three-foil DDCM in singles with the feeder's correction",
+       "within the fit's uncertainty (2σ)")
 def rdds_closure(ref):
-    return None, math.nan, 0, WAVE_3C, {}
+    from . import lifetime_reproduction as lr
+
+    one = lr.closure_one_level(ref)
+    if one is None:
+        return _missing("napytau/ddcm_simulated.csv")
+    fed = lr.cr50(ref)
+    if not fed.get("available"):
+        return _missing("published/lifetimes.csv")
+    rows = [("one level, decay curve", *one["decay_curve"], one["tau_ps"]),
+            ("one level, DDCM", *one["ddcm"], one["tau_ps"]),
+            ("fed from above, three-foil DDCM (singles)", *fed["singles"], fed["simulated_tau_ps"]["2+1"])]
+    pulls = [(tau - true) / stat for _n, tau, stat, true in rows]
+    worst = max(abs(x) for x in pulls) / 2
+    detail = "; ".join(f"{name}: {tau:.2f} ± {stat:.2f} ps for {true:.2f} ({(tau - true) / stat:+.1f}σ)"
+                       for name, tau, stat, true in rows)
+    plot = {"x": one["distances_um"], "physim": one["model"], "reference": one["unshifted"],
+            "xlabel": "distance (µm), one level", "ylabel": "unshifted counts", "logx": True}
+    return worst <= 1.0, worst, len(rows), detail, plot
 
 
 @check(RDDS, "literature", "Reproduced experiment: ⁹⁸Ru, RDDS after Coulex below the barrier (Radeck et al., PRC 85, "
-       "014301 (2012)): τ(2⁺₁) = 8.36(29) ps with the deorientation correction, τ(4⁺₁) = 2.31(16) ps, τ(2⁺₂) = "
-       "1.7(2) ps (lifetimes/published/)", "within the combined uncertainty (2σ)")
+       "014301 (2012)): τ(2⁺₁) = 8.36(29) ps with the deorientation correction (lifetimes/published/). The example "
+       "coulex_ru98_plunger simulated at its 11 distances (particle–γ with the ²⁴Mg recoils), analysed as the paper: "
+       "β from the shifted centroids, decay-curve fits per ring corrected with Table I's deorientation "
+       "(lifetime_reproduction.ru98). The 4⁺₁ (2.31(16) ps) and 2⁺₂ (1.7(2) ps) are not reproduced: their two-step "
+       "excitation needs matrix elements the paper does not give", "within the combined uncertainty (2σ)")
 def rdds_ru98_reproduction(ref):
-    return None, math.nan, 0, WAVE_3C, {}
+    from . import lifetime_reproduction as lr
+
+    res = lr.ru98(ref)
+    if not res.get("available"):
+        return _missing("published/lifetimes.csv")
+    rings = sorted(res["rings"])
+    r0 = res["rings"][rings[0]]
+    plot = {"x": res["distances_um"], "physim": r0["model"], "reference": list(np.array(r0["unshifted"])
+                                                                            / np.array(r0["w_unshifted"])),
+            "xlabel": f"distance (µm), ring {rings[0]:g}°", "ylabel": "unshifted counts / W_U (deorientation)",
+            "logx": True}
+    return res["passed"], res["worst"], len(res["distances_um"]) * len(rings), res["detail"], plot
 
 
 @check(RDDS, "literature", "Reproduced experiment: ⁵⁰Cr, RDDS after fusion-evaporation with a three-foil plunger "
        "(Beckers et al., NIM A 1042, 167418 (2022)): τ(2⁺₁) = 12.2(4) ps, τ(4⁺₁) = 2.4(3) ps by γγ DDCM, against "
-       "the Coulex, RDDS and DSAM values for the same states (lifetimes/published/)",
-       "within the 2σ spread of the published values")
+       "the Coulex, RDDS and DSAM values for the same states (lifetimes/published/). The example fusion_cr50_plunger "
+       "simulated at nine pairs of distances, analysed as the paper: direct gates as its Eq. 13, the degrader and "
+       "stopper parts apart (lifetime_reproduction.cr50)", "within the 2σ spread of the published values")
 def rdds_cr50_reproduction(ref):
-    return None, math.nan, 0, WAVE_3C, {}
+    from . import lifetime_reproduction as lr
+
+    res = lr.cr50(ref)
+    if not res.get("available"):
+        return _missing("published/lifetimes.csv")
+    t1 = res["per_distance"]["t1"]
+    plot = {"x": [p["distance_um"] for p in t1], "physim": [p["tau_ps"] for p in t1],
+            "reference": [res["states"]["2+1"]["paper_tau_ps"]] * len(t1),
+            "xlabel": "x₁ (µm), 2⁺₁, t₁ part", "ylabel": "τ(x) (ps)", "logx": True}
+    return res["passed"], res["worst"], 2, res["detail"], plot
 
 
 @check(DSAM, "literature", "Closure: τ recovered by the line-shape fit from simulated DSAM spectra of known τ (with "
-       "side feeding)", "within the fit's uncertainty (2σ)")
+       "side feeding): the ¹⁴³Sm 444.8 and 527.5 keV lines (the paper's Fig. 2) of lifetime_reproduction.sm143, "
+       "fitted at 148° and 123° with a kernel of separate recoils slowed with the same stopping",
+       "within the fit's uncertainty (2σ)")
 def dsam_closure(ref):
-    return None, math.nan, 0, WAVE_3C, {}
+    from . import lifetime_reproduction as lr
+
+    res = lr.dsam_closure(ref)
+    if not res.get("available"):
+        return _missing("published/lifetimes.csv")
+    lv = res["levels"]
+    detail = "; ".join(f"{lab} ({v['e_gamma_kev']:.1f} keV): {v['tau_ps']:.3f} ± {v['stat_ps']:.3f} ps for "
+                       f"{v['true_ps']:.3f} ({v['pull']:+.1f}σ)" for lab, v in lv.items())
+    plot = {"x": list(lv), "physim": [v["tau_ps"] for v in lv.values()],
+            "reference": [v["true_ps"] for v in lv.values()], "categorical": True}
+    return res["worst"] <= 1.0, res["worst"], len(lv), detail, plot
 
 
 @check(DSAM, "literature", "Reproduced experiment: ¹⁴³Sm, DSAM after fusion-evaporation on a 13 mg/cm² Au backing "
        "(Rajbanshi et al., PLB 782, 143 (2018)): seven lifetimes 0.41–1.02 ps and two upper limits in two dipole "
-       "bands (lifetimes/published/)", "within the published uncertainty plus SRIM's ±5% stopping (2σ)")
+       "bands (lifetimes/published/). The example fusion_sm143_dsam (the paper's level scheme, branchings and "
+       "side-feeding times) simulated with physim's stopping, analysed as the paper: line-shape fits from the top "
+       "of each band down with SRIM's stopping, at 148° and 123° (lifetime_reproduction.sm143)",
+       "within the published uncertainty plus SRIM's ±5% stopping (2σ)")
 def dsam_sm143_reproduction(ref):
-    return None, math.nan, 0, WAVE_3C, {}
+    from . import lifetime_reproduction as lr
+
+    res = lr.sm143(ref)
+    if not res.get("available"):
+        return _missing("published/lifetimes.csv")
+    lv = res["levels"]
+    order = res["order"]
+    plot = {"x": [f"{lv[k]['e_gamma_kev']:.0f}" for k in order], "physim": [lv[k]["tau_ps"] for k in order],
+            "reference": [lv[k]["paper_tau_ps"] for k in order], "categorical": True}
+    return res["passed"], res["worst"], len(order), res["detail"], plot
 
 
 # -- DSAM line shapes against APCAD and AhKin ---------------------------------------------------------------------

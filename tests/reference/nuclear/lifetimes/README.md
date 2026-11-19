@@ -62,6 +62,16 @@ errors), polynomials of degree 2, 3, 4 over all distances. Degree 4 gives 10.03 
 100.02 ps (τ = 100 ps) and 10.04 ps (τ = 10 ps, β = 10%). Its uncertainty propagation gives meaningless numbers
 (10⁴⁰ and more) and is not used. NaPyTau needs numpy and scipy (run with an existing Python 3.12 that had them).
 
+`napytau/ddcm_simulated.csv` (lifetime wave 3C, `scripts/lifetime_reference.py napytau-simulated`): NaPyTau on
+physim's own simulated plunger spectra. The ⁹⁸Ru example `coulex_ru98_plunger` without its deorientation section
+(one exponential, τ = 8.36 ps) simulated at its 11 distances, 4·10⁶ reactions, γ rays in coincidence with the ²⁴Mg
+recoils, the 41.5° ring (`physim.nuclear.lifetime_reproduction.napytau_input`); the unshifted and shifted
+intensities are the counts in windows (the stopped peak E₀ ± 2.5 FWHM, the rest of the line out to its kinematic
+end, less a flat background), with their errors; β = 4.76% from the shifted line's centroids at 41.5° and 138.5°.
+NaPyTau got the intensities over I_u + I_s and the distances plus the 8 µm offset, and gives τ(x) per distance for
+one polynomial of degree 2, 3 and 4 over all distances (its uncertainties again not usable). The same areas serve
+the one-level closure (`rdds_closure`). This file imports physim (it is physim's simulation that both analyse).
+
 ## `published/` — the experiments to reproduce
 
 `lifetimes.csv` (the measured lifetimes, with the other methods' values the papers quote for the same states) and
@@ -85,7 +95,13 @@ The checks of `physim.nuclear.validation` for the capabilities "Lifetimes: recoi
 | `trim/transport_trim.csv`, `trim/srim_stopping.csv` | `rdds_transport_vs_trim` (⁹⁸Ru in Cu), `dsam_transport_vs_trim` (¹⁴³Sm in Au) |
 | `apcad/OneShape_example.csv`, `apcad/XSec_example.dat` | `dsam_lineshape_vs_apcad` |
 | `ahkin/y83_in_ta/` | `dsam_lineshape_vs_ahkin` |
-| `napytau/`, `published/` | `rdds_ddcm_vs_napytau` and the reproductions: written in wave 3C |
+| `napytau/ddcm_simulated.csv` | `rdds_ddcm_vs_napytau`, `rdds_closure` (one level) |
+| `published/` (⁹⁸Ru, ⁵⁰Cr) | `rdds_ru98_reproduction`, `rdds_cr50_reproduction`, `rdds_closure` (fed from above) |
+| `published/` (¹⁴³Sm), `trim/srim_stopping.csv` | `dsam_sm143_reproduction`, `dsam_closure` |
+
+The reproductions (wave 3C, `physim.nuclear.lifetime_reproduction`, rerun with `scripts/reproduce_lifetimes.py`)
+simulate the three examples made after the papers and analyse the spectra as the papers did; the side-feeding times
+of ¹⁴³Sm come from `published/setups.toml` (a setup cannot hold them).
 
 ## Licences
 
