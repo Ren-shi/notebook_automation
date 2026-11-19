@@ -1,0 +1,12 @@
+###############################################################################
+#                                                                             #
+#                  Input parameters for prob_cos                              #
+#                                                                             #
+###############################################################################
+
+3.55             # detector radius in cm 
+8.0              # detector height in cm 
+25.5             # distance from target to detector in cm
+52.8             # angle (degrees) between the beam direction and 
+                 # the detector axis
+

@@ -1,0 +1,8 @@
+{
+  "tau_ps": 0.131308,
+  "plus_ps": 0.0339269,
+  "minus_ps": 0.0326754,
+  "best_lineshape": "ech0.131308.dat",
+  "published": "Garz\u00f3n, Rodr\u00edguez, Cristancho, Tao, Comput. Phys. Commun. (2020), AhKin; readme example: 0.131308 +0.0339269 -0.0326754 ps",
+  "run_on": "2026-11-19"
+}

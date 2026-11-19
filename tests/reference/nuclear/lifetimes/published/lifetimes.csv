@@ -1,0 +1,26 @@
+# Published lifetimes of the experiments physim reproduces (lifetime validation, wave 0, 19 November 2026).
+# Transcribed by hand from the tables and figures named in "source" (no digitising); every value was read from the
+# paper itself. tau_ps with plus_ps / minus_ps (equal when symmetric); kind "value" or "upper" (an upper limit).
+# role: "result" is the paper's own measurement; "comparison" is another method's value the paper quotes for the
+# same state, kept for the cross-method checks (Coulex against RDDS against DSAM).
+case,method,nucleus,state,e_level_kev,e_gamma_kev,tau_ps,plus_ps,minus_ps,kind,role,source
+ru98_rdds_coulex,RDDS,98Ru,2+1,652,652,8.36,0.29,0.29,value,result,"Radeck et al., PRC 85, 014301 (2012), Fig. 10 and text (includes 2% systematic; deorientation-corrected)"
+ru98_rdds_coulex,RDDS,98Ru,4+1,1397,745,2.31,0.16,0.16,value,result,"Radeck et al., PRC 85, 014301 (2012), Fig. 11"
+ru98_rdds_coulex,RDDS,98Ru,2+2,1414,761,1.7,0.2,0.2,value,result,"Radeck et al., PRC 85, 014301 (2012), Fig. 12"
+cr50_rdds_fusion,RDDS,50Cr,2+1,783,783,12.2,0.4,0.4,value,result,"Beckers et al., NIM A 1042, 167418 (2022), Table 1 (OSTI 1898576)"
+cr50_rdds_fusion,RDDS,50Cr,4+1,1881,1098,2.4,0.3,0.3,value,result,"Beckers et al., NIM A 1042, 167418 (2022), Table 1"
+cr50_rdds_fusion,Coulex,50Cr,2+1,783,783,13.2,0.4,0.4,value,comparison,"Ernst et al., PRL 84, 416 (2000), as quoted in Beckers et al. Table 1"
+cr50_rdds_fusion,Coulex,50Cr,4+1,1881,1098,3.2,0.7,0.7,value,comparison,"Ernst et al., PRL 84, 416 (2000), as quoted in Beckers et al. Table 1"
+cr50_rdds_fusion,RDDS,50Cr,2+1,783,783,13.3,0.6,0.6,value,comparison,"Giles et al., PRC 99, 044317 (2019), as quoted in Beckers et al. Table 1"
+cr50_rdds_fusion,RDDS,50Cr,2+1,783,783,13.0,0.4,0.4,value,comparison,"Arnswald et al., PLB 772, 599 (2017), as quoted in Beckers et al. Table 1"
+cr50_rdds_fusion,RDDS,50Cr,4+1,1881,1098,4.9,0.7,0.7,value,comparison,"Giles et al., PRC 99, 044317 (2019), as quoted in Beckers et al. Table 1"
+cr50_rdds_fusion,DSAM,50Cr,4+1,1881,1098,2.5,0.7,0.7,value,comparison,"Brandolini et al., NPA 642, 387 (1998), as quoted in Beckers et al. Table 1"
+sm143_dsam_fusion,DSAM,143Sm,45/2- (DB I),,239.5,1.02,0.16,0.12,value,result,"Rajbanshi et al., PLB 782, 143 (2018), Table I (arXiv:1710.10019); stopping-power systematics (~5%) not included"
+sm143_dsam_fusion,DSAM,143Sm,47/2- (DB I),,339.6,0.58,0.09,0.08,value,result,"Rajbanshi et al., PLB 782, 143 (2018), Table I"
+sm143_dsam_fusion,DSAM,143Sm,49/2- (DB I),,444.8,0.44,0.07,0.06,value,result,"Rajbanshi et al., PLB 782, 143 (2018), Table I"
+sm143_dsam_fusion,DSAM,143Sm,51/2- (DB I),,578.2,0.41,0.07,0.06,value,result,"Rajbanshi et al., PLB 782, 143 (2018), Table I"
+sm143_dsam_fusion,DSAM,143Sm,53/2- (DB I),,728.0,0.78,,,upper,result,"Rajbanshi et al., PLB 782, 143 (2018), Table I"
+sm143_dsam_fusion,DSAM,143Sm,51/2- (DB II),,527.5,0.78,0.12,0.09,value,result,"Rajbanshi et al., PLB 782, 143 (2018), Table I"
+sm143_dsam_fusion,DSAM,143Sm,53/2- (DB II),,584.9,0.57,0.09,0.07,value,result,"Rajbanshi et al., PLB 782, 143 (2018), Table I"
+sm143_dsam_fusion,DSAM,143Sm,55/2(-) (DB II),,646.2,0.44,0.07,0.06,value,result,"Rajbanshi et al., PLB 782, 143 (2018), Table I"
+sm143_dsam_fusion,DSAM,143Sm,57/2(-) (DB II),,698.0,0.66,,,upper,result,"Rajbanshi et al., PLB 782, 143 (2018), Table I"

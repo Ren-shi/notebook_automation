@@ -1,0 +1,41 @@
+# The setups of the published lifetime experiments, as the papers state them (wave 0, 19 November 2026).
+# Wave 3C builds physim experiments from these. "not given" where the paper does not say.
+
+[ru98_rdds_coulex]
+reference = "D. Radeck et al., Phys. Rev. C 85, 014301 (2012); open accepted manuscript https://link.aps.org/accepted/10.1103/PhysRevC.85.014301"
+reaction = "coulex"                      # inverse kinematics, 98Ru excited, scattered 24Mg detected at 0 deg
+beam = "98Ru"
+beam_energy = "300 MeV"                  # Coulomb barrier 347 MeV (paper); 2.5 enA, q = 16+
+target = { material = "24Mg", thickness = "0.7 mg/cm2" }
+stopper = { kind = "stopper", material = "Cu", thickness = "15.7 mg/cm2" }
+distances = "3 um to 450 um (relative to electrical contact), offset d0 = 8(1) um"
+recoil_velocity = "v/c = 4.50(6)%, v = 13.49(18) um/ps (centroid of the shifted peak)"
+particle_detector = "Si at 0 deg behind the stopper, half-angle 29.7 to 28.3 deg (depends on the distance)"
+gamma_array = "SPEEDY: 10 HPGe clovers; rings 36.5, 46.5, 85, 95, 133.5, 143.5 deg (4 shielded at 41.5 deg, 4 at 138.5 deg, 2 unshielded at 90 deg)"
+analysis = "particle-gamma; decay-curve fit P(d) = a (1 - exp(-(d - d0)/(v tau))) per ring; corrections: Lorentz boost of the solid angle, efficiency of shifted vs unshifted, deorientation (2+1 only, G_k(d) = alpha_k + (1 - alpha_k) exp(-Gamma_k (d - d0)/v), Table I: alpha_2 0.18(11), alpha_4 0.24(13), Gamma_2 0.142(31)/ps, Gamma_4 0.314(110)/ps)"
+note = "two-step Coulex feeding negligible (beam at about 85% of the barrier); 4+1 and 2+2 analysed in rings 1 and 6 only"
+
+[cr50_rdds_fusion]
+reference = "C. Beckers et al., Nucl. Instrum. Methods A 1042, 167418 (2022); open accepted manuscript https://www.osti.gov/servlets/purl/1898576"
+reaction = "fusion-evaporation"           # 24Mg(32S,4p2n)50Cr, Cologne FN tandem
+beam = "32S"
+beam_energy = "100 MeV"
+target = { material = "24Mg", thickness = "0.6 mg/cm2" }          # self-supporting
+stopper = { kind = "differential", material = "Ta", thickness = "4.4 mg/cm2" }   # first degrader
+degrader2 = { material = "Ta", thickness = "6.5 mg/cm2" }                         # second foil, stops the recoils
+distances = "9 sets, 18 flight times: target to degrader 17-750 um, degrader to stopper 40-335 um; e.g. (42, 40), (62, 67), (122, 127) um"
+recoil_velocity = "beta = 3.9(1)% after the target, 1.5(1)% after the first degrader"
+gamma_array = "11 HPGe (55-90% rel. eff.): 5 at 142.3 deg, 6 at 45 deg"
+analysis = "gamma-gamma DDCM with direct gates on the feeding transition, extended to three foils (Eqs. 13-14); Delta-x renormalised by v/v'"
+
+[sm143_dsam_fusion]
+reference = "S. Rajbanshi et al., Phys. Lett. B 782, 143 (2018); open https://arxiv.org/abs/1710.10019"
+reaction = "fusion-evaporation"           # 124Sn(24Mg,5n)143Sm, IUAC 15UD pelletron
+beam = "24Mg"
+beam_energy = "107 MeV"
+target = { material = "124Sn", thickness = "0.8 mg/cm2", enrichment = "99.9%" }
+backing = { material = "Au", thickness = "13 mg/cm2" }
+recoil_velocity = "beta about 1.6%"
+gamma_array = "INGA: 18 Compton-suppressed clovers at 90 (6), 123 (4), 148 (4), 57 (4) deg; line shapes fitted at 148, 123, 90 deg"
+analysis = "LINESHAPE with Monte Carlo slowing down and SRIM stopping powers (systematic about 5%, not in the quoted errors); gates from above (GTT) and below (GTB); side feeding as a 5-transition cascade, side-feeding times in Table I"
+side_feeding_ps = { "45/2-" = 0.20, "47/2-" = 0.21, "49/2-" = 0.18, "51/2-" = 0.16, "53/2-" = 0.13, "51/2- (DB II)" = 0.15, "53/2- (DB II)" = 0.16, "55/2(-)" = 0.11, "57/2(-)" = 0.08 }

@@ -1,0 +1,21 @@
+###############################################################################
+#                                                                             #
+#                  Input parameters for AhKin_A/B                             #
+#                                                                             #
+###############################################################################
+
+1193.1                                         # E_g
+0 1.33333                                      # cal0, cal1
+10                                             # nt
+
+1.3953 0.14058e-2 -0.1895e-6                   # reso0, reso1, reso2
+                                               # FWHM = reso0 + reso1*E_g + reso2*E_g^2
+
+EL1192GFAA53.txt                               # file with experimental lineshape
+115                                            # background
+
+                                               # file with kernel
+betak_runge.dat
+
+
+

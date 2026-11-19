@@ -3,3 +3,6 @@ tests/reference/nuclear/shellmodel/** -text
 
 # The vendored KSHELL release is kept byte for byte (its SHA-256 is pinned in scripts/build_kshell.py)
 third_party/kshell/*.tar.gz binary
+
+# Lifetime fixtures are kept byte for byte: AhKin's outputs on Windows have CRLF line endings, its inputs LF
+tests/reference/nuclear/lifetimes/** -text
