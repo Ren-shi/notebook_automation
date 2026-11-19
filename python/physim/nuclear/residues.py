@@ -42,16 +42,27 @@ the cascades enters instead at one of the lower yrast levels. The cascade then f
 branching ratios (with internal conversion). The compound nucleus's spin is perpendicular to the beam, so the
 levels are aligned: a Gaussian distribution of magnetic substates about the beam of width σ = ``alignment`` × J
 at the entry level, carried down by the U_k coefficients through every γ ray, and each γ ray has the angular
-distribution W(θ) = 1 + Σ B_k A_k P_k(cos θ) about the beam in the residue's frame. The γ rays are emitted
-where the residue was made, at the speed it was made with (prompt decays; lifetimes are left out), followed to
-the crystals with the response of :mod:`physim.nuclear.response`, and Doppler corrected as an experimentalist
-does without a recoil detector: as if every residue moved along the beam at β_CN for the nominal beam energy at
-the middle of the target.
+distribution W(θ) = 1 + Σ B_k A_k P_k(cos θ) about the beam in the residue's frame. Without a ``[lifetime]``
+section the γ rays are emitted where the residue was made, at the speed it was made with (prompt decays),
+followed to the crystals with the response of :mod:`physim.nuclear.response`, and Doppler corrected as an
+experimentalist does without a recoil detector: as if every residue moved along the beam at β_CN for the nominal
+beam energy at the middle of the target.
+
+**Lifetimes** (``[lifetime]``, wave 2B of ``planning/lifetimes.md``). Each level has its mean life
+(:attr:`ResidueCascade.taus_ps`, from :func:`physim.nuclear.lifetimes.level_taus`; prompt, with a note, where none
+is known) and each cascade reaches its first known level through a rotational side-feeding band
+(:attr:`ResidueCascade.side_feeding_ps`; the LINESHAPE model, ``side_feeding_q`` and ``side_feeding_levels`` in
+``[reaction]``). The decay times are drawn in proper time down the cascade, converted to lab time along the
+residue's path, and the residue slows through the target and backing (and for a plunger crosses the gap to the
+stopper) before each γ ray (:mod:`physim.nuclear.transport` on :func:`physim.nuclear.rates.recoil_stack`):
+:func:`simulate_residue_gammas` takes the plunger's ``distance_um``. :func:`plunger_components`,
+:func:`plunger_spectra` and :func:`dsam_lineshapes` predict the same from the lifetime functions, for planning.
 
 **Not in Stage 1:** the fusion cross section (Stage 2) and the evaporation's own channel cross sections
 (Stage 3); the energy dependence of the cross sections through the target (each channel's cross section is the
-table's, at every depth); lifetimes and slowing down of the residues; summing and add-back of the residues'
-γ rays; the statistical γ rays above the yrast line; and particle detection of the evaporated particles.
+table's, at every depth); summing and add-back of the residues' γ rays; the statistical γ rays above the yrast
+line (their time is the side-feeding band's); deorientation of fusion residues in vacuum; and particle
+detection of the evaporated particles.
 """
 
 from __future__ import annotations
@@ -82,6 +93,12 @@ EMISSION_R0 = 1.5
 ALIGNMENT = 0.3
 #: Default share of the cascades that enter below the top yrast level.
 SIDE_FEEDING = 0.25
+#: Default quadrupole moment (b) of the rotational side-feeding band, and its number of E2 transitions.
+SIDE_FEEDING_Q_B = 6.0
+SIDE_FEEDING_LEVELS = 5
+#: The mean life (ps) the lifetime functions get for a level whose τ is unknown and which is taken as prompt
+#: (they need a positive number; 1 as against the femtoseconds of the fastest DSAM lifetimes).
+PROMPT_PS = 1e-6
 #: Angular momentum each kind of particle takes away on average, ħ, for the default entry spin.
 SPIN_REMOVED = {"n": 1.0, "p": 1.0, "d": 1.5, "t": 2.0, "a": 3.0}
 #: e² in MeV fm.
@@ -104,6 +121,8 @@ GAMMA_COLUMNS = {
     "beta": "speed of the residue at emission, units of c",
     "corrected": "measured energy Doppler corrected for a residue along the beam at the nominal β_CN, MeV",
     "weight": "rate this γ ray stands for, per second",
+    "distance_um": "target-to-stopper distance of a plunger, µm (0 without one: no gap; a DSAM backing is in contact)",
+    "stopped": "the residue was at rest when it emitted the γ ray (always false without a lifetime section)",
 }
 
 
@@ -321,6 +340,9 @@ class ChannelTable:
     temperature_mev: Optional[float] = None
     alignment: float = ALIGNMENT
     side_feeding: float = SIDE_FEEDING
+    #: The rotational side-feeding band of lifetime measurements: quadrupole moment (b) and number of transitions.
+    side_feeding_q_b: float = SIDE_FEEDING_Q_B
+    side_feeding_levels: int = SIDE_FEEDING_LEVELS
 
     @property
     def compound(self) -> str:
@@ -363,7 +385,12 @@ class ChannelTable:
         table = cls(beam_ion(experiment), main_nuclide(experiment.target),
                     temperature_mev=_q(fe.temperature).to("MeV") if fe.temperature is not None else None,
                     alignment=fe.alignment if fe.alignment is not None else ALIGNMENT,
-                    side_feeding=_q(fe.side_feeding).to("%") / 100 if fe.side_feeding is not None else SIDE_FEEDING)
+                    side_feeding=_q(fe.side_feeding).to("%") / 100 if fe.side_feeding is not None else SIDE_FEEDING,
+                    side_feeding_q_b=(_q(fe.side_feeding_q).to("b") if getattr(fe, "side_feeding_q", None) is not None
+                                      else SIDE_FEEDING_Q_B),
+                    side_feeding_levels=(int(fe.side_feeding_levels)
+                                         if getattr(fe, "side_feeding_levels", None) is not None
+                                         else SIDE_FEEDING_LEVELS))
         for ch in fe.channels:
             parts = parse_particles(ch.particles)
             table.channels.append(ResidueChannel(
@@ -800,11 +827,33 @@ def _gaussian_tensors(j: float, sigma_over_j: float) -> dict:
 @dataclass
 class ResidueCascade:
     """How a residue's γ-ray cascade runs through its level scheme: where it enters (by spin) and the branching at
-    each level, with the alignment carried down."""
+    each level, with the alignment carried down; and, for lifetime measurements, how long each step takes.
+
+    **Level lifetimes** (:attr:`taus_ps`): the mean life of each level from :func:`physim.nuclear.lifetimes.level_taus`
+    (its half-life, else its B(Eλ↓) values), with the source in :attr:`tau_sources`. A level that has γ rays but no
+    known τ gets ``nan`` there and is listed in :attr:`prompt_levels`: the cascade treats it as **prompt** (it decays
+    at once, adding no time), and :func:`simulate_residue_gammas` and the predictions say so in their notes. No τ is
+    made up for it; give it a half-life or a B(E2) in ``[levels.<residue>]`` to include it. The ground state, and
+    any level with no γ rays out of it, has τ = inf (it does not decay within the scheme).
+
+    **Side feeding** (:attr:`side_feeding_ps`, :attr:`side_bands`): every cascade reaches the first known level it
+    enters (the top yrast level of its entry, or a lower one for the share :attr:`side_feeding`) through a
+    rotational band of :attr:`side_feeding_levels` stretched E2 transitions with the quadrupole moment
+    :attr:`side_feeding_q_b`, the usual side-feeding model of the DSAM program LINESHAPE (J. C. Wells and
+    N. R. Johnson, ORNL-6689 (1991); Q_t and the number of transitions are its side-feeding parameters, the band's
+    moment of inertia taken like the fed band's). The band above a level of spin J has spins J + 2, …, J + 2N and
+    transition energies E(I → I − 2) = A (4I − 2), A = ħ²/2𝒥 = E_γ / (J(J + 1) − J_f(J_f + 1)) from the fed level's
+    strongest transition (each step at that transition's energy when the spins are unknown). Each step has the
+    rotor's B(E2; I → I − 2) = (5/16π) Q² ⟨I 0 2 0 | I−2 0⟩² (A. Bohr and B. R. Mottelson, Nuclear Structure II,
+    Eq. 4-68, K = 0), so its mean life comes from :func:`physim.nuclear.lifetimes.tau_from_b`. The side-feeding time
+    of a level is the sum of the band's mean lives: it grows with the band's length and falls as Q² grows. The
+    cascade draws each step of the band (Bateman: a sum of exponentials), not one exponential of the mean."""
 
     scheme: object
     alignment: float = ALIGNMENT
     side_feeding: float = SIDE_FEEDING
+    side_feeding_q_b: float = SIDE_FEEDING_Q_B
+    side_feeding_levels: int = SIDE_FEEDING_LEVELS
 
     def __post_init__(self):
         s = self.scheme
@@ -877,10 +926,142 @@ class ResidueCascade:
                     out.append((e, y, i, final))
         return sorted(out, key=lambda x: -x[1])
 
-    def run(self, entry_spin: np.ndarray, rng) -> dict:
+    # -- lifetimes ---------------------------------------------------------------------------------------------
+
+    def _lifetimes(self) -> tuple:
+        cached = self.__dict__.get("_tau_cache")
+        if cached is None:
+            from . import lifetimes
+            from .gamma import level_names
+
+            levels = self.scheme.levels
+            names = level_names(levels)
+            known = lifetimes.level_taus(self.scheme)
+            taus = np.full(len(levels), np.inf)
+            sources: list = [None] * len(levels)
+            prompt = []
+            for i, name in enumerate(names):
+                if i not in self.branches:
+                    continue  # the ground state, or no γ rays out: it does not decay within the scheme
+                if name in known:
+                    taus[i], sources[i] = known[name]
+                else:
+                    taus[i] = np.nan
+                    prompt.append(i)
+            cached = self.__dict__["_tau_cache"] = (taus, sources, prompt, names)
+        return cached
+
+    @property
+    def taus_ps(self) -> np.ndarray:
+        """Mean life (ps) of each level of the scheme: from :func:`~physim.nuclear.lifetimes.level_taus`; ``nan``
+        for a level with γ rays but no known τ (taken as prompt, see the class notes); inf for the ground state and
+        levels with no γ rays out."""
+        return self._lifetimes()[0]
+
+    @property
+    def tau_sources(self) -> list:
+        """Where each level's τ comes from ("half-life (ensdf)", "B(E2) (user)", ...), None where it is unknown."""
+        return self._lifetimes()[1]
+
+    @property
+    def prompt_levels(self) -> list:
+        """The levels with γ rays but no known τ, which the cascade takes as prompt."""
+        return self._lifetimes()[2]
+
+    @property
+    def level_names(self) -> list:
+        """A name per level ("2+₁", "4+"), as :func:`physim.nuclear.gamma.level_names` gives them."""
+        return self._lifetimes()[3]
+
+    def _side_band(self, i: int) -> list:
+        """The side-feeding band above level i: [(spin, E_γ keV, τ ps)], from the bottom step (into level i) up."""
+        from . import lifetimes
+
+        n = int(self.side_feeding_levels)
+        br = self.branches.get(i)
+        if n <= 0 or not br or self.side_feeding_q_b <= 0:
+            return []
+        spins = [lv.spin for lv in self.scheme.levels]
+        final, _share, _g, _l1, _l2, _d, e = max(br, key=lambda b: b[1])
+        e_kev = 1e3 * e
+        j, jf = spins[i], spins[final]
+        a = None
+        if j is not None and jf is not None and j * (j + 1) > jf * (jf + 1):
+            a = e_kev / (j * (j + 1) - jf * (jf + 1))
+        q2 = self.side_feeding_q_b ** 2 * 1e4  # e² fm⁴ (1 b = 100 fm²)
+        out = []
+        for k in range(1, n + 1):
+            spin = (j if j is not None else 0.0) + 2 * k
+            e_k = a * (4 * spin - 2) if a is not None else e_kev
+            cg2 = 3 * spin * (spin - 1) / (2 * (2 * spin - 1) * (2 * spin + 1))
+            b_e2 = 5 / (16 * math.pi) * q2 * cg2
+            out.append((spin, e_k, float(lifetimes.tau_from_b(e_k, "E2", b_e2))))
+        return out
+
+    @property
+    def side_bands(self) -> dict:
+        """{level: [(spin, E_γ keV, τ ps), ...]}: the side-feeding band above each level a cascade can enter (the
+        yrast levels), bottom step first; empty with ``side_feeding_levels`` = 0."""
+        cached = self.__dict__.get("_band_cache")
+        if cached is None:
+            cached = self.__dict__["_band_cache"] = {i: self._side_band(i) for _j, i in self.yrast}
+        return cached
+
+    @property
+    def side_feeding_ps(self) -> np.ndarray:
+        """The mean side-feeding time (ps) of each level: the sum of its band's mean lives (0 with
+        ``side_feeding_levels`` = 0); ``nan`` for a level no cascade enters directly."""
+        out = np.full(len(self.scheme.levels), np.nan)
+        for i, band in self.side_bands.items():
+            out[i] = float(sum(t for *_x, t in band))
+        return out
+
+    def matrices(self, entry_spin: float) -> dict:
+        """The cascade of one entry spin in the form :mod:`physim.nuclear.lifetimes` takes: ``taus_ps``,
+        ``feeding`` (row = from, column = to, total shares with conversion) and ``populations``, over the scheme's
+        levels followed by the levels of the side-feeding bands (``band_of``: for each extra level, the scheme level
+        its band feeds). A level of unknown τ gets :data:`PROMPT_PS` (prompt, as in :meth:`run`). Also
+        ``names``, ``prompt`` (the levels taken as prompt) and ``lines``: [(initial, final, E_γ keV, γ share of the
+        initial level's decays)]."""
+        n = len(self.scheme.levels)
+        taus = list(np.where(np.isnan(self.taus_ps), PROMPT_PS, self.taus_ps))
+        names = list(self.level_names)
+        rows: list = []  # (from, to, share)
+        band_of: list = []
+        pops = {}
+        for i, share in self.feeding(entry_spin).items():
+            band = self.side_bands.get(i, [])
+            below = i
+            for spin, _e, tau in band:  # bottom step first: each new level feeds the one before
+                k = n + len(band_of)
+                band_of.append(i)
+                taus.append(tau)
+                names.append(f"side feeding {spin:g} → {names[i]}")
+                rows.append((k, below, 1.0))
+                below = k
+            pops[below] = pops.get(below, 0.0) + share
+        m = n + len(band_of)
+        feeding = np.zeros((m, m))
+        for i, br in self.branches.items():
+            for final, share, *_rest in br:
+                feeding[i, final] += share
+        for a, b, s in rows:
+            feeding[a, b] = s
+        populations = np.zeros(m)
+        for k, p in pops.items():
+            populations[k] = p
+        lines = [(i, final, 1e3 * e, share * g) for i, br in self.branches.items()
+                 for final, share, g, *_r, e in br if share * g > 0]
+        return {"taus_ps": np.asarray(taus, dtype=float), "feeding": feeding, "populations": populations,
+                "band_of": band_of, "names": names, "prompt": list(self.prompt_levels), "lines": lines}
+
+    def run(self, entry_spin: np.ndarray, rng, timing_rng=None) -> dict:
         """One cascade per entry: the γ rays, as arrays ``source`` (which entry), ``initial``, ``final``,
         ``energy`` (MeV) and the distribution coefficients ``a2`` and ``a4`` about the beam (W = 1 + a2 P2 +
-        a4 P4)."""
+        a4 P4). With ``timing_rng`` (a numpy Generator, kept apart from ``rng`` so the cascade itself is the same
+        with or without it) also ``time_ps``: the proper time of each γ ray after the residue was made, the
+        side-feeding band's steps and each level's decay drawn from their mean lives and added down the cascade
+        (converted transitions take their time too; levels of unknown τ are prompt)."""
         n = len(entry_spin)
         level = np.zeros(n, dtype=int)
         for j in np.unique(entry_spin):
@@ -894,8 +1075,18 @@ class ResidueCascade:
             m = level == lv
             t = _gaussian_tensors(spins[lv] or 0.0, self.alignment)
             b2[m], b4[m] = t[2], t[4]
+        timed = timing_rng is not None
+        if timed:
+            clock = np.zeros(n)
+            for lv in np.unique(level):
+                m = np.flatnonzero(level == lv)
+                for *_x, tau in self.side_bands.get(int(lv), []):
+                    clock[m] += timing_rng.exponential(tau, len(m))
+            step_tau = np.where(np.isnan(self.taus_ps), 0.0, self.taus_ps)
         alive = np.ones(n, dtype=bool)
         out = {k: [] for k in ("source", "initial", "final", "energy", "a2", "a4")}
+        if timed:
+            out["time_ps"] = []
         for _ in range(4 * len(self.scheme.levels) + 4):
             alive &= np.isin(level, list(self.branches))
             alive &= level != self.ground
@@ -912,6 +1103,8 @@ class ResidueCascade:
                 cum = np.cumsum([b[1] for b in br])
                 pick = np.minimum(np.searchsorted(cum, us * cum[-1], side="right"), len(br) - 1)
                 ji = spins[lv]
+                if timed and step_tau[lv] > 0:
+                    clock[sel] += timing_rng.exponential(step_tau[lv], len(sel))
                 for k, (final, _, g, l1, l2, delta, e) in enumerate(br):
                     rows = sel[pick == k]
                     if not len(rows):
@@ -928,6 +1121,8 @@ class ResidueCascade:
                         out["energy"].append(np.full(len(emitted), e))
                         out["a2"].append(b2[emitted] * a2)
                         out["a4"].append(b4[emitted] * a4)
+                        if timed:
+                            out["time_ps"].append(clock[emitted].copy())
                     if known:
                         u2, u4 = (_u(k_, ji, jf, l1, l2, delta) for k_ in (2, 4))
                         b2[rows] *= u2
@@ -938,6 +1133,7 @@ class ResidueCascade:
                     level[rows] = final
         if not out["source"]:
             return {k: np.zeros(0, dtype=int if k in ("source", "initial", "final") else float) for k in out}
+        # (the stable sort keeps each cascade's γ rays in the order they were emitted)
         res = {k: np.concatenate(v) for k, v in out.items()}
         order = np.argsort(res["source"], kind="stable")
         return {k: v[order] for k, v in res.items()}
@@ -1025,26 +1221,41 @@ def doppler_correct(beta: float, crystal_dirs: np.ndarray, measured: np.ndarray)
 
 def simulate_residue_gammas(experiment, events: int = 100_000, seed: int = 1,
                             residue_events: Optional[ResidueEvents] = None, gammas_per_event: int = 4,
-                            plain: bool = False) -> ResidueGammas:
+                            plain: bool = False, *, distance_um: Optional[float] = None) -> ResidueGammas:
     """The residues' γ rays in the setup's crystals. Each cascade is emitted ``gammas_per_event`` times over, each
     with a share of the event's rate (the rates are unchanged, the spectra smoother). The same setup and seed
-    give the same γ rays, bit for bit."""
+    give the same γ rays, bit for bit.
+
+    With a ``[lifetime]`` section the residues live: each γ ray leaves after its proper decay time through the
+    cascade (side-feeding band and level lifetimes, :meth:`ResidueCascade.run`), converted to lab time along the
+    residue's path (:func:`physim.nuclear.transport.lab_time`), and the residue has slowed through the target and
+    backing by then, and for a plunger crossed the gap to the stopper or degraders
+    (:func:`physim.nuclear.rates.recoil_stack` at ``distance_um``, the target-to-stopper distance without the
+    offset; the setup's first distance if not given, with a note), with :func:`physim.nuclear.transport.slow`
+    (angular scattering for DSAM, straight paths for a plunger). The γ ray is emitted where the residue is then, at
+    its velocity then. The columns ``distance_um`` and ``stopped`` say where; the private column ``_segment`` gives
+    the index into the recoil stack of the segment the residue was in (−1: left by the front, len(stack): beyond
+    the last), which tells a plunger's shifted, degraded and unshifted γ rays apart. Without a lifetime section
+    nothing changes: prompt γ rays at the production speed, and a ``distance_um`` is refused."""
     from .gamma_events import _deposit, _first_crystal, _own_shares, _unit, crystals_of
     from .response import FWHM_PER_SIGMA
 
     if not experiment.gamma_detectors:
         raise ValueError("the setup has no γ-ray detectors")
+    life = _lifetime_path(experiment, distance_um)
     ev = residue_events if residue_events is not None else simulate_residues(experiment, events, seed)
     table = ev.table
     c = ev.columns
     rng = np.random.default_rng([int(seed), 75])
+    # The lifetimes' own stream: the cascades and the γ rays' directions are those of the same seed without them.
+    trng = np.random.default_rng([int(seed), 75, 2]) if life is not None else None
     crystals, bare = crystals_of(experiment, plain=True)
     centres = np.array([cr.centre for cr in crystals])
     normals = _unit(centres)
     radii = np.array([cr.radius for cr in crystals])
     k_rep = max(int(gammas_per_event), 1)
 
-    parts, notes, skipped = [], list(ev.notes), []
+    parts, notes, skipped, prompt_notes = [], list(ev.notes), [], []
     first = 0
     for i, ch in enumerate(table.channels):
         rows = np.flatnonzero(c["channel"] == i)
@@ -1054,7 +1265,7 @@ def simulate_residue_gammas(experiment, events: int = 100_000, seed: int = 1,
             continue
         cas = _cascade_of(scheme, table)
         rows = np.repeat(rows, k_rep)
-        g = cas.run(c["entry_spin"][rows], rng)
+        g = cas.run(c["entry_spin"][rows], rng, trng)
         src = rows[g["source"]]
         cascade = g["source"] + first
         first += len(rows)
@@ -1079,23 +1290,41 @@ def simulate_residue_gammas(experiment, events: int = 100_000, seed: int = 1,
         sin = np.sqrt(1 - cos * cos)
         rest = np.stack([sin * np.cos(phi), sin * np.sin(phi), cos], axis=-1)
         vel = c["_velocity"][src]
-        e_lab, p_lab = _boost(g["energy"], g["energy"][:, None] * rest, vel)
-        lab = p_lab / e_lab[:, None]
         origin = np.zeros((m, 3))
         origin[:, 0], origin[:, 1] = c["x"][src], c["y"][src]
+        beta = c["beta"][src]
+        stopped = np.zeros(m, dtype=bool)
+        segment = np.full(m, -2)
+        if life is not None:
+            moved = _transport(life, ch.residue, c, src, g["time_ps"], trng)
+            vel, beta, stopped, segment = moved["velocity"], moved["beta"], moved["stopped"], moved["segment"]
+            origin += moved["shift_mm"]
+            used = sorted(set(cas.prompt_levels) & set(np.unique(g["initial"]).tolist()))
+            if used:
+                names = ", ".join(cas.level_names[k] for k in used)
+                prompt_notes.append(f"{ch.residue}: no known lifetime for {names}; taken as prompt (give a "
+                                    "half-life or a B(E2) in [levels] to include it)")
+        e_lab, p_lab = _boost(g["energy"], g["energy"][:, None] * rest, vel)
+        lab = p_lab / e_lab[:, None]
         which, reached = _first_crystal(origin, lab, centres, normals, radii)
         keep = np.flatnonzero(reached)
         parts.append({"event": src[keep], "cascade": cascade[keep], "channel": np.full(len(keep), i),
                       "initial": g["initial"][keep], "final": g["final"][keep], "crystal": which[keep],
                       "energy0": g["energy"][keep], "energy_lab": e_lab[keep], "lab": lab[keep],
-                      "beta": c["beta"][src[keep]], "weight": c["weight"][src[keep]] / k_rep})
+                      "beta": beta[keep], "weight": c["weight"][src[keep]] / k_rep,
+                      "distance_um": np.full(len(keep), 0.0 if life is None else life["distance_um"]),
+                      "stopped": stopped[keep], "_segment": segment[keep]})
     if skipped:
         notes.append("No level scheme (in the setup or the local ENSDF copy) for " + ", ".join(skipped)
                      + ": their residues emit no γ rays here.")
+    if life is not None:
+        notes += life["notes"] + [n + "." for n in prompt_notes]
     if not parts:
         cols = {k: np.zeros(0) for k in GAMMA_COLUMNS}
         return ResidueGammas(cols, ev, crystals, int(seed), ev.beta_nominal, notes)
     cols = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
+    if life is None:
+        cols.pop("_segment")
     lab = cols.pop("lab")
     n = len(cols["event"])
     which, energy_lab = cols["crystal"], cols["energy_lab"]
@@ -1124,19 +1353,475 @@ def simulate_residue_gammas(experiment, events: int = 100_000, seed: int = 1,
     notes.append(f"{len(cols['event'])} γ rays interacted in the crystals ({k_rep} emissions of each cascade). "
                  f"Doppler correction for β = {ev.beta_nominal:.5f} along the beam. Each level is aligned with "
                  f"σ/J = {table.alignment:g}; {100 * table.side_feeding:.0f} % side feeding. No summing, add-back "
-                 "or lifetimes.")
+                 + ("or lifetimes." if life is None else "(lifetimes as above)."))
     return ResidueGammas(cols, ev, crystals, int(seed), ev.beta_nominal, notes)
 
 
+def _lifetime_path(experiment, distance_um: Optional[float]) -> Optional[dict]:
+    """The residues' path for a setup with a ``[lifetime]`` section: the recoil stack at the distance, whether the
+    transport scatters (DSAM), the target's tilt, and notes. None without a lifetime section."""
+    from .rates import _q, recoil_stack, tilt_deg
+
+    lt = getattr(experiment, "lifetime", None)
+    if lt is None:
+        if distance_um is not None:
+            raise ValueError("a distance needs a plunger: the setup has no [lifetime] section with method = \"rdds\"")
+        return None
+    notes = []
+    if lt.method == "rdds":
+        if distance_um is None:
+            if not lt.distances:
+                raise ValueError("the plunger has no distances: give distance_um")
+            distance_um = _q(lt.distances[0]).to("um")
+            notes.append(f"No distance asked for: the plunger at the setup's first distance, {distance_um:g} um.")
+        distance = float(distance_um)
+    else:
+        if distance_um is not None:
+            raise ValueError("a distance applies to a plunger (method = \"rdds\"), not to DSAM")
+        distance = 0.0  # no gap: the backing is in contact
+    segments = recoil_stack(experiment, None if lt.method != "rdds" else distance)
+    scatter = lt.method == "dsam"
+    path = " → ".join(s.name or ("gap" if s.vacuum else "layer") for s in segments)
+    notes.append(f"Lifetimes ({lt.method.upper()}): each γ ray after its level's decay time down the cascade, with "
+                 "a rotational side-feeding band; the residues slow along " + path
+                 + (" with angular scattering (ZBL Monte Carlo)" if scatter else " on straight paths") + ".")
+    return {"segments": segments, "scatter": scatter, "tilt": tilt_deg(experiment), "distance_um": distance,
+            "method": lt.method, "notes": notes}
+
+
+def _transport(life: dict, residue: str, columns: dict, src: np.ndarray, proper_ps: np.ndarray, rng) -> dict:
+    """Each residue ``src`` (rows of the events' columns) from where it was made until it emits at its proper
+    decay time: its velocity then (lab frame), speed, whether it had stopped, the segment of the recoil stack it is
+    in, and how far it moved (mm, lab frame)."""
+    from . import transport
+
+    mass = data.nuclide(residue).nuclear_mass_mev
+    v0 = columns["_velocity"][src]
+    speed = np.linalg.norm(v0, axis=1)
+    dirs = np.where(speed[:, None] > 0, v0 / np.where(speed > 0, speed, 1.0)[:, None], np.array([0.0, 0.0, 1.0]))
+    u = transport._into_stack(dirs, life["tilt"])
+    energy, depth = columns["energy"][src], columns["depth"][src]
+    t_lab = transport.lab_time(life["segments"], residue, mass, energy, u, depth, proper_ps)
+    s = transport.slow(life["segments"], residue, mass, energy, u, depth, t_lab, scatter=life["scatter"], rng=rng)
+    back = transport._into_stack(s.direction, -life["tilt"])
+    shift = transport._into_stack(np.nan_to_num(s.position_um), -life["tilt"]) * 1e-3
+    return {"velocity": back * s.beta[:, None], "beta": s.beta, "stopped": s.stopped, "segment": s.segment,
+            "shift_mm": shift}
+
+
 def _cascade_of(scheme, table: ChannelTable) -> ResidueCascade:
-    key = (id(scheme), table.alignment, table.side_feeding)
+    key = (id(scheme), table.alignment, table.side_feeding, table.side_feeding_q_b, table.side_feeding_levels)
     cached = _CASCADES.get(key)
     if cached is None or cached.scheme is not scheme:
-        cached = _CASCADES[key] = ResidueCascade(scheme, table.alignment, table.side_feeding)
+        cached = _CASCADES[key] = ResidueCascade(scheme, table.alignment, table.side_feeding,
+                                                 table.side_feeding_q_b, table.side_feeding_levels)
     return cached
 
 
 _CASCADES: dict = {}
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Lifetime predictions: plunger components per distance and DSAM line shapes (for the planner)
+
+
+def _studied(experiment, table: ChannelTable, channel: Optional[str]) -> int:
+    """The channel a lifetime prediction is for: the one asked for, else the setup's ``[run] channel``, else the
+    strongest."""
+    if channel is None and experiment.run is not None:
+        channel = experiment.run.channel
+    if channel is not None:
+        return table.index(channel)
+    return int(np.argmax([ch.cross_section_mb for ch in table.channels]))
+
+
+def lifetime_cascade(experiment, channel: Optional[str] = None) -> dict:
+    """The studied residue's cascade for the lifetime functions: :meth:`ResidueCascade.matrices` at the channel's
+    entry spin (the nominal beam energy at the middle of the target), with ``channel``, ``residue``, ``entry_spin``,
+    ``yields`` (:meth:`ResidueCascade.line_yields`: γ rays per residue of each transition) and the
+    :class:`ResidueCascade` itself (``cascade``)."""
+    from .rates import stack
+
+    table = ChannelTable.from_experiment(experiment)
+    i = _studied(experiment, table, channel)
+    ch = table.channels[i]
+    scheme = residue_scheme(experiment, ch.residue)
+    if scheme is None or not scheme.transitions:
+        raise ValueError(f"no level scheme for {ch.residue}: add [levels.{ch.residue}] or a local ENSDF copy")
+    layers = stack(experiment)
+    profile = compound_profile(experiment)
+    mid = float(np.interp(layers[0].thickness / 2, profile["depth"], profile["beam_energy"]))
+    cas = _cascade_of(scheme, table)
+    spin = table.entry_spin(i, mid)
+    out = cas.matrices(spin)
+    out.update(channel=ch.label, residue=ch.residue, index=i, entry_spin=spin, cascade=cas,
+               yields={(a, b): y for _e, y, a, b in cas.line_yields(spin)})
+    return out
+
+
+def _reached(cas: dict) -> tuple:
+    """The levels a cascade reaches (populated, or fed from one that is), and the cascade on them alone:
+    (indices into the extended levels, τ, feeding, populations). The lifetime functions cost as the cube of the
+    number of levels, and an ENSDF scheme holds many no cascade passes through."""
+    f, p = cas["feeding"], cas["populations"]
+    seen = set(np.flatnonzero(p > 0).tolist())
+    todo = list(seen)
+    while todo:
+        i = todo.pop()
+        for j in np.flatnonzero(f[i] > 0).tolist():
+            if j not in seen:
+                seen.add(j)
+                todo.append(j)
+    idx = np.array(sorted(seen), dtype=int)
+    return idx, cas["taus_ps"][idx], f[np.ix_(idx, idx)], p[idx]
+
+
+def _per_level(idx: np.ndarray, values: np.ndarray, n: int) -> np.ndarray:
+    """Rows for the reached levels (``idx``) spread back over the scheme's ``n`` levels, ``nan`` elsewhere."""
+    out = np.full((n,) + values.shape[1:], np.nan)
+    keep = idx < n
+    out[idx[keep]] = values[keep]
+    return out
+
+
+def _sample(experiment, index: int, events: int, seed: int) -> dict:
+    """Residues of channel ``index`` from :func:`simulate_residues`: energy, direction in the stack's frame, depth,
+    speed."""
+    from . import transport
+    from .rates import tilt_deg
+
+    ev = simulate_residues(experiment, events, seed)
+    rows = np.flatnonzero(ev["channel"] == index)
+    if not len(rows):
+        raise ValueError(f"no residue of channel {ev.table.channels[index].label} in {events} events: ask for more")
+    v = ev["_velocity"][rows]
+    beta = np.linalg.norm(v, axis=1)
+    dirs = v / np.where(beta > 0, beta, 1.0)[:, None]
+    dirs[beta <= 0] = (0.0, 0.0, 1.0)
+    return {"energy": ev["energy"][rows], "direction": transport._into_stack(dirs, tilt_deg(experiment)),
+            "depth": ev["depth"][rows], "beta": beta, "tilt": tilt_deg(experiment)}
+
+
+def _through(segments: list, species: str, mass_mev: float, energy, direction, depth) -> tuple:
+    """Straight through a stack of matter (and gaps) from a starting depth: the energy as it leaves the back (0 if it
+    stopped or went backwards), the proper time spent (ps; to rest for one that stopped), and whether it stopped (or
+    left by the front). The clocks are :mod:`physim.nuclear.transport`'s."""
+    from . import transport
+    from .rates import _after, stopping
+
+    lay = transport._Layout(segments)
+    e = np.array(energy, dtype=float)
+    u = np.asarray(direction, dtype=float)
+    z = np.asarray(depth, dtype=float)
+    cos = u[:, 2]
+    gone = cos <= 0
+    j0, d_in = lay.start(z)
+    proper = np.zeros(len(e))
+    with np.errstate(divide="ignore"):
+        inv = np.where(gone, 0.0, 1.0 / np.where(gone, 1.0, cos))
+    for j, seg in enumerate(lay.segments):
+        live = ~gone
+        if lay.gap[j]:
+            beta, gam = transport._beta_gamma(e, mass_mev)
+            ok = live & (beta > 0)
+            proper[ok] += lay.th[j] * inv[ok] / (beta[ok] * gam[ok] * transport.C_UM_PS)
+            continue
+        dz = np.where(j0 == j, lay.th[j] - d_in, np.where(j0 < j, lay.th[j], 0.0))
+        step = live & (dz > 0)
+        if not step.any():
+            continue
+        mat = seg.material
+        st = stopping(species, mat)
+        grid_e, grid_p = transport._clock(species, mat, float(mat.density_g_cm3), mass_mev, proper=True)
+        e_in = e[step]
+        e_out = _after(st, e_in, dz[step] * inv[step])
+        proper[step] += np.interp(e_in, grid_e, grid_p) - np.interp(e_out, grid_e, grid_p)
+        e[step] = e_out
+        gone[step] |= e_out <= 0
+    e[gone] = 0.0
+    return e, proper, gone
+
+
+def _plunger_layout(experiment) -> dict:
+    """The plunger's foils from :func:`rates.recoil_stack`: the matter before the first gap, the first foil, the
+    second gap and foil of a differential plunger, the kind and the offset (µm)."""
+    from .rates import recoil_stack
+
+    lt = getattr(experiment, "lifetime", None)
+    if lt is None or lt.method != "rdds":
+        raise ValueError("the setup has no plunger: a [lifetime] section with method = \"rdds\" is needed")
+    segs = recoil_stack(experiment, 0.0)
+    names = [s.name for s in segs]
+    g1 = names.index("gap")
+    out = {"before": segs[:g1], "foil": segs[g1 + 1] if len(segs) > g1 + 1 else None,
+           "kind": lt.stopper.kind if lt.stopper is not None else "stopper", "offset_um": float(lt.offset_um),
+           "gap2_um": None, "distances_um": [float(_qty(d).to("um")) for d in (lt.distances or [])]}
+    if "gap2" in names:
+        out["gap2_um"] = float(segs[names.index("gap2")].gap_um)
+    return out
+
+
+def _qty(x):
+    return x if isinstance(x, Quantity) else Quantity.parse(x)
+
+
+#: Flight times at which :func:`plunger_components` evaluates the cascade (log-spaced; each residue's share is
+#: interpolated between them, to about 1e-4).
+GRID_TIMES = 400
+
+
+def plunger_components(experiment, distances_um=None, channel: Optional[str] = None, events: int = 20_000,
+                       seed: int = 1, *, per_residue: bool = False) -> dict:
+    """The plunger's three components at each distance, for each level of the studied residue: the share of its γ
+    rays emitted before the (first) foil, flying at the speed after the target (``shifted``); between the foils of
+    a differential plunger, or after a degrader, at the speed behind the foil (``degraded``); and at rest in the
+    stopper (``unshifted``). Shapes (levels, distances); ``nan`` for a level no cascade reaches.
+
+    The shares follow the cascade (:func:`lifetime_cascade`: level lifetimes, feeding from above and the
+    side-feeding bands) through :func:`physim.nuclear.lifetimes.unshifted`, at proper flight times averaged over
+    residues drawn by :func:`simulate_residues` (their speeds and angles; the time to leave the target, from its
+    depth, included; time dilation included). For a residue: T₁ = (time in the target) + (d + offset) / (β₁ γ₁ c cos θ)
+    to the first foil and, for a differential plunger, T₂ = T₁ + (time in the degrader) + gap₂ / (β₂ γ₂ c cos θ) to
+    the stopper; shifted = 1 − U(T₁), degraded = U(T₁) − U(T₂), unshifted = U(T₂) (a "stopper" has no degraded
+    component, a single "degrader" no unshifted one). A residue that stops in the target, or flies backwards,
+    counts as unshifted. ``distances_um`` defaults to the setup's (without the offset). Also gives the mean speeds
+    in front of and behind the foil, the mean flight times, the level names and the lines; with ``per_residue`` the
+    residues' own speeds, directions (stack frame) and shares too, for :func:`plunger_spectra`."""
+    from . import lifetimes
+    from .transport import _beta_gamma
+
+    lay = _plunger_layout(experiment)
+    d = np.atleast_1d(np.asarray(lay["distances_um"] if distances_um is None else distances_um, dtype=float))
+    if not len(d) or np.any(d < 0):
+        raise ValueError("give one or more distances, none negative")
+    cas = lifetime_cascade(experiment, channel)
+    species = cas["residue"]
+    mass = data.nuclide(species).nuclear_mass_mev
+    s = _sample(experiment, cas["index"], events, seed)
+    u = s["direction"]
+    cos = np.clip(u[:, 2], 1e-12, 1.0)
+    e1, t1, gone1 = _through(lay["before"], species, mass, s["energy"], u, s["depth"])
+    b1, g1 = _beta_gamma(e1, mass)
+    kind = lay["kind"]
+    has2 = kind in ("degrader", "differential") and lay["foil"] is not None
+    if has2:
+        e2, t_foil, gone2 = _through([lay["foil"]], species, mass, e1, u, np.zeros(len(e1)))
+        b2, g2 = _beta_gamma(e2, mass)
+    c_um = lifetimes.C_UM_PER_PS
+    n_res = len(e1)
+    flight = np.zeros((n_res, len(d)))
+    fly = ~gone1 & (b1 > 0)
+    flight[fly] = t1[fly, None] + (d[None, :] + lay["offset_um"]) / (b1[fly] * g1[fly] * c_um * cos[fly])[:, None]
+    idx, taus, feeding, pops = _reached(cas)
+    n = len(cas["cascade"].scheme.levels)
+
+    def after(times):  # (levels of the scheme, residues, distances)
+        # U(t) is smooth: on a log grid of times, interpolated for each residue (exact at the grid's points).
+        t = times.ravel()
+        pos = t[t > 0]
+        grid = np.r_[0.0, np.geomspace(pos.min(), pos.max(), GRID_TIMES)] if len(pos) else np.zeros(1)
+        grid = np.unique(grid)
+        u_ = np.atleast_2d(lifetimes.unshifted(taus, feeding, pops, grid).T).T  # (levels, grid)
+        vals = np.stack([np.interp(t, grid, row) if np.all(np.isfinite(row)) else np.full(len(t), np.nan)
+                         for row in u_])
+        return _per_level(idx, vals, n).reshape((n,) + times.shape)
+
+    u1 = after(flight)
+    u1[:, ~fly, :] = np.where(np.isnan(u1[:, ~fly, :]), np.nan, 1.0)  # stopped in the target, or backwards
+    if kind == "differential" and has2 and lay["gap2_um"] is not None:
+        flight2 = flight.copy()
+        ok2 = fly & ~gone2 & (b2 > 0)
+        flight2[ok2] += t_foil[ok2, None] + lay["gap2_um"] / (b2[ok2] * g2[ok2] * c_um * cos[ok2])[:, None]
+        stop2 = fly & ~ok2
+        flight2[stop2] += t_foil[stop2, None]  # stops in the degrader: at rest from then on
+        u2 = after(flight2)
+        u2[:, ~fly, :] = u1[:, ~fly, :]
+    elif kind == "degrader":
+        u2 = np.where(np.isnan(u1), np.nan, 0.0)
+    else:
+        u2 = u1
+    shifted_r, degraded_r, unshifted_r = 1.0 - u1, u1 - u2, u2
+    out = {"distances_um": d, "kind": kind, "channel": cas["channel"], "residue": species,
+           "levels": cas["names"][:n], "lines": cas["lines"], "yields": cas["yields"],
+           "taus_ps": cas["taus_ps"][:n], "side_feeding_ps": cas["cascade"].side_feeding_ps,
+           "shifted": shifted_r.mean(axis=1), "degraded": degraded_r.mean(axis=1),
+           "unshifted": unshifted_r.mean(axis=1),
+           "beta_shifted": float(np.mean(b1[fly])) if fly.any() else 0.0,
+           "beta_degraded": float(np.mean(b2[fly & (b2 > 0)])) if has2 and np.any(fly & (b2 > 0)) else None,
+           "flight_ps": flight[fly].mean(axis=0) if fly.any() else np.zeros(len(d)),
+           "residues": n_res, "prompt": [cas["names"][k] for k in cas["prompt"]]}
+    if per_residue:
+        out.update(_beta1=b1, _beta2=b2 if has2 else None, _direction=u, _shifted=shifted_r,
+                   _degraded=degraded_r, _unshifted=unshifted_r)
+    return out
+
+
+def _rings(experiment, theta_deg=None) -> list:
+    """[(θ in degrees, FWHM function of E in MeV)]: one per distinct polar angle of the setup's γ-ray detectors
+    (to 0.1°), or the angles asked for (the resolution of the nearest detector)."""
+    from .gamma_events import crystals_of
+
+    if not experiment.gamma_detectors:
+        raise ValueError("the setup has no γ-ray detectors")
+    crystals, bare = crystals_of(experiment, plain=True)
+    det_theta, det_fwhm = [], []
+    for k, gd in enumerate(experiment.gamma_detectors):
+        first = next(j for j, cr in enumerate(crystals) if cr.detector == k)
+        det_theta.append(round(_qty(gd.theta).to("deg"), 1))
+        det_fwhm.append(bare[first].fwhm)
+    if theta_deg is None:
+        angles = sorted(set(det_theta))
+    else:
+        angles = [float(x) for x in np.atleast_1d(theta_deg)]
+    out = []
+    for a in angles:
+        j = int(np.argmin([abs(t - a) for t in det_theta]))
+        out.append((a, det_fwhm[j]))
+    return out
+
+
+def _fold(shape: np.ndarray, centres_kev: np.ndarray, fwhm_kev: float) -> np.ndarray:
+    """A spectrum on evenly spaced bins folded with a Gaussian of the given FWHM (area kept inside the range)."""
+    if fwhm_kev <= 0 or len(centres_kev) < 2:
+        return shape
+    width = centres_kev[1] - centres_kev[0]
+    sigma = fwhm_kev / 2.354820045 / width
+    half = int(math.ceil(5 * sigma))
+    x = np.arange(-half, half + 1)
+    g = np.exp(-0.5 * (x / max(sigma, 1e-9)) ** 2)
+    g /= g.sum()
+    return np.convolve(shape, g, mode="same")
+
+
+def plunger_spectra(experiment, distances_um=None, channel: Optional[str] = None, theta_deg=None, bins: int = 200,
+                    events: int = 20_000, seed: int = 1, min_yield: float = 0.01, resolution: bool = True) -> dict:
+    """Predicted plunger spectra of the studied residue's lines at each distance and detector ring, split into
+    their shifted, degraded and unshifted components (:func:`plunger_components`).
+
+    Per line (γ rays per residue at least ``min_yield`` of the strongest): ``edges_kev`` (``bins`` bins around the
+    line, covering its shifts) and arrays (distances, rings, bins) ``shifted``, ``degraded``, ``unshifted`` and
+    ``total``, in γ rays emitted per residue made (no efficiency: the planner multiplies by the residue rate, the
+    ring's full-energy-peak efficiency and the beam time per distance), folded with the ring's resolution unless
+    ``resolution`` is False. The shifted and degraded peaks are the residues' own Doppler shifts at the speeds in
+    front of and behind the foil, each residue at its own angle to a detector of the ring (azimuth drawn evenly);
+    decays while the residue slows inside the target or the degrader are put at those speeds (their time there is
+    short: it is in the shares). Rings are the detectors' polar angles, or ``theta_deg``. The target is taken as
+    not tilted for the angles to the detectors."""
+    comp = plunger_components(experiment, distances_um, channel, events, seed, per_residue=True)
+    rings = _rings(experiment, theta_deg)
+    u = comp["_direction"]
+    rng = np.random.default_rng([int(seed), 77])
+    phi = rng.uniform(0.0, 2 * math.pi, len(u))
+    b1, b2 = comp["_beta1"], comp["_beta2"]
+    top = max(comp["yields"].values()) if comp["yields"] else 0.0
+    bmax = float(np.max(b1)) if len(b1) else 0.05
+    lines = []
+    for (a, b), y in sorted(comp["yields"].items(), key=lambda kv: -kv[1]):
+        if y < min_yield * top:
+            continue
+        e0 = next(e for i, f, e, _g in comp["lines"] if i == a and f == b)
+        edges = e0 * np.linspace(1 - 1.3 * bmax - 0.002, 1 + 1.3 * bmax + 0.002, bins + 1)
+        centres = 0.5 * (edges[1:] + edges[:-1])
+        shape = (len(comp["distances_um"]), len(rings), bins)
+        out = {k: np.zeros(shape) for k in ("shifted", "degraded", "unshifted")}
+        for r, (theta, fwhm) in enumerate(rings):
+            th = math.radians(theta)
+            cpsi = math.sin(th) * np.sqrt(np.maximum(1 - u[:, 2] ** 2, 0.0)) * np.cos(phi) + math.cos(th) * u[:, 2]
+            fw = 1e3 * float(fwhm(1e-3 * e0)) if resolution else 0.0
+            for name, beta in (("shifted", b1), ("degraded", b2)):
+                if beta is None:
+                    continue
+                e = e0 * np.sqrt(1 - beta * beta) / (1 - beta * cpsi)
+                w = np.nan_to_num(comp["_" + name][a])  # (residues, distances)
+                for k in range(shape[0]):
+                    h, _ = np.histogram(e, bins=edges, weights=w[:, k] / len(e))
+                    out[name][k, r] = _fold(h * y, centres, fw)
+            unshifted = np.nan_to_num(comp["unshifted"][a])
+            spike = np.zeros(bins)
+            spike[min(max(np.searchsorted(edges, e0, side="right") - 1, 0), bins - 1)] = 1.0
+            for k in range(shape[0]):
+                out["unshifted"][k, r] = _fold(spike * unshifted[k] * y, centres, fw)
+        out["total"] = out["shifted"] + out["degraded"] + out["unshifted"]
+        lines.append({"initial": a, "final": b, "energy_kev": e0, "per_residue": y,
+                      "label": f"{comp['levels'][a]} → {comp['levels'][b]}", "edges_kev": edges, **out})
+    public = {k: v for k, v in comp.items() if not k.startswith("_")}
+    return {"distances_um": comp["distances_um"], "theta_deg": [t for t, _ in rings], "lines": lines,
+            "components": public}
+
+
+def dsam_lineshapes(experiment, channel: Optional[str] = None, theta_deg=None, bins: int = 300,
+                    events: int = 20_000, n: int = 4000, times: int = 160, seed: int = 1, min_yield: float = 0.01,
+                    resolution: bool = True) -> dict:
+    """Predicted DSAM line shapes of the studied residue's lines at each detector ring: the residues slow (and
+    scatter) through the target and its backing (:func:`physim.nuclear.transport.kernel` on
+    :func:`rates.recoil_stack`, ``n`` sample residues drawn from :func:`simulate_residues`, velocities recorded at
+    ``times`` lab times out to after they stop), and each level's decays follow the cascade with its side-feeding
+    bands (:func:`lifetime_cascade`) through :func:`physim.nuclear.lifetimes.lineshape`, which re-weights the same
+    kernel for every level (AhKin's idea: the kernel does not depend on τ).
+
+    Per line (γ rays per residue at least ``min_yield`` of the strongest): ``edges_kev`` (``bins`` bins covering
+    the line's full shift), ``shapes`` (rings, bins: the share of the line's γ rays in each bin, times its γ rays
+    per residue; folded with the ring's resolution unless ``resolution`` is False), ``centroid_kev`` per ring
+    (without resolution) and ``attenuation`` F per ring: the centroid's shift over the full shift of residues at
+    their starting velocity. Also the cascade's ``taus_ps`` and ``side_feeding_ps`` and the ``kernel``. The target
+    is taken as not tilted for the angles to the detectors (``kernel`` directions are in the stack's frame)."""
+    from . import lifetimes, transport
+    from .rates import recoil_stack
+
+    lt = getattr(experiment, "lifetime", None)
+    if lt is not None and lt.method == "rdds":
+        raise ValueError("the setup is a plunger (method = \"rdds\"): use plunger_spectra")
+    cas = lifetime_cascade(experiment, channel)
+    species = cas["residue"]
+    mass = data.nuclide(species).nuclear_mass_mev
+    s = _sample(experiment, cas["index"], events, seed)
+    segs = recoil_stack(experiment)
+    t_stop = transport.time_to_stop(segs, species, mass, s["energy"], s["depth"])
+    finite = t_stop[np.isfinite(t_stop)]
+    t_max = 1.5 * float(np.max(finite)) if len(finite) else 10.0
+    grid = np.r_[0.0, np.geomspace(1e-4 * t_max, t_max, max(int(times), 3) - 1)]
+    k = transport.kernel(segs, species, mass, s["energy"], s["direction"], s["depth"], grid, scatter=True,
+                         rng=np.random.default_rng([int(seed), 78]), n=int(n))
+    b0 = float(np.max(k.beta0))
+    x_edges = np.linspace(1 - 1.3 * b0 - 0.002, 1 + 1.3 * b0 + 0.002, int(bins) + 1)
+    x_mid = 0.5 * (x_edges[1:] + x_edges[:-1])
+    rings = _rings(experiment, theta_deg)
+    idx, taus, feeding, pops = _reached(cas)
+    nlev = len(cas["cascade"].scheme.levels)
+    top = max(cas["yields"].values()) if cas["yields"] else 0.0
+    wanted = [(ab, y) for ab, y in sorted(cas["yields"].items(), key=lambda kv: -kv[1]) if y >= min_yield * top]
+    shapes_x = []  # per ring: (levels, bins) in E/E₀
+    full = []
+    for theta, _fw in rings:
+        shapes_x.append(_per_level(idx, lifetimes.lineshape(1000.0, taus, feeding, pops, k, theta,
+                                                            1000.0 * x_edges), nlev))
+        bc = k.beta_cos(theta, 0.0)[0].astype(float)
+        full.append(float(np.mean(np.sqrt(1 - k.beta[0].astype(float) ** 2) / (1 - bc))))
+    lines = []
+    for (a, b), y in wanted:
+        e0 = next(e for i, f, e, _g in cas["lines"] if i == a and f == b)
+        edges = e0 * x_edges
+        centres = e0 * x_mid
+        shapes = np.zeros((len(rings), int(bins)))
+        centroid, att = np.zeros(len(rings)), np.zeros(len(rings))
+        for r, (theta, fwhm) in enumerate(rings):
+            row = np.nan_to_num(shapes_x[r][a])
+            total = row.sum()
+            centroid[r] = e0 * float(row @ x_mid / total) if total > 0 else np.nan
+            shift = full[r] - 1.0
+            att[r] = (centroid[r] / e0 - 1.0) / shift if abs(shift) > 1e-9 else np.nan
+            fw = 1e3 * float(fwhm(1e-3 * e0)) if resolution else 0.0
+            shapes[r] = _fold(row * y, centres, fw)
+        lines.append({"initial": a, "final": b, "energy_kev": e0, "per_residue": y,
+                      "label": f"{cas['names'][a]} → {cas['names'][b]}", "edges_kev": edges, "shapes": shapes,
+                      "centroid_kev": centroid, "attenuation": att})
+    notes = []
+    if cas["prompt"]:
+        notes.append("No known lifetime for " + ", ".join(cas["names"][j] for j in cas["prompt"])
+                     + "; taken as prompt.")
+    return {"theta_deg": [t for t, _ in rings], "lines": lines, "channel": cas["channel"], "residue": species,
+            "taus_ps": cas["taus_ps"][:nlev], "side_feeding_ps": cas["cascade"].side_feeding_ps, "kernel": k,
+            "beta0": float(np.mean(k.beta0)), "notes": notes}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1228,8 +1913,9 @@ def warnings(experiment, table: Optional[dict] = None) -> list:
     return out
 
 
-__all__ = ["COLUMNS", "GAMMA_COLUMNS", "LIGHT", "PARTICLE_COLUMNS", "ChannelTable", "CompoundState", "ResidueCascade",
-           "ResidueChannel", "ResidueEvents", "ResidueGammas", "compound", "compound_profile", "default_temperature",
-           "doppler_correct", "emission_barrier", "grazing_l", "parse_particles", "particles_label", "residue_of",
-           "residue_scheme", "residue_table", "separation_energy", "simulate_residue_gammas", "simulate_residues",
-           "warnings"]
+__all__ = ["COLUMNS", "GAMMA_COLUMNS", "LIGHT", "PARTICLE_COLUMNS", "PROMPT_PS", "SIDE_FEEDING_LEVELS",
+           "SIDE_FEEDING_Q_B", "ChannelTable", "CompoundState", "ResidueCascade", "ResidueChannel", "ResidueEvents",
+           "ResidueGammas", "compound", "compound_profile", "default_temperature", "doppler_correct",
+           "dsam_lineshapes", "emission_barrier", "grazing_l", "lifetime_cascade", "parse_particles",
+           "particles_label", "plunger_components", "plunger_spectra", "residue_of", "residue_scheme",
+           "residue_table", "separation_energy", "simulate_residue_gammas", "simulate_residues", "warnings"]
