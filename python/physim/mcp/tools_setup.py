@@ -50,6 +50,7 @@ def summary(p: Planner) -> dict:
         "residues": _residues(p),
         "neutron_wall": (None if p.experiment.neutron_wall is None else
                          ", ".join(f"{k} {v}" for k, v in d.get("neutron_wall", {}).items())),
+        "lifetime": d.get("lifetime"),
         "current_run": p.run_status(),
         "problems": list(p.problems),
         "warnings": [{"level": w.level, "source": w.source, "text": w.text} for w in p.warnings()],

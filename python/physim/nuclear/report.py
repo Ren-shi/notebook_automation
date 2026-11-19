@@ -125,6 +125,49 @@ LIMITS = (
 )
 
 
+#: The register capabilities of a lifetime measurement are those whose name speaks of lifetimes ("Lifetimes: recoil
+#: distance (RDDS)", "Lifetimes: Doppler-shift attenuation (DSAM)", and any added later): the report picks their
+#: checks by capability, never by name, so a new check appears without a change here.
+_LIFETIME_WORDS = ("lifetime",)
+
+#: The documented limits of the lifetime models (docs/lifetimes.md, docs/theory/lifetimes.md, the plan's "Not in
+#: this plan"), each with the methods it bears on. :func:`lifetime_limits` adds whether this setup reaches it.
+LIFETIME_LIMITS = (
+    {"key": "dynamic_deorientation", "affects": ("rdds",),
+     "title": "Static deorientation only",
+     "text": "The recoil's alignment fades in vacuum by the static model G_k(t) = α_k + (1 − α_k) e^(−Γ_k t) (Radeck "
+             "et al. 2012), with α_k and Γ_k given in the setup. Dynamic deorientation (fluctuating electron "
+             "configurations) and an a-priori calculation of α_k and Γ_k from atomic physics are left out; the "
+             "analysis applies no deorientation correction to the shifted and unshifted intensities.",
+     "source": "docs/theory/lifetimes.md (Deorientation); planning, Not in this plan"},
+    {"key": "stopping", "affects": ("dsam", "rdds"),
+     "title": "Stopping powers",
+     "text": "DSAM line shapes and F(τ) follow the recoil's slowing down, so τ scales with the stopping powers, "
+             "known to about 5–10% for heavy ions; the line-shape fit's budget scales the kernel's time axis by "
+             "±7%. A plunger's flight times do not depend on stopping, but the DSAM-like tail of decays while the "
+             "recoil slows in the stopper does.",
+     "source": "docs/theory/lifetimes.md (Line shapes); lifetime_analysis.STOPPING_UNCERTAINTY"},
+    {"key": "typical_recoil", "affects": ("rdds", "dsam"),
+     "title": "One typical recoil in the plan",
+     "text": "The plan's speeds, distances, separations and F(τ) are those of one recoil made in the middle of the "
+             "target along the beam (Coulex head-on; fusion at the compound nucleus's speed). The events and runs "
+             "have the full spread of speeds and angles, and the analysis takes the speed from the shifted peaks.",
+     "source": "docs/lifetimes.md (How the plan is worked out)"},
+    {"key": "coulex_spectra", "affects": ("rdds",),
+     "title": "Coulex plunger spectra in the plan are analytic",
+     "text": "The predicted Coulex plunger spectra take one recoil speed; the shifted peak of real recoils is "
+             "broader and may sit elsewhere (a particle detector that also sees forward-scattered beam). The runs "
+             "have it right.",
+     "source": "Planner.lifetime_spectra"},
+    {"key": "sideways", "affects": ("dsam",),
+     "title": "Line shapes near 90°",
+     "text": "The DSAM line shape uses the recoil's velocity along the beam; its sideways part is ignored, which "
+             "matters only for detectors near 90° (where the shift vanishes anyway). Time dilation is left out of "
+             "DSAM (below 0.2% at β < 6%).",
+     "source": "physim.nuclear.lifetimes (DSAM)"},
+)
+
+
 #: The reaction as the report names it.
 _REACTION_WORDS = {"elastic": "elastic scattering", "coulex": "Coulomb excitation (and elastic scattering)",
                    "fusion-evaporation": "fusion-evaporation (the particle detectors see the elastic scattering)"}
@@ -199,6 +242,10 @@ class Report:
     #: matrix, with a neutron wall), "limits" (:func:`fusion_limits`: each documented limit and whether this run
     #: falls where it bites), "checks" (:func:`fusion_checks`, with ``validation``)}.
     fusion: Optional[dict] = None
+    #: A lifetime measurement (a ``[lifetime]`` section), or None: {"plan" (:meth:`Planner.lifetimes`), "analysis"
+    #: (:meth:`Planner.analyse_lifetimes` when the experiment has runs, else None), "limits"
+    #: (:func:`lifetime_limits`), "checks" (:func:`lifetime_checks`, with ``validation``)}.
+    lifetime: Optional[dict] = None
 
     # -- numbers --------------------------------------------------------------------------------------------------
 
@@ -210,6 +257,13 @@ class Report:
             out["fusion"] = {"summary": f["summary"], "residues": (f["residues"] or {}).get("rows"),
                              "selection": None if f["selection"] is None else f["selection"]["matrix"],
                              "flags": [lim["flag"] for lim in f["limits"]]}
+        if self.lifetime is not None:
+            lt_ = self.lifetime
+            keep = ("level", "gamma_kev", "tau_ps", "tau_source", "beta", "method", "recommended_distances_um",
+                    "sensitive_um", "attenuation", "hours_per_distance")
+            out["lifetime"] = {"levels": [{k: row.get(k) for k in keep} for row in lt_["plan"]["levels"]],
+                               "time_to_stop_ps": lt_["plan"]["time_to_stop_ps"],
+                               "flags": [lim["flag"] for lim in lt_["limits"]]}
         return out
 
     def _numbers(self) -> dict:
@@ -391,9 +445,12 @@ applicable; "see register": the tool reference files are only in physim's source
 here). Assumptions: elastic Rutherford scattering; straight tracks; Gaussian straggling and resolution;
 detector faces without inter-strip effects. See the register for each model's range of validity.</p>
 {table(("Model", "vs tools", "vs literature"), reg_rows)}""" + (
-                "\n" + self._fusion_models_html() if self.fusion is not None else ""),
+                "\n" + self._fusion_models_html() if self.fusion is not None else "") + (
+                "\n" + self._lifetime_models_html() if self.lifetime is not None else ""),
             "fusion": self._fusion_html(),
             "fusion_plain": self._fusion_html(level=3),
+            "lifetime": self._lifetime_html(),
+            "lifetime_plain": self._lifetime_html(level=3),
             "references": f"""<ul>{''.join(f'<li>{e(x)}</li>' for x in m['data'])}</ul>
 <ul>{''.join(f'<li>{e(x)}</li>' for x in REFERENCES)}</ul>""",
             "meta": (f"physim {e(m['version'])} (commit {e(m['commit'])}) · {e(m['date'])} · Monte Carlo seed "
@@ -447,6 +504,7 @@ img {{ max-width: 100%; }} figure {{ margin: 1rem 0; }} figcaption {{ font-size:
 
 {p['excitation']}
 {p['fusion'] and p['fusion'] + '''
+'''}{p['lifetime'] and p['lifetime'] + '''
 '''}<h2>Energy loss</h2>
 {p['energy_loss']}
 
@@ -636,6 +694,121 @@ setup file and seed reproduce every number.</p>
         out.append("<p><b>Limits of the fusion-evaporation models</b> (backlog item 75 and the theory notes), and "
                    "whether this run reaches them. Each is also given beside the numbers it affects.</p>")
         out.append(_table(("Limit", "Affects", "This run", "Documented in"), rows))
+        return "\n".join(out)
+
+    def _lifetime_html(self, level: int = 2) -> str:
+        """The lifetime section under a heading of ``level``: the measurement as set up, the plan per level, its
+        warnings, the analysis of the runs when there are some, and the caveats (the limits this setup reaches
+        and the lifetime checks that fail)."""
+        lt_ = self.lifetime
+        if lt_ is None:
+            return ""
+        e = html.escape
+        sub = level + 1
+        exp = self.experiment
+        sec = exp.lifetime
+        plan = lt_["plan"]
+        out = [f"<h{level}>Lifetime measurement</h{level}>"]
+        rows = [("Method", {"rdds": "recoil distance (plunger, RDDS)",
+                            "dsam": "Doppler-shift attenuation (DSAM)"}.get(sec.method, sec.method))]
+        if sec.method == "rdds":
+            rows.append(("Distances", ", ".join(f"{d:g}" for d in sec.distances_um) + " µm"
+                         + (f" (plus an offset of {sec.offset_um:g} µm at electrical contact)" if sec.offset_um else "")))
+            if sec.stopper is not None:
+                rows.append((sec.stopper.kind.capitalize(), f"{sec.stopper.thickness} of {sec.stopper.material}"))
+            if sec.degrader2 is not None and sec.stopper is not None and sec.stopper.kind == "differential":
+                d2 = sec.degrader2
+                rows.append(("Second foil", f"{d2.thickness} of {d2.material}, {d2.gap} behind the first"))
+            dor = sec.deorientation
+            rows.append(("Deorientation", "none set" if dor is None else
+                         ", ".join(f"α{k} = {dor.alpha[k]:g}, Γ{k} = {dor.gamma_per_ps[k]:.3g} /ps" for k in (2, 4))))
+        else:
+            b = exp.target.backing
+            rows.append(("Backing", "none (a thick target)" if b is None else f"{b.thickness} of {b.material}"))
+        if plan.get("nucleus"):
+            rows.append(("Nucleus", plan["nucleus"]))
+        if plan.get("recoil"):
+            r = plan["recoil"]
+            rows.append(("Typical recoil", f"{r['nuclide']} made at {r['energy_made_mev']:.3g} MeV (β = "
+                                          f"{100 * plan['beta_made']:.2f}%), leaving the target at "
+                                          f"{r['energy_after_target_mev']:.3g} MeV (β = "
+                                          f"{100 * plan['beta_after_target']:.2f}%)"))
+        if plan.get("time_to_stop_ps"):
+            what = "in the target and backing" if sec.method == "dsam" else "in the stopper"
+            rows.append(("Time to stop", f"{plan['time_to_stop_ps']:.3g} ps {what}"))
+        out.append(_table(("", ""), rows))
+        if not plan["available"]:
+            out.append(f"<p>No plan: {e(plan.get('reason') or '')}</p>")
+        else:
+            out.append(f"<h{sub}>Plan per level</h{sub}>")
+            out.append(f"<p>Beam time per distance for {100 * plan['precision']:.0f}% on τ from the line's "
+                       "full-energy rate in all γ-ray detectors (statistics only; one level). Peaks count as "
+                       "resolved at a detector when they are at least two FWHM apart.</p>")
+            prow = []
+            for row in plan["levels"]:
+                res = sorted({s["theta_deg"] for s in row["separation"] if s["resolved"]})
+                prow.append((row["level"], _fmt(row["gamma_kev"]),
+                             "—" if row["tau_ps"] is None else f"{_fmt(row['tau_ps'], 3)} ({row['tau_source']})",
+                             row["method"], f"{100 * row['beta']:.2f}%",
+                             ", ".join(f"{d:g}" for d in row["recommended_distances_um"]) or "—",
+                             "—" if not row["sensitive_um"] else
+                             f"{row['sensitive_um'][0]:.3g}–{row['sensitive_um'][1]:.3g}",
+                             ", ".join(f"{t:g}°" for t in res) or "none",
+                             "—" if row["attenuation"] is None else f"{row['attenuation']:.3f}",
+                             _hours(None if row["hours_per_distance"] is None else 3600 * row["hours_per_distance"])))
+            out.append(_table(("Level", "Eγ (keV)", "τ (ps, source)", "Method", "β", "Distances (µm)",
+                               "Sensitive (µm)", "Resolved at", "F(τ)", "Beam time / distance"), prow))
+        if plan["problems"] or plan["warnings"]:
+            out.append('<ul class="warnings">' + "".join(f'<li class="err">{e(t)}</li>' for t in plan["problems"])
+                       + "".join(f'<li class="warn">{e(t)}</li>' for t in plan["warnings"]) + "</ul>")
+        a = lt_.get("analysis")
+        if a is not None and a.get("available"):
+            out.append(f"<h{sub}>Analysis of the runs</h{sub}>")
+            arow = [("Level", a["level"]), ("Method", a["method"]),
+                    ("τ", f"{_fmt(a['tau_ps'], 4)} ± {_fmt(a['stat_ps'], 2)} (stat.) ps, "
+                          f"± {_fmt(a['total_ps'], 2)} ps in all"),
+                    ("Budget", ", ".join(f"{k} {_fmt(v, 2)} ps" for k, v in a["budget"].items() if v))]
+            if a.get("b_down"):
+                arow.append((f"B({a.get('b_multipole', 'E2')}↓)",
+                             f"{_fmt(a['b_down'][0], 4)} ± {_fmt(a['b_down'][1], 2)} {a['b_unit']}"))
+            out.append(_table(("", ""), arow))
+            if a["compare"]:
+                out.append(_table(("Compared with", "τ (ps)", "B↓"), [
+                    (c["source"], _fmt(c["tau_ps"], 4), "—" if c["b_down"] is None else _fmt(c["b_down"], 4))
+                    for c in a["compare"]]))
+            if a["notes"]:
+                out.append("<p class=\"note\">" + " ".join(e(n) for n in a["notes"]) + "</p>")
+        elif a is not None and a.get("reason"):
+            out.append(f"<p>Analysis: {e(a['reason'])}</p>")
+        caveats = [lim for lim in lt_["limits"] if lim["flag"]]
+        known = [c for c in lt_["checks"] if c["status"] in ("known failure", "fail")]
+        if caveats or known:
+            out.append(f"<h{sub}>Caveats</h{sub}>")
+            items = [f"<li><b>{e(lim['title'])}.</b> {e(lim['flag'])}</li>" for lim in caveats]
+            items += [f"<li><b>{e(c['name'])}</b> ({e(c['status'])}, {e(c['checker'])}): {e(c['detail'])}</li>"
+                      for c in known]
+            out.append("<ul>" + "".join(items) + "</ul>")
+        return "\n".join(out)
+
+    def _lifetime_models_html(self) -> str:
+        """Every lifetime check of the validation suite, picked by capability, with its outcome; then the documented
+        limits and whether this setup reaches them."""
+        lt_ = self.lifetime
+        if lt_ is None:
+            return ""
+        out = []
+        if lt_["checks"]:
+            rows = [(c["capability"], c["kind"], c["name"], c["checker"], c["tolerance"],
+                     f"{self._MARK[c['status']]} {c['status']}", _fmt(c["worst"], 3), c["detail"] or "—")
+                    for c in lt_["checks"]]
+            out.append("<p><b>Lifetime checks.</b> Every check of the validation suite on the lifetime models, picked "
+                       "by capability. A known failure is a disagreement the register documents, with its tolerance "
+                       "kept.</p>")
+            out.append(_table(("Model", "Kind", "Check", "Checker", "Tolerance", "Outcome", "Worst", "Detail"), rows))
+        rows = [(lim["title"], ", ".join(lim["affects"]), ("⚠ " + lim["flag"]) if lim["flag"] else "not reached",
+                 lim["source"]) for lim in lt_["limits"]]
+        out.append("<p><b>Limits of the lifetime models</b>, and whether this setup reaches them.</p>")
+        out.append(_table(("Limit", "Methods", "This setup", "Documented in"), rows))
         return "\n".join(out)
 
     def write(self, directory: Union[str, Path], figures: bool = True, root: Optional[bool] = None,
@@ -981,11 +1154,141 @@ def _fusion_data(planner, experiment) -> Optional[dict]:
             "limits": fusion_limits(experiment, summary, residues, selection), "checks": []}
 
 
+# -- lifetime measurements: the checks that apply and the limits -------------------------------------------------
+
+
+#: Words in a lifetime capability's name that tie it to one method.
+_METHOD_WORDS = {"rdds": ("rdds", "recoil distance", "plunger"), "dsam": ("dsam", "doppler-shift attenuation")}
+
+
+def lifetime_capabilities(capabilities, method: Optional[str] = None) -> list:
+    """The register capabilities that bear on a lifetime measurement, in the register's order: those whose name
+    speaks of lifetimes; with ``method`` ("rdds" or "dsam") those of the other method are left out (a capability
+    that names neither is kept)."""
+    out = [c for c in capabilities if any(w in c.lower() for w in _LIFETIME_WORDS)]
+    if method in _METHOD_WORDS:
+        other = [w for m, words in _METHOD_WORDS.items() if m != method for w in words]
+        mine = _METHOD_WORDS[method]
+        out = [c for c in out if any(w in c.lower() for w in mine) or not any(w in c.lower() for w in other)]
+    return out
+
+
+def lifetime_checks(results, have_refs: bool = True, known=None, method: Optional[str] = None) -> list:
+    """One row per check of the lifetime capabilities among ``results`` (:func:`physim.nuclear.validation.run`):
+    the capability, kind, name, checker and version, tolerance, outcome ("pass", "fail", "known failure",
+    "pending", or "not run here" for a tool check whose reference files are not installed), the worst deviation
+    and the suite's own detail (the numbers of a known failure, as the suite writes them)."""
+    from . import validation as v
+
+    known = known_failures() if known is None else known
+    caps = lifetime_capabilities(v.CAPABILITIES, method)
+    rows, seen = [], set()
+
+    def row(r) -> dict:
+        status = {"pass": "pass", "pending": "pending", "unchecked": "not run here"}.get(
+            r.status, "known failure" if r.name in known else "fail")
+        checker, version = _checker(r)
+        return {"capability": r.capability, "kind": r.kind, "name": r.name, "checker": checker, "version": version,
+                "reference": r.reference, "tolerance": r.tolerance, "status": status,
+                "worst": None if not math.isfinite(r.worst) else _round(r.worst), "detail": r.detail}
+
+    for r in results:
+        if r.capability in caps:
+            seen.add(r.name)
+            rows.append(row(r))
+    if not have_refs:
+        for c in v.CHECKS:
+            if c.capability in caps and c.name not in seen:
+                rows.append(row(v.Result(c.capability, c.kind, c.name, c.reference, c.tolerance, "unchecked")))
+    order = {c: i for i, c in enumerate(caps)}
+    return sorted(rows, key=lambda x: order[x["capability"]])
+
+
+def lifetime_limits(experiment, plan: Optional[dict] = None) -> list:
+    """The documented limits (:data:`LIFETIME_LIMITS`), each with ``flag``: None where this setup is outside what
+    the limit covers, else the plain warning for this setup (and ``level``). ``plan`` is
+    :meth:`physim.nuclear.planner.Planner.lifetimes`."""
+    lt_ = experiment.lifetime
+    method = lt_.method if lt_ is not None else None
+    plan = plan or {}
+    levels = plan.get("levels") or []
+    first = levels[0] if levels else {}
+    out = []
+    for lim in LIFETIME_LIMITS:
+        flag, level = None, "note"
+        key = lim["key"]
+        if method not in lim["affects"]:
+            pass
+        elif key == "dynamic_deorientation" and experiment.excitation is not None:
+            tau = first.get("tau_ps")
+            if lt_.deorientation is not None:
+                flag = ("Deorientation is set: the events follow the static model, and the analysis does not "
+                        "correct the shifted/unshifted ratio for it (lifetime_analysis.deorientation_correction "
+                        "with measured α_k, Γ_k does): expect τ biased where G_k differs between the components.")
+                level = "warning"
+            elif tau is not None and tau > 1.0:
+                flag = (f"No deorientation set, and τ = {tau:.3g} ps: the real recoil's alignment fades in vacuum, "
+                        "which the simulation then leaves out.")
+                level = "warning"
+        elif key == "stopping":
+            if method == "dsam":
+                flag = ("DSAM: τ scales with the stopping powers of the recoil in the target and backing (5–10%); "
+                        "the fit's budget carries ±7%.")
+                level = "warning"
+            elif plan.get("time_to_stop_ps") and first.get("tau_ps"):
+                share = plan["time_to_stop_ps"] / first["tau_ps"]
+                if share > 0.1:
+                    flag = (f"The recoil takes {plan['time_to_stop_ps']:.3g} ps to stop in the stopper, "
+                            f"{100 * share:.0f}% of τ: the DSAM-like tail under the unshifted peak depends on "
+                            "the stopping.")
+        elif key == "typical_recoil" and levels:
+            flag = (f"The plan's numbers are for one recoil at β = {100 * first.get('beta', 0.0):.2f}%; the runs "
+                    "have the spread.")
+        elif key == "coulex_spectra" and experiment.excitation is not None:
+            flag = "The plan's plunger spectra are analytic, one recoil speed: compare them with a run."
+        elif key == "sideways":
+            near90 = [g for g in experiment.gamma_detectors
+                      if abs(math.cos(math.radians(float(_q(g.theta).to("deg"))))) < 0.3]
+            if near90:
+                flag = (f"{len(near90)} γ-ray detector(s) within about 17° of 90°: their line shapes leave out the "
+                        "recoil's sideways velocity (and show little shift).")
+        out.append(dict(lim, flag=flag, level=level if flag else None))
+    return out
+
+
+def _q(x):
+    from .quantity import Quantity
+
+    return x if isinstance(x, Quantity) else Quantity.parse(str(x))
+
+
+def _lifetime_data(planner, experiment, runs_from=None) -> Optional[dict]:
+    """The lifetime numbers of the report: the plan, the analysis of the runs (from ``runs_from``, a planner on
+    the experiment's folder, when it has runs of this setup), the limits; None without a ``[lifetime]`` section."""
+    if experiment.lifetime is None:
+        return None
+    try:
+        plan = planner.lifetimes()
+    except Exception as err:  # noqa: BLE001 - the report stands without the plan; it says why
+        plan = {"available": False, "reason": str(err), "levels": [], "problems": [], "warnings": [],
+                "time_to_stop_ps": None, "precision": 0.1}
+    analysis = None
+    if runs_from is not None and getattr(runs_from, "folder", None) is not None:
+        try:
+            analysis = runs_from.analyse_lifetimes()
+        except Exception as err:  # noqa: BLE001 - as above
+            analysis = {"available": False, "reason": str(err)}
+        if analysis is not None and not analysis.get("available") and "No " in str(analysis.get("reason", ""))[:3]:
+            analysis = None  # no runs yet: nothing to say
+    return {"plan": plan, "analysis": analysis, "limits": lifetime_limits(experiment, plan), "checks": []}
+
+
 def build(experiment: Experiment, seed: int = 1, events: int = 200_000, validation: bool = True,
-          journal: str = "physical_review", width: str = "single") -> Report:
+          journal: str = "physical_review", width: str = "single", planner: Optional[Planner] = None) -> Report:
     """Compute everything in the report. ``validation`` runs the register checks to show each model's status (about
-    1.5 s); without it the status is left out. ``journal`` and ``width`` set the figures' style and column width
-    (:data:`physim.nuclear.paper.JOURNALS`)."""
+    1.5 s; longer for fusion-evaporation and lifetime setups, whose checks run too); without it the status is left
+    out. ``journal`` and ``width`` set the figures' style and column width (:data:`physim.nuclear.paper.JOURNALS`).
+    ``planner``, a planner on the experiment's folder, lets the lifetime section analyse the runs taken there."""
     from .. import __version__
     from . import paper
 
@@ -1046,15 +1349,27 @@ def build(experiment: Experiment, seed: int = 1, events: int = 200_000, validati
         kinematics[f"E_{c['label'].replace(' ', '_')}_MeV"] = vals
     status = []
     fusion = _fusion_data(p, experiment)
+    runs_from = None
+    if planner is not None and planner.folder is not None:
+        from .runs import physics_changes
+
+        if not physics_changes(planner.experiment.to_dict(), experiment.to_dict()):
+            runs_from = planner
+    lifetime = _lifetime_data(p, experiment, runs_from)
     if validation:
         from . import validation as v
 
         have_refs = v.reference_dir() is not None
-        models = list(MODELS) + (fusion_capabilities(v.CAPABILITIES) if fusion is not None else [])
+        models = list(MODELS) + (fusion_capabilities(v.CAPABILITIES) if fusion is not None else []) + (
+            [c for c in lifetime_capabilities(v.CAPABILITIES, experiment.lifetime.method) if fusion is None or c not in
+             fusion_capabilities(v.CAPABILITIES)] if lifetime is not None else [])
         # Only the checks of the models this report shows: the fusion-evaporation ones take most of the time.
         results = [r for cap in models for r in v.run(capability=cap, kind=None if have_refs else "literature")]
         if fusion is not None:
             fusion["checks"] = fusion_checks(results, experiment, have_refs)
+        if lifetime is not None:
+            lifetime["checks"] = lifetime_checks(results, have_refs, method=experiment.lifetime.method)
+        checked = (fusion["checks"] if fusion is not None else []) + (lifetime["checks"] if lifetime else [])
         for cap in models:
             row = {"capability": cap}
             for kind in ("tool", "literature"):
@@ -1065,18 +1380,18 @@ def build(experiment: Experiment, seed: int = 1, events: int = 200_000, validati
                 else:
                     row[kind] = ("fail" if "fail" in mine else "pending" if "pending" in mine
                                  else "pass" if mine else "none")
-                if row[kind] == "fail" and cap not in MODELS and fusion is not None:
-                    failed = {c["name"] for c in fusion["checks"] if c["capability"] == cap and c["kind"] == kind
+                if row[kind] == "fail" and cap not in MODELS and checked:
+                    failed = {c["name"] for c in checked if c["capability"] == cap and c["kind"] == kind
                               and c["status"] in ("fail", "known failure")}
-                    if failed and all(c["status"] == "known failure" for c in fusion["checks"]
-                                      if c["name"] in failed):
+                    if failed and all(c["status"] == "known failure" for c in checked if c["name"] in failed):
                         row[kind] = "known"  # every failure here is one the register documents
             status.append(row)
     meta = {"version": __version__, "commit": _commit(), "date": _dt.date.today().isoformat(),
             "data": DATA_SOURCES}
     excitation = p.gamma() if experiment.excitation is not None else None
     return Report(experiment, seed, events, meta, detectors, peaks, kinematics, p.energy_loss(),
-                  [(w.level, w.text) for w in p.warnings()], status, p, excitation, journal, width, fusion)
+                  [(w.level, w.text) for w in p.warnings()], status, p, excitation, journal, width, fusion,
+                  lifetime)
 
 
 def main(argv: Optional[list] = None) -> int:
@@ -1113,7 +1428,8 @@ def main(argv: Optional[list] = None) -> int:
     return 0
 
 
-__all__ = ["DATA_SOURCES", "REFERENCES", "Report", "build", "main"]
+__all__ = ["DATA_SOURCES", "LIFETIME_LIMITS", "REFERENCES", "Report", "build", "lifetime_capabilities",
+           "lifetime_checks", "lifetime_limits", "main"]
 
 
 if __name__ == "__main__":

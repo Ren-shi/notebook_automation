@@ -1,7 +1,8 @@
 """The MCP server: the session, and the tools registered on an ``MCPServer`` from the official ``mcp`` package.
 
 ``build_server`` makes a server that a client talks to; ``physim mcp`` runs it over stdin/stdout. The tools
-themselves are plain methods (:mod:`physim.mcp.tools_setup`, :mod:`physim.mcp.tools_shellmodel`); this module only
+themselves are plain methods (:mod:`physim.mcp.tools_setup`, :mod:`physim.mcp.tools_shellmodel`,
+:mod:`physim.mcp.tools_lifetimes`); this module only
 registers them, marks which ones write files, and turns the planner's exceptions into messages the model can act on.
 """
 
@@ -19,6 +20,7 @@ from .. import __version__
 from ..nuclear.experiment import SetupError
 from ..nuclear.runs import RunInProgress
 from .session import Session, ToolProblem
+from .tools_lifetimes import LifetimeTools
 from .tools_setup import SetupTools
 from .tools_shellmodel import ShellModelTools
 
@@ -44,6 +46,13 @@ levels, B(E2), B(M1), Q_s and mu, and import_shell_model reads results run elsew
 a run may use at most half of the RAM free when it starts (allow_over_limit only when the user explicitly says
 so), and shell-model values never replace ENSDF, derived or user values in a level scheme (apply_shell_model's
 replace only when the user explicitly asks).
+
+Lifetime measurements (a plunger, RDDS, for about 1 ps to 1 ns; Doppler-shift attenuation, DSAM, for 10 fs to 1 ps;
+after Coulomb excitation or fusion-evaporation): plan_lifetime_measurement says which method suits each level, the
+plunger distances, whether the shifted and unshifted peaks separate at each detector angle, F(tau) and the beam time
+per distance; set_plunger sets the distances, the stopper or degrader foils and the deorientation (or DSAM);
+lifetime_spectra predicts the spectra per distance; analyse_lifetimes gets tau and B(E2) back from the runs taken at
+the distances and compares them with ENSDF, the setup's Coulex B(E2) and the shell model.
 """
 
 READS = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
@@ -88,7 +97,7 @@ def build_server(root: Union[str, Path, None] = None, session: Optional[Session]
     session = session or Session(root)
     server = MCPServer("physim-planner", title="physim experiment planner", instructions=INSTRUCTIONS,
                        version=__version__)
-    for tools in (SetupTools(session), ShellModelTools(session)):
+    for tools in (SetupTools(session), ShellModelTools(session), LifetimeTools(session)):
         for name, writes in tools.TOOLS:
             annotations = (REPLACES if name in _REPLACING else DESTRUCTIVE if name in _DESTRUCTIVE
                            else WRITES if writes else READS)
