@@ -49,7 +49,7 @@ from .experiment import Experiment, SetupError, example_names
 from .kinematics import TwoBody
 from .levels import LevelScheme
 from .names import parse_nuclide
-from .quantity import Quantity
+from .quantity import Quantity, format_number
 from .rates import Rates, beam_energy_at, beam_ion, stack, stopping, tilt_deg
 from .rutherford import Rutherford
 from . import runs as _runs
@@ -156,6 +156,13 @@ def _q(x) -> Quantity:
     return Quantity.parse(x) if isinstance(x, str) else x
 
 
+#: Reactions a lifetime measurement goes with.
+LIFETIME_REACTIONS = ("coulex", "fusion-evaporation")
+
+#: The fields of a lifetime section that belong to a plunger (RDDS) only.
+PLUNGER_FIELDS = ("distances", "offset", "deorientation", "stopper", "degrader2")
+
+
 def first_state(nuclide: str, multipolarity: str = "E2", max_energy_kev: float = 3000.0) -> tuple:
     """The lowest state of ``nuclide`` reached from the ground state by ``multipolarity`` with a known B(Eλ↑), from
     the local ENSDF copy: (scheme, level index, B(Eλ↑) in e²fm^2λ). Raises when there is no copy, no data for the
@@ -189,6 +196,12 @@ class Planner:
         self._stashed_excitation: dict = {}
         #: The fusion-evaporation settings (the channel table) while another reaction is chosen.
         self._stashed_fusion: dict = {}
+        #: The lifetime section while the reaction is one without lifetimes (elastic).
+        self._stashed_lifetime: dict = {}
+        #: A plunger's distances and foils while the lifetime method is DSAM, and a differential plunger's second
+        #: foil while the stopper is of another kind, so switching back restores them.
+        self._stashed_plunger: dict = {}
+        self._stashed_degrader2: dict = {}
         #: The experiment folder this setup belongs to (None until one is created or opened).
         self.folder: Optional[_runs.ExperimentFolder] = None
         #: The current run, which the spectra, analysis and the other views read (None: they simulate their own).
@@ -589,6 +602,11 @@ class Planner:
             self._stashed_excitation = kept
         if value == old:
             return self._apply(d)
+        # A lifetime measurement goes with Coulex and fusion-evaporation; it waits while another reaction is chosen.
+        if value not in LIFETIME_REACTIONS and "lifetime" in d:
+            self._stashed_lifetime = d.pop("lifetime")
+        elif value in LIFETIME_REACTIONS and "lifetime" not in d and self._stashed_lifetime:
+            d["lifetime"] = copy.deepcopy(self._stashed_lifetime)
         if value == "coulex":
             reaction = d["reaction"] = {"type": "coulex"}
             reaction.update(self._stashed_excitation or {"excite": "target", "multipolarity": "E2"})
@@ -1386,11 +1404,119 @@ class Planner:
 
     def add_ancillary(self, name: str, **fields) -> bool:
         """Give a fusion-evaporation setup an ancillary detector: "neutron_wall", "charged_particle_ball",
-        "recoil_separator" or "gamma_calorimeter" (:data:`ANCILLARY_DEFAULTS` where no fields are given)."""
+        "recoil_separator" or "gamma_calorimeter" (:data:`ANCILLARY_DEFAULTS` where no fields are given).
+        "plunger" gives the setup (Coulex too) a lifetime section: a plunger with the default distances and a
+        stopper (:meth:`set_lifetime`), or the ``[lifetime]`` fields given."""
+        if name == "plunger":
+            d = self.draft
+            d["lifetime"] = copy.deepcopy(fields) or self._default_lifetime("rdds")
+            return self._apply(d)
         if name not in self.ANCILLARY_DEFAULTS:
-            raise KeyError(f"unknown ancillary {name!r}; known: {', '.join(self.ANCILLARY_DEFAULTS)}")
+            known = ", ".join(list(self.ANCILLARY_DEFAULTS) + ["plunger"])
+            raise KeyError(f"unknown ancillary {name!r}; known: {known}")
         d = self.draft
         d[name] = dict(fields) or dict(self.ANCILLARY_DEFAULTS[name])
+        return self._apply(d)
+
+    # -- the lifetime section (plunger or DSAM) ---------------------------------------------------------------------
+
+    #: The distances a new plunger starts with: log-spaced, for lifetimes of about 1 to 100 ps at a few % of c.
+    PLUNGER_DISTANCES = ("10 um", "20 um", "50 um", "100 um", "200 um", "500 um")
+
+    def _default_lifetime(self, method: str) -> dict:
+        """A new lifetime section: DSAM has no fields of its own; a plunger gets :data:`PLUNGER_DISTANCES` and a
+        gold stopper thick enough to stop the setup's recoil (half as thick again as its range, at least
+        10 mg/cm²)."""
+        if method != "rdds":
+            return {"method": method}
+        return {"method": "rdds", "distances": list(self.PLUNGER_DISTANCES),
+                "stopper": {"kind": "stopper", "material": "Au", "thickness": self._stopper_thickness("Au")}}
+
+    def _stopper_thickness(self, material: str) -> str:
+        from .experiment import _stopping
+
+        recoil = self.experiment.lifetime_recoil()
+        need = 0.0
+        if recoil is not None and recoil[2] > 0:
+            try:
+                need = 1.5 * float(_stopping(recoil[0], material, None).range(recoil[2]))
+            except ValueError:
+                need = 0.0
+        return f"{max(10, math.ceil(need))} mg/cm2"
+
+    @staticmethod
+    def _text(value, unit: str = "um") -> str:
+        """A quantity as setup text: text and quantities as they are, a bare number in ``unit``."""
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return f"{format_number(float(value))} {unit}"
+        return str(value)
+
+    def set_lifetime(self, method: Optional[str] = None, distances=None, offset=None, deorientation=None) -> bool:
+        """Set the lifetime measurement, making the section if there is none (a plunger unless ``method`` says
+        "dsam"). ``distances`` are the target-to-stopper distances and ``offset`` the distance at electrical
+        contact (text with a unit, or numbers in µm); ``deorientation`` a dict of ``alpha2``, ``alpha4`` and either
+        ``gamma2``, ``gamma4`` or ``g``, ``c2``, ``c4`` (an empty dict removes it). Switching a plunger to DSAM
+        keeps its distances and foils aside, and switching back brings them back. Returns whether the setup is
+        valid afterwards."""
+        d = self.draft
+        lt = d.get("lifetime")
+        if lt is None:
+            lt = d["lifetime"] = self._default_lifetime(method or "rdds")
+        elif method is not None and method != lt.get("method"):
+            if method == "dsam":
+                self._stashed_plunger = {k: lt.pop(k) for k in PLUNGER_FIELDS if k in lt}
+                lt["method"] = method
+            else:
+                lt["method"] = method
+                if method == "rdds" and not any(k in lt for k in PLUNGER_FIELDS):
+                    back = copy.deepcopy(self._stashed_plunger) or self._default_lifetime("rdds")
+                    lt.update({k: v for k, v in back.items() if k != "method"})
+        if distances is not None:
+            lt["distances"] = [self._text(x) for x in distances]
+        if offset is not None:
+            lt["offset"] = self._text(offset)
+        if deorientation is not None:
+            if deorientation:
+                lt["deorientation"] = {k: v if isinstance(v, (int, float)) else str(v)
+                                       for k, v in deorientation.items()}
+            else:
+                lt.pop("deorientation", None)
+        return self._apply(d)
+
+    def set_stopper(self, kind: str, material: str, thickness, density=None) -> bool:
+        """Set the plunger's foil after the gap: ``kind`` "stopper" (stops the recoil), "degrader" (lets it through,
+        slower) or "differential" (the first of two foils; see :meth:`set_degrader2`), its material and thickness
+        ("10 mg/cm2", or a length with a known density). Makes a plunger section if there is none. A differential
+        plunger's second foil is kept aside while the kind is another, and comes back with "differential"."""
+        d = self.draft
+        lt = d.setdefault("lifetime", {"method": "rdds", "distances": list(self.PLUNGER_DISTANCES)})
+        stopper = {"kind": kind, "material": material, "thickness": self._text(thickness, "mg/cm2")}
+        if density is not None:
+            stopper["density"] = self._text(density, "g/cm3")
+        lt["stopper"] = stopper
+        if kind != "differential" and "degrader2" in lt:
+            self._stashed_degrader2 = lt.pop("degrader2")
+        elif kind == "differential" and "degrader2" not in lt and self._stashed_degrader2:
+            lt["degrader2"] = copy.deepcopy(self._stashed_degrader2)
+        return self._apply(d)
+
+    def set_degrader2(self, material: str, thickness, gap, density=None) -> bool:
+        """Set the second foil of a differential plunger, ``gap`` behind the first (text with a unit, or µm); it
+        stops the recoil. The plunger's first foil becomes of kind "differential"."""
+        d = self.draft
+        lt = d.setdefault("lifetime", {"method": "rdds", "distances": list(self.PLUNGER_DISTANCES)})
+        foil = {"material": material, "thickness": self._text(thickness, "mg/cm2"), "gap": self._text(gap)}
+        if density is not None:
+            foil["density"] = self._text(density, "g/cm3")
+        lt["degrader2"] = foil
+        if isinstance(lt.get("stopper"), dict):
+            lt["stopper"]["kind"] = "differential"
+        return self._apply(d)
+
+    def remove_lifetime(self) -> bool:
+        """Take the lifetime measurement out of the setup."""
+        d = self.draft
+        d.pop("lifetime", None)
         return self._apply(d)
 
     def remove_ancillary(self, name: str) -> bool:
@@ -2189,6 +2315,9 @@ class Planner:
         out = []
         for v in values:
             d = self.draft
+            # The rates do not depend on a lifetime measurement, and a swept value may make the plunger impossible
+            # (a recoil too slow to leave the target) without changing what is swept.
+            d.pop("lifetime", None)
             if parameter == "beam energy":
                 d["beam"]["energy"] = v
             elif parameter == "target thickness":

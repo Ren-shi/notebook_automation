@@ -1,0 +1,362 @@
+schema = "physim.experiment/1"
+title = "Doppler-shift attenuation after fusion-evaporation: 143Sm"
+description = "The Doppler-shift attenuation (DSAM) measurement of S. Rajbanshi et al., Phys. Lett. B 782, 143 (2018), at IUAC with INGA: 124Sn(24Mg,5n)143Sm at 107 MeV on a 0.8 mg/cm2 124Sn target (enriched to 99.9 %) on a 13 mg/cm2 gold backing, in which the residues (beta about 1.6 %) slow down and stop. Eighteen clovers with BGO shields: six at 90 deg, four at 123 deg, four at 148 deg and four at 57 deg; the line shapes were fitted at 148, 123 and 90 deg. The channel cross sections, beam current, detector distances and beam time are illustrative, not from the paper; the high-spin level scheme and side-feeding times of 143Sm are not in the setup yet. A small silicon detector at 30 deg counts the elastically scattered beam as a monitor, as in the other fusion examples (not in the paper)."
+
+[reaction]
+type = "fusion-evaporation"
+
+[[reaction.channels]]
+residue = "144Sm"
+particles = "4n"
+cross_section = "250 mb"
+source = "illustrative"
+
+[[reaction.channels]]
+residue = "143Sm"
+particles = "5n"
+cross_section = "450 mb"
+source = "illustrative"
+
+[[reaction.channels]]
+residue = "142Sm"
+particles = "6n"
+cross_section = "80 mb"
+source = "illustrative"
+
+[beam]
+nuclide = "24Mg"
+energy = "107 MeV"
+current = "3 pnA"
+
+[target]
+material = "124Sn"
+thickness = "0.8 mg/cm2"
+
+[target.backing]
+material = "Au"
+thickness = "13 mg/cm2"
+
+[run]
+beam_time = "120 h"
+channel = "5n"
+
+[[detectors]]
+name = "Monitor"
+shape = "circle"
+theta = "30 deg"
+phi = "0 deg"
+distance = "200 mm"
+radius = "1 mm"
+thickness = "300 um"
+dead_layer = "0.5 um"
+resolution = "50 keV"
+threshold = "1 MeV"
+
+[[gamma_detectors]]
+name = "C90-1"
+model = "clover"
+theta = "90 deg"
+phi = "0 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C90-2"
+model = "clover"
+theta = "90 deg"
+phi = "60 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C90-3"
+model = "clover"
+theta = "90 deg"
+phi = "120 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C90-4"
+model = "clover"
+theta = "90 deg"
+phi = "180 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C90-5"
+model = "clover"
+theta = "90 deg"
+phi = "240 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C90-6"
+model = "clover"
+theta = "90 deg"
+phi = "300 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C123-1"
+model = "clover"
+theta = "123 deg"
+phi = "45 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C123-2"
+model = "clover"
+theta = "123 deg"
+phi = "135 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C123-3"
+model = "clover"
+theta = "123 deg"
+phi = "225 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C123-4"
+model = "clover"
+theta = "123 deg"
+phi = "315 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C148-1"
+model = "clover"
+theta = "148 deg"
+phi = "0 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C148-2"
+model = "clover"
+theta = "148 deg"
+phi = "90 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C148-3"
+model = "clover"
+theta = "148 deg"
+phi = "180 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C148-4"
+model = "clover"
+theta = "148 deg"
+phi = "270 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C57-1"
+model = "clover"
+theta = "57 deg"
+phi = "45 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C57-2"
+model = "clover"
+theta = "57 deg"
+phi = "135 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C57-3"
+model = "clover"
+theta = "57 deg"
+phi = "225 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "C57-4"
+model = "clover"
+theta = "57 deg"
+phi = "315 deg"
+distance = "280 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[lifetime]
+method = "dsam"

@@ -1,0 +1,190 @@
+schema = "physim.experiment/1"
+title = "Three-foil plunger after fusion-evaporation: 50Cr"
+description = "The differential (three-foil) plunger measurement of C. Beckers et al., Nucl. Instrum. Methods A 1042, 167418 (2022), commissioning the CoCoDiff plunger at Cologne: 24Mg(32S,4p2n)50Cr at 100 MeV on a self-supporting 0.6 mg/cm2 24Mg target. The residues fly across a gap to a 4.4 mg/cm2 tantalum degrader (beta about 3.9 % before it, 1.5 % after), then across a second gap to a 6.5 mg/cm2 tantalum foil that stops them. Eleven germanium detectors: five at 142.3 deg and six at 45 deg. The paper used nine pairs of distances, 17 to 750 um to the degrader and 40 to 335 um between the foils; the setup keeps one gap between the foils (100 um here), and the distances other than 17, 42, 62, 122 and 750 um are illustrative. The channel cross sections, beam current, detector distances and beam time are illustrative too, not from the paper: replace the channels with your own PACE4 run. A small silicon detector at 30 deg counts the elastically scattered beam as a monitor, as in the other fusion examples (not in the paper)."
+
+[reaction]
+type = "fusion-evaporation"
+
+[[reaction.channels]]
+residue = "52Mn"
+particles = "3pn"
+cross_section = "150 mb"
+source = "illustrative"
+
+[[reaction.channels]]
+residue = "49V"
+particles = "a3p"
+cross_section = "120 mb"
+source = "illustrative"
+
+[[reaction.channels]]
+residue = "48Cr"
+particles = "2a"
+cross_section = "60 mb"
+source = "illustrative"
+
+[[reaction.channels]]
+residue = "50Cr"
+particles = "4p2n"
+cross_section = "40 mb"
+source = "illustrative"
+
+[beam]
+nuclide = "32S"
+energy = "100 MeV"
+current = "5 pnA"
+
+[target]
+material = "24Mg"
+thickness = "0.6 mg/cm2"
+
+[run]
+beam_time = "96 h"
+channel = "4p2n"
+
+[[detectors]]
+name = "Monitor"
+shape = "circle"
+theta = "30 deg"
+phi = "0 deg"
+distance = "200 mm"
+radius = "1 mm"
+thickness = "300 um"
+dead_layer = "0.5 um"
+resolution = "50 keV"
+threshold = "1 MeV"
+
+[[gamma_detectors]]
+name = "B1"
+theta = "142.3 deg"
+phi = "0 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[[gamma_detectors]]
+name = "B2"
+theta = "142.3 deg"
+phi = "72 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[[gamma_detectors]]
+name = "B3"
+theta = "142.3 deg"
+phi = "144 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[[gamma_detectors]]
+name = "B4"
+theta = "142.3 deg"
+phi = "216 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[[gamma_detectors]]
+name = "B5"
+theta = "142.3 deg"
+phi = "288 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[[gamma_detectors]]
+name = "F1"
+theta = "45 deg"
+phi = "0 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[[gamma_detectors]]
+name = "F2"
+theta = "45 deg"
+phi = "60 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[[gamma_detectors]]
+name = "F3"
+theta = "45 deg"
+phi = "120 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[[gamma_detectors]]
+name = "F4"
+theta = "45 deg"
+phi = "180 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[[gamma_detectors]]
+name = "F5"
+theta = "45 deg"
+phi = "240 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[[gamma_detectors]]
+name = "F6"
+theta = "45 deg"
+phi = "300 deg"
+distance = "120 mm"
+crystals = 1
+crystal_diameter = "70 mm"
+crystal_length = "80 mm"
+resolution = "2.2 keV"
+material = "Ge"
+
+[lifetime]
+method = "rdds"
+distances = ["17 um", "42 um", "62 um", "122 um", "200 um", "300 um", "400 um", "550 um", "750 um"]
+
+[lifetime.stopper]
+kind = "differential"
+material = "Ta"
+thickness = "4.4 mg/cm2"
+
+[lifetime.degrader2]
+material = "Ta"
+thickness = "6.5 mg/cm2"
+gap = "100 um"
