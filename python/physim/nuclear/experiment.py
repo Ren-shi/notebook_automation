@@ -20,6 +20,7 @@ from __future__ import annotations
 import difflib
 import math
 from dataclasses import dataclass, field, fields
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
 
@@ -151,6 +152,20 @@ def _read_value(spec: _Field, raw: Any) -> Any:
                 out.append([e, f])
         if kind == "curve" and len(out) < 2:
             raise ValueError("needs at least two points")
+        return out
+    if kind == "lengths":
+        if not isinstance(raw, list):
+            raise ValueError(f'must be a list of lengths ["10 um", "20 um", ...], got {raw!r}')
+        out = []
+        for i, x in enumerate(raw, start=1):
+            if not isinstance(x, (str, Quantity)):
+                raise ValueError(f'must be lengths written with a unit, e.g. "10 um"; number {i} is {x!r}')
+            q = x if isinstance(x, Quantity) else Quantity.parse(x)
+            if q.kind != "length":
+                raise ValueError(f"number {i}, '{q}', is not a length")
+            if q.value <= 0:
+                raise ValueError(f"must all be positive; number {i} is '{q}'")
+            out.append(q)
         return out
     if kind == "position":
         if not isinstance(raw, list) or len(raw) != 3:
@@ -991,6 +1006,131 @@ ANCILLARIES = (("charged_particle_ball", ChargedParticleBallSetup, "a charged-pa
                ("gamma_calorimeter", GammaCalorimeterSetup, "a γ calorimeter counts the γ rays of fusion events"))
 
 
+#: Methods of a lifetime measurement: "rdds" (recoil distance, a plunger) and "dsam" (Doppler-shift attenuation in
+#: the target's backing, or in a thick target).
+LIFETIME_METHODS = ("rdds", "dsam")
+
+#: Kinds of a plunger's foil: a "stopper" that stops the recoil, a "degrader" it flies through (slower), or the
+#: first foil of a "differential" plunger whose second foil (``[lifetime.degrader2]``) stops it.
+STOPPER_KINDS = ("stopper", "degrader", "differential")
+
+
+@dataclass
+class Stopper(Layer):
+    """The plunger's foil after the gap (``[lifetime.stopper]``): a layer of material and its ``kind``
+    (:data:`STOPPER_KINDS`)."""
+
+    kind: str = "stopper"
+
+    SPECS = (_Field("kind", "str", required=True, check=_one_of(*STOPPER_KINDS)),) + Layer.SPECS
+
+
+@dataclass
+class Degrader2(Layer):
+    """The second foil of a differential plunger (``[lifetime.degrader2]``), ``gap`` behind the first; it stops
+    the recoil."""
+
+    gap: Optional[QuantityLike] = None
+
+    SPECS = Layer.SPECS + (_Field("gap", "length", required=True, check=_positive),)
+
+    @property
+    def gap_um(self) -> float:
+        return _q(self.gap).to("um")
+
+
+def _alpha(x: float) -> Optional[str]:
+    return None if 0 <= x <= 1 else "must be between 0 and 1"
+
+
+@dataclass
+class Deorientation:
+    """Deorientation in vacuum (``lifetime.deorientation``): the recoil's alignment fades while it flies through
+    the plunger's gap, G_k(t) = α_k + (1 − α_k) e^(−Γ_k t) for k = 2, 4 (the static model of Radeck et al.,
+    PRC 85, 014301). Give ``alpha2``, ``alpha4`` and either the rates ``gamma2``, ``gamma4`` ("0.142 /ps") or the
+    g factor ``g`` with ``c2``, ``c4`` ("3.3 ps"), so that Γ_k = |g| / C_k."""
+
+    alpha2: Optional[float] = None
+    gamma2: Optional[QuantityLike] = None
+    alpha4: Optional[float] = None
+    gamma4: Optional[QuantityLike] = None
+    g: Optional[float] = None
+    c2: Optional[QuantityLike] = None
+    c4: Optional[QuantityLike] = None
+
+    SPECS = (
+        _Field("alpha2", "number", check=_alpha),
+        _Field("gamma2", "rate", check=_non_negative),
+        _Field("alpha4", "number", check=_alpha),
+        _Field("gamma4", "rate", check=_non_negative),
+        _Field("g", "number"),
+        _Field("c2", "time", check=_positive),
+        _Field("c4", "time", check=_positive),
+    )
+
+    @property
+    def alpha(self) -> dict:
+        """α_k by k (2 and 4)."""
+        return {2: float(self.alpha2), 4: float(self.alpha4)}
+
+    @property
+    def gamma_per_ps(self) -> dict:
+        """Γ_k by k (2 and 4), per ps: as given, or |g| / C_k."""
+        if self.gamma2 is not None:
+            return {2: _q(self.gamma2).to("/ps"), 4: _q(self.gamma4).to("/ps")}
+        return {k: abs(self.g) / _q(c).to("ps") for k, c in ((2, self.c2), (4, self.c4))}
+
+
+@dataclass
+class Lifetime:
+    """A lifetime measurement (``[lifetime]``), with a Coulomb-excitation or fusion-evaporation reaction.
+
+    ``method`` "rdds" is a plunger: the target-to-stopper ``distances`` (each plus ``offset``, the distance at
+    electrical contact, 0 if left out), the foil after the gap (:class:`Stopper`) and, for a differential plunger,
+    the second foil (:class:`Degrader2`); ``deorientation`` optionally describes how the recoil's alignment fades
+    in vacuum. ``method`` "dsam" uses the target's backing (or a thick target) to slow the recoil and has no other
+    fields.
+    """
+
+    method: str
+    distances: Optional[list] = None
+    offset: Optional[QuantityLike] = None
+    deorientation: Optional[Deorientation] = None
+    stopper: Optional[Stopper] = None
+    degrader2: Optional[Degrader2] = None
+
+    SPECS = (
+        _Field("method", "str", required=True, check=_one_of(*LIFETIME_METHODS)),
+        _Field("distances", "lengths"),
+        _Field("offset", "length", check=_non_negative),
+    )
+
+    @property
+    def offset_um(self) -> float:
+        """The distance at electrical contact, µm (0 if not given)."""
+        return _q(self.offset).to("um") if self.offset is not None else 0.0
+
+    @property
+    def distances_um(self) -> list:
+        """The distances as given, µm (without the offset)."""
+        return [_q(x).to("um") for x in self.distances or []]
+
+    @property
+    def flight_distances_um(self) -> list:
+        """Target-to-stopper distances the recoil flies, µm: each distance plus the offset."""
+        return [d + self.offset_um for d in self.distances_um]
+
+    def to_dict(self) -> dict:
+        d = {s.name: _out(getattr(self, s.name)) for s in self.SPECS if getattr(self, s.name) is not None}
+        if self.deorientation is not None:
+            d["deorientation"] = _to_dict(self.deorientation)
+        if self.stopper is not None:
+            d["stopper"] = _to_dict(self.stopper)
+        if self.degrader2 is not None:
+            d["degrader2"] = _to_dict(self.degrader2)
+        return d
+
+
 @dataclass
 class Experiment:
     """A complete setup. Build it in Python, or :meth:`load` it from a setup file."""
@@ -1017,6 +1157,8 @@ class Experiment:
     charged_particle_ball: Optional[ChargedParticleBallSetup] = None
     recoil_separator: Optional[RecoilSeparatorSetup] = None
     gamma_calorimeter: Optional[GammaCalorimeterSetup] = None
+    #: A lifetime measurement (plunger or DSAM), for a Coulomb-excitation or fusion-evaporation reaction.
+    lifetime: Optional[Lifetime] = None
 
     # -- reading ------------------------------------------------------------------------------------------------
 
@@ -1027,7 +1169,7 @@ class Experiment:
         if not isinstance(data, dict):
             raise SetupError(["the setup must be a table of sections"])
         known = ("schema", "title", "description", "reaction", "beam", "target", "detectors", "run",
-                 "gamma_detectors", "levels", "chamber", "neutron_wall") + tuple(a[0] for a in ANCILLARIES)
+                 "gamma_detectors", "levels", "chamber", "neutron_wall", "lifetime") + tuple(a[0] for a in ANCILLARIES)
         for key in data:
             if key not in known:
                 hint = difflib.get_close_matches(key, known, n=1)
@@ -1197,6 +1339,10 @@ class Experiment:
                 _q(ball.theta_min).to("deg") >= _q(ball.theta_max).to("deg"):
             problems.append("charged_particle_ball: theta_min must be below theta_max")
 
+        lifetime = None
+        if "lifetime" in data:
+            lifetime = _read_lifetime(data["lifetime"], reaction, problems)
+
         if target is not None and target.position is not None:
             origin = (0.0, 0.0, target.position_mm)
             for d in detectors + gammas:
@@ -1217,11 +1363,16 @@ class Experiment:
             if "beam_time" in r:
                 run = Run(**r)
 
+        if lifetime is not None and beam is not None and target is not None:
+            channel = run.channel if run is not None else None
+            _check_lifetime_foils(lifetime, _recoil(beam, target, excitation, fusion, channel), target, problems)
+
         if problems:
             raise SetupError(problems)
         return cls(title=title, beam=beam, target=target, detectors=detectors, run=run,
                    description=description, reaction=reaction, excitation=excitation, gamma_detectors=gammas,
-                   levels=levels, chamber=chamber, fusion=fusion, neutron_wall=neutron_wall, **ancillaries)
+                   levels=levels, chamber=chamber, fusion=fusion, neutron_wall=neutron_wall, lifetime=lifetime,
+                   **ancillaries)
 
     @classmethod
     def from_toml(cls, text: str) -> Experiment:
@@ -1276,6 +1427,8 @@ class Experiment:
         for name, _, _ in ANCILLARIES:
             if getattr(self, name) is not None:
                 d[name] = _to_dict(getattr(self, name))
+        if self.lifetime is not None:
+            d["lifetime"] = self.lifetime.to_dict()
         if self.levels:
             d["levels"] = {role: scheme.to_dict() for role, scheme in self.levels.items()}
         return d
@@ -1288,6 +1441,17 @@ class Experiment:
         """Validate, then write the setup file."""
         self.validate()
         Path(path).write_text(self.to_toml(), encoding="utf-8")
+
+    def lifetime_recoil(self) -> Optional[tuple]:
+        """The nucleus whose lifetime a lifetime measurement measures, as the setup's own numbers give it:
+        (nuclide, energy in MeV where it is made, energy in MeV as it leaves the target and its backing; 0 when it
+        stops there). It is made in the middle of the target, flying along the beam: for Coulomb excitation in a
+        head-on collision (θ_cm = 180°, where excitation is strongest), for fusion-evaporation the studied residue
+        at the compound nucleus's speed. None when the emitter does not fly forward (a projectile backscattered in
+        normal kinematics) or the numbers cannot be worked out. A single typical recoil: the spread of energies
+        and directions is the recoil transport's (:mod:`physim.nuclear.transport`)."""
+        channel = self.run.channel if self.run is not None else None
+        return _recoil(self.beam, self.target, self.excitation, self.fusion, channel)
 
     def validate(self) -> None:
         """Check the whole setup, including any edits made in Python. Raises :class:`SetupError`."""
@@ -1541,6 +1705,169 @@ def _read_levels(raw: Any, beam: Optional[Beam], target: Optional[Target], probl
     return out
 
 
+def _read_lifetime(raw: Any, reaction: str, problems: list[str]) -> Optional[Lifetime]:
+    """The ``[lifetime]`` section: its method, and for a plunger its distances and foils. Problems for a setup
+    that cannot be measured that way (no distances, no stopper, a second foil without a differential plunger)."""
+    if reaction not in ("coulex", "fusion-evaporation"):
+        problems.append("lifetime: a lifetime measurement (plunger or DSAM) needs [reaction] type = \"coulex\" or "
+                        "\"fusion-evaporation\"")
+    before = len(problems)
+    values = _read_section(raw, Lifetime.SPECS, "lifetime", problems,
+                           extra=("stopper", "degrader2", "deorientation"))
+    raw_l = raw if isinstance(raw, dict) else {}
+    method = values.get("method")
+    parts: dict[str, Any] = {}
+    for name, kind in (("stopper", Stopper), ("degrader2", Degrader2)):
+        if name in raw_l:
+            v = _read_section(raw_l[name], kind.SPECS, f"lifetime.{name}", problems)
+            _check_material(f"lifetime.{name}", v, problems)
+            if all(spec.name in v for spec in kind.SPECS if spec.required):
+                parts[name] = kind(**v)
+    if "deorientation" in raw_l:
+        parts["deorientation"] = _read_deorientation(raw_l["deorientation"], problems)
+    if method == "rdds":
+        if not values.get("distances") and not any(p.startswith("lifetime: distances") for p in problems):
+            problems.append("lifetime: a plunger (RDDS) needs its target-to-stopper distances, e.g. "
+                            "distances = [\"10 um\", \"50 um\", \"200 um\"]")
+        raw_s = raw_l.get("stopper")
+        kind = raw_s.get("kind") if isinstance(raw_s, dict) else None
+        if raw_s is None:
+            problems.append("lifetime: a plunger (RDDS) needs the foil after the gap: add [lifetime.stopper] with "
+                            "kind (\"stopper\", \"degrader\" or \"differential\"), material and thickness")
+        if kind == "differential" and "degrader2" not in raw_l:
+            problems.append("lifetime: a differential plunger needs its second foil, which stops the recoil: add "
+                            "[lifetime.degrader2] with material, thickness and gap")
+        elif kind in ("stopper", "degrader") and "degrader2" in raw_l:
+            problems.append("lifetime.degrader2: a second foil only applies to a stopper of kind \"differential\"")
+    elif method == "dsam":
+        given = [n for n in ("distances", "offset", "deorientation", "stopper", "degrader2") if n in raw_l]
+        if given:
+            problems.append(f"lifetime: {', '.join(given)} only apply to method = \"rdds\" (a plunger); a DSAM "
+                            "measurement slows the recoil in the target's backing")
+    if len(problems) > before or method is None:
+        return None
+    return Lifetime(method=method, distances=values.get("distances"), offset=values.get("offset"), **parts)
+
+
+def _read_deorientation(raw: Any, problems: list[str]) -> Optional[Deorientation]:
+    """``lifetime.deorientation``: α₂, α₄ and either the rates Γ₂, Γ₄ or g with C₂, C₄ — one form, complete."""
+    before = len(problems)
+    v = _read_section(raw, Deorientation.SPECS, "lifetime.deorientation", problems)
+    raw_d = raw if isinstance(raw, dict) else {}
+    rates = [n for n in ("gamma2", "gamma4") if n in raw_d]
+    via_g = [n for n in ("g", "c2", "c4") if n in raw_d]
+    forms = "give alpha2 and alpha4 with either gamma2 and gamma4 (\"0.142 /ps\"), or g, c2 and c4 (\"3.3 ps\")"
+    if not isinstance(raw, dict):
+        return None
+    if rates and via_g:
+        problems.append(f"lifetime.deorientation: {', '.join(rates + via_g)} mix the two forms; {forms}")
+    else:
+        need = ["alpha2", "alpha4"] + (["g", "c2", "c4"] if via_g else ["gamma2", "gamma4"])
+        missing = [n for n in need if n not in raw_d]
+        if missing:
+            problems.append(f"lifetime.deorientation: {', '.join(missing)} missing; {forms}")
+    if len(problems) > before:
+        return None
+    return Deorientation(**v)
+
+
+@lru_cache(maxsize=64)
+def _stopping(ion: str, material: str, density: Optional[str]):
+    from .stopping import Stopping
+
+    return Stopping(ion, _data.material(material, Quantity.parse(density) if density else None))
+
+
+def _slowing(ion: str, layer, energy: float, tilt_deg: float = 0.0, share: float = 1.0) -> tuple:
+    """The stopping of ``ion`` in ``layer`` (a Target or Layer), the mg/cm² it crosses (``share`` of the layer)
+    and the energy left after them."""
+    density = str(_q(layer.density)) if layer.density is not None else None
+    s = _stopping(ion, layer.material, density)
+    areal = share * layer.material_data().areal_density_mg_cm2(_q(layer.thickness))
+    return s, areal, float(s.energy_after(energy, areal, tilt_deg))
+
+
+def _recoil(beam, target, excitation, fusion, channel) -> Optional[tuple]:
+    """See :meth:`Experiment.lifetime_recoil`."""
+    try:
+        tilt = _q(target.tilt).to("deg") if target.tilt is not None else 0.0
+        _, _, e_mid = _slowing(beam.nuclide, target, beam.energy_mev, tilt, share=0.5)
+        if e_mid <= 0:
+            return None
+        if excitation is not None:
+            from .kinematics import TwoBody
+
+            k = TwoBody(beam.nuclide, main_nuclide(target), e_mid, excitation_mev=excitation.energy_mev,
+                        excite="recoil" if excitation.excite == "target" else "ejectile")
+            point = k.recoil_for(180.0) if excitation.excite == "target" else k.at_cm(180.0, "ejectile")
+            if float(point.theta_lab) >= 90.0:
+                return None
+            emitter = (k.recoil if excitation.excite == "target" else k.ejectile).name
+            energy = float(point.energy)
+        elif fusion is not None and fusion.channels:
+            i = studied_channel_index(fusion.channels, channel)
+            if i is None or fusion.channels[i]._residue is None:
+                return None
+            emitter = fusion.channels[i]._residue
+            a_beam, a_target = beam.A, parse_nuclide(main_nuclide(target))[1]
+            # The compound nucleus takes the beam's momentum; the residue keeps its speed.
+            energy = e_mid * a_beam / (a_beam + a_target) * parse_nuclide(emitter)[1] / (a_beam + a_target)
+        else:
+            return None
+        _, _, left = _slowing(emitter, target, energy, tilt, share=0.5)
+        if target.backing is not None and left > 0:
+            _, _, left = _slowing(emitter, target.backing, left, tilt)
+        return emitter, energy, left
+    except (ValueError, KeyError, ZeroDivisionError):
+        return None
+
+
+def _check_lifetime_foils(lifetime: Lifetime, recoil: Optional[tuple], target: Target, problems: list[str]) -> None:
+    """Problems a lifetime setup has with its recoil, from the setup alone: for a plunger, a recoil that never
+    leaves the target, a stopper that does not stop it or a degrader that does; for DSAM, nothing to stop it in."""
+    if lifetime.method == "dsam":
+        if target.backing is None and (recoil is None or recoil[2] > 0):
+            problems.append("lifetime: a DSAM measurement needs the recoil to slow down and stop in matter: give the "
+                            "target a backing ([target.backing]), or a target thick enough to stop the recoil")
+        elif target.backing is not None and recoil is not None and recoil[2] > 0:
+            problems.append(f"lifetime: the backing ({target.backing.thickness} of {target.backing.material}) does not "
+                            f"stop the recoil ({recoil[0]} made at {recoil[1]:.3g} MeV leaves it at {recoil[2]:.3g} "
+                            "MeV); a DSAM backing must stop it: make the backing thicker")
+        return
+    if recoil is None or lifetime.stopper is None:
+        return
+    emitter, made, left = recoil
+    if left <= 0:
+        where = "target and its backing" if target.backing is not None else "target"
+        problems.append(f"lifetime: the recoil ({emitter}, made at {made:.3g} MeV) stops in the {where} and never "
+                        "reaches the plunger's gap")
+        return
+    st = lifetime.stopper
+    try:
+        s, areal, after = _slowing(emitter, st, left)
+    except ValueError:
+        return
+    need = float(s.range(left))
+    foil = f"{st.thickness} of {st.material}"
+    if st.kind == "stopper" and after > 0:
+        problems.append(f"lifetime.stopper: {foil} does not stop the recoil ({emitter} at {left:.3g} MeV after the "
+                        f"target needs {need:.3g} mg/cm2); make it thicker")
+    elif st.kind in ("degrader", "differential") and after <= 0:
+        problems.append(f"lifetime.stopper: the {st.kind} foil ({foil}) stops the recoil ({emitter} at {left:.3g} "
+                        f"MeV after the target, range {need:.3g} mg/cm2); it must let the recoil through: make it "
+                        "thinner" + (", or set kind = \"stopper\"" if st.kind == "degrader" else ""))
+    elif st.kind == "differential" and lifetime.degrader2 is not None:
+        try:
+            s2, _, after2 = _slowing(emitter, lifetime.degrader2, after)
+        except ValueError:
+            return
+        if after2 > 0:
+            d2 = lifetime.degrader2
+            problems.append(f"lifetime.degrader2: {d2.thickness} of {d2.material} does not stop the recoil "
+                            f"({emitter} at {after:.3g} MeV after the first foil needs {float(s2.range(after)):.3g} "
+                            "mg/cm2); make it thicker")
+
+
 def _check_material(where: str, values: dict[str, Any], problems: list[str]) -> None:
     """The material must exist in the data, and lengths need a density to convert to areal densities."""
     if "material" not in values:
@@ -1558,6 +1885,7 @@ def _check_material(where: str, values: dict[str, Any], problems: list[str]) -> 
                                 "not known; give 'density' or the thickness in mg/cm2")
 
 
-__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "example_names", "main_nuclide", "Beam", "Chamber", "Detector",
-           "Excitation", "ExitChannel", "Experiment", "FusionEvaporation", "GammaDetector", "Layer", "NeutronWallSetup", "Run",
-           "SetupError", "Target"]
+__all__ = ["SCHEMA", "REACTIONS", "SHAPES", "EXAMPLES", "LIFETIME_METHODS", "STOPPER_KINDS", "example_names",
+           "main_nuclide", "Beam", "Chamber", "Degrader2", "Deorientation", "Detector", "Excitation", "ExitChannel",
+           "Experiment", "FusionEvaporation", "GammaDetector", "Layer", "Lifetime", "NeutronWallSetup", "Run",
+           "SetupError", "Stopper", "Target"]

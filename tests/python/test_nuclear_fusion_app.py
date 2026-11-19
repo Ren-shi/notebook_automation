@@ -88,8 +88,10 @@ def test_ancillaries_survive_a_switch_of_reaction():
     assert p.set("reaction", "type", "fusion-evaporation")
     assert p.experiment.recoil_separator is not None and p.experiment.gamma_calorimeter is not None
     assert p.remove_ancillary("gamma_calorimeter") and p.experiment.gamma_calorimeter is None
+    # A plunger is a lifetime section, added like an ancillary (backlog: lifetimes, wave 1A).
+    assert p.add_ancillary("plunger") and p.experiment.lifetime.method == "rdds"
     with pytest.raises(KeyError):
-        p.add_ancillary("plunger")
+        p.add_ancillary("nope")
 
 
 def test_kinds_and_templates():
