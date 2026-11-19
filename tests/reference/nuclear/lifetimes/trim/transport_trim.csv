@@ -1,0 +1,55 @@
+# tool: SRIM 2013 (installer SRIM-2013-Std.exe), TRIM.exe; output headers read "SRIM-2013.00"
+# produced by: scripts/transport_reference.py, 2026-11-19
+# settings: the TRIM_<case>_<run>.IN files beside this one (5000 ions each, quick Kinchin-Pease,
+#   compound correction 1, random seed 1), written by physim.nuclear.export.trim_in with the disk-file
+#   line changed: 'range' runs save RANGE_3D.txt (stopped ions' depth and lateral position), 'quarter'
+#   and 'half' runs save TRANSMIT.txt (energies and direction cosines of transmitted ions). Energies
+#   from beta with the nuclear mass; ion masses in TRIM are atomic masses (u). Lengths in um, angles
+#   in degrees from the layer normal; lateral_sigma_um is the per-axis sigma, sqrt(<y^2 + z^2>/2).
+case,ion,beta,energy_mev,material,density_g_cm3,run,thickness_mg_cm2,quantity,value
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,range,15.0,ions,5000
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,range,15.0,projected_range_um,6.61398
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,range,15.0,range_straggling_um,0.433684
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,range,15.0,lateral_sigma_um,0.563358
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,range,15.0,radial_mean_um,0.698797
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,quarter,1.5,ions,5000
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,quarter,1.5,transmitted,1
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,quarter,1.5,mean_energy_mev,53.665
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,quarter,1.5,sigma_energy_mev,1.12612
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,quarter,1.5,rms_angle_deg,3.16557
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,quarter,1.5,median_angle_deg,1.85871
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,quarter,1.5,mean_cos,0.99848
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,quarter,1.5,angle_90_deg,4.2652
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,quarter,1.5,lateral_sigma_um,0.034605
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,half,3.0,ions,5000
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,half,3.0,transmitted,0.9998
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,half,3.0,mean_energy_mev,25.6359
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,half,3.0,sigma_energy_mev,1.5162
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,half,3.0,rms_angle_deg,6.57846
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,half,3.0,median_angle_deg,4.26727
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,half,3.0,mean_cos,0.993464
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,half,3.0,angle_90_deg,9.1896
+ru98_cu,98Ru,0.045,92.456,Cu,8.96,half,3.0,lateral_sigma_um,0.115377
+sm143_au,143Sm,0.016,17.0391,Au,19.32,range,8.0,ions,4996
+sm143_au,143Sm,0.016,17.0391,Au,19.32,range,8.0,projected_range_um,1.66281
+sm143_au,143Sm,0.016,17.0391,Au,19.32,range,8.0,range_straggling_um,0.446706
+sm143_au,143Sm,0.016,17.0391,Au,19.32,range,8.0,lateral_sigma_um,0.505584
+sm143_au,143Sm,0.016,17.0391,Au,19.32,range,8.0,radial_mean_um,0.636583
+sm143_au,143Sm,0.016,17.0391,Au,19.32,quarter,0.75,ions,5000
+sm143_au,143Sm,0.016,17.0391,Au,19.32,quarter,0.75,transmitted,0.9934
+sm143_au,143Sm,0.016,17.0391,Au,19.32,quarter,0.75,mean_energy_mev,13.2062
+sm143_au,143Sm,0.016,17.0391,Au,19.32,quarter,0.75,sigma_energy_mev,1.31001
+sm143_au,143Sm,0.016,17.0391,Au,19.32,quarter,0.75,rms_angle_deg,16.1688
+sm143_au,143Sm,0.016,17.0391,Au,19.32,quarter,0.75,median_angle_deg,9.95856
+sm143_au,143Sm,0.016,17.0391,Au,19.32,quarter,0.75,mean_cos,0.961409
+sm143_au,143Sm,0.016,17.0391,Au,19.32,quarter,0.75,angle_90_deg,24.9498
+sm143_au,143Sm,0.016,17.0391,Au,19.32,quarter,0.75,lateral_sigma_um,0.0489463
+sm143_au,143Sm,0.016,17.0391,Au,19.32,half,1.5,ions,5000
+sm143_au,143Sm,0.016,17.0391,Au,19.32,half,1.5,transmitted,0.969
+sm143_au,143Sm,0.016,17.0391,Au,19.32,half,1.5,mean_energy_mev,9.79005
+sm143_au,143Sm,0.016,17.0391,Au,19.32,half,1.5,sigma_energy_mev,1.68185
+sm143_au,143Sm,0.016,17.0391,Au,19.32,half,1.5,rms_angle_deg,23.9999
+sm143_au,143Sm,0.016,17.0391,Au,19.32,half,1.5,median_angle_deg,17.2854
+sm143_au,143Sm,0.016,17.0391,Au,19.32,half,1.5,mean_cos,0.915836
+sm143_au,143Sm,0.016,17.0391,Au,19.32,half,1.5,angle_90_deg,37.952
+sm143_au,143Sm,0.016,17.0391,Au,19.32,half,1.5,lateral_sigma_um,0.136614

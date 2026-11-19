@@ -480,8 +480,9 @@ def with_srim_stopping(monkeypatch):
 
 
 #: Tolerances against TRIM with the same stopping: TRIM adds electronic energy-loss straggling, which physim's Monte
-#: Carlo leaves out, so its range straggling is a little larger.
-TOL = {"range": 0.03, "straggling": 0.15, "lateral": 0.06, "energy": 0.02, "angle": 0.06}
+#: Carlo leaves out, so its range straggling is a little larger; and TRIM drops the distant collisions (p > p_max)
+#: that physim adds as a Gaussian turn, so its smallest angles (the median) are a few per cent smaller.
+TOL = {"range": 0.03, "straggling": 0.15, "lateral": 0.06, "energy": 0.02, "angle": 0.06, "median": 0.10}
 
 
 @pytest.mark.parametrize("case", sorted(CASES))
@@ -514,7 +515,8 @@ def test_angular_spread_against_trim(case, run, with_srim_stopping):
     assert out.mean() == pytest.approx(ref["transmitted"], abs=0.02)
     assert r["energy"][out, 0].mean() == pytest.approx(ref["mean_energy_mev"], rel=TOL["energy"])
     assert math.sqrt((angle**2).mean()) == pytest.approx(ref["rms_angle_deg"], rel=TOL["angle"])
-    assert np.median(angle) == pytest.approx(ref["median_angle_deg"], rel=TOL["angle"])
+    assert np.median(angle) == pytest.approx(ref["median_angle_deg"], rel=TOL["median"])
+    assert np.percentile(angle, 90) == pytest.approx(ref["angle_90_deg"], rel=TOL["angle"])
 
 
 def test_the_trim_inputs_are_what_the_script_writes():
