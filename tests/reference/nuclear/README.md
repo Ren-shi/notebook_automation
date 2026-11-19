@@ -40,8 +40,10 @@ and run by hand, so each file records exactly how it was produced, so that anyon
   as context without the local ENSDF copy.
 - `lifetimes/` holds the references for the lifetime checks (plunger RDDS and DSAM): closed-form decay curves and
   attenuation, AhKin's and APCAD's DSAM examples, NaPyTau's DDCM answers, and the published lifetimes of the
-  experiments to reproduce, all written by `scripts/lifetime_reference.py`; its own README records where each
-  outside program came from, its licence and how it was run.
+  experiments to reproduce, all written by `scripts/lifetime_reference.py`, and TRIM runs for the recoil transport
+  (`lifetimes/trim/`, `scripts/transport_reference.py`); its own README records where each outside program came
+  from, its licence and how it was run, and which check of `physim.nuclear.validation` reads each file (the two
+  `Lifetimes:` capabilities, docs/physics-register/lifetimes.md).
 - `reproduction_usman2020.csv` is physim's own result, not a reference from outside: the reproduction of Usman
   et al., NIM B 469, 42 (2020) (⁴He + ¹⁶⁵Ho stacked-foil activation) through the planner, one row per Ho foil and
   channel (channel table filled by the app, residues made in the irradiation, σ inferred from them, the measured

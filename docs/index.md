@@ -76,6 +76,7 @@ physics-register/stopping
 physics-register/rutherford
 physics-register/detectors
 physics-register/rates-and-events
+physics-register/lifetimes
 validation
 changelog
 ```

@@ -92,6 +92,18 @@ from experiment is reported as the papers report it.
 |---|---|---|---|---|---|---|
 | Shell-model calculations (KSHELL) | ✅ | ⬜ | ✅ KSHELL as physim runs and reads it against published calculations with the same Hamiltonian: ²⁸Si/USDB vs ANTOINE (Frycz et al. 2024: E(0⁺₁), B(E2; 2⁺→0⁺), B(E2; 4⁺→2⁺), Q_s(2⁺₁) with e_p 1.31, e_n 0.46) and ⁴⁸Cr/KB3 vs the exact energies of five states (Pittel et al. 2009), within one unit of the digit each source prints (0.1 MeV, 1 keV, 0.1 e²fm⁴, ...; worst 99%: B(E2; 2⁺→0⁺) 78.20 vs 78.3); M-scheme dimensions exact | ✅ physim's dimension count vs 8 published dimensions of ²⁸Si, ⁴⁸Cr, ⁵⁶Ni (exact). Reported, not judged: ²⁸Si/USDB vs ENSDF, excitation energies rms 320 keV over 7 states matched by J^π and order (largest 0⁺₃ +636 keV, at the prolate band head that Frycz et al. find USDB does not reproduce, and 2⁺₃ +485 keV), B(E2) 1.2–3.1× ENSDF's | [Shell model](../shell-model.md) | — |
 
+Fifth slice: lifetime measurements, the plunger (RDDS) and the Doppler-shift attenuation method (DSAM), backlog item
+73, built in waves. The checks are in `physim.nuclear.validation` with their references in
+`tests/reference/nuclear/lifetimes/` (closed forms, TRIM, APCAD's and AhKin's examples, NaPyTau, the published
+experiments); the page is [Lifetimes](lifetimes.md). Simulated spectra and the lifetime analysis come next, so the
+DDCM against NaPyTau, the closure tests and the three reproduced experiments (⁹⁸Ru, ⁵⁰Cr, ¹⁴³Sm) wait. The two
+line-shape comparisons fail their tolerances and are listed as known failures in `test_nuclear_validation.py`.
+
+| Capability | Engine | App | vs tools | vs literature | Page | Backlog |
+|---|---|---|---|---|---|---|
+| Lifetimes: recoil distance (RDDS) | 🟡 physics and recoil transport; spectra and analysis next | ⬜ | 🟡 TRIM (SRIM 2013), ⁹⁸Ru at β = 4.5% into the Cu stopper with SRIM's stopping: range 3%, straggling 15%, lateral spread 6%, energy 2% and angles 6–10% after a quarter and half of the range pass (worst 72% of a tolerance); DDCM against NaPyTau waits for simulated spectra | 🟡 closed forms: one level with and without time dilation and Bateman's two-level cascade (1e-9; worst 4e-10); ⁹⁸Ru deorientation G_k and the shifted G̃_k from Radeck et al.'s Table I (1e-8); the recoils' stopping against measured data is `stopping_heavy_vs_data` (Stopping power and range). Closure and the ⁹⁸Ru and ⁵⁰Cr reproductions wait | [Lifetimes](lifetimes.md) | 73 |
+| Lifetimes: Doppler-shift attenuation (DSAM) | 🟡 physics, recoil transport and DSAM kernel; spectra and line-shape fit next | ⬜ | 🟡 TRIM, ¹⁴³Sm at β = 1.6% into the Au backing, same tolerances, pass (worst 84%). Line shapes fail: APCAD's example (τ = 1 ps, 29 angles), widths agree (mean ratio 1.00) but the first-order shift is 17% larger (10% allowed; physim's ¹²⁰Sn leave the Cu backing where Geant4's stopping keeps them); AhKin's ⁸³Y line, shift inside AhKin's 1σ band but 25% wider (10% allowed; physim's scattering turns the residues, AhKin follows the velocity along the beam only) | 🟡 closed form F = α/(α + τ) for stopping ∝ speed and the distribution of v/v₀ at emission (1e-6; bin shares 2e-5, worst 97%). Closure and the ¹⁴³Sm reproduction wait | [Lifetimes](lifetimes.md) | 73 |
+
 Next slices: inelastic scattering through the nuclear interaction, then transfer reactions.
 
 ## Foundations: the classical and quantum engine

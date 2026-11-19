@@ -18,9 +18,12 @@ marks ✅ to pass, and deliberately broken formulas to fail.
 
 from __future__ import annotations
 
+import copy
 import csv
 import math
 import os
+import re
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -48,6 +51,8 @@ CAPABILITIES = (
     "Evaporation Monte Carlo (Hauser–Feshbach)",
     "Neutron detectors and channel selection",
     "Shell-model calculations (KSHELL)",
+    "Lifetimes: recoil distance (RDDS)",
+    "Lifetimes: Doppler-shift attenuation (DSAM)",
 )
 
 
@@ -1823,6 +1828,670 @@ def shellmodel_dimensions(ref):
     detail = (f"{len(labels)} dimensions, " + ("all equal" if not wrong else "different: " + "; ".join(wrong))
               + ". " + _shellmodel_context_text(shellmodel_si28_vs_ensdf(ref)))
     return not wrong, 0.0 if not wrong else math.inf, len(labels), detail, plot
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Lifetime measurements: the plunger (RDDS) and the Doppler-shift attenuation method (DSAM)
+#
+# The references are in tests/reference/nuclear/lifetimes/ (its README gives their provenance): closed forms
+# (analytic/), TRIM for the recoil transport (trim/), APCAD's and AhKin's DSAM examples (apcad/, ahkin/), NaPyTau's
+# DDCM (napytau/) and the published experiments (published/). The recoils' stopping against measured data is the
+# check stopping_heavy_vs_data (Stopping power and range), not repeated here. The checks that need simulated
+# plunger spectra and the lifetime analysis (DDCM against NaPyTau, τ recovered from simulated runs, the three
+# published experiments) are written in wave 3C and wait until then.
+
+RDDS = "Lifetimes: recoil distance (RDDS)"
+DSAM = "Lifetimes: Doppler-shift attenuation (DSAM)"
+#: The lifetime references' folder, inside the reference folder.
+LIFETIME_REFERENCE = "lifetimes"
+#: The detail of the checks that wait for wave 3C.
+WAVE_3C = "waits for simulated plunger and DSAM spectra and the lifetime analysis (waves 2A–2C); written in wave 3C"
+
+
+def _lifetime_file(ref, name: str) -> Optional[Path]:
+    return _file(ref, f"{LIFETIME_REFERENCE}/{name}")
+
+
+def _missing(name: str) -> tuple:
+    return None, math.nan, 0, f"{LIFETIME_REFERENCE}/{name} not found", {}
+
+
+def _share_deviation(got, want) -> np.ndarray:
+    """|got/want − 1|, and for a share that underflowed to 0 in the reference, 0 if physim's is below 1e-300 too."""
+    got, want = np.asarray(got, dtype=float), np.asarray(want, dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rel = np.abs(got / np.where(want > 0, want, 1.0) - 1)
+    return np.where(want > 0, rel, np.where(np.abs(got) < 1e-300, 0.0, np.inf))
+
+
+@check(RDDS, "literature", "Closed form for one level without feeding, the recoil along the beam at one speed: "
+       "unshifted share exp(−d/(γβcτ)), and exp(−d/(βcτ)) without time dilation; τ = 1, 10, 100 ps, β = 2, 5, 10%, "
+       "d = 1 µm to 5 mm (lifetimes/analytic/rdds_one_level.csv)", "1e-9 relative")
+def rdds_one_level_analytic(ref):
+    from . import lifetimes
+
+    path = _lifetime_file(ref, "analytic/rdds_one_level.csv")
+    if path is None:
+        return _missing("analytic/rdds_one_level.csv")
+    rows = read_reference(path)[1]
+    worst, xs, ours, theirs = 0.0, [], [], []
+    for r in rows:
+        tau, beta, d = float(r["tau_ps"]), float(r["beta"]), float(r["distance_um"])
+        dilated = lifetimes.unshifted([tau], None, [1.0], lifetimes.flight_times(d, beta, proper=True))[0]
+        plain = lifetimes.unshifted([tau], None, [1.0], lifetimes.flight_times(d, beta))[0]
+        worst = max(worst, float(_share_deviation(dilated, float(r["unshifted"]))),
+                    float(_share_deviation(plain, float(r["unshifted_no_dilation"]))))
+        if tau == 10.0 and beta == 0.05 and float(r["unshifted"]) > 1e-12:
+            xs.append(d)
+            ours.append(float(dilated))
+            theirs.append(float(r["unshifted"]))
+    plot = {"x": xs, "physim": ours, "reference": theirs, "xlabel": "target-to-stopper distance (µm), τ = 10 ps, "
+            "β = 5%", "ylabel": "unshifted share", "logx": True, "logy": True}
+    return worst <= 1e-9, worst, 2 * len(rows), f"{len(rows)} distances with and without time dilation, worst " \
+        f"{worst:.1e}", plot
+
+
+@check(RDDS, "literature", "Bateman's equations for a level fed from one level above: the unshifted shares of both "
+       "transitions for three lifetime pairs (one with τ₁ ≈ τ₂) and two population splits "
+       "(lifetimes/analytic/rdds_two_levels.csv)", "1e-9 relative")
+def rdds_two_levels_bateman(ref):
+    from . import lifetimes
+
+    path = _lifetime_file(ref, "analytic/rdds_two_levels.csv")
+    if path is None:
+        return _missing("analytic/rdds_two_levels.csv")
+    rows = read_reference(path)[1]
+    feeding = np.array([[0.0, 1.0], [0.0, 0.0]])  # the upper level decays to the lower one
+    worst, xs, ours, theirs = 0.0, [], [], []
+    for r in rows:
+        tau1, tau2, p1, p2 = (float(r[k]) for k in ("tau1_ps", "tau2_ps", "p1", "p2"))
+        t = lifetimes.flight_times(float(r["distance_um"]), float(r["beta"]))
+        upper, lower = lifetimes.unshifted([tau1, tau2], feeding, [p1, p2], t)
+        worst = max(worst, float(_share_deviation(upper, float(r["unshifted_upper"]))),
+                    float(_share_deviation(lower, float(r["unshifted_lower"]))))
+        if (tau1, tau2, p1) == (2.0, 10.0, 1.0) and float(r["unshifted_lower"]) > 1e-12:
+            xs.append(float(r["distance_um"]))
+            ours.append(float(lower))
+            theirs.append(float(r["unshifted_lower"]))
+    plot = {"x": xs, "physim": ours, "reference": theirs, "xlabel": "distance (µm), τ = 2 ps feeding τ = 10 ps",
+            "ylabel": "unshifted share, lower transition", "logx": True, "logy": True}
+    return worst <= 1e-9, worst, 2 * len(rows), f"{len(rows)} distances × 2 transitions, worst {worst:.1e}", plot
+
+
+def ru98_deorientation(ref) -> Optional[dict]:
+    """Radeck et al.'s Table I deorientation parameters (α_k, Γ_k in 1/ps), the recoil speed (µm/ps) and τ(2⁺₁) (ps),
+    from lifetimes/published/setups.toml and lifetimes.csv; None if the files are not there."""
+    from ._toml import loads
+
+    setups, taus = _lifetime_file(ref, "published/setups.toml"), _lifetime_file(ref, "published/lifetimes.csv")
+    if setups is None or taus is None:
+        return None
+    s = loads(setups.read_text(encoding="utf-8"))["ru98_rdds_coulex"]
+
+    def number(key: str, text: str) -> float:
+        return float(re.search(rf"{key} ([0-9.]+)\(", text).group(1))
+
+    tau = [float(r["tau_ps"]) for r in read_reference(taus)[1]
+           if r["case"] == "ru98_rdds_coulex" and r["state"] == "2+1" and r["role"] == "result"]
+    return {"alpha": {k: number(f"alpha_{k}", s["analysis"]) for k in (2, 4)},
+            "gamma": {k: number(f"Gamma_{k}", s["analysis"]) for k in (2, 4)},
+            "v_um_ps": number("v =", s["recoil_velocity"]), "tau_ps": tau[0]}
+
+
+@check(RDDS, "literature", "Deorientation in vacuum, ⁹⁸Ru 2⁺₁ (Radeck et al., PRC 85, 014301 (2012), Table I: α₂ 0.18, "
+       "Γ₂ 0.142/ps, α₄ 0.24, Γ₄ 0.314/ps at v = 13.49 µm/ps, τ = 8.36 ps; lifetimes/published/): the unshifted "
+       "attenuation G_k(d) = α_k + (1 − α_k) e^(−Γ_k d/v) and the shifted one, Radeck's Eq. 7 by Gauss–Legendre "
+       "quadrature, for d = 0–450 µm", "1e-8")
+def deorientation_ru98(ref):
+    from . import lifetimes
+
+    p = ru98_deorientation(ref)
+    if p is None:
+        return _missing("published/setups.toml")
+    d = np.linspace(0.0, 450.0, 91)
+    t = d / p["v_um_ps"]
+    tau, alpha, gamma = p["tau_ps"], p["alpha"], p["gamma"]
+    unshifted = lifetimes.deorientation(t, alpha, gamma)
+    shifted = lifetimes.deorientation_shifted(t, tau, alpha, gamma)
+    x, w = np.polynomial.legendre.leggauss(64)
+    worst, curves = 0.0, {}
+    for k in (2, 4):
+        g_closed = alpha[k] + (1 - alpha[k]) * np.exp(-gamma[k] * t)
+        g_eq7 = np.ones_like(t)
+        for i, tt in enumerate(t):
+            if tt > 0:  # ∫₀ᵀ G_k e^(−t/τ) dt / ∫₀ᵀ e^(−t/τ) dt
+                nodes, weights = 0.5 * tt * (x + 1), 0.5 * tt * w
+                decay = np.exp(-nodes / tau)
+                g_eq7[i] = np.sum(weights * (alpha[k] + (1 - alpha[k]) * np.exp(-gamma[k] * nodes)) * decay) / np.sum(
+                    weights * decay)
+        worst = max(worst, float(np.max(np.abs(unshifted[k] - g_closed))), float(np.max(np.abs(shifted[k] - g_eq7))))
+        curves[k] = {"unshifted": np.asarray(unshifted[k]), "shifted": np.asarray(shifted[k]), "eq7": g_eq7}
+    plot = {"x": d, "physim": curves[2]["shifted"], "reference": curves[2]["eq7"], "xlabel": "distance (µm)",
+            "ylabel": "G̃₂ (shifted γ rays)", "curves": curves}
+    detail = (f"G₂, G₄ and G̃₂, G̃₄ at 91 distances, worst {worst:.1e}; at 450 µm "
+              f"G₂ = {curves[2]['unshifted'][-1]:.3f} (unshifted), G̃₂ = {curves[2]['shifted'][-1]:.3f} (shifted), G₄ = {curves[4]['unshifted'][-1]:.3f}, "
+              f"G̃₄ = {curves[4]['shifted'][-1]:.3f}")
+    return worst <= 1e-8, worst, 4 * len(d), detail, plot
+
+
+@check(DSAM, "literature", "Stopping proportional to speed, v(t) = v₀ e^(−t/α): the attenuation F(τ) = α/(α + τ) "
+       "exactly, and the distribution of v/v₀ at emission in 20 bins as the line shape at 0°; α = 0.2, 0.5, 1 ps, "
+       "τ = 0.01–5 ps (lifetimes/analytic/dsam_exponential.csv)", "F 1e-6 relative; bin shares 2e-5")
+def dsam_exponential_analytic(ref):
+    from . import lifetimes
+    from .gamma import doppler_energy
+
+    path = _lifetime_file(ref, "analytic/dsam_exponential.csv")
+    if path is None:
+        return _missing("analytic/dsam_exponential.csv")
+    rows = read_reference(path)[1]
+    beta0, e0 = 0.04, 1000.0
+    edges = doppler_energy(e0, beta0 * np.linspace(0.0, 1.0, 21), 1.0)
+    kernels: dict = {}
+    worst_f, worst_share, xs, ours, theirs = 0.0, 0.0, [], [], []
+    for r in rows:
+        alpha, tau = float(r["alpha_ps"]), float(r["tau_ps"])
+        kernel = kernels.setdefault(alpha, lifetimes.exponential_kernel(beta0, alpha))
+        f = lifetimes.dsam_attenuation(tau, kernel)
+        worst_f = max(worst_f, abs(f / float(r["attenuation_F"]) - 1))
+        shares = lifetimes.lineshape(e0, [tau], None, [1.0], kernel, 0.0, edges)[0]
+        expected = np.array([float(v) for v in r["share_v_over_v0_in_20_bins"].split(";")])
+        worst_share = max(worst_share, float(np.max(np.abs(shares - expected))))
+        xs.append(tau / alpha)
+        ours.append(f)
+        theirs.append(float(r["attenuation_F"]))
+    order = np.argsort(xs)
+    worst = max(worst_f / 1e-6, worst_share / 2e-5)
+    plot = {"x": np.array(xs)[order], "physim": np.array(ours)[order], "reference": np.array(theirs)[order],
+            "xlabel": "τ / α", "ylabel": "attenuation F(τ)", "logx": True}
+    detail = (f"{len(rows)} (α, τ): worst F {worst_f:.1e}, worst bin share {worst_share:.1e} ({worst:.0%} of the "
+              "tolerance)")
+    return worst <= 1.0, worst, len(rows) * 21, detail, plot
+
+
+# -- the recoil transport against TRIM ----------------------------------------------------------------------------
+
+#: Tolerances against TRIM with TRIM's own (SRIM 2013) stopping, so that only the scattering differs (as in
+#: tests/python/test_nuclear_transport.py): TRIM adds electronic energy-loss straggling, which physim's Monte Carlo
+#: leaves out (range straggling a little larger), and drops the distant collisions physim adds as a Gaussian turn
+#: (its median angle a few per cent smaller). The transmitted fraction is absolute.
+TRIM_TRANSPORT_TOLERANCE = {"projected_range_um": 0.03, "range_straggling_um": 0.15, "lateral_sigma_um": 0.06,
+                            "transmitted": 0.02, "mean_energy_mev": 0.02, "rms_angle_deg": 0.06,
+                            "median_angle_deg": 0.10, "angle_90_deg": 0.06}
+#: Recoils followed per TRIM run (TRIM ran 5000).
+TRIM_RECOILS = 10000
+
+
+def _trim_runs(ref) -> Optional[dict]:
+    path = _lifetime_file(ref, "trim/transport_trim.csv")
+    if path is None:
+        return None
+    out: dict = {}
+    for r in read_reference(path)[1]:
+        out.setdefault((r["case"], r["run"]), {"row": r})[r["quantity"]] = float(r["value"])
+    return out
+
+
+def srim_stopping(ref, species: str, material):
+    """physim's Stopping for ``species`` in ``material`` with SRIM 2013's electronic and nuclear stopping
+    (lifetimes/trim/srim_stopping.csv) in place of its own, on its own grid and with its range integrated the same
+    way: what TRIM slowed the recoils with. A copy: the cached stopping is not changed."""
+    from .rates import stopping
+
+    path = _lifetime_file(ref, "trim/srim_stopping.csv")
+    rows = [r for r in read_reference(path)[1] if r["ion"] == species]
+    e = np.array([float(r["energy_mev"]) for r in rows])
+    se = np.array([float(r["electronic_mev_mg_cm2"]) for r in rows])
+    sn = np.array([float(r["nuclear_mev_mg_cm2"]) for r in rows])
+    st = copy.copy(stopping(species, material))
+    ln = np.log(st._e)
+    se_g = np.exp(np.interp(ln, np.log(e), np.log(se)))
+    sn_g = np.exp(np.interp(ln, np.log(e), np.log(sn)))
+    return _with_stopping(st, se_g, sn_g)
+
+
+def _with_stopping(st, se_mev_mg_cm2: np.ndarray, sn_mev_mg_cm2: np.ndarray):
+    """``st`` (a copy of a Stopping) with these electronic and nuclear stopping powers on its grid, and its range
+    integrated from them as Stopping does."""
+    st._se, st._sn = se_mev_mg_cm2 * 1e3, sn_mev_mg_cm2 * 1e3  # MeV cm²/g
+    total = se_mev_mg_cm2 + sn_mev_mg_cm2
+    f = st._e / total
+    ln = np.log(st._e)
+    st._range = np.r_[0.0, np.cumsum(0.5 * (f[1:] + f[:-1]) * np.diff(ln))] + 2 * st._e[0] / total[0]
+    return st
+
+
+@contextmanager
+def recoil_stopping(species: str, st):
+    """Within the block, the recoil transport slows ``species`` with the Stopping ``st`` (its time-to-stop clocks
+    recomputed for it); everything is put back afterwards."""
+    from . import transport
+
+    saved, clocks = transport.stopping, dict(transport._CLOCKS)
+    transport.stopping = lambda ion, material: st if ion == species else saved(ion, material)
+    transport._CLOCKS.clear()
+    try:
+        yield
+    finally:
+        transport.stopping = saved
+        transport._CLOCKS.clear()
+        transport._CLOCKS.update(clocks)
+
+
+def _transport_vs_trim(ref, case: str) -> tuple:
+    from . import transport
+    from .rates import stopping
+
+    runs = _trim_runs(ref)
+    if runs is None or _lifetime_file(ref, "trim/srim_stopping.csv") is None:
+        return _missing("trim/transport_trim.csv")
+    first = runs[(case, "range")]["row"]
+    species, material, energy = first["ion"], data.material(first["material"]), float(first["energy_mev"])
+    mass = data.nuclide(species).nuclear_mass_mev
+    um = float(material.density_g_cm3) / float(first["density_g_cm3"])  # physim's µm into TRIM's
+    st = srim_stopping(ref, species, material)
+    labels, ours, theirs, notes = [], [], [], []
+    worst = 0.0
+    z = np.array([0.0, 0.0, 1.0])
+    for seed, run in enumerate(("range", "quarter", "half"), start=11):
+        ref_run = runs[(case, run)]
+        thickness = float(ref_run["row"]["thickness_mg_cm2"])
+        with recoil_stopping(species, st):
+            s = transport.slow([transport.Segment(material, thickness)], species, mass, np.full(TRIM_RECOILS, energy),
+                               z, 0.0, np.full(TRIM_RECOILS, np.inf), scatter=True, rng=seed)
+        if run == "range":
+            pos = s.position_um[s.stopped] * um
+            got = {"projected_range_um": pos[:, 2].mean(), "range_straggling_um": pos[:, 2].std(),
+                   "lateral_sigma_um": math.sqrt(0.5 * float((pos[:, 0] ** 2 + pos[:, 1] ** 2).mean()))}
+        else:
+            out = s.segment == 1
+            angle = np.degrees(np.arccos(np.clip(s.direction[out, 2], -1.0, 1.0)))
+            got = {"transmitted": out.mean(), "mean_energy_mev": s.energy[out].mean(),
+                   "rms_angle_deg": math.sqrt(float((angle**2).mean())), "median_angle_deg": float(np.median(angle)),
+                   "angle_90_deg": float(np.percentile(angle, 90))}
+        for key, value in got.items():
+            want = ref_run[key]
+            dev = abs(value - want) if key == "transmitted" else abs(value / want - 1)
+            worst = max(worst, dev / TRIM_TRANSPORT_TOLERANCE[key])
+            labels.append(f"{run}: {key.replace('_um', '').replace('_mev', '').replace('_deg', '')}")
+            ours.append(float(value))
+            theirs.append(want)
+            if key != "transmitted":
+                notes.append(f"{run} {key.rsplit('_', 1)[0].replace('_', ' ')} {value / want - 1:+.1%}")
+    own = float(stopping(species, material).range(energy) / st.range(energy))
+    detail = (f"{species} at β = {float(first['beta']):.3f} ({energy:.2f} MeV) into {first['material']}, "
+              f"{TRIM_RECOILS} recoils per run, SRIM's stopping: " + ", ".join(notes)
+              + f" (worst {worst:.0%} of its tolerance). With physim's own stopping the range is {own - 1:+.0%} "
+              "(stopping_heavy_vs_data checks that stopping against measured data)")
+    plot = {"x": labels, "physim": ours, "reference": theirs, "categorical": True}
+    return worst <= 1.0, worst, len(labels), detail, plot
+
+
+@check(RDDS, "tool", "TRIM (SRIM 2013), 5000 ions per run: ⁹⁸Ru at β = 4.5% (Radeck et al.'s recoil) into Cu, the "
+       "plunger's stopper: projected range, range straggling and lateral spread, and the energy and angles after "
+       "about a quarter and half of the range (lifetimes/trim/transport_trim.csv); physim's Monte Carlo slowing with "
+       "SRIM's stopping (srim_stopping.csv), so that only the scattering differs",
+       "range 3%, range straggling 15%, lateral spread 6%, transmitted fraction 0.02, mean energy 2%, rms and 90% "
+       "angle 6%, median angle 10% (TRIM_TRANSPORT_TOLERANCE)")
+def rdds_transport_vs_trim(ref):
+    return _transport_vs_trim(ref, "ru98_cu")
+
+
+@check(DSAM, "tool", "TRIM (SRIM 2013), 5000 ions per run: ¹⁴³Sm at β = 1.6% (Rajbanshi et al.'s residue) into Au, "
+       "the DSAM backing: projected range, range straggling and lateral spread, and the energy and angles after "
+       "about a quarter and half of the range (lifetimes/trim/transport_trim.csv); physim's Monte Carlo slowing with "
+       "SRIM's stopping (srim_stopping.csv), so that only the scattering differs",
+       "range 3%, range straggling 15%, lateral spread 6%, transmitted fraction 0.02, mean energy 2%, rms and 90% "
+       "angle 6%, median angle 10% (TRIM_TRANSPORT_TOLERANCE)")
+def dsam_transport_vs_trim(ref):
+    return _transport_vs_trim(ref, "sm143_au")
+
+
+# -- what waits for wave 3C ---------------------------------------------------------------------------------------
+
+
+@check(RDDS, "tool", "NaPyTau (Cologne's DDCM, reimplemented; lifetimes/napytau/): physim's DDCM on the same "
+       "simulated plunger spectra", "τ within 1% of NaPyTau's (its central values; its uncertainties are not usable)")
+def rdds_ddcm_vs_napytau(ref):
+    return None, math.nan, 0, WAVE_3C, {}
+
+
+@check(RDDS, "literature", "Closure: τ recovered by the decay-curve fit and the DDCM from simulated plunger runs of "
+       "known τ (one level, and fed from above)", "within the fit's uncertainty (2σ)")
+def rdds_closure(ref):
+    return None, math.nan, 0, WAVE_3C, {}
+
+
+@check(RDDS, "literature", "Reproduced experiment: ⁹⁸Ru, RDDS after Coulex below the barrier (Radeck et al., PRC 85, "
+       "014301 (2012)): τ(2⁺₁) = 8.36(29) ps with the deorientation correction, τ(4⁺₁) = 2.31(16) ps, τ(2⁺₂) = "
+       "1.7(2) ps (lifetimes/published/)", "within the combined uncertainty (2σ)")
+def rdds_ru98_reproduction(ref):
+    return None, math.nan, 0, WAVE_3C, {}
+
+
+@check(RDDS, "literature", "Reproduced experiment: ⁵⁰Cr, RDDS after fusion-evaporation with a three-foil plunger "
+       "(Beckers et al., NIM A 1042, 167418 (2022)): τ(2⁺₁) = 12.2(4) ps, τ(4⁺₁) = 2.4(3) ps by γγ DDCM, against "
+       "the Coulex, RDDS and DSAM values for the same states (lifetimes/published/)",
+       "within the 2σ spread of the published values")
+def rdds_cr50_reproduction(ref):
+    return None, math.nan, 0, WAVE_3C, {}
+
+
+@check(DSAM, "literature", "Closure: τ recovered by the line-shape fit from simulated DSAM spectra of known τ (with "
+       "side feeding)", "within the fit's uncertainty (2σ)")
+def dsam_closure(ref):
+    return None, math.nan, 0, WAVE_3C, {}
+
+
+@check(DSAM, "literature", "Reproduced experiment: ¹⁴³Sm, DSAM after fusion-evaporation on a 13 mg/cm² Au backing "
+       "(Rajbanshi et al., PLB 782, 143 (2018)): seven lifetimes 0.41–1.02 ps and two upper limits in two dipole "
+       "bands (lifetimes/published/)", "within the published uncertainty plus SRIM's ±5% stopping (2σ)")
+def dsam_sm143_reproduction(ref):
+    return None, math.nan, 0, WAVE_3C, {}
+
+
+# -- DSAM line shapes against APCAD and AhKin ---------------------------------------------------------------------
+
+
+def _fold(edges: np.ndarray, shape: np.ndarray, fwhm_kev: float) -> np.ndarray:
+    """A line shape on uniform bins folded with a Gaussian of this FWHM (the detector's response)."""
+    step = edges[1] - edges[0]
+    sigma = fwhm_kev / math.sqrt(8 * math.log(2))
+    half = int(math.ceil(6 * sigma / step))
+    x = np.arange(-half, half + 1) * step  # symmetric, odd length: no shift in "same" mode
+    g = np.exp(-0.5 * (x / sigma) ** 2)
+    return np.convolve(shape, g / g.sum(), mode="same")
+
+
+def _rebin(fine_edges: np.ndarray, contents: np.ndarray, edges: np.ndarray) -> np.ndarray:
+    """Contents on ``fine_edges`` put into the bins ``edges`` (linear within a fine bin)."""
+    return np.diff(np.interp(edges, fine_edges, np.r_[0.0, np.cumsum(contents)]))
+
+
+def _moments(x: np.ndarray, y: np.ndarray) -> tuple:
+    """(centroid, rms width) of the counts y at x."""
+    c = float(np.sum(y * x) / np.sum(y))
+    return c, math.sqrt(abs(float(np.sum(y * (x - c) ** 2) / np.sum(y))))
+
+
+#: APCAD's example (lifetimes/apcad/: Macro_StopSim_example.mac, README.txt; StopSim's source settles the rest): a
+#: 400 MeV ¹²⁰Sn beam on 6.637168 µm C (1.5 mg/cm² at StopSim's 2.26 g/cm³) on 11.210762 µm Cu (10.0 mg/cm² at
+#: 8.92 g/cm³). StopSim tracks the beam-like ion (TrackBeamLike), excited to 1000 keV in the carbon only
+#: (KillInLayer2), with the CM angle of the projectile drawn from XSec_example.dat (each entry dσ integrated over its
+#: 1° bin, linear in the beam energy); a nucleus leaving the target keeps its exit velocity. The spectra: τ = 1 ps,
+#: FWHM 3 keV, background 400 − 0.252 E + 5.6·10⁻⁵ E² (E in keV), 29 angles 20°–160°, 1 keV bins.
+APCAD_SETUP = {"beam": "120Sn", "target": "12C", "beam_energy_mev": 400.0, "target_mg_cm2": 1.5,
+               "backing_mg_cm2": 10.0, "e_gamma_kev": 1000.0, "tau_ps": 1.0, "fwhm_kev": 3.0,
+               "background": (400.0, -0.252, 5.6e-5)}
+#: The first-order centroid shift and the rms width, physim over APCAD, within this (about what a ±10% change of
+#: the stopping powers does to the shift).
+APCAD_TOLERANCE = 0.10
+#: Sample nuclei in physim's kernel for the APCAD and AhKin comparisons.
+LINESHAPE_RECOILS = 4000
+
+
+def _apcad_kernel(ref):
+    """physim's DSAM kernel for APCAD's example: the excited ¹²⁰Sn from APCAD's cross-section table and physim's
+    kinematics, slowed through the rest of the carbon and the copper by physim's transport (with scattering)."""
+    from . import transport
+    from .kinematics import TwoBody
+    from .rates import stopping
+
+    s = APCAD_SETUP
+    xs = np.loadtxt(_lifetime_file(ref, "apcad/XSec_example.dat"))
+    energies, angles = np.unique(xs[:, 0]), np.unique(xs[:, 1])
+    table = np.zeros((len(energies), len(angles)))
+    table[np.searchsorted(energies, xs[:, 0]), np.searchsorted(angles, xs[:, 1])] = xs[:, 2]
+    rng = np.random.default_rng(5)
+    carbon, copper = data.material("C"), data.material("Cu")
+    beam_stopping = stopping(s["beam"], carbon)
+    grid = np.linspace(0.0, s["target_mg_cm2"], 61)
+    beam_e = np.array([s["beam_energy_mev"]] + [beam_stopping.energy_after(s["beam_energy_mev"], f"{d} mg/cm2")
+                                                for d in grid[1:]])
+    depth = rng.uniform(0.0, s["target_mg_cm2"], 8 * LINESHAPE_RECOILS)
+    e_at = np.interp(depth, grid, beam_e)
+    total = np.interp(e_at, energies, table.sum(axis=1))
+    keep = rng.uniform(0.0, total.max(), len(total)) < total  # where the reactions happen: ∝ σ(E)
+    depth, e_at = depth[keep][:2 * LINESHAPE_RECOILS], e_at[keep][:2 * LINESHAPE_RECOILS]
+    theta = np.empty(len(depth))
+    for i, e in enumerate(e_at):
+        j = int(np.clip(np.searchsorted(energies, e) - 1, 0, len(energies) - 2))
+        w = (e - energies[j]) / (energies[j + 1] - energies[j])
+        row = (1 - w) * table[j] + w * table[j + 1]
+        k = rng.choice(len(angles), p=row / row.sum())
+        theta[i] = angles[k] - rng.uniform(0.0, 1.0)  # the entry at a covers (a − 1°, a]
+    theta = np.clip(theta, 1e-3, 180.0)
+    energy, theta_lab = np.empty(len(theta)), np.empty(len(theta))
+    rounded = np.round(e_at)
+    for e in np.unique(rounded):
+        m = rounded == e
+        p = TwoBody(s["beam"], s["target"], float(e), excitation_mev=s["e_gamma_kev"] / 1e3,
+                    excite="ejectile").at_cm(theta[m], "ejectile")
+        energy[m], theta_lab[m] = p.energy, p.theta_lab
+    phi = rng.uniform(0.0, 2 * math.pi, len(theta))
+    sin = np.sin(np.radians(theta_lab))
+    direction = np.c_[sin * np.cos(phi), sin * np.sin(phi), np.cos(np.radians(theta_lab))]
+    segments = [transport.Segment(carbon, s["target_mg_cm2"], name="target"),
+                transport.Segment(copper, s["backing_mg_cm2"], name="backing")]
+    mass = data.nuclide(s["beam"]).nuclear_mass_mev + s["e_gamma_kev"] / 1e3
+    kern = transport.kernel(segments, s["beam"], mass, energy, direction, depth, np.linspace(0.0, 5.0, 201), rng=6,
+                            n=LINESHAPE_RECOILS)
+    return kern, float(stopping(s["beam"], copper).range(float(np.median(energy))))
+
+
+@check(DSAM, "tool", "APCAD (Stahl, Leske, Lettmann, Pietralla; StopSim with Geant4), its OneShape example: a 1000 keV "
+       "line of τ = 1 ps in the excited ¹²⁰Sn after 400 MeV ¹²⁰Sn on 1.5 mg/cm² C on 10 mg/cm² Cu, 29 detector angles "
+       "20°–160° (lifetimes/apcad/). physim's kernel (its kinematics with APCAD's cross-section table, its stopping "
+       "and scattering) through lifetimes.lineshape, folded with the 3 keV FWHM, against the spectra less their stated "
+       "background: shape only, not a lifetime fit",
+       "first-order centroid shift (half the difference between θ and 180° − θ, summed over 20°–85°) and the mean rms "
+       "width, physim/APCAD within 10% (APCAD_TOLERANCE); χ²/bin reported")
+def dsam_lineshape_vs_apcad(ref):
+    from . import lifetimes
+
+    path = _lifetime_file(ref, "apcad/OneShape_example.csv")
+    if path is None or _lifetime_file(ref, "apcad/XSec_example.dat") is None:
+        return _missing("apcad/OneShape_example.csv")
+    s = APCAD_SETUP
+    rows = read_reference(path)[1]
+    angle = np.array([float(r["angle_deg"]) for r in rows])
+    energy = np.array([float(r["energy_kev"]) for r in rows])
+    counts = np.array([float(r["counts"]) for r in rows])
+    b0, b1, b2 = s["background"]
+    background = b0 + b1 * energy + b2 * energy**2
+    kern, range_mg_cm2 = _apcad_kernel(ref)
+    left = float(np.mean(kern.segment[-1] == 2))
+    fine = np.arange(600.0, 1400.0001, 0.5)
+    # The window at each angle, the same for both, from the kinematics alone: the excited ¹²⁰Sn moves at most at the
+    # beam's speed and within asin(m(¹²C)/m(¹²⁰Sn)) = 5.7° of the beam, so its γ rays lie between E₀ (at rest) and
+    # E₀ √(1 − β²)/(1 − β cos ψ) for ψ within 5.7° of the detector's angle; three FWHM more on each side.
+    mass = data.nuclide(s["beam"]).nuclear_mass_mev
+    beta = math.sqrt(1 - (mass / (mass + s["beam_energy_mev"])) ** 2)
+    cone = math.degrees(math.asin(data.nuclide(s["target"]).nuclear_mass_mev / mass))
+    shift_p, shift_d, width_p, width_d, chi, dof, off_chi, off_n = {}, {}, {}, {}, 0.0, 0, 0.0, 0
+    for a in np.unique(angle):
+        m = angle == a
+        e, y, bg = energy[m], counts[m], background[m]
+        edges = np.r_[e - 0.5, e[-1] + 0.5]
+        shape = lifetimes.lineshape(s["e_gamma_kev"], [s["tau_ps"]], None, [1.0], kern, float(a), fine)[0]
+        model = _rebin(fine, _fold(fine, shape, s["fwhm_kev"]), edges)
+        psi = np.radians(np.clip(np.linspace(a - cone, a + cone, 25), 0.0, 180.0))
+        ends = np.r_[1.0, math.sqrt(1 - beta**2) / (1 - beta * np.cos(psi))] * s["e_gamma_kev"]
+        win = (e >= ends.min() - 3 * s["fwhm_kev"]) & (e <= ends.max() + 3 * s["fwhm_kev"])
+        shift_p[a], width_p[a] = _moments(e[win], model[win])
+        shift_d[a], width_d[a] = _moments(e[win], (y - bg)[win])
+        shift_p[a] -= s["e_gamma_kev"]
+        shift_d[a] -= s["e_gamma_kev"]
+        w = 1.0 / np.maximum(y, 1.0)
+        amp = float(np.sum(((y - bg) * model * w)[win]) / np.sum((model**2 * w)[win]))
+        chi += float(np.sum(((y - bg - amp * model) ** 2 * w)[win]))
+        dof += int(win.sum()) - 1
+        off = ~win & (y > 0)  # (the spectra's last bin, at 1500 keV, is empty)
+        off_chi += float(np.sum(((y - bg) ** 2 * w)[off]))
+        off_n += int(off.sum())
+    pairs = [(a, 180.0 - a) for a in shift_p if a < 90 and (180.0 - a) in shift_p]
+    first_p = sum(shift_p[a] - shift_p[b] for a, b in pairs) / 2
+    first_d = sum(shift_d[a] - shift_d[b] for a, b in pairs) / 2
+    ratio_shift = first_p / first_d
+    ratios_w = np.array([width_p[a] / width_d[a] for a in width_p])
+    ratio_width = float(ratios_w.mean())
+    worst = max(abs(ratio_shift - 1), abs(ratio_width - 1)) / APCAD_TOLERANCE
+    angles = sorted(shift_p)
+    detail = (f"first-order shift physim/APCAD {ratio_shift:.3f} (at 20° {shift_p[20.0]:+.1f} against "
+              f"{shift_d[20.0]:+.1f} keV, at 160° {shift_p[160.0]:+.1f} against {shift_d[160.0]:+.1f} keV); rms width "
+              f"physim/APCAD mean {ratio_width:.3f} ({ratios_w.min():.2f}–{ratios_w.max():.2f} by angle), both within "
+              f"each angle's kinematic window; χ²/bin {chi / dof:.1f} there (amplitude free per angle, the stated "
+              f"background; the spectra's χ²/bin outside {off_chi / off_n:.2f}). In physim {left:.0%} of the ¹²⁰Sn leave the "
+              f"10 mg/cm² Cu (range at the median energy {range_mg_cm2:.1f} mg/cm²) and fly on at their exit speed; "
+              "APCAD's line has more of the stopped peak and its flying component lower in energy: StopSim slows the "
+              "ions more, with Geant4's ion stopping (G4IonParametrisedLossModel, scaled above Z = 26)")
+    plot = {"x": angles, "physim": [shift_p[a] for a in angles], "reference": [shift_d[a] for a in angles],
+            "xlabel": "detector angle (deg)", "ylabel": "centroid shift (keV)"}
+    return worst <= 1.0, worst, len(angles), detail, plot
+
+
+def _numbers(path, labels: bool = False):
+    """The values of an AhKin input file: the lines' first fields (comments after # dropped), or {label: value}."""
+    out = [] if not labels else {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        body = line.split("#", 1)[0].split()
+        if not body:
+            continue
+        if labels:
+            if len(body) >= 2:
+                out[body[0]] = body[1]
+        else:
+            out.append(body)
+    return out
+
+
+def ahkin_case(ref) -> Optional[dict]:
+    """AhKin's ⁸³Y example (lifetimes/ahkin/y83_in_ta/): the cascade, detector, resolution, background, the measured
+    line and AhKin's best line and its 1σ edges; None without the files."""
+    folder = _lifetime_file(ref, "ahkin/y83_in_ta")
+    names = ("in_AhKin.dat", "in_casc.dat", "in_stp.dat", "pcos.dat", "EL1192GFAA53.txt", "ech0.131308.dat",
+             "ech0.0986328.dat", "ech0.165235.dat", "Y83_in_Ta.txt")
+    if folder is None or any(not (folder / n).exists() for n in names):
+        return None
+    general = _numbers(folder / "in_AhKin.dat")
+    e0, (cal0, cal1), reso, background = float(general[0][0]), map(float, general[1][:2]), general[3], general[5]
+    casc = [line.split() for line in (folder / "in_casc.dat").read_text(encoding="utf-8").splitlines() if line.split()]
+    n = int(casc[0][0])
+    taus = [float(v) for v in casc[1]]
+    feeding = np.zeros((n, n))  # AhKin's B[i][j]: from j to i; physim's rows are "from"
+    for i in range(n):
+        for j, v in enumerate(casc[2 + i][:i]):
+            feeding[j, i] = float(v)
+    stp = _numbers(folder / "in_stp.dat", labels=True)
+    measured = np.loadtxt(folder / "EL1192GFAA53.txt")
+    cos = np.loadtxt(folder / "pcos.dat", comments="#")
+    return {"e0": e0, "cal": (cal0, cal1), "fwhm": float(reso[0]) + float(reso[1]) * e0 + float(reso[2]) * e0**2,
+            "background": float(background[0]), "taus": taus, "feeding": feeding,
+            "populations": np.array([float(v) for v in casc[2 + n]]), "e_p": float(stp["E_p"]) / 1e3,
+            "fsig": float(stp["fsig"]), "residue": data.nuclide((int(stp["Zr"]), int(stp["Ar"]))).name,
+            "a_beam": int(stp["Ap"]), "a_target": int(stp["At"]), "cos": cos[cos[:, 1] > 0],
+            "channel": measured[:, 0], "measured": measured[:, 1],
+            "best": np.loadtxt(folder / "ech0.131308.dat")[:, 1], "tau": 0.131308,
+            "edges": {0.0986328: np.loadtxt(folder / "ech0.0986328.dat")[:, 1],
+                      0.165235: np.loadtxt(folder / "ech0.165235.dat")[:, 1]},
+            "stopping_table": np.loadtxt(folder / "Y83_in_Ta.txt")[1:]}
+
+
+def _ahkin_line(case: dict, ahkin_stopping: bool) -> np.ndarray:
+    """physim's line for AhKin's example (counts per channel, with AhKin's flat background, scaled to the measured
+    counts): the residues start at the compound nucleus's speed with AhKin's Gaussian spread, along the beam, and
+    slow in Ta by physim's transport (with scattering) and either AhKin's stopping table or physim's own; the
+    cascade's times through lifetimes.lineshape at five detector angles weighted by AhKin's cosine distribution,
+    folded with its resolution."""
+    from . import lifetimes, transport
+    from .rates import stopping
+
+    beam, target = "32S", "58Ni"  # the README's ³²S + ⁵⁸Ni at 135 MeV; in_stp.dat gives the mass numbers
+    assert (data.nuclide(beam).A, data.nuclide(target).A) == (case["a_beam"], case["a_target"])
+    species = case["residue"]
+    mass = data.nuclide(species).nuclear_mass_mev
+    m_b, m_t = data.nuclide(beam).nuclear_mass_mev, data.nuclide(target).nuclear_mass_mev
+    p = math.sqrt(case["e_p"] * (case["e_p"] + 2 * m_b))
+    beta_cn = p / (case["e_p"] + m_b + m_t)
+    e_r = mass * (1 / math.sqrt(1 - beta_cn**2) - 1)
+    rng = np.random.default_rng(1)
+    energies = e_r * (1 + case["fsig"] * rng.standard_normal(2 * LINESHAPE_RECOILS))
+    energies = energies[energies > 0.05 * e_r]
+    tantalum = data.material("Ta")
+    st = copy.copy(stopping(species, tantalum))
+    if ahkin_stopping:  # AhKin's total stopping (keV/µm), physim's nuclear part inside it
+        t = case["stopping_table"]
+        total = np.exp(np.interp(np.log(st._e), np.log(t[:, 0] / 1e3), np.log(t[:, 1] / (100 * float(
+            tantalum.density_g_cm3)))))
+        nuclear = np.minimum(np.asarray(st._sn) * 1e-3, 0.95 * total)
+        st = _with_stopping(st, total - nuclear, nuclear)
+    with recoil_stopping(species, st):
+        kern = transport.kernel([transport.Segment(tantalum, 10.0, name="backing")], species, mass, energies,
+                                np.array([0.0, 0.0, 1.0]), 0.0, np.linspace(0.0, 1.6, 321), rng=2,
+                                n=LINESHAPE_RECOILS)
+    cos, w = case["cos"][:, 0], case["cos"][:, 1]
+    group = np.minimum((np.cumsum(w) / w.sum() * 5 - 1e-9).astype(int), 4)  # five groups of equal weight
+    cal0, cal1 = case["cal"]
+    edges = cal0 + cal1 * np.r_[case["channel"] - 0.5, case["channel"][-1] + 0.5]
+    fine = np.arange(edges[0] - 10.0, edges[-1] + 10.0, 0.2)
+    taus = list(case["taus"])
+    taus[-1] = case["tau"]  # the level of interest is the last; AhKin's τ
+    shape = np.zeros(len(fine) - 1)
+    for g in range(5):
+        m = group == g
+        theta = math.degrees(math.acos(float(np.average(cos[m], weights=w[m]))))
+        shape += w[m].sum() * lifetimes.lineshape(case["e0"], taus, case["feeding"], case["populations"], kern, theta,
+                                                  fine)[-1]
+    line = _rebin(fine, _fold(fine, shape / w.sum(), case["fwhm"]), edges)
+    signal = case["measured"] - case["background"]
+    return case["background"] + line * signal.sum() / line.sum()
+
+
+@check(DSAM, "tool", "AhKin (Garzón, Rodríguez, Cristancho, Tao, CPC 2020), its example: the 1193 keV line of ⁸³Y "
+       "(³²S + ⁵⁸Ni at 135 MeV, residues slowing in Ta) at 52.8° and its best τ = 0.1313 ps "
+       "(lifetimes/ahkin/y83_in_ta/). physim with AhKin's inputs (its stopping table, ten-level cascade with side "
+       "feeding, detector cosine distribution, 10% energy spread, resolution, background) and its own transport and "
+       "line shape, against AhKin's best line, its lines at the ends of its 1σ interval (0.0986, 0.1652 ps) and the "
+       "measured line: shape only, not a lifetime fit",
+       "centroid shift inside AhKin's 1σ band (the shifts of its two edge lines); rms width within 10% of AhKin's; "
+       "χ²/bin against the measured line no larger than that of AhKin's edge lines (its own χ²_min + 1)")
+def dsam_lineshape_vs_ahkin(ref):
+    case = ahkin_case(ref)
+    if case is None:
+        return _missing("ahkin/y83_in_ta/")
+    cal0, cal1 = case["cal"]
+    x = cal0 + cal1 * case["channel"]
+    bg, measured = case["background"], case["measured"]
+    err2 = np.maximum(measured, 1.0)
+
+    def chi(line):
+        return float(np.sum((measured - line) ** 2 / err2) / (len(measured) - 1))
+
+    def shift_width(line):
+        c, w = _moments(x, line - bg)
+        return c - case["e0"], w
+
+    ours = _ahkin_line(case, ahkin_stopping=True)
+    own = _ahkin_line(case, ahkin_stopping=False)
+    s_p, w_p = shift_width(ours)
+    s_a, w_a = shift_width(case["best"])
+    band = sorted(shift_width(line)[0] for line in case["edges"].values())
+    chi_band = max(chi(line) for line in case["edges"].values())
+    in_band = band[0] <= s_p <= band[1]
+    half = (band[1] - band[0]) / 2
+    worst = max(abs(s_p - (band[0] + band[1]) / 2) / half, abs(w_p / w_a - 1) / 0.10, chi(ours) / chi_band)
+    ok = in_band and abs(w_p / w_a - 1) <= 0.10 and chi(ours) <= chi_band
+    detail = (f"centroid shift {s_p:+.2f} keV against AhKin's {s_a:+.2f} (1σ band {band[0]:+.2f} to {band[1]:+.2f}): "
+              f"{'inside' if in_band else 'outside'}; rms width {w_p:.2f} against {w_a:.2f} keV "
+              f"({w_p / w_a - 1:+.0%}); χ²/bin against the measured line {chi(ours):.1f} against AhKin's "
+              f"{chi(case['best']):.1f} (edges {chi_band:.1f}). physim's scattering (checked against TRIM) turns the "
+              "residues, so their sideways motion broadens the line; AhKin follows the velocity along the beam only, "
+              "reduced by Blaugrund's mean cosine. With physim's own stopping (above AhKin's table at these "
+              f"energies): shift {shift_width(own)[0]:+.2f} keV, width {shift_width(own)[1]:.2f} keV, χ²/bin "
+              f"{chi(own):.1f}")
+    plot = {"x": x, "physim": ours, "reference": measured, "ahkin": case["best"], "xlabel": "energy (keV)",
+            "ylabel": "counts per channel"}
+    return ok, worst, len(measured), detail, plot
 
 
 # ---------------------------------------------------------------------------------------------------------------
