@@ -573,3 +573,78 @@ def test_the_kernel():
     e = np.array([E_SM, 0.8 * E_SM])
     k2 = tr.kernel(segs, SM, M_SM, e, Z, [0.1, 0.3], [0.0], rng=2, n=1000)
     assert len(np.unique(k2.beta0)) == 2 and len(np.unique(k2.direction0, axis=0)) == 1
+
+
+# -- the kernel in lifetimes.py's DSAM functions -------------------------------------------------------------------
+
+
+def test_the_transport_kernel_gives_the_analytic_attenuation_through_lifetimes(monkeypatch):
+    from physim.nuclear import lifetimes
+
+    alpha = 0.2  # ps: stopping proportional to the speed, as in the analytic fixture
+    rho = float(CU.density_g_cm3)
+    k = 2 / (alpha * 1e3 * rho * 2.99792458e-2 * math.sqrt(2 / M_RU))
+    fake = _VelocityStopping(k, M_RU / (data.U_KEV * 1e-3))
+    monkeypatch.setattr(tr, "stopping", lambda ion, material: fake)
+    monkeypatch.setattr(tr, "_CLOCKS", {})
+    times = np.linspace(0.0, 40 * alpha, 8001)
+    kern = tr.kernel([tr.Segment(CU, 100.0)], RU, M_RU, E_RU, Z, 0.0, times, scatter=False, n=1)
+    assert isinstance(kern, lifetimes.Kernel)
+    rows = [r for r in csv.DictReader(ln for ln in open(LIFETIMES / "analytic" / "dsam_exponential.csv")
+                                      if not ln.startswith("#")) if float(r["alpha_ps"]) == alpha]
+    for r in rows:
+        tau = float(r["tau_ps"])
+        f = lifetimes.dsam_attenuation(tau, kern)
+        assert f == pytest.approx(float(r["attenuation_F"]), rel=4e-3, abs=1e-3), tau
+
+
+def _centroid_and_width(row, edges):
+    mid = 0.5 * (edges[1:] + edges[:-1])
+    mean = float(row @ mid / row.sum())
+    return mean, float(np.sqrt(row @ (mid - mean) ** 2 / row.sum()))
+
+
+def test_a_scattered_kernel_s_line_shape():
+    from physim.nuclear import lifetimes
+
+    segs = [tr.Segment(data.material("Sn"), 0.4, name="target"), tr.Segment(AU, 13.0, name="backing")]
+    times = np.linspace(0.0, 3.0, 601)
+    kern = tr.kernel(segs, SM, M_SM, E_SM, Z, 0.2, times, rng=3, n=4000)
+    tau, e0 = 0.3, 1000.0
+    edges = np.arange(960.0, 1040.0001, 0.05)
+    decay = np.exp(-times / tau) / tau
+    for theta in (30.0, 150.0, 90.0):
+        row = lifetimes.lineshape(e0, [tau], None, [1.0], kern, theta, edges)[0]
+        assert row.sum() == pytest.approx(1.0, abs=1e-9)
+        # The centroid's shift is the mean β·cos(angle to the detector) at emission (to first order in β).
+        m = kern.mean_beta_cos(theta).astype(float)
+        expected = np.trapezoid(m * decay, times) + m[-1] * math.exp(-times[-1] / tau)
+        centroid, width = _centroid_and_width(row, edges)
+        assert (centroid - e0) / e0 == pytest.approx(expected, abs=0.05 * abs(expected) + 4e-4), theta
+        if theta == 90.0:
+            # Sideways motion counts: at 90° the line is broadened, not a δ at E₀ √(1 − β_z²) as it would be for
+            # recoils along the beam.
+            beam_only = lifetimes.SampledKernel(kern.times_ps, kern.beta_cos(0.0))
+            row_z = lifetimes.lineshape(e0, [tau], None, [1.0], beam_only, theta, edges)[0]
+            _, width_z = _centroid_and_width(row_z, edges)
+            assert width > 1.0 and width > 5 * width_z, (width, width_z)
+    # The cached binning is the detector's: two angles give two different lines.
+    a = lifetimes.lineshape(e0, [tau], None, [1.0], kern, 30.0, edges)[0]
+    b = lifetimes.lineshape(e0, [tau], None, [1.0], kern, -30.0, edges)[0]
+    assert _centroid_and_width(a, edges)[0] == pytest.approx(_centroid_and_width(b, edges)[0], abs=0.3)
+    assert not np.array_equal(a, b)  # the scattered recoils are not exactly symmetric about the beam
+
+
+def test_a_straight_kernel_is_the_equivalent_sampled_kernel():
+    from physim.nuclear import lifetimes
+
+    segs = [tr.Segment(data.material("Sn"), 0.4, name="target"), tr.Segment(AU, 13.0, name="backing")]
+    times = np.linspace(0.0, 3.0, 301)
+    kern = tr.kernel(segs, SM, M_SM, E_SM, Z, 0.2, times, scatter=False, n=5)
+    sampled = lifetimes.SampledKernel(kern.times_ps, kern.beta_cos(0.0))
+    edges = np.arange(960.0, 1040.0001, 0.1)
+    for theta in (0.0, 30.0, 90.0, 150.0):
+        np.testing.assert_allclose(lifetimes.lineshape(1000.0, [0.3, 1.0], None, [1.0, 0.5], kern, theta, edges),
+                                   lifetimes.lineshape(1000.0, [0.3, 1.0], None, [1.0, 0.5], sampled, theta, edges),
+                                   rtol=1e-12, atol=1e-15)
+    assert lifetimes.dsam_attenuation(0.3, kern) == pytest.approx(lifetimes.dsam_attenuation(0.3, sampled), rel=1e-12)
