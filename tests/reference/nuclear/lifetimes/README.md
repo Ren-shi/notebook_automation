@@ -24,6 +24,16 @@ AhKin (A. Garzón, W. Rodríguez, F. Cristancho, M. Tao; Comput. Phys. Commun. 2
 between 0.1 and 0.2 ps give **τ = 0.131308 +0.0339269 −0.0326754 ps**, exactly the value in AhKin's readme.
 The folder holds the inputs (`in_*.dat`, the stopping table `Y83_in_Ta.txt`, the measured line shape
 `EL1192GFAA53.txt`), the kernel and velocity files, `chisqB.dat`, the best-fitting line shape and `result.json`.
+Added for the validation (lifetime wave 2D, 19 November 2026), from the same `AhKin_B -i` run, byte for byte: the
+line shapes at the two ends of AhKin's 1σ interval, `ech0.0986328.dat` (τ − 0.0327 ps) and `ech0.165235.dat`
+(τ + 0.0339 ps), which `chisqB.dat` lists at χ²_min + 1.
+
+The input formats, from AhKin's `readme.pdf`: `in_casc.dat` gives the number of levels, their mean lives (ps; the
+last is the level being fitted, its value unused), the branching matrix B with B[i][j] the share of level j's decays
+that go to level i (−1 on the diagonal), and the unnormalised initial populations. `in_AhKin.dat` gives E_γ, the
+calibration (keV = cal0 + cal1 × channel), the resolution FWHM = r0 + r1 E + r2 E² and the flat background;
+`in_stp.dat` the reaction, the 10% Gaussian spread of the initial energies and the stopping table (keV, keV/µm);
+`pcos.dat` the distribution of the cosine between the beam and the γ ray over the detector's face.
 
 ## `apcad/` — APCAD's example spectra
 
@@ -34,7 +44,14 @@ DSAM spectra (29 angles, 20°–160°, 1 keV bins, 500–1500 keV), converted to
   "A20" is A40), FWHM 3 keV, background 400 − 0.252x + 5.6·10⁻⁵x².
 - `ThreeShapes_example.csv`: the same with contaminants at 1025 keV (τ = 0.5 ps) and 985 keV (τ = 1.6 ps).
 The setup that made them is in `Macro_StopSim_example.mac` (StopSim, Geant4): a 400 MeV ¹²⁰Sn beam on 6.64 µm C on
-11.21 µm Cu, the ¹²C recoil excited to 1000 keV (cross section against angle in `XSec_example.dat`), 10⁶ events.
+11.21 µm Cu, 10⁶ events, with the cross section against angle in `XSec_example.dat`. Read from StopSim's source
+(lifetime wave 2D): `TrackBeamLike true` means the nucleus followed and excited to 1000 keV is the **beam-like
+¹²⁰Sn**, not the ¹²C (the transfer reaction gives the excitation to the ejectile); `KillInLayer2` keeps only ions
+excited in the first layer (the carbon); a nucleus leaving the target keeps its exit velocity. The thicknesses are
+1.5 mg/cm² C at StopSim's 2.26 g/cm³ and 10.0 mg/cm² Cu at 8.92 g/cm³. Each entry of `XSec_example.dat` (beam
+energy in MeV, the projectile's CM angle in degrees, cross section) is dσ integrated over its 1° bin, so ∝ dσ/dθ
+(physim's own first-order Coulex gives the same shape within 3–6%); StopSim interpolates it linearly in energy.
+The stopping is Geant4's `G4IonParametrisedLossModel` (ICRU 73 for ions up to Z = 26, scaled above).
 `Detector_example.det` is the detector file, `README.txt` APCAD's own description.
 
 ## `napytau/` — NaPyTau's DDCM on the analytic decay curves
@@ -53,6 +70,22 @@ errors), polynomials of degree 2, 3, 4 over all distances. Degree 4 gives 10.03 
 - ⁵⁰Cr, RDDS after fusion-evaporation with a three-foil plunger (CoCoDiff): Beckers et al., NIM A 1042, 167418
   (2022), with Coulex, RDDS and DSAM values for the same 2⁺ and 4⁺.
 - ¹⁴³Sm, DSAM after fusion-evaporation on a Au backing: Rajbanshi et al., PLB 782, 143 (2018).
+
+## Which validation check reads what
+
+The checks of `physim.nuclear.validation` for the capabilities "Lifetimes: recoil distance (RDDS)" and
+"Lifetimes: Doppler-shift attenuation (DSAM)" (register page docs/physics-register/lifetimes.md):
+
+| File | Check |
+|---|---|
+| `analytic/rdds_one_level.csv` | `rdds_one_level_analytic` |
+| `analytic/rdds_two_levels.csv` | `rdds_two_levels_bateman` |
+| `analytic/dsam_exponential.csv` | `dsam_exponential_analytic` |
+| `published/setups.toml`, `published/lifetimes.csv` (⁹⁸Ru) | `deorientation_ru98` |
+| `trim/transport_trim.csv`, `trim/srim_stopping.csv` | `rdds_transport_vs_trim` (⁹⁸Ru in Cu), `dsam_transport_vs_trim` (¹⁴³Sm in Au) |
+| `apcad/OneShape_example.csv`, `apcad/XSec_example.dat` | `dsam_lineshape_vs_apcad` |
+| `ahkin/y83_in_ta/` | `dsam_lineshape_vs_ahkin` |
+| `napytau/`, `published/` | `rdds_ddcm_vs_napytau` and the reproductions: written in wave 3C |
 
 ## Licences
 

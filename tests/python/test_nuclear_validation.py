@@ -2,6 +2,8 @@
 show, and deliberately broken formulas are caught."""
 
 import dataclasses
+import functools
+import math
 import re
 from pathlib import Path
 
@@ -10,7 +12,7 @@ import pytest
 
 from physim.nuclear import Experiment, data, export, validation
 from physim.nuclear import coulex, evaporation, fusion, gamma, kinematics, neutrons, rates, residues, rutherford
-from physim.nuclear import stopping
+from physim.nuclear import lifetimes, stopping, transport
 from physim.nuclear.detectors import Geometry
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,10 +31,18 @@ needs_reference = pytest.mark.skipif(not REFERENCE.is_dir(), reason="reference f
 #: neutron energies 10–24% low. Against GEMINI++ 3.3.0 (three systems): the three strongest residues not the same,
 #: in order and within 30% for any of them (shares off by up to 65%, ¹⁶O + ¹⁴⁴Sm also out of order); mean neutron
 #: energies 10–17% high (GEMINI++'s neutrons are softer than physim's, PACE4's harder; physim lies between the two codes,
-#: which evaporation_neutron_energy_band checks).
+#: which evaporation_neutron_energy_band checks). DSAM line shapes (docs/physics-register/lifetimes.md): against
+#: APCAD's example the first-order centroid shift is 17% larger (physim's ¹²⁰Sn leave the 10 mg/cm² Cu backing
+#: where Geant4's stopping keeps them; the widths agree); against AhKin's ⁸³Y line the shift is inside AhKin's 1σ
+#: band but the line is 25% wider (physim's scattering turns the residues sideways, AhKin follows the velocity
+#: along the beam only), so its χ² against the measured line is above AhKin's band.
 KNOWN_FAILURES = {"stopping_compounds_vs_srim", "spectra_vs_trim", "stopping_hydrogen_vs_data", "fusion_vs_pace4",
                   "evaporation_channels_vs_pace4", "evaporation_spectra_vs_pace4", "evaporation_channels_vs_gemini",
-                  "evaporation_spectra_vs_gemini"}
+                  "evaporation_spectra_vs_gemini", "dsam_lineshape_vs_apcad", "dsam_lineshape_vs_ahkin"}
+
+#: Lifetime checks written in wave 3C, when simulated plunger and DSAM spectra and the lifetime analysis exist.
+LIFETIME_WAVE_3C = {"rdds_ddcm_vs_napytau", "rdds_closure", "rdds_ru98_reproduction", "rdds_cr50_reproduction",
+                    "dsam_closure", "dsam_sm143_reproduction"}
 
 
 def statuses(**kw):
@@ -62,16 +72,19 @@ def test_every_check_passes_or_waits_for_its_reference():
     # Known disagreements the register reports as such (not ✅); a fix must remove them from KNOWN_FAILURES.
     assert set(failed) == set(KNOWN_FAILURES), failed
     pending = {r.name for r in results if r.status == "pending"}
-    # Exactly the references still requested from the user (tests/reference/nuclear/pending/).
-    assert pending == {"closest_approach_above_barrier", "rates_vs_lise"}
+    # Exactly the references still requested from the user (tests/reference/nuclear/pending/), and the lifetime
+    # checks that wait for wave 3C.
+    assert pending == {"closest_approach_above_barrier", "rates_vs_lise"} | LIFETIME_WAVE_3C
     assert "| Capability |" in validation.report(results)
 
 
 def test_literature_checks_run_without_reference_files(tmp_path):
     for r in validation.run(kind="literature", reference=tmp_path):
         if r.name in ("stopping_hydrogen_vs_data", "stopping_heavy_vs_data", "fusion_vs_data", "residues_vs_data", "carbon_vs_endf",
-                      "reproduction_usman2020"):
-            # measured or evaluated data kept as reference files
+                      "reproduction_usman2020", "rdds_one_level_analytic", "rdds_two_levels_bateman",
+                      "deorientation_ru98", "dsam_exponential_analytic") or r.name in LIFETIME_WAVE_3C:
+            # measured or evaluated data kept as reference files (the lifetime closed forms and published
+            # parameters are files of tests/reference/nuclear/lifetimes/ too), or checks still to be written
             assert r.status == "pending", r.detail
         elif r.name != "closest_approach_above_barrier":
             assert r.status == "pass", (r.name, r.detail)
@@ -127,6 +140,16 @@ def _scale_method(monkeypatch, cls, name, factor):
         return np.asarray(orig(self, *a, **k)) * factor
 
     monkeypatch.setattr(cls, name, broken)
+
+
+def _scale_function(monkeypatch, module, name, factor, mapping=False):
+    orig = getattr(module, name)
+
+    def broken(*a, **k):
+        out = orig(*a, **k)
+        return {key: np.asarray(v) * factor for key, v in out.items()} if mapping else np.asarray(out) * factor
+
+    monkeypatch.setattr(module, name, broken)
 
 
 def _break_masses(monkeypatch):
@@ -220,7 +243,27 @@ def _break_selection(monkeypatch):
     monkeypatch.setattr(neutrons, "selection_matrix", broken)
 
 
+def _break_recoil_scattering(monkeypatch):
+    # Every nuclear collision turns the recoil a little more (1 − cos Θ × 1.21, about 10% larger angles; capped at
+    # Θ = π), which also changes the energy it gives the atom: the spread no longer matches TRIM.
+    orig = transport._tables.__wrapped__
+
+    def broken():
+        t = dict(orig())
+        t["ln_vers"] = np.minimum(t["ln_vers"] + math.log(1.21), math.log(2.0))
+        return t
+
+    monkeypatch.setattr(transport, "_tables", functools.lru_cache(maxsize=1)(broken))
+
+
 BREAKS = {
+    "rdds unshifted share": (lambda m: _scale_function(m, lifetimes, "unshifted", 1 + 1e-6),
+                             ["rdds_one_level_analytic", "rdds_two_levels_bateman"]),
+    "deorientation in flight": (lambda m: _scale_function(m, lifetimes, "deorientation_shifted", 1 + 1e-6,
+                                                          mapping=True), ["deorientation_ru98"]),
+    "dsam attenuation": (lambda m: _scale_function(m, lifetimes, "dsam_attenuation", 1 + 1e-5),
+                         ["dsam_exponential_analytic"]),
+    "recoil scattering": (_break_recoil_scattering, ["rdds_transport_vs_trim", "dsam_transport_vs_trim"]),
     "masses": (_break_masses, ["masses_vs_lise", "q_values"]),
     "kinematics": (_break_kinematics, ["kinematics_vs_lise", "kinematics_classical_limit"]),
     "stopping power": (lambda m: _scale_method(m, stopping.Stopping, "stopping_power", 1.10),
@@ -288,6 +331,53 @@ def test_saved_reproduction_is_current():
     for a, b in zip(now, saved):
         for k in ("sigma_table_mb", "residues_made", "sigma_mb", "sigma_unc_mb"):
             assert a[k] == pytest.approx(b[k], rel=1e-5), (a["e_lab_mev"], a["channel"], k)
+
+
+# -- lifetimes ----------------------------------------------------------------------------------------------------
+
+
+@needs_reference
+def test_lifetime_inputs_are_read_as_the_sources_state_them():
+    """The deorientation parameters of Radeck et al.'s Table I and AhKin's example, as the papers and AhKin's readme
+    give them, so that the checks run on the right numbers."""
+    p = validation.ru98_deorientation(REFERENCE)
+    assert p == {"alpha": {2: 0.18, 4: 0.24}, "gamma": {2: 0.142, 4: 0.314}, "v_um_ps": 13.49, "tau_ps": 8.36}
+    case = validation.ahkin_case(REFERENCE)
+    assert case["e0"] == 1193.1 and case["cal"] == (0.0, 1.33333) and case["background"] == 115.0
+    assert case["fwhm"] == pytest.approx(2.803, abs=1e-3)
+    assert case["residue"] == "83Y" and case["e_p"] == 135.0 and case["fsig"] == 0.1
+    # Ten levels, the last (the 1193 keV level) fed only from the ninth; every other level decays wholly downwards.
+    assert case["feeding"].shape == (10, 10)
+    assert case["feeding"].sum(axis=1).tolist() == [1.0] * 9 + [0.0]
+    assert np.all(np.tril(case["feeding"]) == 0)
+    assert case["populations"].tolist() == [7, 7, 0, 6, 0, 16, 0, 8, 0, 0]
+    assert case["tau"] == 0.131308 and set(case["edges"]) == {0.0986328, 0.165235}
+    # The detector at 52.8° with a half-angle of about 8° (3.55 cm radius at 25.5 cm).
+    assert math.cos(math.radians(61)) < case["cos"][:, 0].min() < case["cos"][:, 0].max() < math.cos(math.radians(44))
+
+
+@needs_reference
+def test_dsam_line_shape_disagreements_are_the_documented_ones():
+    """The two known failures disagree by the amounts the register states (docs/physics-register/lifetimes.md), so a
+    change to the transport, the stopping or the line shape shows up here."""
+    r = {x.name: x for x in validation.run(reference=REFERENCE,
+                                           names=["dsam_lineshape_vs_apcad", "dsam_lineshape_vs_ahkin"])}
+    apcad = r["dsam_lineshape_vs_apcad"].detail
+    shift = float(re.search(r"first-order shift physim/APCAD ([0-9.]+)", apcad).group(1))
+    width = float(re.search(r"rms width physim/APCAD mean ([0-9.]+)", apcad).group(1))
+    assert 1.12 < shift < 1.23 and abs(width - 1) < 0.05, apcad
+    ahkin = r["dsam_lineshape_vs_ahkin"].detail
+    assert ": inside;" in ahkin, ahkin
+    ours, theirs = (float(v) for v in re.search(r"rms width ([0-9.]+) against ([0-9.]+) keV", ahkin).groups())
+    assert 1.18 < ours / theirs < 1.32, ahkin
+
+
+def test_lifetime_pictures():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    for r in validation.run(capability=validation.RDDS, kind="literature", reference=REFERENCE):
+        assert validation.plot(r) is not None
 
 
 # -- exports ------------------------------------------------------------------------------------------------------

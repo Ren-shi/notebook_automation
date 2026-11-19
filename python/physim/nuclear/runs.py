@@ -61,9 +61,11 @@ from .events import Events, channel_index, generator_config
 from .experiment import Experiment
 from .quantity import Quantity
 from .rates import Rates
+from .rates import stack as rates_stack
 
-#: The kinds of run.
-KINDS = ("beam", "source", "alignment")
+#: The kinds of run: a "fusion" run (γ rays of fusion-evaporation residues) is taken by
+#: :mod:`physim.nuclear.fusion_runs`, the others here.
+KINDS = ("beam", "source", "alignment", "fusion")
 #: The real part of a beam run by default, and the most that is offered, s.
 DEFAULT_BUDGET_S = 600.0
 MAX_BUDGET_S = 3600.0
@@ -116,6 +118,9 @@ GAMMA_COLUMNS = {
     # Which nucleus emitted the γ ray: 0 the [reaction]'s, 1 the other one of the collision (runs taken before
     # the events held both have no such column: all 0).
     "nucleus": np.int8,
+    # Where the emitter decayed (a lifetime measurement): at rest, and in which segment of its path
+    # (GammaEvents.segments); runs taken before have neither (not at rest, after the stack).
+    "stopped": np.int8, "segment": np.int8,
 }
 
 
@@ -322,6 +327,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+#: Fusion run folders being loaded by fusion_runs.FusionRunData.load (which may call RunData.load in turn).
+_LOADING_FUSION: set = set()
+
+
 @dataclass
 class RunData:
     """One run, as stored: its setup snapshot, its summary (counters), and its events, loaded when asked for."""
@@ -334,8 +343,19 @@ class RunData:
 
     @classmethod
     def load(cls, folder: Union[str, Path]) -> RunData:
+        """The run stored in ``folder``; a fusion run (``kind`` "fusion") as
+        :class:`physim.nuclear.fusion_runs.FusionRunData`."""
         folder = Path(folder)
         summary = json.loads((folder / "summary.json").read_text(encoding="utf-8"))
+        key = str(folder.resolve())
+        if cls is RunData and summary.get("kind") == "fusion" and key not in _LOADING_FUSION:
+            from . import fusion_runs  # imported only when a fusion run is loaded
+
+            _LOADING_FUSION.add(key)  # FusionRunData.load may come back here: then build the base class
+            try:
+                return fusion_runs.FusionRunData.load(folder)
+            finally:
+                _LOADING_FUSION.discard(key)
         setup = Experiment.load(folder / "setup.toml").to_dict()
         return cls(folder, summary, setup)
 
@@ -352,6 +372,13 @@ class RunData:
     @property
     def label(self) -> str:
         return self.folder.name
+
+    @property
+    def distance_um(self) -> Optional[float]:
+        """The plunger's target-to-stopper distance (µm, as the setup's distances give it, without the offset) the
+        run was taken at; None for a run without a plunger."""
+        d = self.summary.get("distance_um")
+        return None if d is None else float(d)
 
     @property
     def experiment(self) -> Experiment:
@@ -387,8 +414,10 @@ class RunData:
         """One line: kind, duration, what was real."""
         s = self.summary
         what = {"beam": "Beam run", "source": f"{s.get('source', {}).get('nuclide', 'Source')} source run",
-                "alignment": "Alignment run"}[self.kind]
+                "alignment": "Alignment run", "fusion": "Fusion run"}.get(self.kind, f"{self.kind.capitalize()} run")
         line = f"{what}, {duration_label(self.duration_s)}"
+        if self.distance_um is not None:
+            line += f" at {self.distance_um:g} µm"
         if self.kind != "source":
             line += (f"; the first {duration_label(self.real_s)} simulated event by event, the rest scaled"
                      if self.scale > 1.000001 else "; every event simulated")
@@ -540,6 +569,16 @@ def _gamma_events(run: RunData, a: dict, plain: bool):
     initial = a["initial"].astype(np.int64) if "initial" in a else np.ones(len(rows), dtype=np.int64)
     final = a["final"].astype(np.int64) if "final" in a else np.zeros(len(rows), dtype=np.int64)
     nucleus = a["nucleus"].astype(np.int64) if "nucleus" in a else np.zeros(len(rows), dtype=np.int64)
+    from .rates import recoil_stack, stack
+
+    lifetime = getattr(exp, "lifetime", None)
+    distance = run.distance_um
+    if lifetime is not None and lifetime.method == "rdds" and distance is None and lifetime.distances_um:
+        distance = lifetime.distances_um[0]
+    segments = ([s.name for s in recoil_stack(exp, distance)] if lifetime is not None
+                else [lay.name for lay in stack(exp)])
+    stopped = a["stopped"].astype(bool) if "stopped" in a else np.zeros(len(rows), dtype=bool)
+    segment = a["segment"].astype(np.int64) if "segment" in a else np.full(len(rows), len(segments), dtype=np.int64)
     e0s = np.full(len(rows), exp.excitation.energy_mev)
     # Each γ ray's energy in its nucleus's frame, from that nucleus's level scheme.
     for n, role in enumerate((reaction, "beam" if reaction == "target" else "target")):
@@ -556,7 +595,10 @@ def _gamma_events(run: RunData, a: dict, plain: bool):
             "counted": measured >= thresholds[which] if len(rows) else np.zeros(0, dtype=bool),
             "theta": a["theta"].astype(float), "phi": a["phi"].astype(float),
             "corrected_projectile": corrected["ejectile"], "corrected_recoil": corrected["recoil"],
+            "stopped": stopped, "segment": segment,
             "weight": np.full(len(rows), 1.0 / run.real_s if run.real_s > 0 else 0.0)}
+    if run.distance_um is not None:
+        cols["distance_um"] = np.full(len(rows), run.distance_um)
     notes = [f"{len(rows)} γ rays in the real part of run {run.number} ({duration_label(run.real_s)}); each counts "
              "once."]
     from .gamma import excitation_of
@@ -564,7 +606,8 @@ def _gamma_events(run: RunData, a: dict, plain: bool):
     shaping = _seconds(exp.run.shaping_time) if exp.run.shaping_time is not None else 0.0
     return GammaEvents(cols, ev, crystals, int(run.summary["seed"]), e0, excitation_of(exp).scheme.nuclide,
                        bg["window_s"], bg["dead_time_s"], bg["live_fraction"], bg["singles_rate"],
-                       bg["singles_spectrum"], bg["singles_edges"], bg["particle_rate"], notes, shaping)
+                       bg["singles_spectrum"], bg["singles_edges"], bg["particle_rate"], notes, shaping,
+                       run.distance_um, segments)
 
 
 # -- taking a run -------------------------------------------------------------------------------------------------
@@ -575,8 +618,10 @@ class RunTaker:
 
     def __init__(self, folder: Path, number: int, kind: str, experiment: Experiment, duration_s: float,
                  budget_s: float, seed: int, extra: Optional[dict] = None, plan: Optional[dict] = None,
-                 previous: Optional[RunData] = None):
+                 previous: Optional[RunData] = None, distance_um: Optional[float] = None):
         self.folder, self.number, self.kind = folder, number, kind
+        #: The plunger's distance (µm) the run is taken at; None without a plunger.
+        self.distance_um = None if distance_um is None else float(distance_um)
         self.experiment = experiment
         self.duration_s = float(duration_s)
         self.budget_s = float(min(budget_s, MAX_BUDGET_S))
@@ -617,12 +662,16 @@ class RunTaker:
             a = previous._arrays()
             for k in self.parts:
                 self.parts[k].append(a[k])
+            segments = len(rates_stack(experiment))
             for k in self.gparts:
+                prefix, name = k.split("_", 1)
                 if k in a:
                     self.gparts[k].append(a[k])
-                elif k.endswith("_nucleus") and k[:-len("nucleus")] + "particle" in a:
-                    # A run taken before the events held both nuclei: all its γ rays are the [reaction]'s.
-                    self.gparts[k].append(np.zeros(len(a[k[:-len("nucleus")] + "particle"]), dtype=np.int8))
+                elif name in ("nucleus", "stopped", "segment") and prefix + "_particle" in a:
+                    # A run taken before the events held both nuclei (all its γ rays are the [reaction]'s) or where
+                    # each emitter decayed (none at rest, all after the stack).
+                    fill = segments if name == "segment" else 0
+                    self.gparts[k].append(np.full(len(a[prefix + "_particle"]), fill, dtype=np.int8))
             self.n_rows = len(a["p_event_step"])
             self.last_event = int(np.sum(a["p_event_step"].astype(np.int64)))
             self.created = previous.summary.get("created", self.created)
@@ -675,12 +724,13 @@ class RunTaker:
                 from .gamma_events import simulate_gammas
 
                 g = simulate_gammas(self.experiment, seed=chunk_seed, particle_events=ev, gammas_per_event=1,
-                                    plain=plain, rates=self.rates, count_once=True, other=self.both)
+                                    plain=plain, rates=self.rates, count_once=True, other=self.both,
+                                    distance_um=self.distance_um)
                 rows = g["particle"]
                 part = {"particle": rows + self.n_rows, "crystal": g["crystal"], "deposited": g["deposited"],
                         "measured": g["measured"], "theta": g["theta"], "phi": g["phi"],
                         "cascade": g["cascade"] + self.n_rows, "initial": g["initial"], "final": g["final"],
-                        "nucleus": g["nucleus"]}
+                        "nucleus": g["nucleus"], "stopped": g["stopped"], "segment": g["segment"]}
                 for k, t in GAMMA_COLUMNS.items():
                     self.gparts[prefix + k].append(np.asarray(part[k]).astype(t))
                 if not plain:
@@ -793,6 +843,7 @@ class RunTaker:
             "peak_coincidences": self.counters.get("peak", {}),
             "other_peak_coincidences": self.counters.get("other_peak", {}) if self.both else None,
             "nuclei": 2 if self.both else 1,
+            "distance_um": self.distance_um,
             # One particle per collision: elastic scattering is what the excitation leaves (runs taken before
             # counted the excited particles on top of all of Rutherford scattering, and say nothing here).
             "one_particle": True,
@@ -826,6 +877,33 @@ def _json_default(x):
     if isinstance(x, (set, tuple)):
         return list(x)
     return str(x)
+
+
+@dataclass
+class DistanceSeries:
+    """The runs of one plunger setup at its distances (:meth:`ExperimentFolder.distance_series`): ``setup`` (the
+    setup dict they were taken with) and ``runs``, {distance in µm: [RunData, ...] in the order taken}."""
+
+    setup: dict
+    runs: dict
+
+    @property
+    def distances(self) -> list:
+        """The distances (µm) with runs, ascending."""
+        return sorted(self.runs)
+
+    @property
+    def experiment(self) -> Experiment:
+        return Experiment.from_dict(copy.deepcopy(self.setup))
+
+    def missing(self) -> list:
+        """The setup's distances (µm) that have no run yet."""
+        lt = self.experiment.lifetime
+        have = set(self.runs)
+        return [d for d in (lt.distances_um if lt is not None else []) if not any(abs(d - h) < 1e-9 for h in have)]
+
+    def __len__(self) -> int:
+        return sum(len(v) for v in self.runs.values())
 
 
 class ExperimentFolder:
@@ -906,7 +984,32 @@ class ExperimentFolder:
             what = f"{slug((extra or {}).get('source', {}).get('nuclide', 'source'))}-source"
         else:
             what = f"{kind}-{duration_label(duration_s)}"
+            distance = (extra or {}).get("distance_um")
+            if distance is not None:
+                what += f"-{float(distance):g}um"
         return self.path / "runs" / f"{number:02d}-{what}"
+
+    def distance_series(self, experiment: Optional[Experiment] = None) -> list:
+        """The runs taken at plunger distances, grouped by setup: one :class:`DistanceSeries` per setup (the same
+        physics, labels aside, :func:`physics_changes`), its runs by distance, in the order the setups were first
+        used. With ``experiment``, only the series of that setup (a list of one, or empty). Runs without a
+        distance (no plunger) and source runs are left out."""
+        out: list = []
+        want = experiment.to_dict() if experiment is not None else None
+        for p in self.run_folders():
+            s = json.loads((p / "summary.json").read_text(encoding="utf-8"))
+            if s.get("distance_um") is None or s.get("kind") in ("source", "alignment"):
+                continue
+            run = RunData.load(p)
+            if want is not None and physics_changes(run.setup, want):
+                continue
+            for series in out:
+                if not physics_changes(series.setup, run.setup):
+                    series.runs.setdefault(run.distance_um, []).append(run)
+                    break
+            else:
+                out.append(DistanceSeries(run.setup, {run.distance_um: [run]}))
+        return out
 
     def take_run(self, kind: str = "beam", duration=None, budget=DEFAULT_BUDGET_S, seed: Optional[int] = None,
                  experiment: Optional[Experiment] = None, plan: Optional[dict] = None,
@@ -924,14 +1027,34 @@ class ExperimentFolder:
 
 def start(folder: ExperimentFolder, kind: str = "beam", duration=None, budget=DEFAULT_BUDGET_S,
           seed: Optional[int] = None, experiment: Optional[Experiment] = None, plan: Optional[dict] = None,
-          source: str = "152Eu", activity: str = "37 kBq", position=None, offset_mm: float = 0.0):
+          source: str = "152Eu", activity: str = "37 kBq", position=None, offset_mm: float = 0.0,
+          distance_um: Optional[float] = None, **options):
     """Begin a run in ``folder``: a :class:`RunTaker` to step for a beam or alignment run, or the stored
     :class:`RunData` of a source run (which is computed at once). ``duration`` defaults to the setup's beam time;
     ``budget`` is the real part (at most :data:`MAX_BUDGET_S`); ``seed`` defaults to the run's number. A source
     run takes ``source``, ``activity`` and ``position`` (mm from the target); an alignment run ``offset_mm``, the
-    target's assumed offset along the beam."""
+    target's assumed offset along the beam.
+
+    A setup with a plunger (``[lifetime] method = "rdds"``) takes its beam runs at one target-to-stopper distance,
+    ``distance_um`` (µm as the setup's distances give it, without the offset; by default the setup's first): one run
+    per distance makes a distance series (:meth:`ExperimentFolder.distance_series`). It is stored in the summary
+    and the folder's name. A setup without a plunger takes no distance.
+
+    A ``"fusion"`` run (γ rays of fusion-evaporation residues) is taken by :func:`physim.nuclear.fusion_runs.start`,
+    which gets the folder, ``duration``, ``budget``, ``seed``, ``experiment``, ``plan``, ``distance_um`` (when
+    given) and any other ``options``, and whose result is returned as it is."""
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}")
+    if kind == "fusion":
+        from . import fusion_runs  # written beside this module; imported only when a fusion run is asked for
+
+        more = dict(options)
+        if distance_um is not None:
+            more["distance_um"] = distance_um
+        return fusion_runs.start(folder, duration=duration, budget=budget, seed=seed, experiment=experiment,
+                                 plan=plan, **more)
+    if options:
+        raise TypeError(f"start() got unexpected options for a {kind} run: {', '.join(sorted(options))}")
     exp = experiment if experiment is not None else folder.setup()
     exp.validate()
     duration_s = _seconds(duration) if duration is not None else _seconds(exp.run.beam_time)
@@ -942,9 +1065,34 @@ def start(folder: ExperimentFolder, kind: str = "beam", duration=None, budget=DE
     seed = number if seed is None else int(seed)
     if kind == "source":
         return _source_run(folder, number, exp, duration_s, seed, source, activity, position, plan)
+    distance_um = _run_distance(exp, distance_um)
     extra = {"assumed_offset_mm": float(offset_mm)} if kind == "alignment" else {}
-    path = folder.run_folder(number, kind, duration_s)
-    return RunTaker(path, number, kind, exp, duration_s, budget_s, seed, extra, plan)
+    path = folder.run_folder(number, kind, duration_s, {"distance_um": distance_um})
+    return RunTaker(path, number, kind, exp, duration_s, budget_s, seed, extra, plan, distance_um=distance_um)
+
+
+def _run_distance(experiment: Experiment, distance_um: Optional[float]) -> Optional[float]:
+    """The plunger distance (µm) a beam run is taken at: the one given, or the setup's first; None without a
+    plunger (where giving one is a mistake)."""
+    lifetime = getattr(experiment, "lifetime", None)
+    if lifetime is None or lifetime.method != "rdds":
+        if distance_um is not None:
+            raise ValueError("a distance is for a plunger: the setup has no [lifetime] section with method \"rdds\"")
+        return None
+    if distance_um is None:
+        if not lifetime.distances_um:
+            raise ValueError("the plunger has no distances: give distance_um")
+        return float(lifetime.distances_um[0])
+    distance_um = _length_um(distance_um)
+    if not distance_um >= 0:
+        raise ValueError(f"the distance must not be negative, not {distance_um} um")
+    return distance_um
+
+
+def _length_um(x) -> float:
+    if isinstance(x, (int, float)):
+        return float(x)
+    return Quantity.parse(x).to("um") if isinstance(x, str) else x.to("um")
 
 
 def retake(folder: ExperimentFolder, run: RunData, plan: Optional[dict] = None) -> RunTaker:
@@ -953,8 +1101,20 @@ def retake(folder: ExperimentFolder, run: RunData, plan: Optional[dict] = None) 
     has a level scheme of the other (:attr:`RunData.one_nucleus`), the new run holds both. The old run stays."""
     if run.kind == "source":
         raise ValueError("a source run has nothing to take again")
+    if run.kind == "fusion":
+        from . import fusion_runs
+
+        more = {} if run.distance_um is None else {"distance_um": run.distance_um}
+        trigger = run.summary.get("trigger")  # the run's own trigger: fold and gates
+        if trigger:
+            more.update({k: trigger[k] for k in ("fold", "neutrons_min", "charged_min", "gates") if k in trigger})
+        taker = fusion_runs.start(folder, duration=f"{run.duration_s!r} s", budget=f"{run.real_s!r} s",
+                                  seed=int(run.summary["seed"]), experiment=run.experiment, plan=plan, **more)
+        taker.extra["retake_of"] = run.number
+        return taker
     taker = start(folder, run.kind, f"{run.duration_s!r} s", f"{run.real_s!r} s", int(run.summary["seed"]),
-                  run.experiment, plan, offset_mm=float(run.summary.get("assumed_offset_mm", 0.0)))
+                  run.experiment, plan, offset_mm=float(run.summary.get("assumed_offset_mm", 0.0)),
+                  distance_um=run.distance_um)
     taker.extra["retake_of"] = run.number
     return taker
 
@@ -978,9 +1138,14 @@ def extend(run: RunData, more) -> RunTaker:
     it, which rewrites the run's folder."""
     if run.kind == "source":
         raise ValueError("a source run cannot be extended; take another")
+    if run.kind == "fusion":
+        from . import fusion_runs
+
+        return fusion_runs.extend(run, more)
     extra = {k: run.summary[k] for k in ("assumed_offset_mm",) if k in run.summary}
     taker = RunTaker(run.folder, run.number, run.kind, run.experiment, run.duration_s + _seconds(more),
-                     run.summary["budget_s"], run.summary["seed"], extra, run.summary.get("plan"), previous=run)
+                     run.summary["budget_s"], run.summary["seed"], extra, run.summary.get("plan"), previous=run,
+                     distance_um=run.distance_um)
     return taker
 
 
@@ -1046,6 +1211,7 @@ class Background:
         return self.thread.is_alive()
 
 
-__all__ = ["DEFAULT_BUDGET_S", "KINDS", "MAX_BUDGET_S", "Background", "BeamRunner", "ExperimentFolder", "RunData",
+__all__ = ["DEFAULT_BUDGET_S", "KINDS", "MAX_BUDGET_S", "Background", "BeamRunner", "DistanceSeries",
+           "ExperimentFolder", "RunData",
            "RunInProgress", "RunTaker", "default_name", "duration_label", "estimate", "extend", "home", "list_experiments",
            "physics_changes", "slug", "start"]
