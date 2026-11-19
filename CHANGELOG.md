@@ -94,6 +94,24 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The alignment fit (`alignment.fit_offset`) could come out short of the offset at small statistics: with one
+  ring per point and 600 000 events of `coulex_ni58` (about 30 γ rays per point), a 2 mm offset gave −1.33 ±
+  0.25 mm over 16 independent samples without refinement (−1.0 ± 0.4 mm with the default reference of 400 000
+  events), because each point is made again from the same γ rays at every step of the scan and the noise part
+  of χ² changes with the geometry assumed (it moves the minimum of the mean χ² by 0.3 mm). It now merges
+  adjacent rings until the median point holds 60 γ rays (`rings_per_point` in the result): −1.87 ± 0.22 mm over
+  18 samples, the uncertainty unchanged (1.1 mm), and −0.07 ± 0.27 mm with the target where it is assumed. The
+  test of the 2 mm offset, marked as expected to fail, did not fail for a bias alone: at 600 000 events the
+  uncertainty is 1.1 mm, so a test within 1.5 of them fails one sample in seven, and the old seed's sample was
+  such a one. It now uses 1.8 million events (uncertainty 0.6 mm; −1.98 ± 0.19 mm over 12 samples) and checks
+  within 2.5 uncertainties.
+- The test of a carbon contaminant's elastic line passed only by its seed: in DSSD-R's forward strips the
+  median energy of ¹⁶O scattered on ¹²C sits 0.3 MeV above the line, because the line is drawn at the strip's
+  middle while the Rutherford cross section falls across the 4° strip, where the energy falls by 0.65 MeV per
+  degree. The energy loss and the generator agree with the line to 20 keV. The test now measures each particle
+  against the line at its own angle (`dataviews.kinematic_lines` gives each ring's angle as `"theta"`), with
+  medians and median absolute deviations, an allowance about ten times tighter than before; it passes on seeds
+  1–10.
 - Stopping of slow heavy ions in solids: the effective charge uses ZBL's screening length, the stopping below the
   speed where its fit holds is proportional to the speed (ZBL's rule), and the Lindhard–Scharff floor is scaled by
   0.8. Against 3620 measured points (Ar to U in 12 elemental solids, IAEA database, the new
