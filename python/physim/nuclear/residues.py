@@ -1320,7 +1320,10 @@ def simulate_residue_gammas(experiment, events: int = 100_000, seed: int = 1,
     if life is not None:
         notes += life["notes"] + [n + "." for n in prompt_notes]
     if not parts:
-        cols = {k: np.zeros(0) for k in GAMMA_COLUMNS}
+        # No γ rays (no level scheme for any residue): every column, empty, with the type it has when filled.
+        cols = {k: np.zeros(0, dtype=_GAMMA_DTYPES.get(k, float)) for k in GAMMA_COLUMNS}
+        if life is not None:
+            cols["_segment"] = np.zeros(0, dtype=int)
         return ResidueGammas(cols, ev, crystals, int(seed), ev.beta_nominal, notes)
     cols = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
     if life is None:
@@ -1355,6 +1358,11 @@ def simulate_residue_gammas(experiment, events: int = 100_000, seed: int = 1,
                  f"σ/J = {table.alignment:g}; {100 * table.side_feeding:.0f} % side feeding. No summing, add-back "
                  + ("or lifetimes." if life is None else "(lifetimes as above)."))
     return ResidueGammas(cols, ev, crystals, int(seed), ev.beta_nominal, notes)
+
+
+#: The γ-ray columns that are not floats.
+_GAMMA_DTYPES = {"event": int, "cascade": int, "channel": int, "initial": int, "final": int, "crystal": int,
+                 "counted": bool, "stopped": bool}
 
 
 def _lifetime_path(experiment, distance_um: Optional[float]) -> Optional[dict]:

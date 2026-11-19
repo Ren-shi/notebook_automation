@@ -17,9 +17,37 @@ from physim.nuclear.residues import (SIDE_FEEDING_LEVELS, SIDE_FEEDING_Q_B, Chan
                                      residue_scheme, simulate_residue_gammas)
 
 
+#: The yrast band of 50Cr typed in from ENSDF (adopted levels and γ rays of 50Cr, NDS 157, 1 (2019), file dated
+#: 201906), so the tests need no local ENSDF copy: (J^π, level keV, T½ ps, γ-ray keV to the level below).
+CR50_YRAST = (("0+", 0.0, None, None), ("2+", 783.31, 9.08, 783.3), ("4+", 1881.42, 2.2, 1098.1),
+              ("6+", 3164.06, 0.8, 1282.5), ("8+", 4744.9, 0.28, 1580.8), ("10+", 6340.6, 0.76, 1595.7))
+
+
+def _cr50_levels(without_half_life=()) -> dict:
+    """``[levels.50Cr]`` for the setup: :data:`CR50_YRAST`, each level feeding the one below by E2. The levels in
+    ``without_half_life`` lose their half-life (to test how a level of unknown τ is handled; not ENSDF's)."""
+    levels, transitions = [], []
+    for k, (jpi, e, t_half, e_gamma) in enumerate(CR50_YRAST):
+        lv = {"energy": f"{e:g} keV", "jpi": jpi, "source": "ensdf"}
+        if t_half is not None and jpi not in without_half_life:
+            lv["half_life"] = f"{t_half:g} ps"
+        levels.append(lv)
+        if e_gamma is not None:
+            transitions.append({"from": k, "to": k - 1, "energy": f"{e_gamma:g} keV", "intensity": 100,
+                                "multipolarity": "E2", "source": "ensdf"})
+    return {"nuclide": "50Cr", "reference": "yrast band of 50Cr from ENSDF, NDS 157, 1 (2019)", "level": levels,
+            "transition": transitions}
+
+
+def _cr50_example(without_half_life=()):
+    d = Experiment.example("fusion_cr50_plunger").to_dict()
+    d.setdefault("levels", {})["50Cr"] = _cr50_levels(without_half_life)
+    return Experiment.from_dict(d)
+
+
 @pytest.fixture(scope="module")
 def cr50():
-    return Experiment.example("fusion_cr50_plunger")
+    return _cr50_example()
 
 
 def _with(exp, **reaction):
@@ -57,17 +85,23 @@ def test_side_feeding_fields_default_validate_and_round_trip(cr50):
 # τ per level and the side-feeding band
 
 
-def test_level_taus_come_from_the_scheme_and_unknown_ones_are_prompt(cr50):
-    scheme = residue_scheme(cr50, "50Cr")
+def test_level_taus_come_from_the_scheme_and_unknown_ones_are_prompt():
+    exp = _cr50_example(without_half_life=("10+",))
+    scheme = residue_scheme(exp, "50Cr")
     cas = ResidueCascade(scheme)
     taus = cas.taus_ps
-    assert taus[1] == pytest.approx(scheme.levels[1].half_life.value / LN2 * 1e12)   # 2+, ENSDF
+    assert taus[1] == pytest.approx(9.08 / LN2)                    # 2+, T½ 9.08 ps
     assert cas.tau_sources[1] == "half-life (ensdf)"
     assert math.isinf(taus[cas.ground])
-    for i in cas.prompt_levels:            # γ rays but no τ: nan, never a made-up number
-        assert np.isnan(taus[i]) and cas.tau_sources[i] is None and i in cas.branches
+    assert cas.prompt_levels == [5]                                # the 10+ has γ rays but no τ here
+    assert np.isnan(taus[5]) and cas.tau_sources[5] is None        # nan, never a made-up number
     assert set(cas.prompt_levels) == {i for i in cas.branches if cas.level_names[i]
                                       not in lifetimes.level_taus(scheme)}
+    # The events name it, and the cascade's timing skips it (prompt) while the levels below keep theirs.
+    g = simulate_residue_gammas(exp, events=3000, seed=2, distance_um=42.0)
+    assert any("no known lifetime for 10+" in n and "prompt" in n for n in g.notes)
+    t = cas.run(np.full(4000, 10.0), np.random.default_rng(1), np.random.default_rng(2))["time_ps"]
+    assert np.all(np.isfinite(t))
 
 
 def test_side_feeding_band_is_the_rotor_of_lineshape(cr50):
@@ -123,6 +157,22 @@ def test_without_a_lifetime_section_the_gamma_rays_are_prompt(cr50):
     assert "_segment" not in g.columns
     with pytest.raises(ValueError, match="plunger"):
         simulate_residue_gammas(exp, events=100, distance_um=50.0)
+
+
+def test_no_level_scheme_gives_an_empty_table_with_every_column(cr50, monkeypatch):
+    from physim.nuclear import residues
+
+    monkeypatch.setattr(residues, "residue_scheme", lambda *a, **k: None)
+    for distance in (42.0, None):
+        exp = cr50 if distance is not None else Experiment.from_dict({k: v for k, v in cr50.to_dict().items()
+                                                                       if k != "lifetime"})
+        g = simulate_residue_gammas(exp, events=200, seed=1, distance_um=distance)
+        assert len(g) == 0 and set(residues.GAMMA_COLUMNS) <= set(g.columns)
+        for k in ("event", "cascade", "channel", "initial", "final", "crystal"):
+            assert g[k].dtype.kind == "i", k
+        assert g["counted"].dtype == bool and g["stopped"].dtype == bool
+        assert len(g.select()) == 0 and g.rate() == (0.0, 0.0)          # masks and indexing work when empty
+        assert any("No level scheme" in n for n in g.notes)
 
 
 # ---------------------------------------------------------------------------------------------------------------
