@@ -118,7 +118,7 @@ def test_without_a_lifetime_section_the_gamma_rays_are_prompt(cr50):
     d.pop("lifetime")
     exp = Experiment.from_dict(d)
     g = simulate_residue_gammas(exp, events=2000, seed=2)
-    assert np.all(g["distance_um"] == 0) and not g["stopped"].any()
+    assert np.isnan(g["distance_um"]).all() and not g["stopped"].any()
     assert np.array_equal(g["beta"], g.events["beta"][g["event"]])
     assert "_segment" not in g.columns
     with pytest.raises(ValueError, match="plunger"):
@@ -280,7 +280,7 @@ def test_sm143_events_slow_and_stop_in_the_backing():
     assert 0.1 < stopped.mean() < 0.9
     assert np.all(g["beta"][m][stopped] == 0)
     assert g["beta"][m].mean() < 0.8 * g.events["beta"][g["event"][m]].mean()
-    assert np.all(g["distance_um"] == 0)
+    assert np.isnan(g["distance_um"]).all()
     with pytest.raises(ValueError, match="DSAM"):
         simulate_residue_gammas(exp, events=100, distance_um=10.0)
     with pytest.raises(ValueError, match="plunger"):

@@ -121,7 +121,7 @@ GAMMA_COLUMNS = {
     "beta": "speed of the residue at emission, units of c",
     "corrected": "measured energy Doppler corrected for a residue along the beam at the nominal β_CN, MeV",
     "weight": "rate this γ ray stands for, per second",
-    "distance_um": "target-to-stopper distance of a plunger, µm (0 without one: no gap; a DSAM backing is in contact)",
+    "distance_um": "target-to-stopper distance of a plunger, µm (nan without one, and for DSAM)",
     "stopped": "the residue was at rest when it emitted the γ ray (always false without a lifetime section)",
 }
 
@@ -1312,7 +1312,7 @@ def simulate_residue_gammas(experiment, events: int = 100_000, seed: int = 1,
                       "initial": g["initial"][keep], "final": g["final"][keep], "crystal": which[keep],
                       "energy0": g["energy"][keep], "energy_lab": e_lab[keep], "lab": lab[keep],
                       "beta": beta[keep], "weight": c["weight"][src[keep]] / k_rep,
-                      "distance_um": np.full(len(keep), 0.0 if life is None else life["distance_um"]),
+                      "distance_um": np.full(len(keep), np.nan if life is None else life["distance_um"]),
                       "stopped": stopped[keep], "_segment": segment[keep]})
     if skipped:
         notes.append("No level scheme (in the setup or the local ENSDF copy) for " + ", ".join(skipped)
@@ -1378,7 +1378,7 @@ def _lifetime_path(experiment, distance_um: Optional[float]) -> Optional[dict]:
     else:
         if distance_um is not None:
             raise ValueError("a distance applies to a plunger (method = \"rdds\"), not to DSAM")
-        distance = 0.0  # no gap: the backing is in contact
+        distance = float("nan")  # no plunger: 0 um would be a contact measurement
     segments = recoil_stack(experiment, None if lt.method != "rdds" else distance)
     scatter = lt.method == "dsam"
     path = " → ".join(s.name or ("gap" if s.vacuum else "layer") for s in segments)
