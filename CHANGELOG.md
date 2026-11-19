@@ -84,6 +84,39 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - Only the last γ ray of a cascade is aimed at the crystals; those before it are drawn over the whole sphere,
     since the next one depends on their direction. The γ rays of a setup with cascades take about twice as long
     (23 s for 300 000 reactions of the ⁶²Ni on ¹⁹⁴Pt template, against 12 s).
+- Lifetime measurements, plunger (RDDS) and Doppler-shift attenuation (DSAM), backlog 73 (waves 1 and 2; the
+  planner, report, MCP tools and app follow).
+  - A `[lifetime]` section in the setup for Coulex and fusion-evaporation: a plunger (stopper, degrader, or a
+    differential plunger with a second foil, `set_degrader2`) at a distance with an offset, or a DSAM backing,
+    with problems for impossible setups (a stopper too thin to stop the recoil, distances not positive). Units
+    `ps`, `fs`, `/ns`, `/ps`. Examples after the papers: `coulex_ru98_plunger`, `fusion_cr50_plunger`,
+    `fusion_sm143_dsam`.
+  - Lifetime physics (`physim.nuclear.lifetimes`): B(Eλ) ↔ τ, decay curves with Bateman feeding, the plunger's
+    shifted and unshifted components, DSAM attenuation and line shapes on a slowing-down kernel, and the
+    deorientation in vacuum (`lifetime.deorientation`: α₂, α₄ with either the rates or g, C₂, C₄). Theory note
+    `docs/theory/lifetimes.md`.
+  - Recoil transport (`physim.nuclear.transport`): the recoil's path through target, backing, vacuum gap and foils
+    (`rates.recoil_stack`), with electronic stopping and a ZBL scattering Monte Carlo checked against TRIM
+    (range, straggling, lateral spread and angles within a few %). The slowing of item 73 moved here unchanged.
+  - Coulomb-excitation γ rays through a plunger or DSAM backing, with lifetimes, time dilation and deorientation in
+    vacuum (new γ columns `stopped`, `segment`, `time_ps`, `vacuum_ps`, `distance_um`, `stopper_ps`); plunger runs
+    at a distance (`runs.start(distance_um=...)`), grouped as distance series.
+  - Fusion-evaporation residues carry level lifetimes and side-feeding times (LINESHAPE rotational band,
+    `side_feeding_q` and `side_feeding_levels` in `[reaction]`). With a `[lifetime]` section they slow through the
+    target, backing and plunger before each γ ray, and there are predicted plunger components and spectra per
+    distance and DSAM line shapes.
+  - Simulated fusion-evaporation runs (`physim.nuclear.fusion_runs`, or `runs.start(kind="fusion")`): residue
+    events with their γ rays, triggered on γ-ray fold and the ancillaries' gates; stored, started, stopped,
+    extended and loaded like Coulex runs; γγ matrices and gated spectra; a plunger distance per run.
+  - Lifetime analysis (`physim.nuclear.lifetime_analysis`): plunger peak areas, decay-curve fits with Bateman
+    feeding, the differential decay-curve method (singles with feeding correction, gated, and three-foil for
+    differential plungers), DSAM line-shape fits, B(Eλ) from τ, and the deorientation correction and fit. Each
+    result has an uncertainty budget (statistics, distance, velocity, feeding, stopping).
+  - Validation: two capabilities, "Lifetimes: recoil distance (RDDS)" and "Lifetimes: Doppler-shift attenuation
+    (DSAM)", with analytic, Bateman, deorientation (Radeck et al.) and TRIM checks that pass, and two known
+    failures said plainly: against APCAD the DSAM line's shift is 17% off (widths agree), against AhKin its width
+    is 25% off (shift inside AhKin's band). Register page `docs/physics-register/lifetimes.md`, notebook
+    `notebooks/validation/lifetimes.ipynb`. The published reproductions (⁹⁸Ru, ⁵⁰Cr, ¹⁴³Sm) follow.
 
 ### Documentation
 - The README shows the application: what the experiment planner does, step by step, with screenshots
@@ -94,6 +127,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- A shell-model job reads as finished, with its finish time, as soon as its results are written; before, a status
+  read between the results and the worker's last status write saw it still running (a rare test failure).
 - The alignment fit (`alignment.fit_offset`) could come out short of the offset at small statistics: with one
   ring per point and 600 000 events of `coulex_ni58` (about 30 γ rays per point), a 2 mm offset gave −1.33 ±
   0.25 mm over 16 independent samples without refinement (−1.0 ± 0.4 mm with the default reference of 400 000
