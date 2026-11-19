@@ -50,7 +50,7 @@ from typing import Optional
 
 import numpy as np
 
-from . import angular, data
+from . import angular, data, transport
 from .detectors import Array
 from .events import Events, simulate
 from .gamma import cascade_excitation, excitation_of, excitation_order, other_excitation, start_levels
@@ -1064,62 +1064,23 @@ def _cumulative_by(group: np.ndarray, x: np.ndarray) -> np.ndarray:
     return total - offset
 
 
-_CLOCKS: dict = {}
-
-
 def _clock(species: str, material, density: float, mass_mev: float) -> tuple:
     """The time (s) a nucleus of ``species`` takes to stop from each energy of its stopping table in ``material``
-    of density ``density`` (g/cm³): t(E) = ∫ dR / (ρ v), on the table's energies (MeV). Kept once computed."""
-    key = (species, material.name, density, mass_mev)
-    if key in _CLOCKS:
-        return _CLOCKS[key]
-    st = stopping(species, material)
-    e, r = np.asarray(st._e, dtype=float), np.asarray(st._range, dtype=float)  # MeV, mg/cm²
-    beta = np.sqrt(np.maximum(e * (e + 2 * mass_mev), 0.0)) / (e + mass_mev)
-    mid = 0.5 * (beta[1:] + beta[:-1])
-    dt = np.diff(r) / (1000.0 * density * C_CM_S * np.maximum(mid, 1e-12))
-    t = np.r_[r[0] / (1000.0 * density * C_CM_S * max(beta[0], 1e-12)), 0.0]
-    t = np.cumsum(np.r_[t[0], dt])
-    _CLOCKS[key] = (np.r_[0.0, e], np.r_[0.0, t])
-    return _CLOCKS[key]
+    of density ``density`` (g/cm³): t(E) = ∫ dR / (ρ v), on the table's energies (MeV). The clock now lives in
+    :mod:`.transport` (in ps); this gives it in seconds."""
+    e, t = transport._clock(species, material, density, mass_mev)
+    return e, t * 1e-12
 
 
 def _slowing(experiment, layers: list, depth, dirs, species: str, energy, t_decay, mass_mev: float) -> tuple:
     """The emitter's energy (MeV) at its decay time ``t_decay`` (s after the reaction): it slows along its path
     through the rest of the stack, then flies at its exit energy; one that stops first decays at rest. Returns
-    (energy at the decay, whether it had stopped). The direction is kept (no angular straggling); time dilation
-    (a few parts in a thousand here) is left out."""
-    fwd, steps = _exit_paths(experiment, layers, 0, depth, dirs)
-    e = np.asarray(energy, dtype=float).copy()
-    elapsed = np.zeros(len(e))
-    done = np.zeros(len(e), dtype=bool)
-    stopped = np.zeros(len(e), dtype=bool)
-    out = np.full(len(e), np.nan)
-    for j, path, forward in steps:
-        m = (fwd == forward) & ~done & (np.asarray(path) > 0)
-        if not m.any():
-            continue
-        mat = layers[j].material
-        density = mat.density_g_cm3
-        if not density:
-            raise ValueError(f"lifetimes need the density of {mat.name}, which is not known")
-        grid_e, grid_t = _clock(species, mat, float(density), float(mass_mev))
-        idx = np.flatnonzero(m)
-        e_in = e[idx]
-        e_out = _after(stopping(species, mat), e_in, np.asarray(path)[idx])
-        t_in, t_out = np.interp(e_in, grid_e, grid_t), np.interp(e_out, grid_e, grid_t)
-        here = t_decay[idx] < elapsed[idx] + (t_in - t_out)
-        out[idx[here]] = np.interp(t_in[here] - (t_decay[idx[here]] - elapsed[idx[here]]), grid_t, grid_e)
-        done[idx[here]] = True
-        rest = (e_out <= 0) & ~here
-        out[idx[rest]] = 0.0
-        stopped[idx[rest]] = True
-        done[idx[rest]] = True
-        go = ~here & ~rest
-        elapsed[idx[go]] += (t_in - t_out)[go]
-        e[idx[go]] = e_out[go]
-    out[~done] = e[~done]  # out of the stack: in flight at the exit energy
-    return out, stopped
+    (energy at the decay, whether it had stopped). The direction is kept (no angular straggling) and ``t_decay`` is
+    taken as lab time: :func:`.transport.slow` without scattering."""
+    segments = [transport.Segment(lay.material, lay.thickness, name=lay.name) for lay in layers]
+    s = transport.slow(segments, species, mass_mev, energy, transport._into_stack(dirs, tilt_deg(experiment)), depth,
+                       np.asarray(t_decay, dtype=float) * 1e12)
+    return s.energy, s.stopped
 
 
 def _sum_cascades(cascade, which, deposited, measured, counted, keep, kind, energy_lab, crystals) -> int:
