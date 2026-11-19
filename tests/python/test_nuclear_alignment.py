@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pytest
 
-from physim.nuclear import Experiment, response
+from physim.nuclear import Experiment, alignment, response
 from physim.nuclear.alignment import diagnostic, fit_offset, flatness, overlay, with_offset
 from physim.nuclear.analysis import Analysis, Settings
 from physim.nuclear.detectors import Array
@@ -105,16 +105,32 @@ def test_the_correction_with_the_true_geometry_is_what_the_events_carry(ni):
     assert with_offset(with_offset(exp, 3.0), -3.0).target.position is None
 
 
-@pytest.mark.xfail(strict=False, reason=(
-    "fit_offset does not recover the 2 mm with these 600 000 events: over the references of seeds 12-17 it gives "
-    "+0.23 +- 0.31 mm with the stopping before 2026-11-19 and +0.08 +- 0.32 mm after (uncertainty about 1.2 mm each); "
-    "seed 12 had passed by chance (-0.85 mm). To be investigated."))
-def test_the_fit_recovers_a_two_mm_offset(ni):
-    # The analysis assumes the target 2 mm from where it is: the fit should give the 2 mm back, within its
-    # uncertainty.
+def test_the_fit_recovers_a_two_mm_offset():
+    # The analysis assumes the target 2 mm from where it is: the fit gives the 2 mm back. With the 600 000 events of
+    # the other tests the fit's uncertainty is 1.1 mm, so 2 mm is under two standard deviations from none and a
+    # test at 1.5 of them fails one sample in seven: three times the events make it 0.6 mm.
+    exp = Experiment.example("coulex_ni58")
+    g = simulate_gammas(exp, 1_800_000, seed=1)
+    found = fit_offset(g, with_offset(exp, 2.0))
+    assert found["against"] == "simulation" and not found["at_edge"], found
+    assert found["uncertainty_mm"] < 0.8, found
+    assert abs(found["offset_mm"] - (-2.0)) < 2.5 * found["uncertainty_mm"], found
+
+
+def test_the_fit_merges_rings_until_its_points_hold_enough_gamma_rays(ni):
+    # With one ring per point the 600 000 events leave about 30 γ rays in each point's window, and the part of χ²
+    # that the noise makes depends on the geometry assumed by as much as the signal does over a millimetre: the
+    # fit came out 0.3-1 mm short of a 2 mm offset, on average over samples. Rings are merged until the median
+    # point holds POINT_GAMMAS; the diagnostic plot keeps one ring per point.
     exp, g = ni
-    found = fit_offset(g, with_offset(exp, 2.0), seed=12)
-    assert abs(found["offset_mm"] - (-2.0)) < 1.5 * found["uncertainty_mm"], found
+    rows = diagnostic(g, exp)
+    assert np.median([r["n"] for r in rows]) < alignment.POINT_GAMMAS
+    merged = diagnostic(g, exp, rings_per_point=4)
+    assert np.median([r["n"] for r in merged]) >= alignment.POINT_GAMMAS
+    assert {r["ring"] % 4 for r in merged} == {0} and len(merged) < len(rows) / 2
+    found = fit_offset(g, exp, steps=5, refine=0)
+    assert found["rings_per_point"] == 4
+    assert fit_offset(g, exp, steps=5, refine=0, least_per_point=1)["rings_per_point"] == 1
 
 
 def test_the_diagnostic_is_flat_when_aligned_and_the_fit_recovers_an_offset(ni):

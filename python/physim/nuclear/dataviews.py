@@ -146,7 +146,12 @@ class Gate:
 def kinematic_lines(experiment, detector: str) -> list:
     """The measured energy each group would have in each ring (or strip) of a particle detector: after the way
     out of the middle of the target and the detector's dead layer, at the ring's centre. A list of {"label",
-    "group" ("elastic" or "excited"), "particle", "rings": [index], "energy": [MeV]}."""
+    "group" ("elastic" or "excited"), "particle", "rings": [index], "theta": [degrees, the angle of each ring's
+    centre the line is evaluated at], "energy": [MeV]}.
+
+    The line is where a particle at the ring's centre lands, not the median of the ring's counts: across a ring
+    the cross section changes, and where the energy falls steeply with the angle (¹⁶O on ¹²C at 30°, 0.65 MeV per
+    degree over a 4° strip) the counts' median can sit a few hundred keV from the line."""
     from . import data
     from .detectors import Array
     from .kinematics import TwoBody
@@ -208,6 +213,7 @@ def kinematic_lines(experiment, detector: str) -> list:
                     what = f"scattered {ion} on {nuc}" if particle == "ejectile" else f"{nuc} recoil"
                     out.append({"label": f"{what} ({lay.name})", "group": "elastic", "particle": particle,
                                 "layer": lay.name, "rings": [r for r, k in zip(np.array(rings)[ok], keep) if k],
+                                "theta": [float(t) for t in theta[ok][keep]],
                                 "energy": [float(x) for x in dep[keep]]})
     for group, tb in kinds:
         for particle, species in (("ejectile", ion), ("recoil", target)):
@@ -228,6 +234,7 @@ def kinematic_lines(experiment, detector: str) -> list:
                 ", excited" if group == "excited" else ", elastic")
             out.append({"label": label, "group": group, "particle": particle,
                         "rings": [r for r, k in zip(np.array(rings)[ok], keep) if k],
+                        "theta": [float(t) for t in theta[ok][keep]],
                         "energy": [float(x) for x in dep[keep]]})
     return out
 

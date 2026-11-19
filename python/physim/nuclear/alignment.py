@@ -34,6 +34,10 @@ REFERENCE_EVENTS = 400_000
 #: The most such simulations the reference is made of.
 REFERENCE_CHUNKS = 4
 
+#: The γ rays the median point of :func:`fit_offset` holds in its window, at the least: adjacent rings are merged
+#: until it does.
+POINT_GAMMAS = 60
+
 
 def _corrected(gammas, experiment_assumed) -> np.ndarray:
     exc = experiment_assumed.excitation
@@ -103,6 +107,14 @@ def _table(gammas, experiment_assumed) -> dict:
             "detector": c["detector"][particle], "ring": c["segment_i"][particle]}
 
 
+def _grouped(table: dict, rings_per_point: int) -> dict:
+    """The table with adjacent rings (or strips) merged in groups of ``rings_per_point``, each group named by its
+    first ring."""
+    if rings_per_point <= 1:
+        return table
+    return {**table, "ring": (table["ring"] // rings_per_point) * rings_per_point}
+
+
 def _sigma_det(crystal, e0: float) -> float:
     return max(float(crystal.response.fwhm(e0)) / FWHM_PER_SIGMA, 1e-4)
 
@@ -148,14 +160,17 @@ def _rows(table: dict, gammas, widths: dict, least: int) -> list:
     return out
 
 
-def diagnostic(gammas, experiment_assumed, least: int = 10, widths: Optional[dict] = None) -> list:
+def diagnostic(gammas, experiment_assumed, least: int = 10, widths: Optional[dict] = None,
+               rings_per_point: int = 1) -> list:
     """The corrected peak's centroid per crystal and ring (or strip): rows {"crystal", "detector", "ring",
     "centroid_kev", "error_kev", "n", "counts"} with at least ``least`` γ rays in the peak's window, over the
     run's statistics. The window is ±2.5σ with σ the peak's width in that crystal (:func:`peak_widths`, measured
     here unless ``widths`` gives them: a scan over geometries keeps one set, so that every step and the
-    reference take the same window)."""
+    reference take the same window). With ``rings_per_point`` above 1, adjacent rings are merged into one point
+    (``"ring"`` is then the group's first ring)."""
     table = _table(gammas, experiment_assumed)
-    return _rows(table, gammas, widths if widths is not None else _widths(table, gammas), least)
+    widths = widths if widths is not None else _widths(table, gammas)
+    return _rows(_grouped(table, rings_per_point), gammas, widths, least)
 
 
 def _flatness(rows: list, e0_kev: Optional[float] = None, reference: Optional[list] = None) -> tuple:
@@ -210,7 +225,7 @@ def with_offset(experiment, offset_mm: float) -> Experiment:
     return Experiment.from_dict(d)
 
 
-def _reference(experiment, gammas, wanted: int, widths: dict, seed: int) -> tuple:
+def _reference(experiment, gammas, wanted: int, widths: dict, seed: int, rings_per_point: int = 1) -> tuple:
     """The diagnostic of a simulation made with ``experiment`` and corrected with it, holding about ``wanted``
     counted γ rays: (rows, γ rays, events simulated).
 
@@ -237,7 +252,7 @@ def _reference(experiment, gammas, wanted: int, widths: dict, seed: int) -> tupl
         k += 1
     table = {key: np.concatenate([t[key] for t in tables]) for key in tables[0]}
     table["w"] = table["w"] / len(tables)
-    return _rows(table, first, widths, 10), len(table["x"]), events * len(tables)
+    return _rows(_grouped(table, rings_per_point), first, widths, 10), len(table["x"]), events * len(tables)
 
 
 def _covers(reference: list, rows: list) -> bool:
@@ -258,13 +273,34 @@ def _minimum(grid: np.ndarray, chi2: np.ndarray) -> tuple:
     return float(grid[k]), float(grid[1] - grid[0]) if len(grid) > 1 else float("nan"), float(chi2[k]), k
 
 
+def _rings_per_point(gammas, experiment, widths: dict, least_per_point: int) -> int:
+    """The fewest adjacent rings (1, 2, 4 or 8) per point that put at least ``least_per_point`` γ rays in the
+    median point's window, with the assumed geometry."""
+    table = _table(gammas, experiment)
+    for k in (1, 2, 4):
+        rows = _rows(_grouped(table, k), gammas, widths, 10)
+        if rows and float(np.median([r["n"] for r in rows])) >= least_per_point:
+            return k
+    return 8
+
+
 def fit_offset(gammas, experiment, span_mm: float = 8.0, steps: int = 17, reference: bool = True,
-               seed: int = 2, refine: int = 2) -> dict:
+               seed: int = 2, refine: int = 2, least_per_point: int = POINT_GAMMAS) -> dict:
     """The target offset along the beam (from the position ``experiment`` assumes) that flattens the diagnostic
     plot: χ² of the centroids is scanned over ±``span_mm`` and a parabola through its lowest points gives the
     minimum and its uncertainty (Δχ² = 1, scaled by √(χ²/ν) when the centroids scatter by more than their
     errors). Returns {"offset_mm", "uncertainty_mm", "chi2", "degrees_of_freedom", "at_edge", "scan", "against",
-    "passes", "reference_at_mm", "reference_gammas", "reference_events"}.
+    "passes", "reference_at_mm", "reference_gammas", "reference_events", "rings_per_point"}.
+
+    Each point is made again from the same γ rays at every step of the scan, so its noise depends on the geometry
+    assumed, and so does the noise part of χ²: a part that grows with the number of points, while the signal
+    grows with the number of γ rays. With few γ rays per point it moves the minimum. One ring per point, with
+    600 000 events of ``coulex_ni58`` (about 30 γ rays in a point's window, χ² rising 1.6 per mm² about its
+    minimum), put the fit 0.7 mm short of a 2 mm offset on average (−1.33 ± 0.25 mm over 16 samples, references
+    of the same size, no refinement); with four times the events, 0.2 mm. Adjacent rings are
+    therefore merged (1, 2, 4 or 8 per point) until the median point holds ``least_per_point`` γ rays in its
+    window (``"rings_per_point"``), at no cost in precision: the centroids' slope with the offset changes slowly
+    from ring to ring. The diagnostic plot itself keeps one ring per point.
 
     With ``reference`` (the default) the pattern is judged against that of a simulation made with the assumed
     geometry and corrected with it, which holds the ring dependence that the finite crystals and the energy loss
@@ -281,8 +317,9 @@ def fit_offset(gammas, experiment, span_mm: float = 8.0, steps: int = 17, refere
     recoils of grazing collisions, nearly every generated event is one of those. Such a reference is not used:
     ``"against"`` is then ``"flat"`` (flat lines) if it was the first, and a later one ends the refinement."""
     widths = peak_widths(gammas, experiment)
+    group = _rings_per_point(gammas, experiment, widths, least_per_point)
     grid = np.linspace(-span_mm, span_mm, steps)
-    scanned = [diagnostic(gammas, with_offset(experiment, z), widths=widths) for z in grid]
+    scanned = [diagnostic(gammas, with_offset(experiment, z), widths=widths, rings_per_point=group) for z in grid]
     wanted = int(np.sum(gammas["counted"]))
 
     def solve(ref):
@@ -296,26 +333,27 @@ def fit_offset(gammas, experiment, span_mm: float = 8.0, steps: int = 17, refere
                 "at_edge": k in (0, len(grid) - 1),
                 "scan": [{"offset_mm": float(z), "chi2": float(c)} for z, c in zip(grid, chi2)]}
 
-    used = {"against": "flat", "passes": 0, "reference_at_mm": None, "reference_gammas": 0, "reference_events": 0}
+    used = {"against": "flat", "passes": 0, "reference_at_mm": None, "reference_gammas": 0, "reference_events": 0,
+            "rings_per_point": group}
     if not reference:
         return {**solve(None), **used}
     middle = scanned[len(scanned) // 2]
-    ref, n_gammas, n_events = _reference(experiment, gammas, wanted, widths, seed)
+    ref, n_gammas, n_events = _reference(experiment, gammas, wanted, widths, seed, group)
     passes = 1
     if _covers(ref, middle):
         used = {"against": "simulation", "reference_at_mm": 0.0, "reference_gammas": n_gammas,
-                "reference_events": n_events}
+                "reference_events": n_events, "rings_per_point": group}
         out = solve(ref)
     else:
         out = solve(None)
     while passes <= refine and not out["at_edge"] and abs(out["offset_mm"]) > 2 * out["uncertainty_mm"]:
         there = with_offset(experiment, out["offset_mm"])
-        ref, n_gammas, n_events = _reference(there, gammas, wanted, widths, seed)
+        ref, n_gammas, n_events = _reference(there, gammas, wanted, widths, seed, group)
         passes += 1
         if not _covers(ref, middle):
             break
         used = {"against": "simulation", "reference_at_mm": out["offset_mm"], "reference_gammas": n_gammas,
-                "reference_events": n_events}
+                "reference_events": n_events, "rings_per_point": group}
         before, out = out["offset_mm"], solve(ref)
         if abs(out["offset_mm"] - before) < out["uncertainty_mm"]:
             break
@@ -351,5 +389,5 @@ def overlay(gammas, experiment_true, experiment_assumed, bins: int = 200) -> dic
     return out
 
 
-__all__ = ["REFERENCE_CHUNKS", "REFERENCE_EVENTS", "diagnostic", "fit_offset", "flatness", "overlay", "peak_widths",
+__all__ = ["POINT_GAMMAS", "REFERENCE_CHUNKS", "REFERENCE_EVENTS", "diagnostic", "fit_offset", "flatness", "overlay", "peak_widths",
            "with_offset"]

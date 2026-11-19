@@ -654,6 +654,12 @@ fit_offset(gammas, assumed)                      # the offset that flattens it, 
 - Each centroid is taken in a window of ±2.5σ of the corrected peak as it stands in that crystal
   (`peak_widths`): a fast emitter seen by a large crystal leaves a peak many times wider than the detector's
   resolution.
+- The fit merges adjacent rings (1, 2, 4 or 8 per point, `rings_per_point` in its result) until the median point
+  holds `alignment.POINT_GAMMAS` (60) γ rays in its window; the diagnostic plot keeps one ring per point. Each
+  point is made again from the same γ rays at every step of the scan, so the noise part of χ² depends on the
+  geometry assumed; it grows with the number of points while the signal grows with the γ rays, and with about 30
+  γ rays per point (one ring per point, 600 000 events of `coulex_ni58`) it put the fit 0.3–1 mm short of a 2 mm
+  offset on average. With 600 000 events the fit's uncertainty is about 1.1 mm; with 1.8 million, 0.6 mm.
 - `Settings.target_offset_mm` in the analysis makes it assume the offset; the budget's "detector positions" entry
   includes the change of the peak area when the target moves by `position_unc_mm`.
 - In the app, **Check the alignment** on the Spectra tab shows the overlay, the diagnostic plot and the fitted

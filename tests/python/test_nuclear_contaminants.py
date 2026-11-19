@@ -27,15 +27,13 @@ def test_a_carbon_contaminant_has_its_elastic_line_in_every_ring():
     exp = with_carbon()
     layers = stack(exp)
     assert [lay.name for lay in layers] == ["target", "C contaminant"]
-    # Seed 5: with seed 3 the forward strip of DSSD-R (ring 0, 31-35 deg) has its median 0.30 MeV above the line, with
-    # the stopping before 2026-11-19 and after it alike; it passed before only because that strip's spread was wide.
-    # The offset is to be investigated.
-    ev = simulate(exp, 400_000, 5)
+    ev = simulate(exp, 400_000, 3)
     carbon = ev.channels.index("12C (C contaminant)")
     for det in ("DSSD-L", "DSSD-R"):
         lines = dv.kinematic_lines(exp, det)
         line = next(x for x in lines if x["label"] == "scattered 16O on 12C (C contaminant)")
-        at = dict(zip(line["rings"], line["energy"]))
+        order = np.argsort(line["theta"])
+        theta_line, energy_line = np.array(line["theta"])[order], np.array(line["energy"])[order]
         m = ev.select(det) & (ev["channel"] == carbon) & ~ev["recoil"]
         seen = sorted(set(ev["segment_i"][m].tolist()))
         assert len(seen) >= 10, det
@@ -50,10 +48,20 @@ def test_a_carbon_contaminant_has_its_elastic_line_in_every_ring():
             spans = [g.theta_range((ring, j)) for j in range(g.strips_y)]
             if min(a for a, _ in spans) < limit < max(b for _, b in spans):
                 continue
-            median = float(np.median(ev["measured"][here]))
-            # The strip spans a range of angles: the line is at its middle, within the spread across the strip.
-            spread = float(np.std(ev["measured"][here]))
-            assert abs(median - at[ring]) < max(3 * spread / np.sqrt(here.sum()) + 0.03, 0.05), (det, ring)
+            # The line is drawn at each strip's middle, but a strip spans 4° and the energy falls by 0.65 MeV per
+            # degree: where in the strip the counts sit (the Rutherford cross section falls across the forward
+            # strips of DSSD-R, which puts ring 0's median 0.3 MeV above the line at its middle) is not the line's
+            # business. So each particle is measured against the line at its own angle, the line being smooth
+            # between the strips' middles (a parabola through the three nearest): what is left is the depth in the
+            # layer, the straggling and the resolution, a spread of 50-100 keV.
+            near = np.argsort(np.abs(theta_line - np.median(ev["theta"][here])))[:3]
+            expected = np.polyval(np.polyfit(theta_line[near], energy_line[near], 2), ev["theta"][here])
+            residual = ev["measured"][here] - expected
+            # The median and a spread from the median absolute deviation: the few particles of the slow branch
+            # (CM angles past 139°, MeV below the line) move neither.
+            median = float(np.median(residual))
+            sigma = 1.4826 * float(np.median(np.abs(residual - median)))
+            assert abs(median) < 4 * 1.2533 * sigma / np.sqrt(here.sum()) + 0.02, (det, ring, median, sigma)
 
 
 def _spot_setup(spot):
