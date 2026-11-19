@@ -1,0 +1,218 @@
+schema = "physim.experiment/1"
+title = "Plunger after Coulomb excitation: 98Ru on 24Mg"
+description = "The recoil-distance (plunger) measurement of D. Radeck et al., Phys. Rev. C 85, 014301 (2012), at Cologne: a 98Ru beam (300 MeV, charge state 16+, 2.5 electrical nA) is Coulomb excited below the barrier on a 0.7 mg/cm2 24Mg target, and the excited 98Ru flies at about 4.5 % of c across a gap of 3 to 450 um (plus an offset of 8 um at electrical contact) into a 15.7 mg/cm2 copper stopper. The Mg recoils go through the stopper into a silicon detector at 0 deg (half-angle about 29 deg); here it is an annular detector with a hole for the beam, since physim does not yet let the stopper take the beam. The gamma rays are seen by ten germanium clovers as in SPEEDY: four with BGO shields at 41.5 deg, four at 138.5 deg and two unshielded at 90 deg; their distance is not given in the paper and is set here as close as the shields allow without touching (210 mm). Deorientation in vacuum for the 2+ state from the paper's Table I. The distances in between are illustrative (the paper gives only their range), as are the beam time and B(E2) up (from ENSDF)."
+
+[reaction]
+type = "coulex"
+excite = "projectile"
+energy = "652.46 keV"
+multipolarity = "E2"
+b_up = "3999.19 e2fm4"
+
+[beam]
+nuclide = "98Ru"
+energy = "300 MeV"
+current = "2.5 enA"
+charge_state = 16
+
+[target]
+material = "24Mg"
+thickness = "0.7 mg/cm2"
+
+[run]
+beam_time = "120 h"
+
+[[detectors]]
+name = "Si0"
+shape = "annular"
+theta = "0 deg"
+distance = "25 mm"
+inner_radius = "1.5 mm"
+outer_radius = "14.3 mm"
+thickness = "1000 um"
+resolution = "100 keV"
+threshold = "1 MeV"
+
+[[gamma_detectors]]
+name = "F1"
+model = "clover"
+theta = "41.5 deg"
+phi = "0 deg"
+distance = "210 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "F2"
+model = "clover"
+theta = "41.5 deg"
+phi = "90 deg"
+distance = "210 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "F3"
+model = "clover"
+theta = "41.5 deg"
+phi = "180 deg"
+distance = "210 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "F4"
+model = "clover"
+theta = "41.5 deg"
+phi = "270 deg"
+distance = "210 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "B1"
+model = "clover"
+theta = "138.5 deg"
+phi = "0 deg"
+distance = "210 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "B2"
+model = "clover"
+theta = "138.5 deg"
+phi = "90 deg"
+distance = "210 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "B3"
+model = "clover"
+theta = "138.5 deg"
+phi = "180 deg"
+distance = "210 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "B4"
+model = "clover"
+theta = "138.5 deg"
+phi = "270 deg"
+distance = "210 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+shield = "BGO"
+
+[[gamma_detectors]]
+name = "M1"
+model = "clover"
+theta = "90 deg"
+phi = "45 deg"
+distance = "210 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+
+[[gamma_detectors]]
+name = "M2"
+model = "clover"
+theta = "90 deg"
+phi = "225 deg"
+distance = "210 mm"
+crystals = 4
+crystal_diameter = "50 mm"
+crystal_length = "70 mm"
+crystal_pitch = "45 mm"
+housing_side = "101 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+
+[lifetime]
+method = "rdds"
+distances = ["3 um", "6 um", "10 um", "16 um", "25 um", "40 um", "60 um", "100 um", "160 um", "250 um", "450 um"]
+offset = "8 um"
+
+[lifetime.deorientation]
+alpha2 = 0.18
+gamma2 = "0.142 /ps"
+alpha4 = 0.24
+gamma4 = "0.314 /ps"
+
+[lifetime.stopper]
+kind = "stopper"
+material = "Cu"
+thickness = "15.7 mg/cm2"
