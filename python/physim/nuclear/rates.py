@@ -123,6 +123,37 @@ def stack(experiment) -> list:
     return [StackLayer(name, mat, mat.areal_density_mg_cm2(th), mat.atoms_per_cm2(th)) for mat, th, name in layers]
 
 
+def recoil_stack(experiment, distance_um: Optional[float] = None) -> list:
+    """The recoil's path for a lifetime measurement, as :class:`~physim.nuclear.transport.Segment` objects from the
+    front of the target: the layers of :func:`stack` (target, backing, contaminants), then for a plunger (``method``
+    "rdds") a vacuum gap of ``distance_um`` plus the plunger's offset and the foil after it (named "stopper" or
+    "degrader" by its kind), and for a differential plunger a second gap and the second foil ("degrader2").
+
+    ``distance_um`` is a target-to-stopper distance as the setup gives it (``Lifetime.distances``, without the
+    offset); a plunger needs one. Without a lifetime section, or for DSAM, the stack alone (the backing slows the
+    recoil). The beam's path is :func:`stack`, unchanged: the stopper is in the recoil's way only."""
+    from .transport import Segment
+
+    out = [Segment(lay.material, lay.thickness, name=lay.name) for lay in stack(experiment)]
+    lt = getattr(experiment, "lifetime", None)
+    if lt is None or lt.method != "rdds":
+        return out
+    if distance_um is None:
+        raise ValueError("a plunger's recoil path needs a target-to-stopper distance (distance_um)")
+    if distance_um < 0:
+        raise ValueError(f"the distance must not be negative, not {distance_um} um")
+    out.append(Segment(None, gap_um=float(distance_um) + lt.offset_um, name="gap"))
+    if lt.stopper is not None:
+        mat = lt.stopper.material_data()
+        name = "stopper" if lt.stopper.kind == "stopper" else "degrader"
+        out.append(Segment(mat, mat.areal_density_mg_cm2(_q(lt.stopper.thickness)), name=name))
+    if lt.degrader2 is not None and lt.stopper is not None and lt.stopper.kind == "differential":
+        mat = lt.degrader2.material_data()
+        out.append(Segment(None, gap_um=lt.degrader2.gap_um, name="gap2"))
+        out.append(Segment(mat, mat.areal_density_mg_cm2(_q(lt.degrader2.thickness)), name="degrader2"))
+    return out
+
+
 def channels(layers: list, experiment=None) -> list:
     """One elastic :class:`Channel` per nuclide per layer and, for a Coulomb-excitation setup, the excitation
     channels: of the main nuclide of the target (target excitation), or of the beam by every nuclide (projectile
