@@ -44,23 +44,36 @@ def describe_runs(planner) -> list:
     rows = []
     for s in planner.runs():
         rows.append({"n": s["number"], "label": s["label"], "what": s["describe"],
+                     "distance": "" if s.get("distance_um") is None else f"{float(s['distance_um']):g}",
                      "when": str(s.get("finished", ""))[:16].replace("T", " "),
                      "stale": "; ".join(x for x in ("setup changed since" if s["stale"] else "",
                                                     "one nucleus only" if s.get("one_nucleus") else "") if x)})
     return rows
 
 
+def kinds(experiment) -> dict:
+    """The kinds of run a setup takes: a fusion-evaporation setup takes fusion runs (residues' γ rays, triggered
+    on the γ-ray fold) and source runs; the others beam runs, source runs and alignment checks."""
+    if experiment.fusion is not None:
+        return {"fusion": "Fusion run (γ-ray trigger)", "source": "Source run (beam off)"}
+    return {"beam": "Beam run", "source": "Source run (beam off)", "alignment": "Alignment check"}
+
+
 def form(ctx) -> None:
-    """The kind of run, its duration and real part, and the Run (or Stop) button."""
+    """The kind of run, its duration and real part, and the Run (or Stop) button; for a plunger the distance."""
+    from . import tab_lifetimes
+
     ui = ctx.ui
     p = ctx.P()
     f = ctx.run_form
     running = p.running
+    options = kinds(p.experiment)
+    if f["kind"] not in options:
+        f["kind"] = next(iter(options))
     with ui.row().classes("items-end gap-2 w-full"):
-        ui.select({"beam": "Beam run", "source": "Source run (beam off)", "alignment": "Alignment check"},
-                  value=f["kind"], label="Kind of run",
+        ui.select(options, value=f["kind"], label="Kind of run",
                   on_change=lambda e: (f.update(kind=e.value), ctx.refresh_run_form())).props(
-            "dense outlined").classes("w-48")
+            "dense outlined").classes("w-56" if "fusion" in options else "w-48")
         ui.input("Run for", value=f["duration"] or str(p.experiment.run.beam_time),
                  on_change=lambda e: f.update(duration=e.value)).props("dense outlined").classes("w-28").on(
             "blur", lambda: ctx.refresh_run_form())
@@ -82,11 +95,32 @@ def form(ctx) -> None:
                      on_change=lambda e: f.update(position=e.value)).props("dense outlined").classes("w-48")
         ui.label("Beam off: the source's lines in every crystal, with the counting statistics of the duration. The "
                  "position is from the target; empty puts the source at the target.").classes("text-xs ps-muted")
+    elif f["kind"] == "fusion":
+        ui.number("γ-ray fold at least", value=f.get("fold"), min=1, step=1, placeholder="as physim's default",
+                  on_change=lambda e: f.update(fold=int(e.value) if e.value else None)).props(
+            "dense outlined").classes("w-48")
+        ui.label("An event is kept when at least this many γ rays are counted (and the ancillaries' gates pass); "
+                 "empty takes physim's default.").classes("text-xs ps-muted")
     elif f["kind"] == "alignment":
         ui.number("Target assumed off along the beam (mm)", value=f["offset_mm"], step=0.5,
                   on_change=lambda e: f.update(offset_mm=e.value)).props("dense outlined").classes("w-72")
         ui.label("A beam run analysed as if the target stood elsewhere: the Analysis step shows what the Doppler "
                  "correction then does, and fits the offset back.").classes("text-xs ps-muted")
+    if f["kind"] != "source" and tab_lifetimes.plunger(p.experiment):
+        tab_lifetimes.distance_controls(ctx, f)
+    if f["kind"] == "fusion" and not running:
+        try:
+            from .. import fusion_runs
+
+            e = ctx.keep(p, ("fusion", "estimate", f["duration"], f["budget"]),
+                         lambda: fusion_runs.estimate(p.experiment, f["duration"] or None, f["budget"]))
+        except Exception:  # noqa: BLE001 - an estimate must never break the tab
+            return
+        scaled = f", then {_time(e['scaled_s'])} scaled from it" if e["scaled_s"] > 0 else ", all of it"
+        ui.label(f"Simulates the first {_time(e['real_s'])} event by event{scaled}: about {_n(e['residues'])} "
+                 f"residues ({_n(e['residues_per_s'])} per second), about {_time(e['cpu_s'])} of CPU.").classes(
+            "text-sm")
+        return
     if f["kind"] != "source" and not running:
         try:
             e = p.estimate_run(f["duration"] or None, f["budget"])
@@ -105,6 +139,7 @@ def live(ctx) -> None:
     g = p.run_progress()
     if g is None:
         return
+    fusion = g.get("kind") == "fusion"
     with ui.column().classes("w-full ps-plate gap-1"):
         with ui.row().classes("items-baseline gap-3"):
             ui.label(_clock(g["real_s"])).classes("ps-readout-value")
@@ -116,9 +151,18 @@ def live(ctx) -> None:
                      "the real part, with their own Poisson fluctuations.").classes("text-xs ps-muted")
         if g["stopping"]:
             ui.label("Stopping after this step; what is accumulated is kept.").classes("text-sm ps-warn")
-        counters(ctx, g)
+        if fusion:
+            from .tab_lifetimes import fusion_live
+
+            fusion_live(ctx, g)
+        else:
+            counters(ctx, g)
     sample = p.run_sample(8)
-    if sample:
+    if sample and fusion:
+        from .tab_lifetimes import fusion_sample
+
+        fusion_sample(ctx, sample)
+    elif sample:
         ui.label("The last particles counted").classes("ps-section mt-2")
         ui.table(columns=ctx.columns((("detector", "Detector"), ("segment", "Ring/strip, sector"),
                                       ("energy", "Energy (MeV)"), ("channel", "Channel"))),
@@ -169,8 +213,10 @@ def runs_list(ctx) -> None:
     if not rows:
         ui.label("No run yet.").classes("text-sm ps-muted")
         return
-    ui.table(columns=ctx.columns((("n", "#"), ("what", "Run"), ("when", "Finished (UTC)"), ("stale", ""))),
-             rows=rows).props("dense flat").classes("w-full")
+    cols = (("n", "#"), ("what", "Run"), ("when", "Finished (UTC)"), ("stale", ""))
+    if any(r.get("distance") for r in rows):
+        cols = cols[:2] + (("distance", "Distance (µm)"),) + cols[2:]
+    ui.table(columns=ctx.columns(cols), rows=rows).props("dense flat").classes("w-full")
     current = p.run.number if p.run is not None else None
     with ui.row().classes("items-end gap-2 w-full"):
         ui.select({r["n"]: f"{r['n']}: {r['what']}" for r in rows}, value=current, label="Current run",
@@ -178,8 +224,9 @@ def runs_list(ctx) -> None:
         if p.run is not None and p.run.kind != "source" and not p.running:
             more = ui.input("Extend by", value="10 min").props("dense outlined").classes("w-28")
             ui.button("Extend", icon="update", on_click=lambda: ctx.extend_run(more.value)).props("flat no-caps")
-            ui.button("Watch events", icon="timeline", on_click=ctx.watch_events).props("flat no-caps").tooltip(
-                "A sample of this run's events as tracks in the scene")
+            if p.run.kind != "fusion":
+                ui.button("Watch events", icon="timeline", on_click=ctx.watch_events).props(
+                    "flat no-caps").tooltip("A sample of this run's events as tracks in the scene")
     if p.run is not None and p.run.one_nucleus and not p.running:
         with ui.row().classes("items-center gap-2 w-full ps-note rounded p-2"):
             ui.label(f"Run {p.run.number} holds the γ rays of the nucleus of the reaction only: it was taken before "
@@ -198,7 +245,18 @@ def current_run(ctx) -> None:
     s = p.run.summary
     with ctx.panel(f"Run {p.run.number}", "the current run"):
         ui.label(p.run.describe()).classes("text-sm")
-        if s.get("kind") != "source" and s.get("counts"):
+        if s.get("kind") == "fusion":
+            with ui.element("div").classes("ps-readouts mt-2").style(
+                    "grid-template-columns: repeat(auto-fit, minmax(130px, 1fr))"):
+                for title, value, sub in (("Residues", _n(s.get("residues")), f"{_n(s.get('residues_per_s'))} /s"),
+                                          ("Events kept", _n(s.get("triggered")),
+                                           f"γ-ray fold ≥ {s.get('trigger', {}).get('fold', '?')}"),
+                                          ("γ rays", _n(s.get("gammas")), "in the kept events")):
+                    with ui.element("div").classes("ps-readout"):
+                        ui.label(title).classes("text-xs ps-muted")
+                        ui.label(value).classes("ps-readout-value")
+                        ui.label(sub).classes("text-xs ps-muted ps-num")
+        elif s.get("kind") != "source" and s.get("counts"):
             with ui.element("div").classes("ps-readouts mt-2").style(
                     "grid-template-columns: repeat(auto-fit, minmax(130px, 1fr))"):
                 for d, c in s["counts"].items():

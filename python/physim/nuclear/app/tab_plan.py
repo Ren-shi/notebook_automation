@@ -284,7 +284,9 @@ def selection(ctx) -> None:
 
 
 def render_answers(ctx) -> None:
-    """The answers (refreshed after every edit)."""
+    """The answers (refreshed after every edit), then the lifetimes panel of a setup with a lifetime measurement."""
+    from .tab_lifetimes import plan_panel as lifetimes_panel
+
     if ctx.P().experiment.fusion is not None:
         from .tab_fusion import render_plan
 
@@ -294,6 +296,7 @@ def render_answers(ctx) -> None:
                 answers_monitor(ctx, ctx.P().plan())
             except Exception:  # noqa: BLE001 - the monitor's table is not essential
                 pass
+        lifetimes_panel(ctx)
         return
     try:
         pl = ctx.P().plan()
@@ -307,6 +310,7 @@ def render_answers(ctx) -> None:
         residues(ctx, pl["residues"])
     if ctx.P().experiment.neutron_wall is not None:
         selection(ctx)
+    lifetimes_panel(ctx)
 
 
 def render(ctx) -> None:

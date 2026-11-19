@@ -91,7 +91,30 @@ SHAPE_FIELDS = {"rectangle": {"width", "height", "strips_x", "strips_y"}, "circl
 
 #: The decision groups, in order.
 GROUPS = ("Beam", "Target and reaction", "Particle detectors", "γ-ray detectors", "Ancillary detectors",
-          "Run conditions")
+          "Lifetime measurement", "Run conditions")
+
+#: The lifetime card's choices: the method, and the kind of the plunger's foil after the gap.
+LIFETIME_METHODS = {"rdds": "Plunger (RDDS): recoil distance", "dsam": "Line shapes (DSAM): Doppler-shift attenuation"}
+FOIL_KINDS = {"stopper": "Stopper: stops the recoil", "degrader": "Degrader: lets it through, slower",
+              "differential": "Differential: a degrader, then a second foil that stops it"}
+#: The lifetime card's fields, as (section, field, label, placeholder); sections are the setup's own
+#: (``lifetime``, ``lifetime.stopper``, ``lifetime.degrader2``, ``lifetime.deorientation``).
+PLUNGER_FIELDS = [("lifetime", "distances", "Distances (target to stopper)", "10, 20, 50, 100, 200, 500 um"),
+                  ("lifetime", "offset", "Offset at electrical contact", "0 um")]
+FOIL_FIELDS = [("lifetime.stopper", "material", "Foil material", "Au"),
+               ("lifetime.stopper", "thickness", "Foil thickness", "10 mg/cm2")]
+FOIL_MORE = [("lifetime.stopper", "density", "Foil density (for a thickness in µm)", "19.3 g/cm3")]
+DEGRADER2_FIELDS = [("lifetime.degrader2", "material", "Second foil material", "Au"),
+                    ("lifetime.degrader2", "thickness", "Second foil thickness", "10 mg/cm2"),
+                    ("lifetime.degrader2", "gap", "Gap after the first foil", "1000 um")]
+#: Deorientation in vacuum, in either of its two forms.
+DEORIENTATION_COMMON = [("lifetime.deorientation", "alpha2", "α₂ (hard core)", "0.18"),
+                        ("lifetime.deorientation", "alpha4", "α₄ (hard core)", "0.24")]
+DEORIENTATION_RATES = [("lifetime.deorientation", "gamma2", "Γ₂", "0.142 /ps"),
+                       ("lifetime.deorientation", "gamma4", "Γ₄", "0.314 /ps")]
+DEORIENTATION_G = [("lifetime.deorientation", "g", "g factor", "0.47"),
+                   ("lifetime.deorientation", "c2", "C₂", "3.3 ps"),
+                   ("lifetime.deorientation", "c4", "C₄", "1.5 ps")]
 #: The ancillary detectors of a fusion-evaporation setup, as cards: {section: (title, fields, more fields, what
 #: it is for)}. (The beam monitor is a particle detector.)
 ANCILLARY_CARDS = {
@@ -213,6 +236,19 @@ FUSION_TEMPLATES = (
     ("fusion-blank", "Blank", "no detectors yet: the γ-ray array is added on the Setup step", None, ()),
 )
 
+#: The lifetime templates: (key, label, what it holds, example the detectors come from, reaction, method). The
+#: beam and target are the new experiment's own; the plunger's foil is made thick enough for its recoil.
+LIFETIME_TEMPLATES = (
+    ("lifetimes-coulex-plunger", "Plunger after Coulomb excitation",
+     "ten clovers and a silicon detector at 0°, as coulex_ru98_plunger", "coulex_ru98_plunger", "coulex", "rdds"),
+    ("lifetimes-fusion-plunger", "Plunger after fusion-evaporation",
+     "eleven germanium detectors at 45° and 142°, as fusion_cr50_plunger", "fusion_cr50_plunger",
+     "fusion-evaporation", "rdds"),
+    ("lifetimes-fusion-dsam", "Line shapes (DSAM) after fusion-evaporation, backed target",
+     "the germanium array and the gold backing of fusion_sm143_dsam", "fusion_sm143_dsam", "fusion-evaporation",
+     "dsam"),
+)
+
 
 @dataclass(frozen=True)
 class Kind:
@@ -253,14 +289,26 @@ KINDS = (
          templates=tuple(t[0] for t in FUSION_TEMPLATES), examples=("fusion_dy158", "fusion_tm165"),
          defaults=("12C", "60 MeV", "150Nd", "1 mg/cm2"), measure="fusion-evaporation"),
     Kind("transfer", "Transfer reactions", "(d,p), (t,p) and the like.", "", live=False),
-    Kind("lifetimes", "Lifetimes (RDDS, DSAM)", "Plunger and line-shape measurements.", "", live=False),
+    Kind("lifetimes", "Lifetimes (RDDS, DSAM)",
+         "Measure how long a state lives: a plunger (recoil distance) or line shapes in a backed target (Doppler-shift "
+         "attenuation), after Coulomb excitation or fusion-evaporation.",
+         "τ per level, plunger distances, peak separation, F(τ), beam time per distance, decay curves, B(E2)",
+         templates=tuple(t[0] for t in LIFETIME_TEMPLATES),
+         examples=("coulex_ru98_plunger", "fusion_cr50_plunger", "fusion_sm143_dsam"),
+         defaults=("98Ru", "300 MeV", "24Mg", "0.7 mg/cm2"), measure="lifetimes"),
     Kind("inelastic", "Inelastic scattering", "Nuclear excitation above the barrier.", "", live=False),
 )
 
 
 def kind_of(experiment) -> tuple:
     """The kind of an experiment, from its reaction: (key of :data:`KINDS`, the short label the app shows under
-    its name). Coulomb excitation says which nucleus is excited."""
+    its name). Coulomb excitation says which nucleus is excited; a setup with a lifetime measurement is of the
+    "lifetimes" kind, with its method and reaction."""
+    lt = getattr(experiment, "lifetime", None)
+    if lt is not None:
+        how = "plunger" if lt.method == "rdds" else "DSAM"
+        after = "fusion" if experiment.reaction == "fusion-evaporation" else "Coulex"
+        return "lifetimes", f"Lifetimes · {how} after {after}"
     if experiment.reaction == "fusion-evaporation":
         return "fusion-evaporation", "Fusion-evaporation"
     if experiment.reaction == "coulex":
@@ -270,8 +318,9 @@ def kind_of(experiment) -> tuple:
 
 
 def template_label(key: str) -> tuple:
-    """A template's (label, what it holds), for :data:`TEMPLATES` and :data:`FUSION_TEMPLATES`."""
-    for t in FUSION_TEMPLATES:
+    """A template's (label, what it holds), for :data:`TEMPLATES`, :data:`FUSION_TEMPLATES` and
+    :data:`LIFETIME_TEMPLATES`."""
+    for t in FUSION_TEMPLATES + LIFETIME_TEMPLATES:
         if t[0] == key:
             return t[1], t[2]
     for k, label, example in TEMPLATES:
@@ -511,6 +560,148 @@ def _ancillary(p, name: str) -> Decision:
                     a)
 
 
+def parse_distances(text: str) -> list:
+    """Plunger distances as typed ("10, 20, 50 um", "10 um; 0.02 mm", "10 20 50") into the setup's list of texts
+    with units: a bare number takes the unit of the next number that has one, µm when none has. Text that is not a
+    distance is kept as it is, for the setup's checks to report."""
+    import re
+
+    tokens = re.findall(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?\s*[a-zA-Zµ]*|[^\s,;]+", str(text or ""))
+    out, waiting = [], []
+    for tok in (t.strip() for t in tokens):
+        if not tok:
+            continue
+        m = re.fullmatch(r"([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*([a-zA-Zµ]*)", tok)
+        if m is None:
+            out += [f"{w} um" for w in waiting] + [tok]
+            waiting = []
+            continue
+        number, unit = m.groups()
+        if not unit:
+            waiting.append(number)
+            continue
+        unit = "um" if unit in ("µm", "μm") else unit
+        out += [f"{w} {unit}" for w in waiting] + [f"{number} {unit}"]
+        waiting = []
+    return out + [f"{w} um" for w in waiting]
+
+
+def lifetime_text(text: str) -> bool:
+    """Whether a check (a problem or warning) is about the lifetime measurement, for the lifetime card."""
+    low = text.lower()
+    return any(k in low for k in ("lifetime", "plunger", "stopper", "degrader", "deorientation", "dsam"))
+
+
+def _tau_text(tau_ps) -> str:
+    """A lifetime in its natural unit: fs below 1 ps, ns from 1000 ps."""
+    if tau_ps is None:
+        return "τ unknown"
+    if tau_ps < 1:
+        return f"τ {1e3 * tau_ps:.3g} fs"
+    return f"τ {tau_ps / 1e3:.3g} ns" if tau_ps >= 1e3 else f"τ {tau_ps:.3g} ps"
+
+
+def lifetime_plan(planner) -> dict:
+    """The lifetime plan of a planner (:meth:`physim.nuclear.planner.Planner.lifetimes`), or ``{"available":
+    False, "reason": ...}`` when this physim has none yet or it fails: the app shows the reason, never an error."""
+    fn = getattr(planner, "lifetimes", None)
+    if fn is None:
+        return {"available": False, "missing": True,
+                "reason": "The lifetime plan (Planner.lifetimes) is not in this version of physim yet."}
+    cache = getattr(planner, "_cache", None)  # the planner's own: it goes when the setup changes
+    if isinstance(cache, dict) and ("workbench", "lifetimes") in cache:
+        return cache[("workbench", "lifetimes")]
+    try:
+        out = fn()
+    except Exception as err:  # noqa: BLE001 - the card and the panel say why
+        out = {"available": False, "reason": f"The lifetime plan could not be worked out: {err}"}
+    if isinstance(cache, dict):
+        cache[("workbench", "lifetimes")] = out
+    return out
+
+
+def _recoil_line(p) -> str:
+    """The recoil as the setup alone gives it (no lifetime plan): what is measured and how fast it flies."""
+    import math
+
+    from . import data
+    from .names import parse_nuclide
+
+    rec = p.experiment.lifetime_recoil()
+    if rec is None:
+        return "the emitter does not fly forward out of the target: no recoil to measure"
+    nuclide, made, out = rec
+    mass = 931.494 * data.nuclide(parse_nuclide(nuclide)).atomic_mass_u
+    gamma = 1 + made / mass
+    beta = math.sqrt(1 - 1 / gamma ** 2)
+    left = "stops in the target and backing" if out <= 0 else f"leaves the target with {out:.3g} MeV"
+    return f"{nuclide} made at {made:.3g} MeV (β {beta:.3f}), {left}"
+
+
+def lifetime_line(planner) -> str:
+    """The lifetime card's consequence line: the setup's own lifetime problem if it has one, else the studied
+    level's lifetime and what the plan makes of it (peaks resolved, distances, F(τ), beam time per distance)."""
+    p = planner
+    problems = [t for t in p.problems if t.startswith("lifetime")]
+    if problems:
+        return problems[0]
+    lt = lifetime_plan(p)
+    if not lt.get("available"):
+        if lt.get("missing"):
+            return _recoil_line(p) + " (the plan per level is not in this version yet)"
+        return lt.get("reason") or "no lifetime plan"
+    levels = lt.get("levels") or []
+    if not levels:
+        return "no level with a lifetime to measure"
+    lev = levels[0]
+    parts = [f"{lev.get('level', '?')} → {lev.get('gamma_kev', 0):.0f} keV: {_tau_text(lev.get('tau_ps'))}"
+             + (f" ({lev['tau_source']})" if lev.get("tau_source") else "")]
+    if lev.get("method") == "dsam":
+        if lev.get("attenuation") is not None:
+            parts.append(f"F(τ) {lev['attenuation']:.2f}")
+    elif lev.get("method") == "rdds":
+        sep = lev.get("separation") or []
+        if sep:
+            parts.append(f"peaks apart at {sum(bool(s.get('resolved')) for s in sep)} of {len(sep)} detectors")
+        rec = lev.get("recommended_distances_um") or []
+        if rec:
+            parts.append(f"distances {min(rec):.3g}–{max(rec):.3g} µm recommended")
+    else:
+        parts.append("outside what a plunger or DSAM measures")
+    if lev.get("hours_per_distance") is not None:
+        parts.append(f"{lev['hours_per_distance']:.3g} h per distance")
+    n_warn = len(lt.get("warnings") or []) + len(lt.get("problems") or [])
+    if n_warn:
+        parts.append(f"{n_warn} note{'s' * (n_warn != 1)} in the plan")
+    return " · ".join(parts)
+
+
+def _lifetime(p) -> Decision:
+    """The card of the lifetime measurement: a plunger's distances and foils, or DSAM's backing."""
+    lt = p.draft["lifetime"]
+    if lt.get("method") == "dsam":
+        b = p.draft["target"].get("backing")
+        title = "Line shapes (DSAM)"
+        state = ("the recoil slows down and stops in the " + (f"{b.get('thickness', '')} {b.get('material', '')} "
+                                                             "backing".replace("  ", " ") if b else "target itself"))
+    else:
+        title = "Plunger (RDDS)"
+        ds = lt.get("distances") or []
+        state = f"{len(ds)} distance{'s' * (len(ds) != 1)}" + (f", {ds[0]} to {ds[-1]}" if ds else "")
+        if lt.get("offset"):
+            state += f" (+ {lt['offset']} at contact)"
+        st = lt.get("stopper") or {}
+        foil = f"{st.get('thickness', '?')} {st.get('material', '?')} {st.get('kind', 'stopper')}"
+        d2 = lt.get("degrader2")
+        if st.get("kind") == "differential" and d2:
+            foil += f", then {d2.get('thickness', '?')} {d2.get('material', '?')} {d2.get('gap', '?')} behind"
+        state += " · " + foil
+        if lt.get("deorientation"):
+            state += " · deorientation set"
+    return Decision("lifetime", "Lifetime measurement", title, state, _try(lambda: lifetime_line(p)), "lifetime",
+                    [], [], lt)
+
+
 def ancillary_numbers(planner) -> dict:
     """What can be said of the ancillaries from the simulated residues without their own physics: for a recoil
     separator, the share of all residues and of each channel's inside its angular acceptance ({"all": share,
@@ -545,6 +736,8 @@ def decisions(planner) -> list:
     out += [_gamma_detector(p, i) for i in range(len(p.draft.get("gamma_detectors", [])))]
     if p.draft.get("reaction", {}).get("type") == "fusion-evaporation":
         out += [_ancillary(p, name) for name in ANCILLARY_CARDS if name in p.draft]
+    if "lifetime" in p.draft and p.draft.get("reaction", {}).get("type") in ("coulex", "fusion-evaporation"):
+        out.append(_lifetime(p))
     out.append(_run(p))
     return out
 
@@ -577,6 +770,10 @@ def card_setup(setup: dict, key: str, name: Optional[str] = None):
         return {"target": setup.get("target"), "reaction": setup.get("reaction", {"type": "elastic"})}
     if key in ("beam", "run"):
         return setup.get(key)
+    if key == "lifetime":  # DSAM reads the backing, so a change of the backing changes this card too
+        return {"lifetime": setup.get("lifetime"), "backing": (setup.get("target") or {}).get("backing")}
+    if key.startswith("anc:"):
+        return setup.get(key.split(":", 1)[1])
     kind, i = key.split(":")
     items = setup.get("detectors" if kind == "detector" else "gamma_detectors", [])
     if name is not None:
@@ -619,7 +816,24 @@ def changes(applied: dict, draft: dict) -> list:
             if name in a:
                 fields(name, a[name], b[name])
     fields("Run conditions", applied.get("run"), draft.get("run"))
-    known = ("schema", "title", "description", "beam", "target", "reaction", "detectors", "gamma_detectors", "run")
+    a_lt, b_lt = applied.get("lifetime"), draft.get("lifetime")
+    if a_lt is None and b_lt is not None:
+        out.append("Lifetime measurement: added")
+    elif a_lt is not None and b_lt is None:
+        out.append("Lifetime measurement: removed")
+    elif a_lt != b_lt:
+        parts = ("stopper", "degrader2", "deorientation")
+        fields("Lifetime", {k: v for k, v in a_lt.items() if k not in parts},
+               {k: v for k, v in b_lt.items() if k not in parts})
+        for part, title in zip(parts, ("Plunger foil", "Second foil", "Deorientation")):
+            if a_lt.get(part) is None and b_lt.get(part) is not None:
+                out.append(f"{title}: added")
+            elif a_lt.get(part) is not None and b_lt.get(part) is None:
+                out.append(f"{title}: removed")
+            else:
+                fields(title, a_lt.get(part), b_lt.get(part))
+    known = ("schema", "title", "description", "beam", "target", "reaction", "detectors", "gamma_detectors", "run",
+             "lifetime")
     for k in dict.fromkeys([*applied, *draft]):
         if k not in known and applied.get(k) != draft.get(k):
             out.append("Level schemes" if k == "levels" else k.replace("_", " ").capitalize())
@@ -754,9 +968,20 @@ def steps(planner) -> list:
         data = f"run {run.number}" + (f" · {gates} gate{'s' * (gates != 1)}" if gates and run.kind != "source" else "")
         data_state = "done"
 
-    result = _try(p.run_analysis, None) if run is not None else None
+    result = _try(p.run_analysis, None) if run is not None and run.kind != "fusion" else None
     coulex = p.experiment.excitation is not None and bool(p.experiment.gamma_detectors)
-    if not coulex:
+    lifetime = p.experiment.lifetime
+    if lifetime is not None and not (result is not None and getattr(result, "b_e2fm4", None) is not None):
+        if lifetime.method == "rdds":
+            have = {r.get("distance_um") for r in runs if not r.get("stale") and r.get("distance_um") is not None}
+            n = len(lifetime.distances_um)
+            analysis = (f"lifetimes: {len(have)} of {n} distance{'s' * (n != 1)} taken" if have else
+                        "lifetimes: take a run at each distance")
+        else:
+            analysis = "lifetimes: line shapes of run " + str(run.number) if run is not None else \
+                "lifetimes: take a run for the line shapes"
+        analysis_state = "ready"
+    elif not coulex:
         analysis, analysis_state = "needs Coulomb excitation and γ detectors", "waiting"
     elif result is not None and getattr(result, "b_e2fm4", None) is not None:
         analysis, analysis_state = f"run {run.number}: B(E2↑) {_num(result.b_e2fm4, 4)} e²fm⁴", "done"
@@ -799,10 +1024,14 @@ def next_step(planner, key: str, pending: int = 0) -> Optional[dict]:
     if key == "run":
         if p.running:
             return {"hint": "The run is being taken; its data are there when it ends.", "label": None, "to": None}
+        plunger = p.experiment.lifetime is not None and p.experiment.lifetime.method == "rdds"
         if run is None:
-            return {"hint": "No run yet: choose its length above and press Run.", "label": None, "to": None}
-        return {"hint": f"Run {run.number} is the current run.", "label": f"Next: look at run {run.number}'s data",
-                "to": "data"}
+            return {"hint": "No run yet: choose its length " + ("and the plunger distance " if plunger else "")
+                            + "above and press Run.", "label": None, "to": None}
+        more = " A plunger measurement takes one run per distance: the Data and Analysis steps read them together." \
+            if plunger else ""
+        return {"hint": f"Run {run.number} is the current run.{more}",
+                "label": f"Next: look at run {run.number}'s data", "to": "data"}
     if key == "data":
         if run is None:
             return {"hint": "The spectra are a run's.", "label": "Take a run", "to": "run"}
@@ -830,9 +1059,13 @@ def template(key: str):
     fusion = next((t for t in FUSION_TEMPLATES if t[0] == key), None)
     if fusion is not None:
         return new_setup("12C", "60 MeV", "150Nd", "1 mg/cm2", "fusion-evaporation", detectors_from=key)
+    lifetime = next((t for t in LIFETIME_TEMPLATES if t[0] == key), None)
+    if lifetime is not None:  # the worked example itself: its beam and target suit its detectors and foils
+        return Experiment.example(lifetime[3])
     found = next((t for t in TEMPLATES if t[0] == key), None)
     if found is None:
-        raise KeyError(f"no template {key!r}; the templates are {[t[0] for t in TEMPLATES + FUSION_TEMPLATES]}")
+        known = [t[0] for t in TEMPLATES + FUSION_TEMPLATES + LIFETIME_TEMPLATES]
+        raise KeyError(f"no template {key!r}; the templates are {known}")
     if found[2] is None:
         return new_setup("4He", "5.5 MeV", "Au")
     return Experiment.example(found[2])
@@ -874,7 +1107,7 @@ def new_setup(beam: str, energy: str, target: str, thickness: str = "0.5 mg/cm2"
         if source.get("gamma_detectors"):
             d["gamma_detectors"] = source["gamma_detectors"]
     if measure == "fusion-evaporation":
-        return _new_fusion_setup(d, detectors_from)
+        return _with_lifetime(_new_fusion_setup(d, detectors_from), detectors_from)
     exp = Experiment.from_dict(copy.deepcopy(d))
     notes = []
     if measure in ("coulex-target", "coulex-beam"):
@@ -892,7 +1125,44 @@ def new_setup(beam: str, energy: str, target: str, thickness: str = "0.5 mg/cm2"
                          "the reaction to Coulomb excitation and enter the state's energy and B(E2) in the Target "
                          "and reaction card.")
     exp._new_setup_notes = notes  # read by new_setup_notes
-    return exp
+    return _with_lifetime(exp, detectors_from)
+
+
+def _with_lifetime(exp, key: Optional[str]):
+    """A new setup with the lifetime measurement of the lifetime template ``key`` (:data:`LIFETIME_TEMPLATES`;
+    any other key leaves it as it is): a plunger with the default distances and a stopper thick enough for this
+    setup's recoil, or DSAM with the example's backing when the target has none."""
+    from .experiment import Experiment
+    from .planner import LIFETIME_REACTIONS, Planner
+
+    found = next((t for t in LIFETIME_TEMPLATES if t[0] == key), None)
+    if found is None:
+        return exp
+    notes = new_setup_notes(exp)
+    if exp.reaction not in LIFETIME_REACTIONS:
+        notes.append("The lifetime measurement waits for the reaction: set Coulomb excitation in the Target and "
+                     "reaction card, then add the plunger or DSAM in the Lifetime measurement card.")
+        exp._new_setup_notes = notes
+        return exp
+    p = Planner(exp)
+    if found[5] == "dsam":
+        if exp.target.backing is None:
+            backing = Experiment.example(found[3]).to_dict()["target"].get("backing") or {"material": "Au",
+                                                                                         "thickness": "15 mg/cm2"}
+            p.set("backing", "material", backing["material"])
+            p.set("backing", "thickness", backing["thickness"])
+        p.set_lifetime(method="dsam")
+    else:
+        p.add_ancillary("plunger")
+    if p.problems:
+        notes.append("The lifetime measurement of the template does not fit this beam and target as it is: "
+                     + "; ".join(p.problems) + ". Change it in the Lifetime measurement card.")
+    try:
+        out = Experiment.from_dict(copy.deepcopy(p.draft))
+    except Exception:  # noqa: BLE001 - keep the setup as made, with the note above
+        out = exp
+    out._new_setup_notes = notes
+    return out
 
 
 def _new_fusion_setup(d: dict, detectors_from: Optional[str]):
@@ -903,6 +1173,9 @@ def _new_fusion_setup(d: dict, detectors_from: Optional[str]):
     from .planner import Planner
 
     found = next((t for t in FUSION_TEMPLATES if t[0] == detectors_from), None)
+    lifetime = next((t for t in LIFETIME_TEMPLATES if t[0] == detectors_from), None)
+    if lifetime is not None:  # the γ-ray array (and monitor) of the lifetime template's example, no ancillary
+        found = (lifetime[0], lifetime[1], lifetime[2], lifetime[3], ())
     if found is None:
         found = FUSION_TEMPLATES[-1] if detectors_from in (None, "blank", "fusion-blank") else FUSION_TEMPLATES[0]
     _, _, _, example, ancillaries = found
@@ -1033,7 +1306,8 @@ _SUPERSCRIPT = {2: "²", 4: "⁴", 6: "⁶", 8: "⁸"}
 
 
 __all__ = ["ANCILLARY_CARDS", "ancillary_numbers", "card_setup", "changes", "draft_decisions", "COMPOUND",
-           "FUSION_TEMPLATES", "GROUPS", "KINDS", "Kind",
+           "FUSION_TEMPLATES", "GROUPS", "KINDS", "Kind", "LIFETIME_METHODS", "LIFETIME_TEMPLATES", "FOIL_KINDS",
+           "lifetime_line", "lifetime_plan",
            "kind_of", "template_label", "MEASUREMENTS", "NATURAL", "NOT_SIMULATED", "PHYSICS", "PHYSICS_FOR", "physics_for",
            "STAGES", "STEPS", "TEMPLATES", "Decision", "checks", "decisions", "elements", "mass_numbers",
            "most_abundant", "new_setup", "new_setup_notes", "next_step", "split_nuclide", "states", "status_strip",

@@ -96,8 +96,8 @@ def test_every_card_has_a_consequence_that_follows_its_fields():
     cards = wb.decisions(p)
     assert [c.group for c in cards][:2] == ["Beam", "Target and reaction"]
     groups = list(dict.fromkeys(c.group for c in cards))
-    # (Ancillary detectors are a fusion-evaporation group.)
-    assert groups == [g for g in wb.GROUPS if g != "Ancillary detectors"]
+    # (Ancillary detectors are a fusion-evaporation group; Lifetime measurement is there with a [lifetime] section.)
+    assert groups == [g for g in wb.GROUPS if g not in ("Ancillary detectors", "Lifetime measurement")]
     for c in cards:
         assert c.state and c.consequence and c.consequence != "—", c.key
     before = _card(p, "target").consequence

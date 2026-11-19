@@ -850,3 +850,153 @@ def figure_gamma_crystal(view: dict, height: int = 360):
     fig.update_layout(height=height, margin=dict(l=60, r=10, t=10, b=60),
                       xaxis=dict(title="crystal"), yaxis=dict(title=f"γ-ray energy, {view['correction']} (keV)"))
     return fig
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Lifetimes (plunger RDDS and DSAM): the frozen shapes of Planner.lifetime_spectra, Planner.analyse_lifetimes and
+# dataviews.distance_spectra, and the γγ coincidences of a fusion run
+
+
+def _steps(edges, counts) -> tuple:
+    e = np.asarray(edges, dtype=float)
+    return np.repeat(e, 2)[1:-1], np.repeat(np.asarray(counts, dtype=float), 2)
+
+
+def _shade(i: int, n: int) -> str:
+    """A colour from a short sequential scale (dark blue → orange) for the i-th of n distances."""
+    stops = ((0x00, 0x2E, 0x6B), (0x00, 0x72, 0xB2), (0x56, 0xB4, 0xE9), (0xE6, 0x9F, 0x00), (0xD5, 0x5E, 0x00))
+    x = 0.0 if n <= 1 else i / (n - 1)
+    k = min(int(x * (len(stops) - 1)), len(stops) - 2)
+    f = x * (len(stops) - 1) - k
+    r, g, b = (round(a + (c - a) * f) for a, c in zip(stops[k], stops[k + 1]))
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def figure_lifetime_spectra(spectra: dict, distance_um=None, height: int = 300):
+    """Predicted spectra of a lifetime measurement (``Planner.lifetime_spectra``): at one plunger distance (or the
+    DSAM line shapes), one line per detector angle, with the unshifted and shifted energies of the first spectrum
+    marked."""
+    go = _go()
+    fig = go.Figure()
+    chosen = [s for s in spectra.get("spectra", []) if distance_um is None or s.get("distance_um") is None
+              or abs(float(s["distance_um"]) - float(distance_um)) < 1e-9]
+    for i, s in enumerate(chosen):
+        x, y = _steps(spectra["edges_kev"], s["counts"])
+        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name=f"θ {s.get('theta_deg', 0):.1f}°",
+                                 line=dict(color=COLORS[i % len(COLORS)], width=1.3)))
+    marks = []
+    for s in chosen[:1]:
+        for key, dash in (("unshifted_kev", "dot"), ("shifted_kev", "dash")):
+            if s.get(key) is not None:
+                marks.append(dict(type="line", x0=s[key], x1=s[key], yref="paper", y0=0, y1=1,
+                                  line=dict(color=COLORS[6], width=1, dash=dash)))
+    fig.update_layout(height=height, margin=dict(l=55, r=10, t=10, b=40), shapes=marks,
+                      xaxis=dict(title="γ-ray energy, as measured (keV)"), yaxis=dict(title="counts per bin"),
+                      legend=dict(orientation="h", y=-0.25, x=0))
+    return fig
+
+
+def figure_distance_spectra(view: dict, ring: int = 0, height: int = 340, normalise: bool = True):
+    """A distance series as measured (``dataviews.distance_spectra``): one ring's spectrum at every distance,
+    overlaid from the shortest (dark) to the longest (orange); ``normalise`` scales each to its own total, so
+    the unshifted peak's share is what changes."""
+    go = _go()
+    fig = go.Figure()
+    by = view.get("by_distance", {})
+    distances = sorted(by, key=float)
+    for i, d in enumerate(distances):
+        counts = np.asarray(by[d]["counts"], dtype=float)
+        row = counts[ring] if counts.ndim == 2 and ring < len(counts) else counts.ravel()
+        total = row.sum()
+        y = row / total if normalise and total > 0 else row
+        x, yy = _steps(view["edges_kev"], y)
+        fig.add_trace(go.Scatter(x=x, y=yy, mode="lines", name=f"{float(d):g} µm",
+                                 line=dict(color=_shade(i, len(distances)), width=1.3)))
+    fig.update_layout(height=height, margin=dict(l=55, r=10, t=10, b=40),
+                      xaxis=dict(title="γ-ray energy (keV)"),
+                      yaxis=dict(title="share of the spectrum per bin" if normalise else "counts per bin"),
+                      legend=dict(orientation="v", x=1.01, y=1))
+    return fig
+
+
+def figure_decay_curve(result: dict, height: int = 320):
+    """The decay curve of a plunger analysis (``Planner.analyse_lifetimes``): the unshifted share
+    I_u / (I_u + I_s) at each distance with its error, and the fitted curve."""
+    go = _go()
+    fig = go.Figure()
+    pts = result.get("points") or []
+    if pts:
+        x = np.array([p["distance_um"] for p in pts], dtype=float)
+        u = np.array([p["unshifted"] for p in pts], dtype=float)
+        s = np.array([p["shifted"] for p in pts], dtype=float)
+        total = np.where(u + s > 0, u + s, 1.0)
+        err = np.array([p.get("error") or 0.0 for p in pts], dtype=float)
+        # The error is the unshifted intensity's; as a share it is divided by the total.
+        fig.add_trace(go.Scatter(x=x, y=u / total, mode="markers", name="measured",
+                                 error_y=dict(type="data", array=err / total, visible=True, color=COLORS[0]),
+                                 marker=dict(size=7, color=COLORS[0])))
+    curve = result.get("curve") or {}
+    if curve.get("x") is not None and len(curve.get("x", [])):
+        fig.add_trace(go.Scatter(x=curve["x"], y=curve["y"], mode="lines", name="fit",
+                                 line=dict(color=COLORS[1], width=1.6)))
+    fig.update_layout(height=height, margin=dict(l=60, r=10, t=10, b=40),
+                      xaxis=dict(title="target-to-stopper distance (µm)", type="log"),
+                      yaxis=dict(title="unshifted share I_u / (I_u + I_s)"),
+                      legend=dict(orientation="h", y=-0.25, x=0))
+    return fig
+
+
+def figure_tau_distance(result: dict, height: int = 300):
+    """The differential decay-curve method's τ(x): τ from each distance in the region of sensitivity, with the
+    result and its statistical band."""
+    go = _go()
+    fig = go.Figure()
+    pts = [p for p in result.get("points") or [] if p.get("tau_ps") is not None]
+    if pts:
+        x = np.array([p["distance_um"] for p in pts], dtype=float)
+        fig.add_trace(go.Scatter(x=x, y=[p["tau_ps"] for p in pts], mode="markers", name="τ(x)",
+                                 error_y=dict(type="data", array=[p.get("tau_err_ps") or 0.0 for p in pts],
+                                              visible=True, color=COLORS[0]),
+                                 marker=dict(size=7, color=COLORS[0])))
+    tau, stat = result.get("tau_ps"), result.get("stat_ps")
+    shapes = []
+    if tau is not None:
+        shapes.append(dict(type="line", xref="paper", x0=0, x1=1, y0=tau, y1=tau,
+                           line=dict(color=COLORS[1], width=1.4)))
+        if stat:
+            shapes.append(dict(type="rect", xref="paper", x0=0, x1=1, y0=tau - stat, y1=tau + stat,
+                               fillcolor=COLORS[1], opacity=0.15, line=dict(width=0)))
+    fig.update_layout(height=height, margin=dict(l=60, r=10, t=10, b=40), shapes=shapes, showlegend=False,
+                      xaxis=dict(title="target-to-stopper distance (µm)", type="log"), yaxis=dict(title="τ (ps)"))
+    return fig
+
+
+def figure_lineshape(result: dict, counts=None, edges_kev=None, height: int = 320):
+    """A DSAM line-shape fit: the fitted line shape (``curve``), over the measured spectrum when given."""
+    go = _go()
+    fig = go.Figure()
+    if counts is not None and edges_kev is not None:
+        x, y = _steps(edges_kev, counts)
+        fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name="measured", line=dict(color=COLORS[0], width=1.1)))
+    curve = result.get("curve") or {}
+    if curve.get("x") is not None and len(curve.get("x", [])):
+        fig.add_trace(go.Scatter(x=curve["x"], y=curve["y"], mode="lines", name="fitted line shape",
+                                 line=dict(color=COLORS[1], width=1.6)))
+    fig.update_layout(height=height, margin=dict(l=60, r=10, t=10, b=40),
+                      xaxis=dict(title="γ-ray energy (keV)"), yaxis=dict(title="counts per bin"),
+                      legend=dict(orientation="h", y=-0.25, x=0))
+    return fig
+
+
+def figure_gg_matrix(counts, edges_kev, height: int = 420):
+    """A γγ matrix (symmetric), its counts on a log scale (log₁₀ of one more, so an empty bin is 0)."""
+    go = _go()
+    e = np.asarray(edges_kev, dtype=float)
+    centres = (e[:-1] + e[1:]) / 2
+    z = np.log10(1.0 + np.asarray(counts, dtype=float))
+    fig = go.Figure(go.Heatmap(x=centres, y=centres, z=z, colorscale="Viridis", zmin=0,
+                               colorbar=dict(title="log₁₀(1 + counts)"),
+                               hovertemplate="%{x:.1f} keV × %{y:.1f} keV<extra></extra>"))
+    fig.update_layout(height=height, margin=dict(l=60, r=10, t=10, b=45),
+                      xaxis=dict(title="γ₁ energy (keV)"), yaxis=dict(title="γ₂ energy (keV)", scaleanchor="x"))
+    return fig

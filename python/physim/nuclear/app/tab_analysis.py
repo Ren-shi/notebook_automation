@@ -53,7 +53,7 @@ def render(ctx) -> None:
 
 
 #: The parts of the step, in order: (class of its anchor, name in the list at the top).
-PARTS = (("compare", "Predicted against measured"), ("b-e2", "B(E2) from the peak"),
+PARTS = (("lifetimes", "Lifetimes"), ("compare", "Predicted against measured"), ("b-e2", "B(E2) from the peak"),
          ("alignment", "Target alignment"), ("all-orders", "All orders"))
 
 
@@ -69,7 +69,9 @@ def render_view(ctx) -> None:
     p = ctx.P()
     exp = p._data_experiment()
     coulex = exp.excitation is not None and bool(exp.gamma_detectors)
-    shown = [(a, t) for a, t in PARTS if coulex or a in ("compare", "all-orders")]
+    lifetime = p.experiment.lifetime is not None
+    shown = [(a, t) for a, t in PARTS if (a == "lifetimes" and lifetime)
+             or (a != "lifetimes" and (coulex or a in ("compare", "all-orders")))]
     with ui.row().classes("w-full items-center gap-1"):
         ui.label("On this step").classes("text-xs ps-muted")
         for anchor, title in shown:
@@ -81,6 +83,14 @@ def render_view(ctx) -> None:
     elif p.run.kind == "source":
         ui.label(f"Run {p.run.number} is a source run: it measures the γ-ray efficiency. Choose a beam run on the "
                  "Run step to analyse it.").classes("text-sm ps-note rounded p-2")
+    if lifetime:
+        from .tab_lifetimes import analysis_panel
+
+        with ui.column().classes("w-full gap-2 analysis-lifetimes ps-panel").style("padding: 10px 14px 12px"):
+            try:
+                analysis_panel(ctx)
+            except Exception as err:  # noqa: BLE001 -- the other parts still stand
+                ui.label(f"The lifetime analysis could not be shown: {err}").classes("text-sm ps-warn")
     # Side by side where the window has the width: the comparison and the choices of the analysis, then the
     # result across the page, then the alignment check and the all-orders solution.
     grid = "grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); align-items: start"
@@ -95,7 +105,7 @@ def render_view(ctx) -> None:
         if coulex:
             with ui.column().classes("w-full gap-2 analysis-b-e2 ps-panel").style(pad):
                 ctx.analysis_block(results)
-    if not coulex:
+    if not coulex and not lifetime:
         ui.markdown("The analysis needs Coulomb excitation with γ-ray detectors: set the reaction in the "
                     "**Target and reaction** card and add γ-ray detectors.")
     with ui.element("div").classes("w-full grid gap-3").style(grid):
