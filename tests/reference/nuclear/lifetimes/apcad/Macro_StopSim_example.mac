@@ -1,0 +1,71 @@
+##################################
+####       Target Setup	###
+##################################
+
+/StopSim/target/setTargetSize 10. mm
+/StopSim/target/setLayerNumber 2
+/StopSim/target/setMat1 Carbon
+/StopSim/target/setThickness1 6.637168  micrometer
+/StopSim/target/setMat2 Copper
+/StopSim/target/setThickness2 11.210762  micrometer
+/StopSim/target/setTargetRotY 0.000000 deg
+
+
+##################################
+####       Physics Setup       ###
+##################################
+/StopSim/phys/SelectPhysics transfer
+/run/initialize
+
+
+##################################
+####       Transfer Setup      ###
+##################################
+/StopSim/Transfer/setExEn 1000.000000 keV
+/StopSim/Transfer/setGsEn 0 MeV
+/StopSim/Transfer/targetZ 6
+/StopSim/Transfer/targetA 12
+/StopSim/Transfer/recoilZ 6
+/StopSim/Transfer/recoilA 12
+/StopSim/Transfer/beamZ 50
+/StopSim/Transfer/beamA 120
+/StopSim/Transfer/setEnhance 500.000000
+/StopSim/Transfer/setTableFile XSec_example.dat
+
+
+##################################
+####     File Output Setup     ###
+##################################
+/StopSim/histo/fileName Stopmat_example.root
+/StopSim/histo/setTRes 0.005000 picosecond
+/StopSim/histo/TrackBeamLike true
+/StopSim/histo/ForceExcitation true
+/StopSim/histo/KillInLayer2 true
+/StopSim/histo/KillInLayer3 true
+/StopSim/histo/ForceTargetLikeExit true
+/StopSim/histo/ForceBeamLikeExit false
+
+
+##################################
+####    Screen Output Setup    ###
+##################################
+/run/verbose 0
+/event/verbose 0
+/tracking/verbose 0
+/control/verbose 0
+/process/verbose 0
+/StopSim/coulex/verbose 0
+/StopSim/stepping/verbose 1
+
+
+##################################
+####	 Beam Setup	###
+##################################
+/gps/position 0. 0. 0. mm
+/gps/direction 0. 0. 1.
+/gps/energy 400.000000 MeV
+/gps/particle ion
+/gps/ion 50 120 10 0
+
+/run/beamOn 1000000
+

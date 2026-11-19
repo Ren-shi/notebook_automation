@@ -1,0 +1,46 @@
+###############################################################################
+#                                                                             #
+#                        Parameters for program stopping                      #
+#                                                                             #
+###############################################################################
+
+# label     value       description
+
+Ap    32               # Projectile mass number, non-dimensional
+At    58               # Target mass number, non-dimensional
+Ar    83               # Residual nucleus mass number, non-dimensional
+Ab   181               # Stopping material mass number, non-dimensional
+
+Zr    39               # Residual nucleus atomic number, non-dimensional
+Zb    73               # Stopping material atomic number, non-dimensional
+
+E_p   135000           # Projectile kinetic energy, keV
+
+                       # parameters for computation of T(x)
+xf    5                # final x, micrometers
+nx  200                # number of steps for integration of stop. power
+
+                       # parameters for computation of x(t)
+tf  2                  # final t, picoseconds
+nt  200                # number of steps for integration of v(x)
+
+stp_file  Y83_in_Ta.txt # file with stopping power table 
+
+nsig   100             # 2*nsig + 1 = (number of samples of
+                       #               initial kinetic energy distribution)
+fsig   0.1             # fsig*E_p is sigma of the Gaussian distribution of
+                       # initial kinetic energies
+
+tm     1.6            # upper endpoint of time range, picoseconds(ps)
+vm     12             # upper endpoint of velocity range, micrometers/ps
+ntt    200            # number of subintervals in time range
+nv     200            # number of subintervals in velocity range
+
+cosfile pcos.dat    # file with cosine distribution
+
+nbk    200            # number of subintervals in beta_k range.
+                      # Range computed internally.
+
+      	
+
+
