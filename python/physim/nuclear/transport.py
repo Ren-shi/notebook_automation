@@ -54,7 +54,7 @@ idea), so a line-shape fit only re-weights it.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Optional, Sequence
 
@@ -107,14 +107,27 @@ class Slowed:
     position_um: Optional[np.ndarray] = None
 
 
-@dataclass
+#: The most detector angles a :class:`Kernel` keeps :meth:`Kernel.beta_cos` for, and the most bytes it spends on
+#: them (the latest angle is always kept): a fit asks for one angle hundreds of times, a ring scan a few angles.
+KERNEL_ANGLES_KEPT = 8
+KERNEL_ANGLE_BYTES = 128 * 2**20
+
+_KERNEL_ARRAYS = ("times_ps", "beta", "direction", "proper_ps", "stopped", "segment", "beta0", "direction0")
+
+
+@dataclass(frozen=True, eq=False)
 class Kernel:
     """The recoils' velocities against lab time, for DSAM line shapes: ``n`` sample recoils followed through the
     stack, their state recorded at each of ``times_ps``. Arrays are (times, n) (directions (times, n, 3)).
 
     The distribution of β·cos(angle to a detector) at time t is :meth:`beta_cos`; a level of mean life τ decays at
     lab time t with probability density e^(−s/τ) / (τ γ), s the proper time (``proper_ps``) and γ = 1/√(1 − β²), so
-    attenuations and line shapes are weighted sums over this table, with no transport per τ."""
+    attenuations and line shapes are weighted sums over this table, with no transport per τ.
+
+    A kernel does not change once made: its fields cannot be reassigned and its arrays are read-only (an array
+    given as a view of another is copied first), so what is worked out from it once (:meth:`beta_cos` per angle
+    here, the binned kernel in :func:`physim.nuclear.lifetimes.lineshape`) stays right. For different arrays, make
+    a new kernel (``dataclasses.replace``)."""
 
     times_ps: np.ndarray  # (T,) lab times after the reaction
     beta: np.ndarray  # (T, n) speed (0 once stopped)
@@ -124,16 +137,50 @@ class Kernel:
     segment: np.ndarray  # (T, n) the segment each sample is in
     beta0: np.ndarray  # (n,) speed at the start
     direction0: np.ndarray  # (n, 3) direction at the start
+    _angles: dict = field(default_factory=dict, init=False, repr=False, compare=False)  # (θ, φ) → β·cos ψ
+
+    def __post_init__(self):
+        self._freeze()
+
+    def _freeze(self) -> None:
+        for name in _KERNEL_ARRAYS:
+            a = np.asarray(getattr(self, name))
+            if not a.flags.owndata:  # a view: its base could still be written through
+                a = a.copy()
+            a.flags.writeable = False
+            object.__setattr__(self, name, a)
+
+    def __getstate__(self) -> dict:
+        state = dict(self.__dict__)
+        state["_angles"] = {}
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        for name, value in state.items():
+            object.__setattr__(self, name, value)
+        object.__setattr__(self, "_angles", {})
+        self._freeze()
 
     @property
     def n(self) -> int:
         return self.beta.shape[1]
 
     def beta_cos(self, theta_deg: float, phi_deg: float = 0.0) -> np.ndarray:
-        """β·cos(angle between the recoil's velocity and a detector at (θ, φ) from the beam axis), (T, n)."""
-        th, ph = math.radians(theta_deg), math.radians(phi_deg)
-        axis = np.array([math.sin(th) * math.cos(ph), math.sin(th) * math.sin(ph), math.cos(th)])
-        return self.beta * (self.direction @ axis)
+        """β·cos(angle between the recoil's velocity and a detector at (θ, φ) from the beam axis), (T, n),
+        read-only. Kept for the last few angles asked (:data:`KERNEL_ANGLES_KEPT`, :data:`KERNEL_ANGLE_BYTES`)."""
+        key = (float(theta_deg), float(phi_deg))
+        kept = self._angles
+        out = kept.pop(key, None)  # put back last: the most recently used
+        if out is None:
+            th, ph = math.radians(key[0]), math.radians(key[1])
+            axis = np.array([math.sin(th) * math.cos(ph), math.sin(th) * math.sin(ph), math.cos(th)])
+            out = self.beta * (self.direction @ axis)
+            out.flags.writeable = False
+            while kept and (len(kept) >= KERNEL_ANGLES_KEPT
+                            or sum(a.nbytes for a in list(kept.values())) + out.nbytes > KERNEL_ANGLE_BYTES):
+                kept.pop(next(iter(kept)), None)
+        kept[key] = out
+        return out
 
     def mean_beta_cos(self, theta_deg: float = 0.0, phi_deg: float = 0.0) -> np.ndarray:
         """The mean of :meth:`beta_cos` over the samples at each time, (T,)."""
