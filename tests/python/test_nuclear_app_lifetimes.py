@@ -313,18 +313,40 @@ def test_the_dsam_analysis_and_a_failing_plan(monkeypatch, tmp_path):
     _on_page(failing, example="fusion_sm143_dsam")
 
 
-def _fusion_run_folder(tmp_path):
-    """A fusion experiment with one short run at a plunger distance (a fraction of a second of beam)."""
-    p = Planner.example("fusion_cr50_plunger")
+#: The bottom of 50Cr's yrast band typed in from ENSDF (adopted levels and γ rays of 50Cr, NDS 157, 1 (2019)), as in
+#: test_nuclear_fusion_runs.py, so the fusion runs here have a cascade (hence γγ coincidences) without a local
+#: ENSDF copy (CI has none).
+CR50_LEVELS = {
+    "nuclide": "50Cr",
+    "level": [{"energy": "0 keV", "jpi": "0+", "source": "ensdf"},
+              {"energy": "783.31 keV", "jpi": "2+", "half_life": "9.08 ps", "source": "ensdf"},
+              {"energy": "1881.42 keV", "jpi": "4+", "half_life": "2.2 ps", "source": "ensdf"},
+              {"energy": "3164.06 keV", "jpi": "6+", "half_life": "0.8 ps", "source": "ensdf"}],
+    "transition": [{"from": 1, "to": 0, "energy": "783.3 keV", "intensity": 100, "multipolarity": "E2"},
+                   {"from": 2, "to": 1, "energy": "1098.1 keV", "intensity": 100, "multipolarity": "E2"},
+                   {"from": 3, "to": 2, "energy": "1282.5 keV", "intensity": 100, "multipolarity": "E2"}]}
+
+
+def _fusion_run_folder(tmp_path, monkeypatch):
+    """A fusion experiment (the 50Cr plunger, its channel alone, with :data:`CR50_LEVELS`) with one short run at a
+    plunger distance (half a second of beam simulated). ENSDF is hidden, as in CI."""
+    from physim.nuclear import ensdf
+
+    monkeypatch.setenv(ensdf.ENV, str(tmp_path / "no-ensdf"))
+    d = Experiment.example("fusion_cr50_plunger").to_dict()
+    d.setdefault("levels", {})["50Cr"] = copy.deepcopy(CR50_LEVELS)
+    d["reaction"]["channels"] = [ch for ch in d["reaction"]["channels"] if ch["residue"] == "50Cr"]
+    d["run"].pop("channel", None)
+    p = Planner(Experiment.from_dict(d))
     p.create_experiment("cr50")
     d = p.experiment.lifetime.distances_um[0]
-    run = p.start_run("fusion", "1 s", "0.05 s", distance_um=d)
+    run = p.start_run("fusion", "1 s", "0.5 s", distance_um=d)
     return p, run, d
 
 
 def test_fusion_runs_in_run_and_data(monkeypatch, tmp_path):
     monkeypatch.setenv("PHYSIM_EXPERIMENTS", str(tmp_path))
-    p, run, d = _fusion_run_folder(tmp_path)
+    p, run, d = _fusion_run_folder(tmp_path, monkeypatch)
     assert run.kind == "fusion" and run.distance_um == d
     from physim.nuclear.app import tab_run
 
@@ -354,7 +376,7 @@ def test_the_fusion_data_views_and_the_distance_series(monkeypatch, tmp_path):
     from physim.nuclear.app import tab_lifetimes as tl
 
     monkeypatch.setenv("PHYSIM_EXPERIMENTS", str(tmp_path))
-    p, run, d = _fusion_run_folder(tmp_path)
+    p, run, d = _fusion_run_folder(tmp_path, monkeypatch)
     kept = {}
 
     def keep(planner, key, make, of_run=False):
@@ -368,9 +390,10 @@ def test_the_fusion_data_views_and_the_distance_series(monkeypatch, tmp_path):
     assert lo == 0 and hi >= 500 and len(views["singles"]) == len(p.experiment.gamma_detectors)
     counts, edges = views["matrix"]
     assert counts.shape[0] == counts.shape[1] and np.allclose(counts, counts.T) and counts.sum() > 0
-    ctx.data_options["fusion_gate"] = 783.0
+    # Gate on the 2+ → 0+ line as measured: at this short distance most 2+ decays are in the stopper, unshifted.
+    ctx.data_options.update(fusion_gate=783.3, fusion_corrected=False)
     gated = tl.fusion_views(ctx, p)["gated"]
-    assert gated is not None and len(gated[0]) == 100
+    assert gated is not None and len(gated[0]) == 100 and gated[0].sum() > 0  # the 4+ → 2+ line, in coincidence
     # The series this run belongs to; its spectra per distance through distance_spectra (guarded).
     series = tl.series_of(p, p.run)
     assert series is not None and series.distances == [d]
