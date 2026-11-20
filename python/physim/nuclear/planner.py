@@ -992,6 +992,12 @@ class Planner:
             source = "rates" if ("counts" in text or "collects" in text or "records" in text) else "physics"
             out.append(Warning(level, source, text))
         out += [Warning("warning", "physics", t) for t in self._stopping_shortfalls()]
+        if self.experiment.lifetime is not None:
+            from .lifetime_plan import deorientation_warning
+
+            text = deorientation_warning(self.experiment)
+            if text:
+                out.append(Warning("warning", "physics", text))
         for p in _scene.problems(self.experiment):
             if p.kind == "overlap":  # a detector in the beam is already reported above
                 out.append(Warning("warning", "setup", p.text.replace("would overlap", "overlaps")
@@ -1518,6 +1524,101 @@ class Planner:
         d = self.draft
         d.pop("lifetime", None)
         return self._apply(d)
+
+    # -- planning, predicting and analysing a lifetime measurement (lifetime wave 3A) ------------------------------
+
+    def lifetimes(self, level=None, precision: float = 0.1) -> dict:
+        """How to measure the lifetimes of the studied nucleus's levels (:mod:`physim.nuclear.lifetime_plan`):
+        Coulomb excitation's excited nucleus (the projectile or the target), or fusion-evaporation's studied residue
+        (:meth:`studied_channel`; its levels as :meth:`band` lists them).
+
+        Returns ``available`` (and ``reason`` when not), ``reaction``, ``nucleus``, ``method`` (the setup's, or
+        None), ``distances_um`` (the setup's, without the offset), ``precision`` (the relative precision on τ
+        wanted, default 10%), ``time_to_stop_ps`` (DSAM: the recoil's time to stop in the target and backing; a
+        plunger: in its stopper, the DSAM-like tail under the unshifted peak), ``problems``, ``warnings`` and
+        ``levels``, the studied level first (``level`` asks for one level only: its name, number or energy), each
+        with:
+
+        - ``level``, ``energy_kev``, ``gamma_kev`` (its strongest line), ``tau_ps`` and ``tau_source``
+          (:func:`physim.nuclear.lifetimes.level_taus`: the half-life, else the B(Eλ↓) of the scheme or the
+          setup's Coulex B(E2), with its source), ``beta`` (the recoil's speed: in the plunger's gap, or where it
+          is made for DSAM);
+        - ``method``: "rdds" for τ of about 1 ps to 1 ns, "dsam" for 10 fs to 1 ps, else "outside" (also for a
+          level without a known τ);
+        - ``recommended_distances_um`` and ``sensitive_um`` (:func:`~physim.nuclear.lifetimes.recommend_distances`,
+          :func:`~physim.nuclear.lifetimes.sensitive_range`) for a plunger level;
+        - ``separation``: per γ-ray detector its angle, the shifted − unshifted separation against its FWHM, and
+          whether they are ``resolved`` (at least two FWHM apart);
+        - ``attenuation``: F(τ) on the setup's backing for DSAM (:func:`~physim.nuclear.lifetimes.dsam_attenuation`
+          on the slowing-down kernel of the typical recoil), else None;
+        - ``hours_per_distance``: the beam time at each distance (the setup's, else the recommended ones) for the
+          wanted precision on τ, from the line's full-energy rate in all γ-ray detectors (``rate_per_s``) and the
+          one-level binomial precision of the unshifted share at each distance, combined over the distances.
+
+        The recoil is the setup's typical one (:meth:`~physim.nuclear.experiment.Experiment.lifetime_recoil`).
+        Kept until the setup changes."""
+        key = ("lifetimes", level, float(precision))
+        if key not in self._cache:
+            from . import lifetime_plan
+
+            self._cache[key] = lifetime_plan.plan(self, level, precision)
+        return self._cache[key]
+
+    def lifetime_spectra(self, distance_um=None, level=None) -> dict:
+        """The predicted γ-ray spectra of a level's line (``level``; the studied one by default) at each plunger
+        distance (``distance_um``: one distance, else the setup's) and each ring of γ-ray detectors (their distinct
+        polar angles), or for DSAM the line shape at each ring.
+
+        Counts are expected full-energy counts in the beam time per distance (the setup's beam time shared over its
+        distances; DSAM: all of it). How they are made (``model``):
+
+        - fusion-evaporation: :func:`physim.nuclear.residues.plunger_spectra` or
+          :func:`~physim.nuclear.residues.dsam_lineshapes` (residues drawn from the evaporation, the cascade with
+          side feeding), scaled by the residue rate and the ring's full-energy efficiency, folded with its
+          resolution;
+        - Coulomb excitation, a plunger: analytic, fast enough for a UI call. The unshifted share is
+          :func:`~physim.nuclear.lifetimes.unshifted` of the level's cascade at the flight time of the typical
+          recoil (one speed, head-on); the shifted peak is a Gaussian at its Doppler energy, as wide as the
+          detector's resolution and the spread of angles over a crystal's face. The real recoils' spread of speeds
+          and angles (forward-scattered beam caught by a 0° detector, say) broadens and moves the shifted peak: a
+          run shows that;
+        - Coulomb excitation, DSAM: :func:`~physim.nuclear.lifetimes.lineshape` on the slowing-down kernel of the
+          typical recoil (ZBL scattering), folded with the resolution.
+
+        Returns ``available``, ``reason``, ``method``, ``edges_kev``, ``spectra`` = [{``distance_um`` (None for
+        DSAM), ``theta_deg``, ``counts``, ``shifted_kev``, ``unshifted_kev``}], and ``level``, ``gamma_kev``,
+        ``model``, ``seconds_per_distance``, ``notes``. Kept until the setup changes."""
+        key = ("lifetime_spectra", distance_um, level)
+        if key not in self._cache:
+            from . import lifetime_plan
+
+            self._cache[key] = lifetime_plan.spectra(self, distance_um, level)
+        return self._cache[key]
+
+    def analyse_lifetimes(self, level=None, series=None, method: Optional[str] = None) -> dict:
+        """τ of a level (the studied one by default) from the runs, as an experimenter would get it, then B(λ↓) and
+        the comparison with what is known.
+
+        A plunger: ``series`` (a :class:`~physim.nuclear.runs.DistanceSeries`; by default this setup's, from
+        :meth:`~physim.nuclear.runs.ExperimentFolder.distance_series`) → the spectra per distance and ring
+        (:func:`physim.nuclear.dataviews.distance_spectra`, Doppler shifts kept) → the shifted and unshifted peak
+        areas in the rings away from 90°, added (:func:`physim.nuclear.lifetime_analysis.peak_areas`; the recoil's
+        speed from where the shifted peaks are) → ``method`` "ddcm" (default; with the strongest feeding line's
+        areas for the feeding correction), "ddcm_three_foil" (the default for a differential plunger) or
+        "decay_curve". DSAM: the runs of this setup → the line shape at each ring away from 90° →
+        :func:`~physim.nuclear.lifetime_analysis.fit_lineshape` on the transport kernel ("lineshape"), τ the
+        weighted mean of the rings. Then B(λ↓) by :func:`~physim.nuclear.lifetime_analysis.b_from_result` and
+        ``compare``: the level scheme's own τ (ENSDF, typed, derived), the local ENSDF copy, the setup's Coulex
+        B(E2) and shell-model matrix elements in the scheme.
+
+        Returns ``available``, ``reason``, ``level``, ``method``, ``tau_ps``, ``stat_ps``, ``budget``, ``points`` =
+        [{``distance_um``, ``unshifted``, ``shifted`` (shares of the line), ``error``, ``tau_ps``, ``tau_err_ps``}]
+        (empty for DSAM), ``curve`` = {``x``, ``y``, ``kind``} (the fitted curve, or the line shape), ``b_down`` =
+        [value, uncertainty], ``b_unit``, ``compare`` = [{``source``, ``tau_ps``, ``b_down``}], ``notes``, and
+        ``total_ps``, ``beta``, ``rings_deg``."""
+        from . import lifetime_plan
+
+        return lifetime_plan.analyse(self, level, series, method)
 
     def remove_ancillary(self, name: str) -> bool:
         d = self.draft

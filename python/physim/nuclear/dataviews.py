@@ -24,6 +24,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional, Union
@@ -391,6 +392,118 @@ def grid(run, crystals: bool = False, bins: int = 200, **gamma_options) -> dict:
     return out
 
 
+# -- plunger distance series ------------------------------------------------------------------------------------------
+
+#: The bin width (keV) of :func:`distance_spectra` when no edges are given: fine enough for a 2 keV FWHM.
+DISTANCE_BIN_KEV = 0.5
+
+
+def gamma_rings(experiment) -> list:
+    """The polar angles (degrees, to 0.1°, ascending) of the setup's γ-ray detectors: one "ring" per distinct
+    angle, as the lifetime analysis groups them (:func:`physim.nuclear.residues.plunger_spectra` does the same)."""
+    from .quantity import Quantity
+
+    out = set()
+    for gd in experiment.gamma_detectors:
+        th = gd.theta if isinstance(gd.theta, Quantity) else Quantity.parse(str(gd.theta))
+        out.add(round(float(th.to("deg")), 1))
+    return sorted(out)
+
+
+def _crystal_rings(experiment, crystals, rings: list) -> np.ndarray:
+    """The ring (index into ``rings``) of each crystal of a run's γ rays: its γ-ray detector's polar angle."""
+    from .quantity import Quantity
+
+    det_theta = []
+    for gd in experiment.gamma_detectors:
+        th = gd.theta if isinstance(gd.theta, Quantity) else Quantity.parse(str(gd.theta))
+        det_theta.append(round(float(th.to("deg")), 1))
+    if crystals and isinstance(crystals[0], str):  # a fusion run names its crystals: they are crystals_of's
+        from .gamma_events import crystals_of
+
+        crystals = crystals_of(experiment, plain=True)[0]
+    return np.array([rings.index(det_theta[c.detector]) for c in crystals], dtype=int)
+
+
+def _run_gammas(run, doppler: bool) -> tuple:
+    """(energies in keV, counts each γ ray stands for in the run's real part, crystal index) of a run's counted
+    γ rays, as measured (``doppler``) or Doppler-corrected for the emitter."""
+    exp = run.experiment
+    g = run.gammas()
+    if g is None:
+        return np.zeros(0), np.zeros(0), np.zeros(0, dtype=int), []
+    if hasattr(g, "live_fraction"):  # a particle run's GammaEvents
+        m = g.select()
+        if doppler:
+            key = "measured"
+        else:
+            key = "corrected_recoil" if exp.excitation is not None and exp.excitation.excite == "target" \
+                else "corrected_projectile"
+        t = g.events.beam_time_s * g.live_fraction
+        return (1e3 * np.asarray(g[key][m], dtype=float), np.asarray(g["weight"][m], dtype=float) * t,
+                np.asarray(g["crystal"][m], dtype=int), g.crystals)
+    key = "measured" if doppler else "corrected"  # a fusion run's FusionGammas: each γ ray counts once
+    n = len(g)
+    return (1e3 * np.asarray(g[key], dtype=float), np.ones(n), np.asarray(g["crystal"], dtype=int), g.crystals)
+
+
+def distance_spectra(series, edges_kev=None, doppler: bool = True) -> dict:
+    """The γ-ray spectra of a plunger's distance series (:meth:`physim.nuclear.runs.ExperimentFolder.distance_series`)
+    per distance and per ring of γ-ray detectors (their distinct polar angles, :func:`gamma_rings`): what the
+    lifetime analysis fits (:func:`physim.nuclear.lifetime_analysis.peak_areas`).
+
+    ``doppler`` True keeps the energies as measured, with the Doppler shift, so the shifted (in flight) and
+    unshifted (at rest in the stopper) peaks stand apart; False corrects them for the emitter (a Coulex run: the
+    excited nucleus's two-body velocity; a fusion run: the compound nucleus's speed along the beam), which puts the
+    shifted peak at E₀ and moves the unshifted one. ``edges_kev`` are the bin edges (default
+    :data:`DISTANCE_BIN_KEV` bins from 0 to above the highest energy recorded). Counts are those of the runs' real
+    parts (Poisson numbers, as in :func:`gamma_spectrum`), summed over the runs taken at one distance; ``scale``
+    turns them into the runs' full durations.
+
+    Returns {``edges_kev``, ``by_distance`` = {distance in µm: {``theta_deg``: [ring angles], ``counts``: (rings ×
+    bins) array, ``scale``, ``runs`` (their labels)}}, ``doppler``, ``kind``}."""
+    exp = series.experiment
+    rings = gamma_rings(exp)
+    if not rings:
+        raise ValueError("the setup has no γ-ray detectors")
+    collected = {}
+    top = 0.0
+    kinds = set()
+    for d in series.distances:
+        parts = []
+        for run in series.runs[d]:
+            e, w, crystal, crystals = _run_gammas(run, doppler)
+            kinds.add(run.kind)
+            ring = _crystal_rings(run.experiment, crystals, rings)[crystal] if len(crystal) else crystal
+            parts.append((e, w, ring, run))
+            if len(e):
+                top = max(top, float(np.max(e)))
+        collected[d] = parts
+    if edges_kev is None:
+        hi = max(10.0, math.ceil(1.05 * top / 10.0) * 10.0)
+        edges = np.arange(0.0, hi + DISTANCE_BIN_KEV / 2, DISTANCE_BIN_KEV)
+    else:
+        edges = np.asarray(edges_kev, dtype=float)
+        if edges.ndim != 1 or len(edges) < 2 or np.any(np.diff(edges) <= 0):
+            raise ValueError("edges_kev must be increasing bin edges")
+    by_distance = {}
+    for d, parts in collected.items():
+        counts = np.zeros((len(rings), len(edges) - 1))
+        real = full = 0.0
+        for e, w, ring, run in parts:
+            for r in range(len(rings)):
+                m = ring == r
+                if np.any(m):
+                    counts[r] += np.histogram(e[m], bins=edges, weights=w[m])[0]
+            real += run.real_s
+            full += run.duration_s
+        by_distance[float(d)] = {"theta_deg": list(rings), "counts": counts,
+                                 "scale": full / real if real > 0 else 1.0,
+                                 "runs": [run.label for _e, _w, _r, run in parts]}
+    return {"edges_kev": edges, "by_distance": by_distance, "doppler": bool(doppler),
+            "kind": next(iter(kinds)) if len(kinds) == 1 else sorted(kinds)}
+
+
 # -- 2D views -------------------------------------------------------------------------------------------------------
 
 def energy_vs_ring(run, detector: str, bins: int = 150, gate: Optional[Gate] = None) -> dict:
@@ -541,6 +654,7 @@ class GateBook:
         return self.gates[name]
 
 
-__all__ = ["CORRECTIONS", "RANDOMS", "Gate", "GateBook", "correction_reason", "cut_expression", "energy_vs_ring",
+__all__ = ["CORRECTIONS", "DISTANCE_BIN_KEV", "RANDOMS", "Gate", "GateBook", "correction_reason", "cut_expression",
+           "distance_spectra", "energy_vs_ring", "gamma_rings",
            "gamma_spectrum", "gamma_vs_crystal", "grid", "group_of", "kinematic_lines", "overlay",
            "particle_spectrum", "spectrum_csv", "write_root"]

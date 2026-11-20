@@ -1206,7 +1206,7 @@ def _plan_report(planner, events: int, seed: int, journal: str, width: str, vali
         from .report import build
 
         return build(planner.experiment, seed=seed, events=events, validation=validation, journal=journal,
-                     width=width), ""
+                     width=width, planner=planner), ""
     except Exception as err:  # noqa: BLE001 - the report stands without the plan's figures
         return None, str(err)
 
@@ -1340,7 +1340,8 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
     if pp:
         sec["plan"] += ["<h3>Detectors: coverage, cross sections, rates and beam time</h3>", pp["detectors"],
                         "<h3>Kinematics</h3>", pp["kinematics"], "<h3>Expected peaks</h3>", pp["peaks"],
-                        pp["excitation_plain"]] + ([pp["fusion_plain"]] if pp.get("fusion_plain") else []) + [
+                        pp["excitation_plain"]] + ([pp["fusion_plain"]] if pp.get("fusion_plain") else []) + (
+                        [pp["lifetime_plain"]] if pp.get("lifetime_plain") else []) + [
                         "<h3>Energy loss</h3>", pp["energy_loss"],
                         "<h3>Simulated spectra</h3>", pp["spectra"]]
     elif why_no_plan:

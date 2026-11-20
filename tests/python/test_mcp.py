@@ -17,6 +17,7 @@ from mcp.client.stdio import StdioServerParameters  # noqa: E402
 from physim.mcp.server import build_server, message  # noqa: E402
 from physim.mcp.session import Session, ToolProblem  # noqa: E402
 from physim.mcp.shape import LIMIT, plain  # noqa: E402
+from physim.mcp.tools_lifetimes import LifetimeTools  # noqa: E402
 from physim.mcp.tools_setup import SetupTools  # noqa: E402
 from physim.mcp.tools_shellmodel import ShellModelTools  # noqa: E402
 from physim.nuclear.planner import Planner  # noqa: E402
@@ -189,7 +190,7 @@ def test_the_server_lists_and_calls_the_tools(tmp_path):
     async def talk():
         async with Client(server) as c:
             listed = {t.name: t for t in (await c.list_tools()).tools}
-            assert set(listed) == {name for name, _ in SetupTools.TOOLS + ShellModelTools.TOOLS}
+            assert set(listed) == {name for name, _ in SetupTools.TOOLS + ShellModelTools.TOOLS + LifetimeTools.TOOLS}
             assert listed["list_experiments"].annotations.read_only_hint
             assert not listed["set_value"].annotations.read_only_hint
             assert listed["replace_setup"].annotations.destructive_hint

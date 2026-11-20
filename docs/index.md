@@ -26,6 +26,7 @@ new-ideas
 nuclear-setup
 planner-app
 shell-model
+lifetimes
 ```
 
 ```{toctree}
@@ -43,6 +44,7 @@ theory/rutherford
 theory/detectors
 theory/events
 theory/coulex
+theory/lifetimes
 theory/fusion-evaporation
 theory/fusion
 theory/evaporation

@@ -1,13 +1,10 @@
----
-orphan: true
----
-
 # Lifetimes: plunger (RDDS) and Doppler-shift attenuation (DSAM)
 
 `physim.nuclear.lifetimes` holds the physics of lifetime measurements as pure functions on numbers: B(Eλ) ↔ τ, decay
 curves of a cascade, the shifted and unshifted shares in a plunger, the DSAM attenuation and line shape, and the
-deorientation of a recoil flying in vacuum. Units: time ps, distance µm, γ-ray energy keV, speed β = v/c. (This note
-covers wave 1 of the lifetime work; the planner, analysis and validation parts come later.)
+deorientation of a recoil flying in vacuum; `physim.nuclear.lifetime_analysis` gets τ back from spectra; the
+planner puts them together ([Lifetime measurements](../lifetimes.md)). Units: time ps, distance µm, γ-ray energy
+keV, speed β = v/c.
 
 ## B(λ) and the mean life
 
@@ -89,3 +86,58 @@ $$
 $$
 
 which is 1 at T = 0.
+
+## Planning a measurement
+
+**Method.** A plunger measures τ of about 1 ps to 1 ns (decay lengths γβcτ of tens of µm to tens of mm at a few %
+of c); DSAM about 10 fs to 1 ps (comparable to the time a recoil takes to stop in a backing).
+
+**Beam time per distance.** For one level, the unshifted share at flight time t is R = e^{−x}, x = t/τ. With N
+counts of the line at that distance, R has the binomial error √(R(1 − R)/N), and τ = t/(−ln R), so
+
+$$
+\frac{\sigma_\tau}{\tau} = \frac{p(x)}{\sqrt N},\qquad p(x) = \frac{\sqrt{e^x - 1}}{x},
+$$
+
+smallest at x ≈ 1.59 (where `recommend_distances` puts its best single distance). Measuring N counts at each of the
+distances x_i and combining, (σ_τ/τ)⁻² = N Σ_i p(x_i)⁻², so the counts per distance for a wanted precision ε are
+N = 1/(ε² Σ_i p(x_i)⁻²), and the beam time per distance is N over the line's full-energy rate in the γ-ray
+detectors. This is statistics only and one level: feeding, background and the systematic entries of the analysis's
+budget (distance, velocity, stopping) come on top.
+
+**Resolved peaks.** The planner calls the shifted and unshifted peaks resolved at a detector when their separation
+E₀√(1 − β²)/(1 − β cos θ) − E₀ is at least twice the detector's FWHM: two Gaussians of one width are apart at about
+1.7 FWHM, and the shifted peak is broader (the spread of speeds and angles over the crystal).
+
+## Analysis
+
+**Peak areas.** Fusion residues fly at nearly one speed, and the shifted and unshifted peaks are fitted as Gaussians
+on a straight background. After Coulomb excitation the emitters' speeds spread widely (a particle detector at 0°
+sees both the target recoil and forward-scattered beam, so the excited projectile's speed ranges over almost a factor
+of two): one Gaussian catches only part of the shifted component, which biases the unshifted share upwards at every
+distance. There the planner sums the counts instead: the unshifted side from E₀ − 3σ to E₀ + half the shift (it
+holds the decays while the recoil slows in the stopper, which `lifetimes.unshifted` counts as unshifted), the
+shifted side from there to twice the planned shift, both over a straight background through the counts beyond. The
+recoil's speed for the flight times comes from the shifted peaks' centroid, E_s/E₀ − 1 ≈ β cos θ (the outermost
+peak, for a differential plunger).
+
+**DDCM, joint fit.** For a trial τ, the curve P(t) (linear in its coefficients) minimises
+Σ(S − P)²/σ_S² + Σ(N − τP′)²/σ_N². Here N = I_u − α I_u^B (singles) or {B_s, A_u} (gated), and S = I_s or
+{B_s, A_s}. χ²(τ) is profiled, and the error comes from Δχ² = 1, scaled by χ²/ndf when that is above 1. τ(x) = N/P′
+at each point, from the best curve, for the plot.
+
+**α.** With efficiency-corrected intensities normalised by the transition's own I_u + I_s, α is the share of the
+feeder's decays that go through the transition (α = b ε_A/ε_B for raw intensities). Gated data are not normalised by
+I_u + I_s, because that sum follows the feeder's decay: they take an explicit normalisation.
+
+**Three foils.** R(t), the share of decays after t, is one function of time. The degrader point sits at t₁ = x₁/v
+and the stopper point at t₂ = x₁/v + x₂/v′, that is at x_eff = x₁ + x₂ v/v′ when flown at v. This is derived from
+first principles; the comparison with Beckers et al.'s Eqs. 13–14 is one of the validation checks.
+
+**Stopping budget (DSAM).** A uniform scaling of the stopping power by k scales every slowing time by 1/k, so it is
+a scaling of the kernel's time axis. The fit refits with ±7% by default (heavy-ion stopping at these speeds is known
+to about 5–10%); for one level without feeding this moves τ by exactly that share.
+
+**Deorientation correction.** W(θ) = 1 + Σ a_k G_k P_k(cos θ). The shifted component uses G̃_k(T) (above), the
+unshifted one G_k(T). With f = W_U/W_S, the corrected unshifted share is R/(R + f(1 − R)). The aberration of the
+shifted γ rays' angle is left out.
