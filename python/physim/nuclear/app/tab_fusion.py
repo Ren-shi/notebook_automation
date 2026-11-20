@@ -7,7 +7,8 @@ ancillaries, the beam monitor). The Plan step: the channel studied, which sets t
 residues; the studied residue's band with its known B(E2); the channel selection; what the compound nucleus boils
 off. The spectra: the residues' γ rays by channel, one channel alone, the evaporated particles, the neutrons' flight
 times and the recoils. Every number comes from :class:`physim.nuclear.planner.Planner`; what physim does not
-compute yet (the ball's, separator's and calorimeter's selection, γγ coincidences, lifetimes) is said so."""
+compute yet (the ball's, separator's and calorimeter's selection) is said so. A plunger or DSAM is added from the
+band's stage 2 (:mod:`.tab_lifetimes`)."""
 
 from __future__ import annotations
 
@@ -300,11 +301,38 @@ def band(ctx, pl: dict) -> None:
                              + (f" {b['reference']}" if b.get("reference") else "")).classes("text-xs ps-muted")
         with ui.element("div").style("flex: 1 1 300px; min-width: 0"):
             with ctx.panel("Measure the lifetimes", "stage 2: plunger (RDDS) or line shapes (DSAM)"):
-                ui.label("Later: a plunger or a backed target as an ancillary on the Setup step. The plan would then "
-                         "show the shifted and unshifted peaks against the plunger distance, or the line shapes, and "
-                         "the beam time for a wanted precision on τ, hence on B(E2). The levels above with no known "
-                         "lifetime would be the first to measure.").classes("text-sm")
-                ui.button("Add a plunger…").props("dense flat no-caps disable").tooltip("Not in this version")
+                lifetime_stage(ctx)
+
+
+def lifetime_stage(ctx) -> None:
+    """Stage 2 beside the band: add a plunger (or DSAM) to the setup, or what the setup's measurement is, with
+    the lifetimes panel below the plan."""
+    ui, p = ctx.ui, ctx.P()
+    from .tab_lifetimes import setup_line
+
+    lt = p.experiment.lifetime
+    if lt is None:
+        ui.label("A plunger (recoil distance, about 1 ps to 1 ns) or line shapes in a backed target (DSAM, about 10 "
+                 "fs to 1 ps) measure the lifetimes of the levels on the left, hence B(E2) independently of the "
+                 "known values. The plan then shows τ per level, the distances or the attenuation, the separation "
+                 "of the shifted and unshifted peaks and the beam time per distance.").classes("text-sm")
+        with ui.row().classes("gap-1"):
+            ui.button("Add a plunger…", icon="add", on_click=lambda: add_lifetime(ctx, "rdds")).props(
+                "dense flat no-caps").tooltip("A plunger in the setup, with a stopper thick enough for the residues")
+            ui.button("Line shapes (DSAM)…", on_click=lambda: add_lifetime(ctx, "dsam")).props(
+                "dense flat no-caps").tooltip("DSAM in the setup: the residues slow down in the target's backing")
+        return
+    ui.label(setup_line(p.experiment)).classes("text-sm")
+    ui.label("The lifetimes panel below the plan has τ per level and what the measurement makes of it.").classes(
+        "text-xs ps-muted")
+    ui.button("Edit the " + ("plunger" if lt.method == "rdds" else "DSAM measurement") + "…",
+              on_click=lambda: ctx.open_card("lifetime")).props("dense flat no-caps")
+
+
+def add_lifetime(ctx, method: str) -> None:
+    """Put a lifetime measurement in the setup being edited and open its card (the change waits for Apply)."""
+    ctx.add_lifetime(method)
+    ctx.open_card("lifetime")
 
 
 def selection(ctx) -> None:
@@ -466,8 +494,8 @@ def spectra(ctx) -> None:
                              "share is in the Plan's channel selection; the ball's, separator's and calorimeter's "
                              "are not computed yet.").classes("text-xs ps-muted")
             with ui.tab_panel(t_gg):
-                ui.label("γγ coincidences are not computed yet: they need the cascade's coincidences through two "
-                         "detectors, which a later version adds.").classes("text-sm ps-muted")
+                ui.label("γγ coincidences come from a run: take a fusion run on the Run step, and its Data step "
+                         "shows the γγ matrix and the spectrum gated on any line.").classes("text-sm ps-muted")
             ev = None
             try:
                 ev = p.evaporation()

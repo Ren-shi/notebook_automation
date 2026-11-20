@@ -1,6 +1,7 @@
 """The start page: the kind of experiment first (:data:`physim.nuclear.workbench.KINDS`), then its beam, target and
 detectors, or an experiment already made. Coulomb excitation and elastic scattering then go on to the steps as
-they always were; fusion-evaporation to its own screens (:mod:`.tab_fusion`)."""
+they always were; fusion-evaporation to its own screens (:mod:`.tab_fusion`); lifetimes to a Coulomb-excitation or
+fusion-evaporation setup with a plunger or DSAM (:mod:`.tab_lifetimes`)."""
 
 from __future__ import annotations
 
@@ -20,6 +21,10 @@ def experiment_kind(path: str) -> str:
         return ""
     r = d.get("reaction", {})
     kind = r.get("type", "elastic")
+    lt = d.get("lifetime")
+    if isinstance(lt, dict) and kind in ("coulex", "fusion-evaporation"):
+        how = "plunger" if lt.get("method", "rdds") == "rdds" else "DSAM"
+        return f"Lifetimes · {how} after " + ("fusion" if kind == "fusion-evaporation" else "Coulex")
     if kind == "fusion-evaporation":
         return "Fusion-evaporation"
     if kind == "coulex":
@@ -104,7 +109,8 @@ def kind_form(ctx, k) -> None:
     ui = ctx.ui
     st = ctx.state["start"]
     values = st.setdefault("values", dict(zip(("beam", "energy", "target", "thickness"), k.defaults),
-                                          template=k.templates[0], name="", excite="target", fill=True))
+                                          template=k.templates[0], name="",
+                                          excite="beam" if k.key == "lifetimes" else "target", fill=True))
     with ui.column().classes("w-full ps-card gap-0"):
         with ui.row().classes("w-full items-center ps-panel-head"):
             ui.label(k.label)
@@ -123,11 +129,20 @@ def kind_form(ctx, k) -> None:
                         inp.on_value_change(lambda e, key=key: values.update({key: e.value}))
                         if k.key == "fusion-evaporation":
                             inp.on("blur", lambda: preview.refresh())
-                if k.key == "coulex":
+                if k.key in ("coulex", "lifetimes"):
                     ui.select({"target": "The target", "beam": "The beam"}, value=values["excite"],
-                              label="Which nucleus is excited",
+                              label="Which nucleus is excited" + (" (after Coulomb excitation)"
+                                                                  if k.key == "lifetimes" else ""),
                               on_change=lambda e: values.update(excite=e.value)).props("dense outlined").classes(
                         "w-full")
+                if k.key == "lifetimes":
+                    ui.toggle({True: "Fill the exit channels from physim", False: "Enter them by hand"},
+                              value=values["fill"], on_change=lambda e: values.update(fill=e.value)).props(
+                        "dense no-caps")
+                    ui.label("The excited nucleus is for the Coulomb-excitation template, the exit channels for "
+                             "the fusion-evaporation ones. The plunger's stopper is made thick enough to stop this "
+                             "beam and target's recoil; DSAM takes the template's backing. The worked examples "
+                             "are the published measurements they are named after.").classes("text-xs ps-muted")
                 if k.key == "fusion-evaporation":
                     @ui.refreshable
                     def preview() -> None:
@@ -157,6 +172,7 @@ def kind_form(ctx, k) -> None:
                                 "dense outline no-caps rounded").classes("text-xs")
         with ui.row().classes("w-full items-center p-3").style("border-top: 1px solid var(--ps-line)"):
             ui.label("Next: the Setup step" + (", with the fusion-evaporation scene." if k.key == "fusion-evaporation"
+                                                else ", with the lifetime measurement's card." if k.key == "lifetimes"
                                                 else ".")).classes("text-sm ps-muted")
             ui.space()
             ui.button("Make the experiment", icon="arrow_forward", on_click=lambda: make()).props(
@@ -164,11 +180,16 @@ def kind_form(ctx, k) -> None:
 
     async def make() -> None:
         measure = k.measure
-        if k.key == "coulex":
+        coulex = k.key == "coulex"
+        if k.key == "lifetimes":  # the template says which reaction the lifetime measurement follows
+            reaction = next(t[4] for t in wb.LIFETIME_TEMPLATES if t[0] == values["template"])
+            coulex = reaction == "coulex"
+            measure = "fusion-evaporation" if not coulex else measure
+        if coulex:
             measure = "coulex-beam" if values["excite"] == "beam" else "coulex-target"
         await ctx.create_experiment(values["beam"], values["energy"], values["target"], values["thickness"], measure,
                                     values["template"], values["name"],
-                                    fill=k.key == "fusion-evaporation" and values["fill"])
+                                    fill=measure == "fusion-evaporation" and values["fill"])
 
 
 def experiments_table(ctx) -> None:

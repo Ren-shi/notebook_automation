@@ -129,8 +129,13 @@ def compared(ctx, p):
 def prepare(ctx, p) -> None:
     """Load the current run's events and compute every view of the tab for the current choices, on the page's
     worker thread (``p`` is a snapshot of the planner). What is kept already is not computed again."""
+    from . import tab_lifetimes
+
     run = p.run
     if run is None:
+        return
+    if run.kind == "fusion":  # the residues' γ rays: singles, γγ, gated (and the distance series)
+        tab_lifetimes.prepare_data(ctx, p)
         return
     panels(ctx, p)
     if run.kind == "source":
@@ -139,6 +144,7 @@ def prepare(ctx, p) -> None:
     if run.gammas() is not None:
         crystal_view(ctx, p)
     compared(ctx, p)
+    tab_lifetimes.prepare_data(ctx, p)
 
 
 def controls(ctx, run) -> None:
@@ -380,7 +386,7 @@ def exports(ctx, run) -> None:
         ui.download.content(data, f"run{run.number:02d}.root")
 
     with ui.row().classes("gap-2"):
-        if run.kind != "source":
+        if run.kind not in ("source", "fusion"):
             ui.button("ROOT file (events, spectra, gates as cuts)", icon="download", on_click=root_file).props(
                 "flat no-caps")
         ui.button("The run's events (.npz)", icon="download",
@@ -413,8 +419,16 @@ def render_view(ctx) -> None:
         grid(ctx, run)
         exports(ctx, run)
         return
+    from . import tab_lifetimes
+
+    if run.kind == "fusion":
+        tab_lifetimes.fusion_data(ctx, run)
+        tab_lifetimes.series_block(ctx, run)
+        exports(ctx, run)
+        return
     controls(ctx, run)
     grid(ctx, run)
+    tab_lifetimes.series_block(ctx, run)
     gates_block(ctx, run)
     views_2d(ctx, run)
     with ctx.ui.element("div").classes("w-full grid gap-3").style(

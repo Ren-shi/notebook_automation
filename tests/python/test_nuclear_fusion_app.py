@@ -96,7 +96,7 @@ def test_ancillaries_survive_a_switch_of_reaction():
 
 def test_kinds_and_templates():
     live = [k.key for k in wb.KINDS if k.live]
-    assert live == ["coulex", "elastic", "fusion-evaporation"]
+    assert live == ["coulex", "elastic", "fusion-evaporation", "lifetimes"]
     assert all(not k.templates for k in wb.KINDS if not k.live)
     for key, *_ , ancillaries in wb.FUSION_TEMPLATES:
         exp = wb.template(key)

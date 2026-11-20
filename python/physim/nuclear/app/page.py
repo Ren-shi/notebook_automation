@@ -148,7 +148,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     from ..experiment import Experiment, SetupError
     from . import panel as _panel
     from . import start as _start
-    from . import tab_analysis, tab_data, tab_fusion, tab_physics, tab_plan, tab_report, tab_run, tab_setup
+    from . import tab_analysis, tab_data, tab_fusion, tab_lifetimes, tab_physics, tab_plan, tab_report, tab_run
+    from . import tab_setup
     from . import tab_shellmodel
 
     first, offer_list = _starting_planner(example, template, experiment)
@@ -201,6 +202,12 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             return setup.get("title")
         if section == "backing":
             return setup["target"].get("backing", {}).get(field)
+        if section.startswith("lifetime"):  # "lifetime", "lifetime.stopper", "lifetime.degrader2", ...
+            lt = setup.get("lifetime") or {}
+            if section == "lifetime":
+                v = lt.get(field)
+                return ", ".join(str(x) for x in v) if field == "distances" and isinstance(v, list) else v
+            return (lt.get(section.split(".", 1)[1]) or {}).get(field)
         if section.startswith("reaction channel"):
             items = setup.get("reaction", {}).get("channels", [])
             i = int(section.split()[2]) - 1
@@ -229,6 +236,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     field_marks: list = []
     field_inputs: dict = {}
     field_shown: dict = {}
+    #: What a card shows besides its fields and lines that follows the draft too (the lifetime card's checks):
+    #: called by sync_cards, emptied when the panel is rebuilt.
+    card_hooks: list = []
 
     def scene_shows() -> tuple:
         """What a drawing of the scene depends on: the draft's setup, and the applied one's numbers once they are
@@ -319,6 +329,11 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             mark(element, section, field, register=False)
         checks_box.refresh()
         checks_line.refresh()
+        for hook in list(card_hooks):
+            try:
+                hook()
+            except Exception:  # noqa: BLE001 -- a part of a card that is gone
+                card_hooks.remove(hook)
 
     def draft_views() -> None:
         """What follows the draft without any number being worked out: the scene, the quick numbers beside it and
@@ -445,6 +460,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             return "target"
         if section in wb.ANCILLARY_CARDS:
             return f"anc:{section}"
+        if section.startswith("lifetime"):
+            return "lifetime"
         if section.startswith("gamma detector"):
             return f"gamma:{int(section.split()[2]) - 1}"
         if section.startswith("detector"):
@@ -471,6 +488,74 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             return
         state["open"] = card_of(section) or state["open"]
         staged(D().set(section, field, value), rebuild or field in ("model", "shape", "crystals", "nuclide", "material"))
+
+    def edit_lifetime(section: str, field: str, text, rebuild: bool = False) -> None:
+        """A field of the lifetime card was changed: the draft takes it through the planner's lifetime methods
+        (``set_lifetime``, ``set_stopper``, ``set_degrader2``). ``section`` is "lifetime", "lifetime.stopper",
+        "lifetime.degrader2" or "lifetime.deorientation"."""
+        value = None if text is None or str(text).strip() == "" else str(text).strip()
+        old = value_in(D()._draft, section, field)
+        if (None if old is None else str(old)) == value:
+            return
+        if locked():
+            return
+        state["open"] = "lifetime"
+        d = D()
+        lt = d.draft.get("lifetime") or {}
+        if section == "lifetime":
+            if field == "method":
+                ok, rebuild = d.set_lifetime(method=value or "rdds"), True
+            elif field == "distances":
+                ok = d.set_lifetime(distances=wb.parse_distances(value)) if value else d.set("lifetime", field, None)
+            else:
+                ok = d.set_lifetime(**{field: value}) if value else d.set("lifetime", field, None)
+        elif section == "lifetime.stopper":
+            foil = dict(lt.get("stopper") or {"kind": "stopper"}, **{field: value})
+            ok = d.set_stopper(foil.get("kind") or "stopper", foil.get("material") or "", foil.get("thickness") or "",
+                               foil.get("density"))
+            rebuild = rebuild or field == "kind"
+        elif section == "lifetime.degrader2":
+            foil = dict(lt.get("degrader2") or {}, **{field: value})
+            ok = d.set_degrader2(foil.get("material") or "", foil.get("thickness") or "", foil.get("gap") or "",
+                                 foil.get("density"))
+        else:  # deorientation: numbers for α and g, text with a unit for Γ and C
+            values = {k: v for k, v in dict(lt.get("deorientation") or {}, **{field: value}).items() if v is not None}
+            for k in ("alpha2", "alpha4", "g"):
+                try:
+                    values[k] = float(values[k])
+                except (KeyError, TypeError, ValueError):
+                    pass
+            ok = d.set_lifetime(deorientation=values)
+        staged(ok, rebuild)
+
+    def deorientation_form(form: str) -> None:
+        """The deorientation's form: "none" removes it; "rates" (Γ₂, Γ₄) and "g" (g, C₂, C₄) keep α₂, α₄ and drop
+        the other form's fields (the ones the new form needs are typed in next)."""
+        if locked():
+            return
+        state["open"] = "lifetime"
+        state["deorientation_form"] = form
+        d = D()
+        now = dict((d.draft.get("lifetime") or {}).get("deorientation") or {})
+        if form == "none":
+            if now:
+                staged(d.set_lifetime(deorientation={}), rebuild=True)
+            else:
+                setup_panel.refresh()
+            return
+        drop = ("g", "c2", "c4") if form == "rates" else ("gamma2", "gamma4")
+        kept = {k: v for k, v in now.items() if k not in drop}
+        if kept != now:
+            staged(d.set_lifetime(deorientation=kept), rebuild=True)
+        else:
+            setup_panel.refresh()
+
+    def add_lifetime(method: str = "rdds") -> None:
+        """Give the draft a lifetime measurement: a plunger (with a stopper for its recoil) or DSAM."""
+        if locked():
+            return
+        state["open"] = "lifetime"
+        staged(D().add_ancillary("plunger") if method == "rdds" else D().set_lifetime(method="dsam"), rebuild=True)
 
     def add_detector(key: str = "side"):
         def run_() -> None:
@@ -726,6 +811,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         field_marks.clear()
         field_inputs.clear()
         field_shown.clear()
+        card_hooks.clear()
         if not state["ready"]:  # the rates are being computed on the worker (refresh_results)
             with ui.row().classes("items-center gap-2 ps-muted p-2"):
                 ui.spinner(size="md")
@@ -1081,20 +1167,24 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             shown("strips", p.rates()["rows"][0]["detector"], p=p)
         elif tab == "spectra":
             shown("spectra", state["events"], 1, p=p)
+        elif tab == "lifetime_spectra" and p.experiment.lifetime is not None:
+            tab_lifetimes.spectra_of(ctx, p)
 
     #: The panels each stage shows at once, and those it shows when asked (the Plan tab's checks, which open).
     stage_needs = {"setup": (("geometry",), ()),
                    "plan": ((), ("kinematics", "energy_loss", "trajectories", "gamma", "efficiency", "rates",
-                                 "spectra")),
+                                 "spectra", "lifetime_spectra")),
                    "physics": (("gamma", "kinematics", "energy_loss", "trajectories", "geometry", "efficiency"), ()),
                    "data": ((), ()), "run": ((), ()), "analysis": ((), ()), "report": ((), ())}
 
     def warm(p: Planner) -> None:
-        """The numbers every tab starts from: the rates, the warnings, the Doppler table."""
+        """The numbers every tab starts from: the rates, the warnings, the Doppler table, the lifetime plan."""
         p.rates()
         p.warnings()
         if p.experiment.excitation is not None:
             p.gamma()
+        if p.experiment.lifetime is not None:
+            wb.lifetime_plan(p)
         decisions(p)
 
     def prepare(key: str, p: Planner, everything: bool = False) -> None:
@@ -1118,6 +1208,12 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             with run_work:
                 try:
                     tab_data.prepare(ctx, p)
+                except Exception:  # noqa: BLE001 -- the tab says what is wrong when it is built
+                    pass
+        if key == "analysis" and p.experiment.lifetime is not None:
+            with run_work:
+                try:
+                    tab_lifetimes.prepare_analysis(ctx, p)
                 except Exception:  # noqa: BLE001 -- the tab says what is wrong when it is built
                     pass
 
@@ -1964,14 +2060,24 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
             async def simulate():
                 state["events"] = int(n.value)
-                fig = await run.io_bound(figure_spectra, P().snapshot(), int(n.value), int(seed.value))
+                q = P().snapshot()
+                if q.run is not None and q.run.kind == "fusion":
+                    q.run = None  # a fusion run has no particle spectra: a sample of the setup instead
+                fig = await run.io_bound(figure_spectra, q, int(n.value), int(seed.value))
                 plot_area.clear()
                 with plot_area:
                     plot(fig, "spectra", events=int(n.value), seed=int(seed.value))
 
             ui.button("Simulate", icon="play_arrow", on_click=simulate)
         plot_area = ui.column().classes("w-full")
-        if P().experiment.detectors:
+        if P().run is not None and P().run.kind == "fusion":
+            # A fusion run records the residues' γ rays only (the Data step shows them): the beam monitor's
+            # spectra come without a run, from a sample of the setup.
+            with plot_area:
+                ui.label(f"The current run ({P().run.number}) is a fusion run: it records the residues' γ rays, "
+                         "which the Data step shows. Press Simulate for the beam monitor's spectra.").classes(
+                    "text-sm ps-muted")
+        elif P().experiment.detectors:
             with plot_area:
                 plot(shown("spectra", state["events"], 1), "spectra", events=state["events"], seed=1)
         gamma_block()
@@ -3100,12 +3206,34 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     return
         elif kind == "alignment":
             options = {"offset_mm": float(f["offset_mm"] or 0.0)}
+        elif kind == "fusion" and f.get("fold"):
+            options = {"fold": int(f["fold"])}
+        if kind != "source" and tab_lifetimes.plunger(P().experiment) and f.get("distance") is not None:
+            options["distance_um"] = float(f["distance"])
         try:
             out = P().start_run(kind, f["duration"] or None, f["budget"], background=kind != "source", **options)
         except (SetupError, ValueError, _runs.RunInProgress) as err:
             ui.notify(str(err), type="negative", multi_line=True)
             return
         after_start(out)
+
+    def start_series(f: dict, distances: list) -> None:
+        """Take one run at each of ``distances`` (µm), one after the other, with the form's duration and real
+        part: the first now, the others as each ends (a failed or stopped run ends the series)."""
+        if not distances:
+            return
+        state["distance_queue"] = [float(d) for d in distances[1:]]
+        state["distance_form"] = dict(f)
+        start_run(dict(f, distance=float(distances[0])))
+        if not P().running:  # it did not start: no series
+            state["distance_queue"] = []
+
+    def next_in_series() -> None:
+        queue = state.get("distance_queue") or []
+        if not queue or P().running:
+            return
+        d = queue.pop(0)
+        start_run(dict(state.get("distance_form") or run_form, distance=d))
 
     def after_start(out) -> None:
         setup_panel.refresh()
@@ -3140,9 +3268,14 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             return
         run_state["watching"] = False
         bg = P()._background
+        failed = bg is not None and (bg.error is not None or getattr(bg.taker, "stop", False))
         if bg is not None and bg.error is not None:
             ui.notify(f"The run failed: {bg.error}", type="negative", multi_line=True)
+        if failed and state.get("distance_queue"):
+            ui.notify("The distance series stops here: the runs taken so far are kept.", type="warning")
+            state["distance_queue"] = []
         finished()
+        next_in_series()
 
     def finished() -> None:
         setup_panel.refresh()
@@ -3335,7 +3468,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         gate_form=gate_form, fmt=_fmt, time_text=_time,
         analysis_view=analysis_view, report_view=report_view, show_physics=show_physics, levels_block=levels_block,
         geometry_tables=geometry_tables, explain=explain, reading_box=reading_box, gamma_panel=gamma_panel,
-        go_to=go_to, direct=direct,
+        go_to=go_to, direct=direct, value_in=value_in, field_inputs=field_inputs, field_shown=field_shown,
+        later=later, start_series=start_series, card_hooks=card_hooks,
+        edit_lifetime=edit_lifetime, deorientation_form=deorientation_form, add_lifetime=add_lifetime,
+        remove_lifetime=lambda: None if locked() else staged(D().remove_lifetime(), rebuild=True),
         add_ancillary=lambda name: None if locked() else staged(D().add_ancillary(name), rebuild=True),
         remove_ancillary=lambda name: None if locked() else staged(D().remove_ancillary(name), rebuild=True))
 
