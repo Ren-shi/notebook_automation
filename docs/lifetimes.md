@@ -69,10 +69,42 @@ residue (`[run] channel`, else the largest cross section). For each level the pl
 | `recommended_distances_um`, `sensitive_um` | log-spaced over the range where a measured unshifted share gives τ within twice the best precision (0.18 to 5.1 decay lengths γβcτ) |
 | `separation` | per γ-ray detector: its angle, the shifted − unshifted separation, its FWHM, and whether the peaks are `resolved` (at least two FWHM apart) |
 | `attenuation` | F(τ) on the setup's backing (DSAM) |
+| `backing_advice` | DSAM: the usual backings ranked for this level (below); None for a plunger level |
 | `hours_per_distance` | the beam time at each distance for the wanted precision on τ (default 10%) |
 
 and for the whole measurement `time_to_stop_ps` (the recoil's time to stop in the backing, or in the plunger's
-stopper, where decays make a DSAM-like tail under the unshifted peak), `problems` and `warnings`.
+stopper, where decays make a DSAM-like tail under the unshifted peak), `stopper` (the beam in the plunger's foils,
+below), `problems` and `warnings`.
+
+**Which backing for DSAM.** A measured attenuation F with uncertainty σ_F gives σ_τ/τ = σ_F / |dF/d ln τ|, so the
+best backing for a level is the one on which F changes fastest with τ: for stopping proportional to speed,
+F = α/(α + τ) and |dF/d ln τ| = ατ/(α + τ)² is largest, ¼, when the slowing-down time α matches τ and F = ½. For
+each level DSAM would measure (every level with a τ in a DSAM setup, and the levels whose τ suits DSAM in a plunger
+setup) `backing_advice` lists Pt, Au, W, Ta, Pb, Ag, Cu, Ni, Fe and C (and the setup's own backing material if it is
+none of them), best first, each behind the setup's target and with its slowing-down kernel (ZBL scattering, 250
+recoils, the same random numbers for every backing): `material`, `density_g_cm3`, `attenuation` F(τ),
+`sensitivity` |dF/d ln τ| (`lifetimes.dsam_sensitivity`), `relative_sensitivity` (its share of the best's), `good`
+(at least 80% of the best's: σ_τ at most 25% larger), `slowing_time_ps` α (`lifetimes.slowing_time`: ∫β cos θ dt
+over its value at the start), `time_to_stop_ps`, `thickness_to_stop_mg_cm2` and `_um` (the typical recoil's range in
+it) and `thickness_mg_cm2` and `_um` (1.5 times that, rounded up: room for the recoils' spread and the stopping's
+5–10%), and `setup` (the setup's backing material). For decays mostly inside the target (a few tens of fs after
+fusion) every backing does about as well; heavy and medium backings often lie within a few per cent of each other,
+so read the ranking with the `good` mark. The setup's backing below 80% of the best is warned about; a backing that
+does not stop the recoil is already a problem of the setup.
+
+**The beam in the plunger's foils.** The beam that passes the target flies on into the plunger's stopper (for a
+differential plunger the degrader and the second foil), in normal and inverse kinematics alike. Per foil `stopper`
+gives the beam's energy entering and leaving it (`beam_in_mev`, `beam_out_mev`, 0 when it stops there),
+`deposited_mev`, `power_w` = particle current × deposited energy against `power_limit_w` = 0.5 W (a stretched foil
+of a few mg/cm², cooled only by radiation, sheds about half a watt from a 1 cm² beam spot at about 900 K; above it
+the foil heats, sags and the distance drifts), and the foil's own Coulomb excitation by the beam: `lines` of its
+isotopes (those with at least 10% of its atoms), each with `yield_per_beam` (first-order Coulex cross sections of the
+level scheme, integrated over the foil from the entry energy down to where the beam leaves or half the entry
+energy) and `rate_per_s` (full-energy, all γ-ray detectors, singles); `missing` lists isotopes without level data
+(the setup's scheme for that nuclide, else the local ENSDF copy): physim says so rather than guess. A foil over the
+power limit and a foil line within 3 FWHM of a studied line's unshifted peak or its shifted peak at any detector are
+warnings, in the plan and the planner's banner; no level data is a note. For ⁹⁸Ru on Cu, for instance, ⁶³Cu's 670 keV
+line sits next to the 652 keV line shifted at 41.5°: gate on the particles or the feeding γ rays.
 
 **How the numbers are worked out.** The recoil is one typical nucleus
 (`Experiment.lifetime_recoil`): made in the middle of the target along the beam (Coulex in a
@@ -88,7 +120,8 @@ entries of the analysis's budget come on top.
 **Warnings** the plan gives: a Coulex plunger without deorientation for a level that lives longer than 1 ps (the
 recoil's alignment fades in vacuum, which biases the shifted/unshifted ratio at each angle); a level whose τ suits
 the other method; fewer than three distances in the sensitive range; peaks that no detector resolves; levels with no
-known τ.
+known τ; a DSAM backing far from the advice; a plunger foil taking more than 0.5 W of beam, or with Coulex lines near
+the studied ones.
 
 ## Predicted spectra
 
@@ -181,7 +214,7 @@ lifetime tools. Quantities are text with units, and the spectra's bins are left 
 
 | Tool | Does |
 |---|---|
-| `plan_lifetime_measurement(level?, method?, precision?)` | the plan above, per level; `method` plans as if the setup used that method, changing nothing |
+| `plan_lifetime_measurement(level?, method?, precision?)` | the plan above, per level (with the backing advice: the first five backings and the setup's); the beam in the plunger's foils; `method` plans as if the setup used that method, changing nothing |
 | `set_plunger(distances?, offset?, kind?, material?, thickness?, density?, second_foil?, deorientation?, method?, remove?)` | sets the `[lifetime]` section through the draft methods; returns the summary with problems and warnings |
 | `lifetime_spectra(distance?, level?)` | where the peaks are, the line's counts and the unshifted share per distance and angle |
 | `analyse_lifetimes(level?, method?)` | τ with its budget, the points, B(λ↓) and the comparison |
@@ -206,6 +239,13 @@ to the suite appears there without a change to the report.
   scattering's sideways velocity). The report quotes the suite's own numbers.
 - **One typical recoil in the plan.** The plan's speeds and separations are those of one recoil; the analysis takes
   the speed from the shifted peaks.
+- **The planner's choices against the papers'.** The recommended distances fall inside the papers' ranges to within
+  a factor 1.5 at each end (⁹⁸Ru 19–560 µm against 3–450 µm, ⁵⁰Cr 27–780 µm against 17–750 µm), and the paper's Au
+  backing for ¹⁴³Sm is within 80% of the best backing's sensitivity for every level (validation checks
+  `rdds_planner_distances`, `dsam_planner_backing`).
+- **The beam in the plunger's foils** is a warning, not part of the simulation: the runs do not add the foils' own
+  γ rays, the power limit is a rule of thumb for radiation-cooled foils, and the foils' Coulex is first order, below
+  half the entry energy left out.
 - **Line shapes near 90°** leave out the recoil's sideways velocity; time dilation is left out of DSAM (below 0.2%).
 - Not covered: fast electronic timing (LaBr₃), intermediate-energy plungers beyond the relativistic Doppler formula,
   lifetimes from Coulex reorientation.

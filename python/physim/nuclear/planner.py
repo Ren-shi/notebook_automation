@@ -993,11 +993,15 @@ class Planner:
             out.append(Warning(level, source, text))
         out += [Warning("warning", "physics", t) for t in self._stopping_shortfalls()]
         if self.experiment.lifetime is not None:
-            from .lifetime_plan import deorientation_warning
+            from .lifetime_plan import deorientation_warning, stopper_warnings
 
             text = deorientation_warning(self.experiment)
             if text:
                 out.append(Warning("warning", "physics", text))
+            # The beam in the plunger's foils: its heating and their own Coulomb excitation (kept for the setup,
+            # shared with Planner.lifetimes).
+            for text in stopper_warnings(self):
+                out.append(Warning("note" if text.startswith("No level data") else "warning", "physics", text))
         for p in _scene.problems(self.experiment):
             if p.kind == "overlap":  # a detector in the beam is already reported above
                 out.append(Warning("warning", "setup", p.text.replace("would overlap", "overlaps")

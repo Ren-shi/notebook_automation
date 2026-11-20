@@ -485,6 +485,392 @@ def degraded_beta(subject: Subject) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# DSAM backing advice (lifetime wave 4A)
+
+#: The usual DSAM backings, densest first (elements; their densities are the material table's).
+BACKING_CANDIDATES = ("Pt", "Au", "W", "Ta", "Pb", "Ag", "Cu", "Ni", "Fe", "C")
+#: A backing counts as good for a level when its sensitivity |dF/d ln τ| is at least this share of the best
+#: candidate's: σ_τ at most 25% larger for the same precision on F. The setup's backing below it is warned about.
+BACKING_GOOD = 0.8
+#: The thickness advised is this many times the thickness that stops the typical recoil: room for the recoils'
+#: spread of energies and directions and for the stopping's 5–10%.
+BACKING_MARGIN = 1.5
+#: Sample recoils per candidate's kernel (the same random numbers for every candidate, so they compare fairly).
+BACKING_SAMPLES = 250
+
+
+def _round_up(x: float, digits: int = 2) -> float:
+    """``x`` rounded up to ``digits`` significant figures."""
+    if not x > 0:
+        return 0.0
+    scale = 10.0 ** (math.floor(math.log10(x)) - digits + 1)
+    return math.ceil(x / scale - 1e-9) * scale
+
+
+def _um_of(mg_cm2: float, density: Optional[float]) -> Optional[float]:
+    return None if not density else 10.0 * mg_cm2 / density
+
+
+def backing_candidates(subject: Subject, seed: int = 1) -> list:
+    """The usual DSAM backings (:data:`BACKING_CANDIDATES`, plus the setup's own backing material when it is not
+    one of them) behind the setup's target, each as thick as :data:`BACKING_MARGIN` times what stops the typical
+    recoil (made in the middle of the target along the beam): per backing its material, density, the thickness to
+    stop the recoil and the thickness advised (mg/cm² and µm), the recoil's time to stop and the slowing-down time
+    α (:func:`physim.nuclear.lifetimes.slowing_time`), whether it is the setup's backing material, and its
+    slowing-down ``kernel`` (target and backing, ZBL scattering, :data:`BACKING_SAMPLES` recoils). These do not
+    depend on τ: :func:`backing_advice` ranks them for a level. Empty when the recoil does not reach the backing."""
+    from . import data, transport
+    from .rates import _after, stack, stopping
+
+    exp = subject.experiment
+    if subject.recoil is None or subject.recoil[1] <= 0:
+        return []
+    target = stack(exp)[0]
+    depth = 0.5 * float(target.thickness)
+    e_made = float(subject.recoil[1])
+    e_in = float(_after(stopping(subject.species, target.material), e_made, depth))
+    if e_in <= 0:
+        return []
+    setup_mat = exp.target.backing.material_data() if exp.target.backing is not None else None
+    materials = [data.material(name) for name in BACKING_CANDIDATES]
+    if setup_mat is not None and setup_mat.name not in {m.name for m in materials}:
+        materials.append(setup_mat)
+    out = []
+    for mat in materials:
+        stop_mg = float(stopping(subject.species, mat).range(e_in))
+        if not stop_mg > 0:
+            continue
+        thick = BACKING_MARGIN * stop_mg
+        segs = [transport.Segment(target.material, float(target.thickness), name="target"),
+                transport.Segment(mat, thick, name="backing")]
+        t_stop = float(transport.time_to_stop(segs, subject.species, subject.mass_mev, np.array([e_made]),
+                                              np.array([depth]))[0])
+        if not math.isfinite(t_stop) or t_stop <= 0:
+            continue
+        n = BACKING_SAMPLES
+        grid = np.r_[0.0, np.geomspace(1e-4 * 1.5 * t_stop, 1.5 * t_stop, 79)]
+        kernel = transport.kernel(segs, subject.species, subject.mass_mev, np.full(n, e_made),
+                                  np.tile([0.0, 0.0, 1.0], (n, 1)), np.full(n, depth), grid, scatter=True,
+                                  rng=np.random.default_rng([int(seed), 79]), n=n)
+        advised = _round_up(thick)
+        rho = mat.density_g_cm3
+        out.append({"material": mat.name, "density_g_cm3": rho, "thickness_to_stop_mg_cm2": stop_mg,
+                    "thickness_to_stop_um": _um_of(stop_mg, rho), "thickness_mg_cm2": advised,
+                    "thickness_um": _um_of(advised, rho), "time_to_stop_ps": t_stop,
+                    "slowing_time_ps": float(lt.slowing_time(kernel)),
+                    "setup": setup_mat is not None and mat.name == setup_mat.name, "kernel": kernel})
+    return out
+
+
+def backing_advice(tau_ps: float, candidates: list) -> list:
+    """The candidates of :func:`backing_candidates` ranked for a level of mean life ``tau_ps``, best first: each
+    with ``attenuation`` F(τ) and ``sensitivity`` |dF/d ln τ| (:func:`physim.nuclear.lifetimes.dsam_sensitivity`;
+    σ_τ/τ = σ_F / sensitivity, so the larger the better: at most about 1/4, where the slowing-down time matches τ
+    and F is near 1/2), ``relative_sensitivity`` (its share of the best's) and ``good`` (at least
+    :data:`BACKING_GOOD` of the best's), without the kernels."""
+    rows = []
+    for c in candidates:
+        row = {k: v for k, v in c.items() if k != "kernel"}
+        row["attenuation"] = float(lt.dsam_attenuation(tau_ps, c["kernel"]))
+        row["sensitivity"] = float(lt.dsam_sensitivity(tau_ps, c["kernel"]))
+        rows.append(row)
+    rows.sort(key=lambda r: -r["sensitivity"])
+    best = rows[0]["sensitivity"] if rows else 0.0
+    for r in rows:
+        r["relative_sensitivity"] = r["sensitivity"] / best if best > 0 else 0.0
+        r["good"] = bool(r["relative_sensitivity"] >= BACKING_GOOD)
+    return rows
+
+
+def _kept(planner, key, make):
+    """``make()`` kept in the planner's results for this setup (shared by the plan and the warnings banner)."""
+    cache = getattr(planner, "_cache", None)
+    if cache is None:
+        return make()
+    if key not in cache:
+        cache[key] = make()
+    return cache[key]
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The beam in the plunger's foils: heating and the foils' own Coulomb excitation (lifetime wave 4A)
+
+#: The beam power (W) a plunger's foil takes: a stretched foil of a few mg/cm², cooled only by radiation, sheds
+#: about half a watt from a 1 cm² beam spot at about 900 K (both faces, emissivity about 0.1); above that it heats
+#: further, sags and the distance drifts, and thin Au or Cu foils can melt.
+STOPPER_POWER_W = 0.5
+#: A foil's γ-ray line within this many FWHM of a studied line's unshifted or shifted peak is warned about.
+NEAR_FWHM = 3.0
+#: Isotopes of a foil's material below this share of its atoms are left out of its Coulomb excitation.
+STOPPER_ISOTOPE_SHARE = 0.1
+#: A foil's lines weaker than this share of its strongest are left out.
+STOPPER_MIN_LINE = 0.01
+#: The beam energies (shares of its energy entering the foil, down to where it leaves) at which the foil's Coulomb
+#: excitation is worked out and integrated over the foil; below half the energy it is left out (much weaker).
+STOPPER_ENERGY_STEPS = (1.0, 0.75, 0.5)
+#: The foil's nuclei's levels up to this energy (keV).
+STOPPER_MAX_KEV = 3000.0
+#: Angle step (degrees) of the foil's Coulomb-excitation cross sections.
+STOPPER_ANGLE_STEP = 2.0
+_MEV_J = 1.602176634e-13
+
+
+def _stopper_scheme(experiment, nuclide: str):
+    """(level scheme of ``nuclide``, or None, and where it came from or why there is none): a scheme of the setup
+    for that nuclide, else the local ENSDF copy's adopted levels up to :data:`STOPPER_MAX_KEV`."""
+    for scheme in (experiment.levels or {}).values():
+        if getattr(scheme, "nuclide", None) == nuclide and scheme.transitions:
+            return scheme, "the setup's level scheme"
+    from . import ensdf
+    from .levels import LevelScheme
+
+    try:
+        return LevelScheme.from_ensdf(nuclide, STOPPER_MAX_KEV), "ENSDF"
+    except ensdf.EnsdfMissing as e:
+        return None, str(e)
+    except Exception as e:  # noqa: BLE001 - no scheme: said, not guessed
+        return None, f"its ENSDF levels could not be read ({e})"
+
+
+def _gamma_cross_sections(ex, step: float) -> dict:
+    """{(initial, final): σ of the γ ray, mb} of an :class:`~physim.nuclear.orientation.Excitation`, as its
+    ``cross_sections`` works them out (each level's direct excitation probability times the Rutherford cross section
+    of its orbit, integrated over CM angles ``step`` apart; the decays share them out), from the populations alone:
+    the substates' orientation, which costs ten times more and does not change a cross section, is left out."""
+    grid = np.arange(step, 180.0 + step / 2, step)
+    th = np.radians(grid)
+    probs = {n: np.zeros(len(grid)) for n in ex.paths}
+    for k, t in enumerate(grid):
+        for n, m in ex._direct(float(t)).items():
+            probs[n][k] = float(np.trace(m).real)
+    levels = ex.scheme.levels
+    populated = {n: float(2 * math.pi * np.sum(p * np.asarray(ex.paths[n][0][2].rutherford_cm(grid)) * np.sin(th))
+                          * math.radians(step)) for n, p in probs.items()}
+    for n in sorted(set(populated) | {d.initial for d in ex._decays.values()}, key=lambda k: -levels[k].energy.value):
+        for (i, f), d in ex._decays.items():
+            if i == n and populated.get(n):
+                populated[f] = populated.get(f, 0.0) + d.branch * populated[n]
+    return {(i, f): populated.get(i, 0.0) * d.gamma for (i, f), d in ex._decays.items()}
+
+
+def _foil_coulex(experiment, beam: str, mat, e_in: float, e_out: float) -> dict:
+    """The foil's own Coulomb excitation by the beam entering it at ``e_in`` (MeV) and leaving at ``e_out`` (0 if
+    it stops): per isotope (share ≥ :data:`STOPPER_ISOTOPE_SHARE`) its γ-ray lines with their yield per beam
+    particle, the cross sections integrated over the foil from ``e_in`` down to ``e_out`` or half of ``e_in``
+    (trapezoids at :data:`STOPPER_ENERGY_STEPS`). Isotopes without level data are listed in ``missing``."""
+    from . import data
+    from .gamma import level_names
+    from .orientation import Excitation
+    from .rates import stopping
+
+    st = stopping(beam, mat)
+    energies = [e_in * f for f in STOPPER_ENERGY_STEPS if e_in * f > e_out]
+    if e_out > 0 and (not energies or energies[-1] > e_out):
+        energies.append(e_out)
+    per_mg = {}
+    for z, a, share in mat.atoms:
+        per_mg[(z, a)] = per_mg.get((z, a), 0.0) + share * 1e-3 * 6.02214076e23 / mat.molar_mass
+    total = sum(per_mg.values()) or 1.0
+    lines, missing, sources, notes = [], [], {}, []
+    for key, n_mg in sorted(per_mg.items(), key=lambda kv: -kv[1]):
+        if n_mg / total < STOPPER_ISOTOPE_SHARE:
+            continue
+        nuc = data.nuclide(key).name
+        scheme, source = _stopper_scheme(experiment, nuc)
+        if scheme is None:
+            missing.append({"nuclide": nuc, "why": source})
+            continue
+        sources[nuc] = source
+        names = level_names(scheme.levels)
+        sigma = []
+        try:
+            for e in energies:
+                sigma.append(_gamma_cross_sections(Excitation(beam, nuc, e, scheme, excite="target"),
+                                                   STOPPER_ANGLE_STEP))
+        except Exception as ex:  # noqa: BLE001 - said, not guessed
+            missing.append({"nuclide": nuc, "why": f"its Coulomb excitation could not be worked out ({ex})"})
+            continue
+        ranges = [float(st.range(e)) for e in energies]
+        for (i, f) in sorted(set().union(*sigma)) if sigma else []:
+            y = 0.0
+            for k in range(len(energies) - 1):
+                path = ranges[k] - ranges[k + 1]  # mg/cm² between the two energies
+                y += 0.5 * (sigma[k].get((i, f), 0.0) + sigma[k + 1].get((i, f), 0.0)) * 1e-27 * n_mg * path
+            e_line = scheme.levels[i].energy.value - scheme.levels[f].energy.value
+            if y > 0 and e_line > 0:
+                lines.append({"nuclide": nuc, "gamma_kev": float(e_line), "transition": f"{names[i]} → {names[f]}",
+                              "yield_per_beam": float(y)})
+    if lines:
+        top = max(x["yield_per_beam"] for x in lines)
+        lines = sorted((x for x in lines if x["yield_per_beam"] >= STOPPER_MIN_LINE * top),
+                       key=lambda x: -x["yield_per_beam"])
+    if energies and energies[-1] > 0 and e_out <= 0 and len(energies) > 1:
+        notes.append(f"Coulomb excitation below {energies[-1]:.3g} MeV, half the energy entering the foil, is "
+                     "left out (much weaker).")
+    return {"lines": lines, "missing": missing, "sources": sources, "energies_mev": energies, "notes": notes}
+
+
+def _foils(experiment) -> list:
+    """The plunger's foils in the beam's way: [(name, material, thickness mg/cm²)] from the recoil's path."""
+    from .rates import recoil_stack
+
+    lt_ = experiment.lifetime
+    if lt_ is None or lt_.method != "rdds" or lt_.stopper is None:
+        return []
+    segs = recoil_stack(experiment, 0.0)
+    g1 = [s.name for s in segs].index("gap")
+    return [(s.name, s.material, float(s.thickness_mg_cm2)) for s in segs[g1 + 1:] if not s.vacuum]
+
+
+def stopper_beam(planner) -> list:
+    """What the beam does in the plunger's foils (the stopper; for a differential plunger the degrader and the
+    second foil), kept for the setup: the beam passes the target and flies on into them, in normal and inverse
+    kinematics alike. Per foil: ``foil``, ``material``, ``thickness_mg_cm2``, the beam's energy entering and
+    leaving (``beam_in_mev``, ``beam_out_mev``; 0 when it stops there), ``deposited_mev``, ``power_w`` (particle
+    current × deposited energy) against ``power_limit_w`` (:data:`STOPPER_POWER_W`), and the foil's own Coulomb
+    excitation by the beam (:func:`_foil_coulex`): ``lines`` with ``yield_per_beam`` and ``rate_per_s`` (full-energy
+    counts per second in all γ-ray detectors, singles), ``missing`` [{``nuclide``, ``why``}] for isotopes without level
+    data, ``sources``. Empty without a plunger, or when the beam stops before it."""
+    def make():
+        from .rates import _after, beam_energy_at, beam_ion, stack, stopping
+
+        exp = planner.experiment
+        foils = _foils(exp)
+        if not foils:
+            return []
+        layers = stack(exp)
+        e = float(beam_energy_at(exp, len(layers) - 1, [layers[-1].thickness], layers)[0])
+        beam = beam_ion(exp)
+        pps = float(exp.beam.particles_per_second)
+        out = []
+        for name, mat, thick in foils:
+            if e <= 0:
+                break
+            e_out = float(_after(stopping(beam, mat), e, thick))
+            dep = e - e_out
+            row = {"foil": name, "material": mat.name, "thickness_mg_cm2": thick, "beam_in_mev": e,
+                   "beam_out_mev": e_out, "deposited_mev": dep, "power_w": pps * dep * _MEV_J,
+                   "power_limit_w": STOPPER_POWER_W, "particles_per_s": pps}
+            cx = _foil_coulex(exp, beam, mat, e, e_out)
+            for line in cx["lines"]:
+                line["rate_per_s"] = (line["yield_per_beam"] * pps * _efficiency(exp, line["gamma_kev"])
+                                      if exp.gamma_detectors else None)
+            row.update(lines=cx["lines"], missing=cx["missing"], sources=cx["sources"], notes=cx["notes"])
+            out.append(row)
+            e = e_out
+        return out
+
+    return _kept(planner, ("lifetimes", "stopper"), make)
+
+
+def nucleus_lines(experiment) -> tuple:
+    """([(level name, γ-ray keV)], β in the plunger's gap) of the studied nucleus, for the foils' lines to be held
+    against: Coulomb excitation's every transition of the excited nucleus's scheme; fusion-evaporation's studied
+    residue's lines fed with at least :data:`MIN_YIELD` of the strongest. Cheap: no rates, for the banner."""
+    from . import data
+
+    lines = []
+    if experiment.excitation is not None:
+        from .gamma import cascade_excitation, excitation_of, level_names
+
+        try:
+            cex = cascade_excitation(experiment)
+            scheme = cex.scheme if cex is not None else excitation_of(experiment).scheme
+        except Exception:  # noqa: BLE001 - no lines: nothing to hold the foils' lines against
+            scheme = None
+        if scheme is not None:
+            names = level_names(scheme.levels)
+            lines = [(names[t.initial], float(t.energy.value)) for t in scheme.transitions
+                     if t.energy is not None and t.energy.value > 0]
+    elif experiment.fusion is not None:
+        from .gamma import level_names
+        from .residues import lifetime_cascade
+
+        try:
+            cas = lifetime_cascade(experiment)
+        except Exception:  # noqa: BLE001
+            cas = None
+        if cas is not None and cas["yields"]:
+            names = level_names(cas["cascade"].scheme.levels)
+            top = max(cas["yields"].values())
+            for i, f, e, _g in cas["lines"]:
+                if cas["yields"].get((i, f), 0.0) >= MIN_YIELD * top and i < len(names):
+                    lines.append((names[i], float(e)))
+    recoil = experiment.lifetime_recoil()
+    beta = _beta(recoil[2], data.nuclide(recoil[0]).nuclear_mass_mev) if recoil is not None else 0.0
+    return lines, beta
+
+
+def stopper_warnings(planner) -> list:
+    """The warnings about the beam in the plunger's foils (:func:`stopper_beam`): a foil taking more beam power
+    than :data:`STOPPER_POWER_W`, a foil's own Coulomb-excitation line within :data:`NEAR_FWHM` FWHM of a studied
+    line's unshifted or shifted peak (:func:`nucleus_lines`), and a foil whose nuclei have no level data (said,
+    not guessed). The planner's banner and :meth:`~physim.nuclear.planner.Planner.lifetimes` show the same."""
+    exp = planner.experiment
+    try:
+        foils = stopper_beam(planner)
+    except Exception as e:  # noqa: BLE001 - a planning aid: say it could not be worked out
+        return [f"The beam in the plunger's foils could not be worked out ({e})."]
+    if not foils:
+        return []
+    out = []
+    current_pna = float(exp.beam.particle_current_pna)
+    for f in foils:
+        where = f"the plunger's {f['thickness_mg_cm2']:.3g} mg/cm² {f['material']} {f['foil']}"
+        if f["power_w"] > f["power_limit_w"]:
+            how = "it stops there" if f["beam_out_mev"] <= 0 else f"it leaves at {f['beam_out_mev']:.3g} MeV"
+            out.append(f"The beam deposits {f['power_w']:.2g} W in {where} ({current_pna:.3g} pnA × "
+                       f"{f['deposited_mev']:.3g} MeV of its {f['beam_in_mev']:.3g} MeV; {how}): more than the "
+                       f"{f['power_limit_w']:g} W a thin stretched foil cooled only by radiation takes (about half a "
+                       "watt from a 1 cm² beam spot at 900 K), so it heats, sags and the distance drifts. Keep the "
+                       f"current under {current_pna * f['power_limit_w'] / f['power_w']:.2g} pnA, spread the beam "
+                       "spot, or use a cooled stopper.")
+    lines, beta = nucleus_lines(exp)
+    resolution = detector_resolution(exp) if exp.gamma_detectors else []
+    for f in foils:
+        where = f"the plunger's {f['material']} {f['foil']}"
+        near = []
+        for x in f["lines"]:
+            hit = _near(x["gamma_kev"], lines, beta, resolution)
+            if hit is not None:
+                near.append((x, hit))
+        if near:
+            parts = []
+            for x, (level, e_line, what, d, fw) in near[:4]:
+                rate = f", {x['rate_per_s']:.3g}/s in the γ-ray detectors (singles)" if x.get("rate_per_s") else ""
+                parts.append(f"{x['nuclide']} {x['gamma_kev']:.1f} keV ({x['transition']}{rate}) is {abs(d):.1f} keV "
+                             f"from the {e_line:.1f} keV line of {level} {what} (FWHM {fw:.2g} keV)")
+            out.append(f"The beam ({f['beam_in_mev']:.3g} MeV) Coulomb-excites {where}, and its lines sit near the "
+                       "studied ones: " + "; ".join(parts) + ". Gate on the particles or on the feeding γ rays, or "
+                       "choose a stopper material without lines there.")
+        if f["missing"]:
+            nucs = ", ".join(m["nuclide"] for m in f["missing"])
+            out.append(f"No level data for {where} ({nucs}): its own Coulomb excitation by the beam "
+                       f"({f['beam_in_mev']:.3g} MeV entering it) could not be checked for lines near the studied "
+                       "ones. With a local ENSDF copy physim checks it.")
+    return out
+
+
+def _near(e_foil: float, lines: list, beta: float, resolution: list) -> Optional[tuple]:
+    """The closest studied line's peak within :data:`NEAR_FWHM` FWHM of a foil's line at ``e_foil`` keV:
+    (level, its γ-ray keV, "unshifted" or "shifted at θ°", distance keV, FWHM keV), or None. The unshifted peak and
+    the shifted one at each γ-ray detector's angle (speed ``beta``); without detectors, 2 keV FWHM."""
+    best = None
+    dets = resolution or [("", None, lambda e: 2.0)]
+    for level, e0 in lines:
+        for _name, theta, fwhm in dets:
+            fw = float(fwhm(e0))
+            peaks = [("unshifted", e0)]
+            if theta is not None and beta > 0:
+                peaks.append((f"shifted at {theta:g}°", e0 + float(lt.peak_separation(e0, beta, theta))))
+            for what, e in peaks:
+                d = e_foil - e
+                if abs(d) <= NEAR_FWHM * fw and (best is None or abs(d) / fw < abs(best[3]) / best[4]):
+                    best = (level, e0, what, d, fw)
+    return best
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # Planner.lifetimes
 
 
@@ -495,7 +881,8 @@ def _empty(subject: Optional[Subject], experiment, precision: float) -> dict:
             "method": lt_.method if lt_ is not None else None,
             "distances_um": list(lt_.distances_um) if lt_ is not None and lt_.method == "rdds" else [],
             "offset_um": float(lt_.offset_um) if lt_ is not None else 0.0,
-            "precision": float(precision), "levels": [], "time_to_stop_ps": None, "problems": [], "warnings": []}
+            "precision": float(precision), "levels": [], "time_to_stop_ps": None, "problems": [], "warnings": [],
+            "stopper": []}
 
 
 def plan(planner, level=None, precision: float = DEFAULT_PRECISION) -> dict:
@@ -559,7 +946,7 @@ def plan(planner, level=None, precision: float = DEFAULT_PRECISION) -> dict:
                "tau_ps": tau, "tau_source": source, "beta": beta, "method": meth,
                "recommended_distances_um": [], "sensitive_um": None, "separation": [], "attenuation": None,
                "hours_per_distance": None, "rate_per_s": subject.rates.get(i), "distances_used_um": [],
-               "counts_per_distance": None, "note": None}
+               "counts_per_distance": None, "note": None, "backing_advice": None}
         if tau is None:
             no_tau.append(name)
             row["note"] = "No known lifetime: give the level a half-life, or its transition a B(E2), in the scheme."
@@ -589,6 +976,19 @@ def plan(planner, level=None, precision: float = DEFAULT_PRECISION) -> dict:
         if tau is not None and tau > DEORIENTATION_TAU_PS:
             long_lived.append(name)
         out["levels"].append(row)
+    # DSAM backing advice for the levels DSAM would measure (every level with a τ in a DSAM setup).
+    advised = [r for r in out["levels"] if r["tau_ps"] is not None
+               and (r["method"] == "dsam" or (subject.method == "dsam" and r["method"] != "outside"))]
+    if advised:
+        try:
+            candidates = _kept(planner, ("lifetimes", "backings"), lambda: backing_candidates(subject))
+        except Exception as e:  # noqa: BLE001 - no advice; the warnings say why
+            candidates = []
+            warnings.append(f"The DSAM backing advice could not be worked out ({e}).")
+        for r in advised:
+            r["backing_advice"] = backing_advice(r["tau_ps"], candidates) if candidates else None
+    out["stopper"] = [{k: v for k, v in f.items()} for f in stopper_beam(planner)] \
+        if subject.method == "rdds" else []
     _plan_warnings(subject, out, no_tau, long_lived)
     return out
 
@@ -666,6 +1066,32 @@ def _plan_warnings(subject: Subject, out: dict, no_tau: list, long_lived: list) 
     if lt_ is not None and lt_.method == "dsam":
         w.append("DSAM line shapes depend on the stopping powers (about 5–10%), and two of physim's DSAM checks are "
                  "known failures (the report's lifetime section lists them): treat F(τ) as a guide.")
+        w.extend(_backing_warnings(subject, studied))
+    if lt_ is not None and lt_.method == "rdds":
+        w.extend(stopper_warnings(subject.planner))
+
+
+def _backing_warnings(subject: Subject, studied: dict) -> list:
+    """A DSAM setup's backing against the advice for the studied level: warned about when its sensitivity is under
+    :data:`BACKING_GOOD` of the best candidate's. (A backing that does not stop the recoil, or none when the recoil
+    leaves the target, is already a problem of the setup.)"""
+    advice = studied.get("backing_advice")
+    if not advice or subject.experiment.target.backing is None:
+        return []
+    best = advice[0]
+    tau = studied["tau_ps"]
+    best_text = (f"{best['material']} (F = {best['attenuation']:.2f}, |dF/d ln τ| = {best['sensitivity']:.3f}; "
+                 f"{best['thickness_mg_cm2']:.2g} mg/cm²" + (f" = {best['thickness_um']:.2g} µm" if best.get(
+                     "thickness_um") else "") + f", slowing-down time {best['slowing_time_ps']:.2g} ps)")
+    out = []
+    mine = next((r for r in advice if r["setup"]), None)
+    if mine is not None and not mine["good"]:
+        out.append(f"The {mine['material']} backing gives {studied['level']} (τ = {tau:.3g} ps) F = "
+                   f"{mine['attenuation']:.2f} with |dF/d ln τ| = {mine['sensitivity']:.3f}, "
+                   f"{100 * mine['relative_sensitivity']:.0f}% of the best of the usual backings, {best_text}: σ_τ "
+                   f"would be {1 / max(mine['relative_sensitivity'], 1e-9):.2g} times larger for the same line-shape "
+                   f"precision. Its slowing-down time is {mine['slowing_time_ps']:.2g} ps against τ.")
+    return out
 
 
 # ---------------------------------------------------------------------------------------------------------------
