@@ -76,8 +76,55 @@ def level_plan(row: dict) -> dict:
         out["beam_time_per_distance"] = _time(3600 * row["hours_per_distance"])
         out["counts_per_distance"] = round(float(row["counts_per_distance"]))
         out["at_distances"] = _um(row["distances_used_um"])
+    if row.get("backing_advice"):
+        out["backing_advice"] = backing_view(row["backing_advice"])
     if row["note"]:
         out["note"] = row["note"]
+    return out
+
+
+#: The backings listed per level (the setup's is added when it is not among them).
+BACKINGS_SHOWN = 5
+
+
+def backing_view(advice: list) -> list:
+    """The DSAM backing advice of a level, best first, as text with units: the first :data:`BACKINGS_SHOWN` and
+    the setup's backing material."""
+    out = []
+    for rank, c in enumerate(advice, start=1):
+        if rank > BACKINGS_SHOWN and not c.get("setup"):
+            continue
+        um = (lambda x: f" ({x:.2g} um)" if x else "")
+        row = {"rank": rank, "material": c["material"],
+               "attenuation_F": round(float(c["attenuation"]), 3),
+               "sensitivity_dF_dlntau": round(float(c["sensitivity"]), 4),
+               "of_best": f"{100 * c['relative_sensitivity']:.0f} %",
+               "slowing_down_time": _ps(c["slowing_time_ps"], 3), "time_to_stop": _ps(c["time_to_stop_ps"], 3),
+               "thickness_to_stop": f"{c['thickness_to_stop_mg_cm2']:.3g} mg/cm2{um(c.get('thickness_to_stop_um'))}",
+               "thickness_advised": f"{c['thickness_mg_cm2']:.2g} mg/cm2{um(c.get('thickness_um'))}"}
+        if c.get("setup"):
+            row["setup_backing"] = True
+        out.append(row)
+    return out
+
+
+def foil_view(f: dict) -> dict:
+    """The beam in one of the plunger's foils as text with units."""
+    out: dict[str, Any] = {
+        "foil": f"{f['thickness_mg_cm2']:.3g} mg/cm2 {f['material']} {f['foil']}",
+        "beam": f"{f['beam_in_mev']:.4g} MeV in, " + ("stops in it" if f["beam_out_mev"] <= 0 else
+                                                    f"{f['beam_out_mev']:.4g} MeV out"),
+        "power": f"{f['power_w']:.3g} W ({f['deposited_mev']:.4g} MeV per particle); limit {f['power_limit_w']:g} W"}
+    lines = []
+    for x in f.get("lines") or []:
+        line = f"{x['nuclide']} {x['gamma_kev']:.1f} keV ({x['transition']})"
+        if x.get("rate_per_s"):
+            line += f": {x['rate_per_s']:.3g} /s in the γ-ray detectors (singles)"
+        lines.append(line)
+    if lines:
+        out["coulex_lines"] = lines[:8]
+    if f.get("missing"):
+        out["no_level_data"] = [m["nuclide"] for m in f["missing"]]
     return out
 
 
@@ -99,6 +146,8 @@ def plan_view(plan: dict) -> dict:
     if plan["time_to_stop_ps"]:
         out["time_to_stop"] = _ps(plan["time_to_stop_ps"], 3)
     out["levels"] = [level_plan(row) for row in plan["levels"]]
+    if plan.get("stopper"):
+        out["beam_in_plunger_foils"] = [foil_view(f) for f in plan["stopper"]]
     out["problems"] = list(plan["problems"])
     out["warnings"] = list(plan["warnings"])
     return plain(out)
@@ -181,8 +230,11 @@ class LifetimeTools:
         listed, the studied one first. For each: tau and where it comes from (ENSDF half-life, the setup's B(E2),
         typed), the method that suits it (plunger "rdds" for about 1 ps to 1 ns, "dsam" for 10 fs to 1 ps), the
         recoil's speed, the recommended plunger distances and sensitive range, the shifted-unshifted peak
-        separation at each γ-ray detector angle against its resolution, F(tau) for DSAM on the backing, and the
-        beam time per distance for the wanted precision on tau (0.1 = 10%, statistics only). method "rdds" or
+        separation at each γ-ray detector angle against its resolution, F(tau) for DSAM on the backing, the
+        DSAM backing advice (the usual backings ranked by the sensitivity |dF/d ln tau|, with F(tau), the
+        slowing-down time and the thickness to stop the recoil), and the beam time per distance for the wanted
+        precision on tau (0.1 = 10%, statistics only). For a plunger, the beam in its foils: the power it deposits
+        against what a thin foil takes, and the foils' own Coulomb-excitation lines. method "rdds" or
         "dsam" plans as if the setup used that method (nothing is changed; set_plunger changes it). Read the
         problems and warnings."""
         p = self.session.require()

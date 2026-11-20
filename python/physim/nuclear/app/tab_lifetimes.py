@@ -179,6 +179,16 @@ def render_plan(ctx, plan: dict) -> None:
         if first.get("attenuation") is not None:
             cells.append(("Attenuation F(τ)", f"{first['attenuation']:.3f}",
                           "share of the full Doppler shift the line keeps", ""))
+        advice = first.get("backing_advice") or []
+        if advice:
+            best = advice[0]
+            mine = next((c for c in advice if c.get("setup")), None)
+            sub = f"{best['thickness_mg_cm2']:.2g} mg/cm² to stop it, F = {best['attenuation']:.2f}"
+            colour = ""
+            if mine is not None and mine is not best:
+                sub += f"; the setup's {mine['material']}: {100 * mine['relative_sensitivity']:.0f}% as sensitive"
+                colour = "ps-ok" if mine.get("good") else "ps-warn"
+            cells.append(("Best backing", best["material"], sub, colour))
         if first.get("hours_per_distance") is not None:
             what = "per distance" if first.get("method") == "rdds" else "in all"
             cells.append(("Beam time " + what, _time(3600 * first["hours_per_distance"]),
@@ -194,7 +204,60 @@ def render_plan(ctx, plan: dict) -> None:
     if first is not None and first.get("separation"):
         separation_table(ctx, first)
     distances_line(ctx, plan, first)
+    advised = next((lev for lev in levels if lev.get("backing_advice")), None)
+    if advised is not None:
+        backing_table(ctx, advised)
+    if plan.get("stopper"):
+        stopper_table(ctx, plan)
     _checks(ui, plan)
+
+
+def backing_table(ctx, lev: dict) -> None:
+    """The DSAM backing advice for a level (``backing_advice`` of ``Planner.lifetimes``): the usual backings
+    ranked by how sensitive F(τ) is to τ on each."""
+    ui = ctx.ui
+    rows = []
+    for k, c in enumerate(lev["backing_advice"]):
+        um = (lambda x: f" ({x:.2g} µm)" if x else "")
+        rows.append({
+            "k": k, "m": ("● " if c.get("setup") else "") + c["material"],
+            "f": f"{c['attenuation']:.3f}", "s": f"{c['sensitivity']:.3f}",
+            "r": f"{100 * c['relative_sensitivity']:.0f}%" + (" ✓" if c.get("good") else ""),
+            "a": _tau(c.get("slowing_time_ps")), "t": _tau(c.get("time_to_stop_ps")),
+            "stop": f"{c['thickness_to_stop_mg_cm2']:.3g}{um(c.get('thickness_to_stop_um'))}",
+            "adv": f"{c['thickness_mg_cm2']:.2g}{um(c.get('thickness_um'))}"})
+    ui.label(f"DSAM backing for {lev.get('level', '')} (τ = {_tau(lev.get('tau_ps'))})").classes("ps-section mt-2")
+    ui.table(columns=ctx.columns((("m", "Backing"), ("f", "F(τ)"), ("s", "|dF/d ln τ|"), ("r", "Of the best"),
+                                  ("a", "Slowing time"), ("t", "Time to stop"), ("stop", "To stop (mg/cm²)"),
+                                  ("adv", "Advised (mg/cm²)"))),
+             rows=rows, row_key="k").props("dense flat").classes("w-full")
+    ui.label("Ranked by |dF/d ln τ|: σ_τ/τ = σ_F / |dF/d ln τ|, best (about 1/4) when the slowing-down time matches "
+             "τ and F is near ½. ✓ within 80% of the best; ● the setup's backing material. Advised: 1.5 times the "
+             "thickness that stops the typical recoil.").classes("text-xs ps-muted")
+
+
+def stopper_table(ctx, plan: dict) -> None:
+    """The beam in the plunger's foils (``stopper`` of ``Planner.lifetimes``): its power and the foils' own
+    Coulomb-excitation lines."""
+    ui = ctx.ui
+    rows = []
+    for k, f in enumerate(plan["stopper"]):
+        lines = ", ".join(f"{x['nuclide']} {x['gamma_kev']:.0f}" for x in (f.get("lines") or [])[:3])
+        if f.get("missing"):
+            lines = (lines + "; " if lines else "") + "no level data: " + ", ".join(
+                m["nuclide"] for m in f["missing"])
+        over = f["power_w"] > f["power_limit_w"]
+        rows.append({"k": k, "foil": f"{f['thickness_mg_cm2']:.3g} mg/cm² {f['material']} {f['foil']}",
+                     "e": f"{f['beam_in_mev']:.3g} → {f['beam_out_mev']:.3g}",
+                     "p": f"{f['power_w']:.2g} W" + (" ⚠" if over else ""), "lim": f"{f['power_limit_w']:g} W",
+                     "lines": lines or "—"})
+    ui.label("The beam in the plunger's foils").classes("ps-section mt-2")
+    ui.table(columns=ctx.columns((("foil", "Foil"), ("e", "Beam in → out (MeV)"), ("p", "Power"),
+                                  ("lim", "Limit"), ("lines", "Its Coulex lines (keV)"))),
+             rows=rows, row_key="k").props("dense flat").classes("w-full")
+    ui.label("The beam that passes the target stops in (or crosses) the plunger's foils: it heats them (a thin "
+             "stretched foil cooled by radiation takes about half a watt) and Coulomb-excites their nuclei, whose "
+             "lines are warned about when they sit near the studied ones.").classes("text-xs ps-muted")
 
 
 def levels_table(ctx, plan: dict) -> None:

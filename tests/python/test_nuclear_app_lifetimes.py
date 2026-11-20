@@ -313,6 +313,56 @@ def test_the_dsam_analysis_and_a_failing_plan(monkeypatch, tmp_path):
     _on_page(failing, example="fusion_sm143_dsam")
 
 
+#: Wave 4A's keys (made-up numbers): a level's DSAM backing advice and the beam in the plunger's foils.
+BACKINGS = [
+    {"material": "Cu", "density_g_cm3": 8.96, "attenuation": 0.49, "sensitivity": 0.296, "relative_sensitivity": 1.0,
+     "good": True, "slowing_time_ps": 0.45, "time_to_stop_ps": 0.98, "thickness_to_stop_mg_cm2": 1.55,
+     "thickness_to_stop_um": 1.73, "thickness_mg_cm2": 2.4, "thickness_um": 2.68, "setup": False},
+    {"material": "Au", "density_g_cm3": 19.32, "attenuation": 0.42, "sensitivity": 0.21, "relative_sensitivity": 0.71,
+     "good": False, "slowing_time_ps": 0.35, "time_to_stop_ps": 0.88, "thickness_to_stop_mg_cm2": 2.76,
+     "thickness_to_stop_um": 1.43, "thickness_mg_cm2": 4.2, "thickness_um": 2.17, "setup": True}]
+FOILS = [{"foil": "stopper", "material": "Cu", "thickness_mg_cm2": 15.7, "beam_in_mev": 263.0, "beam_out_mev": 0.0,
+          "deposited_mev": 263.0, "power_w": 0.72, "power_limit_w": 0.5, "particles_per_s": 1.7e10,
+          "lines": [{"nuclide": "63Cu", "gamma_kev": 669.7, "transition": "1/2- → 3/2-", "yield_per_beam": 1e-6,
+                     "rate_per_s": 31.0}],
+          "missing": [{"nuclide": "65Cu", "why": "no ENSDF"}], "sources": {"63Cu": "ENSDF"}, "notes": []}]
+
+
+def _table_texts(user) -> str:
+    from nicegui import ui
+
+    return " | ".join(str(v) for e in user.find(kind=ui.table).elements for row in e.rows for v in row.values())
+
+
+def test_the_backing_advice_and_the_beam_in_the_foils(monkeypatch, tmp_path):
+    monkeypatch.setenv("PHYSIM_EXPERIMENTS", str(tmp_path))
+    dsam = dict(LIFETIMES, method="dsam", levels=[dict(LIFETIMES["levels"][0], method="dsam", attenuation=0.42,
+                                                       separation=[], backing_advice=BACKINGS)])
+    _patch(monkeypatch, lifetimes=dsam, analysis=LINESHAPE,
+           spectra=dict(SPECTRA, method="dsam", spectra=[dict(s, distance_um=None) for s in SPECTRA["spectra"][:2]]))
+
+    async def scenario(user):
+        await user.should_see("Lifetimes · Line shapes (DSAM)")
+        texts = _texts(user) + _table_texts(user)
+        for part in ("Best backing", "the setup's Au: 71% as sensitive", "DSAM backing for 2+", "|dF/d ln τ|",
+                     "● Au", "0.296", "100% ✓", "2.4 (2.7 µm)"):
+            assert part in texts, part
+        assert "The beam in the plunger's foils" not in texts
+
+    _on_page(scenario, example="fusion_sm143_dsam")
+    _patch(monkeypatch, lifetimes=dict(LIFETIMES, stopper=FOILS))
+
+    async def plunger(user):
+        await user.should_see("Lifetimes · Plunger (RDDS)")
+        texts = _texts(user) + _table_texts(user)
+        for part in ("The beam in the plunger's foils", "15.7 mg/cm² Cu stopper", "263 → 0", "0.72 W ⚠", "0.5 W",
+                     "63Cu 670", "no level data: 65Cu"):
+            assert part in texts, part
+        assert "DSAM backing for" not in texts
+
+    _on_page(plunger, example="coulex_ru98_plunger")
+
+
 #: The bottom of 50Cr's yrast band typed in from ENSDF (adopted levels and γ rays of 50Cr, NDS 157, 1 (2019)), as in
 #: test_nuclear_fusion_runs.py, so the fusion runs here have a cascade (hence γγ coincidences) without a local
 #: ENSDF copy (CI has none).

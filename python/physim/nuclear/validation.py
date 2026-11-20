@@ -2240,6 +2240,46 @@ def rdds_cr50_reproduction(ref):
     return res["passed"], res["worst"], 2, res["detail"], plot
 
 
+#: The papers' plunger distances (µm) for their studied level (lifetimes/published/setups.toml): (label, example,
+#: shortest, longest). ⁹⁸Ru: 3–450 µm for τ(2⁺₁) = 8.36 ps (Radeck et al. 2012); ⁵⁰Cr: 17–750 µm to the degrader for
+#: τ(2⁺₁) = 12.2 ps (Beckers et al. 2022).
+PAPER_DISTANCES = (("⁹⁸Ru 2⁺₁", "coulex_ru98_plunger", 3.0, 450.0), ("⁵⁰Cr 2⁺₁", "fusion_cr50_plunger", 17.0, 750.0))
+#: How far (a factor) the paper's range may fall short of the planner's recommended distances at either end.
+PLANNER_RANGE_FACTOR = 1.5
+
+
+@check(RDDS, "literature", "The planner's choices against the papers': the plunger distances Planner.lifetimes "
+       "recommends for the studied level of the examples made after the papers (coulex_ru98_plunger, "
+       "fusion_cr50_plunger: log-spaced over the sensitive range, 0.18 to 5.1 decay lengths at physim's recoil speed) "
+       "against the distances the papers chose: ⁹⁸Ru 3–450 µm for τ(2⁺₁) = 8.36 ps (Radeck et al. 2012), ⁵⁰Cr "
+       "17–750 µm to the degrader for τ(2⁺₁) = 12.2 ps (Beckers et al. 2022) (lifetimes/published/setups.toml)",
+       "the paper's range covers the planner's recommended distances to within a factor 1.5 at each end: the paper's "
+       "shortest at most 1.5 × the planner's shortest, its longest at least the planner's longest / 1.5 (worst: the "
+       "larger of the two ratios paper/planner at the short end and planner/paper at the long end). The factor allows "
+       "physim's recoil speeds differing from the papers' (by up to 25%) and the factor-2 definition of the sensitive range; shorter "
+       "distances a paper adds for its shorter-lived levels are not held against the planner")
+def rdds_planner_distances(ref):
+    from .planner import Planner
+
+    worst, rows, plot_x, plot_p, plot_r = 0.0, [], [], [], []
+    for label, example, lo, hi in PAPER_DISTANCES:
+        out = Planner.example(example).lifetimes()
+        if not out.get("available") or not out["levels"] or not out["levels"][0]["recommended_distances_um"]:
+            return None, math.nan, 0, f"{example}: no recommended distances ({out.get('reason')})", {}
+        row = out["levels"][0]
+        rec = row["recommended_distances_um"]
+        short, long_ = lo / min(rec), max(rec) / hi
+        worst = max(worst, short, long_)
+        rows.append(f"{label} (planner's {row['level']}, τ = {row['tau_ps']:.3g} ps, β = {100 * row['beta']:.2f}%): "
+                    f"planner {min(rec):.3g}–{max(rec):.3g} µm, paper {lo:g}–{hi:g} µm (short end {short:.2f}, long "
+                    f"end {long_:.2f})")
+        plot_x += [f"{label} shortest", f"{label} longest"]
+        plot_p += [min(rec), max(rec)]
+        plot_r += [lo, hi]
+    plot = {"x": plot_x, "physim": plot_p, "reference": plot_r, "categorical": True}
+    return worst <= PLANNER_RANGE_FACTOR, worst, len(rows), "; ".join(rows), plot
+
+
 @check(DSAM, "literature", "Closure: τ recovered by the line-shape fit from simulated DSAM spectra of known τ (with "
        "side feeding): the ¹⁴³Sm 444.8 and 527.5 keV lines (the paper's Fig. 2) of lifetime_reproduction.sm143, "
        "fitted at 148° and 123° with a kernel of separate recoils slowed with the same stopping",
@@ -2275,6 +2315,49 @@ def dsam_sm143_reproduction(ref):
     plot = {"x": [f"{lv[k]['e_gamma_kev']:.0f}" for k in order], "physim": [lv[k]["tau_ps"] for k in order],
             "reference": [lv[k]["paper_tau_ps"] for k in order], "categorical": True}
     return res["passed"], res["worst"], len(order), res["detail"], plot
+
+
+#: The paper's DSAM backing (lifetimes/published/setups.toml): ¹⁴³Sm on 13 mg/cm² Au (Rajbanshi et al. 2018).
+PAPER_BACKING = ("fusion_sm143_dsam", "Au", 13.0)
+#: The share of the best candidate's sensitivity the paper's backing must reach (the planner's BACKING_GOOD).
+BACKING_SHARE = 0.8
+
+
+@check(DSAM, "literature", "The planner's choices against the papers': the DSAM backing advice of Planner.lifetimes "
+       "(the usual backings behind the target, ranked per level by the sensitivity |dF/d ln τ| of F(τ) on each "
+       "one's slowing-down kernel) for the levels of the example made after the paper (fusion_sm143_dsam: τ "
+       "0.41–1.02 ps), against the backing the paper chose: 13 mg/cm² Au (Rajbanshi et al. 2018; "
+       "lifetimes/published/setups.toml)",
+       "for every level advised on, Au's sensitivity at least 80% of the best candidate's (worst: the largest "
+       "1 − S_Au/S_best, at most 0.2), and the paper's 13 mg/cm² at least the planner's thickness to stop ¹⁴³Sm in "
+       "Au")
+def dsam_planner_backing(ref):
+    from .planner import Planner
+
+    example, material, thickness = PAPER_BACKING
+    out = Planner.example(example).lifetimes()
+    rows = [r for r in out.get("levels", []) if r.get("backing_advice")]
+    if not rows:
+        return None, math.nan, 0, f"{example}: no backing advice ({out.get('reason')})", {}
+    worst, parts, stops, x, got, best = 0.0, [], True, [], [], []
+    for r in rows:
+        adv = r["backing_advice"]
+        mine = next((c for c in adv if c["material"] == material), None)
+        if mine is None:
+            return False, math.inf, len(rows), f"{material} is not among the planner's candidates", {}
+        worst = max(worst, 1.0 - mine["relative_sensitivity"])
+        stops = stops and thickness >= mine["thickness_to_stop_mg_cm2"]
+        rank = adv.index(mine) + 1
+        parts.append(f"{r['level']} ({r['tau_ps']:.2f} ps): {material} {100 * mine['relative_sensitivity']:.0f}% of "
+                     f"the best ({adv[0]['material']}), rank {rank} of {len(adv)}")
+        x.append(f"{r['gamma_kev']:.0f} keV")
+        got.append(mine["sensitivity"])
+        best.append(adv[0]["sensitivity"])
+    to_stop = next(c for c in rows[0]["backing_advice"] if c["material"] == material)["thickness_to_stop_mg_cm2"]
+    detail = (f"thickness to stop ¹⁴³Sm in {material}: {to_stop:.2f} mg/cm² (paper {thickness:g}); "
+              + "; ".join(parts))
+    plot = {"x": x, "physim": got, "reference": best, "categorical": True}
+    return worst <= 1.0 - BACKING_SHARE and stops, worst, len(rows), detail, plot
 
 
 # -- DSAM line shapes against APCAD and AhKin ---------------------------------------------------------------------

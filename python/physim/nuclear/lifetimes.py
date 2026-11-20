@@ -767,7 +767,42 @@ def deorientation_shifted(flight_time_ps, tau_ps, alpha: dict, gamma_per_ps: dic
     return out
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# DSAM sensitivity (for choosing a backing; lifetime wave 4A)
+
+
+def dsam_sensitivity(tau_ps: float, kernel, step: float = 0.05) -> float:
+    """|dF/d ln τ|: how much the attenuation F(τ) (:func:`dsam_attenuation`) moves for a relative change of τ, on
+    this kernel. A measured F with uncertainty σ_F gives σ_τ/τ = σ_F / |dF/d ln τ|, so the larger the better. For
+    stopping proportional to speed (F = α/(α + τ)) it is ατ/(α + τ)², largest (1/4) when the slowing-down time α
+    equals τ, where F = 1/2. A central difference in ln τ of ``step`` either side."""
+    if not tau_ps > 0:
+        raise ValueError("the mean life must be positive")
+    if not 0 < step < 1:
+        raise ValueError("the step is a small change of ln τ, between 0 and 1")
+    lo = dsam_attenuation(tau_ps * math.exp(-step), kernel)
+    hi = dsam_attenuation(tau_ps * math.exp(step), kernel)
+    return abs(lo - hi) / (2.0 * step)
+
+
+def slowing_time(kernel) -> float:
+    """The slowing-down time α (ps) of a kernel: ∫ ⟨β cos θ⟩(t) dt / ⟨β cos θ⟩(0), the time the recoils would take
+    to stop at their initial speed's pace. For stopping proportional to speed it is the time constant α of
+    β(t) = β₀ e^(−t/α), and F(τ) = α/(α + τ); for any kernel F(τ) → α/τ for τ much longer than the slowing, which is
+    how it is worked out here (from :func:`dsam_attenuation`). Infinite when the recoils have not stopped by the
+    kernel's last time (they leave the backing, or the kernel is too short)."""
+    t_last = float(np.asarray(kernel.times_ps, dtype=float)[-1])
+    if not t_last > 0:
+        raise ValueError("the kernel needs times after 0")
+    tau1 = 1e4 * t_last
+    s1 = tau1 * dsam_attenuation(tau1, kernel)
+    s2 = 10.0 * tau1 * dsam_attenuation(10.0 * tau1, kernel)
+    if s2 > 1.5 * s1:  # τF keeps growing with τ: some recoils still move after the last time
+        return math.inf
+    return float(s1)
+
+
 __all__ = ["C_UM_PER_PS", "Kernel", "SampledKernel", "b_from_tau", "bateman", "deorientation",
-           "deorientation_shifted", "dsam_attenuation", "exponential_kernel", "flight_times", "level_taus",
-           "lineshape", "lorentz_gamma", "peak_separation", "rate_per_unit_b", "recommend_distances",
-           "sensitive_range", "tau_from_b", "unshifted"]
+           "deorientation_shifted", "dsam_attenuation", "dsam_sensitivity", "exponential_kernel", "flight_times",
+           "level_taus", "lineshape", "lorentz_gamma", "peak_separation", "rate_per_unit_b", "recommend_distances",
+           "sensitive_range", "slowing_time", "tau_from_b", "unshifted"]
