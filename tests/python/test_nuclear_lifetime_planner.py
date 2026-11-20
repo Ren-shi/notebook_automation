@@ -422,3 +422,77 @@ def test_planning_kernel_stops_the_recoil(sm143):
     assert t_stop > 0 and k.times_ps[-1] >= t_stop
     assert np.all(k.beta[-1] == 0)
     assert isinstance(k, transport.Kernel)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# 98Ru closure through the planner (lifetime wave 4B)
+
+#: Distances of the closure series (µm): the example's range, fewer of them.
+RU98_DISTANCES = (3.0, 10.0, 25.0, 60.0, 160.0, 450.0)
+
+
+class _SimGammas(_Gammas):
+    """A simulated distance's counted γ rays, their weights times ``scale`` (the same at every distance, as the
+    reactions are: the efficiency ratio is fitted from a constant total)."""
+
+    def __init__(self, g, scale):
+        m = np.asarray(g["counted"], dtype=bool)
+        super().__init__(np.asarray(g["measured"])[m], np.asarray(g["crystal"])[m], g.crystals)
+        self.columns["weight"] = np.asarray(g["weight"], dtype=float)[m] * scale
+
+
+def _ru98_series(exp, particle_events, seed):
+    """One simulated run per distance from the same particle events (the beam and the recoils that reach the
+    silicon detector, as a planner run has them), γ rays with their own seed per distance, in effective counts
+    (Σw/Σw² of the first distance's γ rays, so that the spectra's errors are about those of counts)."""
+    from physim.nuclear import gamma_events
+
+    runs, scale = {}, None
+    for k, d in enumerate(RU98_DISTANCES):
+        g = gamma_events.simulate_gammas(exp, particle_events=particle_events, seed=seed + 101 * (k + 1),
+                                         distance_um=d, gammas_per_event=1)
+        if scale is None:
+            w = np.asarray(g["weight"], dtype=float)[np.asarray(g["counted"], dtype=bool)]
+            scale = w.sum() / (w * w).sum()
+        runs[d] = [_Run(exp, _SimGammas(g, scale), d)]
+    return DistanceSeries(exp.to_dict(), runs)
+
+
+@pytest.fixture(scope="module")
+def ru98_closure():
+    """The coulex_ru98_plunger example (τ = 8.36 ps) with and without its deorientation: seeded simulated series
+    from 200 000 reactions."""
+    from physim.nuclear import events
+
+    out = {}
+    base = Experiment.example("coulex_ru98_plunger").to_dict()
+    base["lifetime"]["distances"] = [f"{d:g} um" for d in RU98_DISTANCES]
+    ev = events.simulate(Experiment.from_dict(base), 200_000, 7)
+    for name in ("with", "without"):
+        d = {**base, "lifetime": dict(base["lifetime"])}
+        if name == "without":
+            d["lifetime"].pop("deorientation")
+        exp = Experiment.from_dict(d)
+        out[name] = (Planner(exp), _ru98_series(exp, ev, 7))
+    return out
+
+
+@pytest.mark.parametrize("deorientation", ["with", "without"])
+def test_ru98_tau_comes_back_from_a_simulated_series(ru98_closure, deorientation):
+    """Planner.analyse_lifetimes on simulated ⁹⁸Ru runs gives τ back within its stated uncertainty, with and without
+    deorientation in vacuum. Before wave 4B the DDCM came out ~10% long: Gaussian or window areas with one recoil
+    speed (the runs' speeds spread over β ≈ 4–8%: the silicon detector sees the scattered beam and the recoils), no
+    efficiency ratio and no deorientation correction."""
+    p, series = ru98_closure[deorientation]
+    tau = 8.36
+    assert p.lifetimes()["levels"][0]["tau_ps"] == pytest.approx(tau, rel=0.01)
+    out = p.analyse_lifetimes(series=series)
+    assert out["available"], out["reason"]
+    assert out["method"] == "ddcm"
+    assert abs(out["tau_ps"] - tau) <= 2 * out["total_ps"], (out["tau_ps"], out["total_ps"])
+    assert out["total_ps"] < 0.08 * tau
+    notes = " ".join(out["notes"])
+    assert "weighted by their own speed" in notes and "Efficiency of the shifted" in notes
+    assert ("Deorientation in vacuum corrected" in notes) == (deorientation == "with")
+    dc = p.analyse_lifetimes(series=series, method="decay_curve")
+    assert abs(dc["tau_ps"] - tau) <= 2 * dc["total_ps"] + 0.03 * tau, (dc["tau_ps"], dc["total_ps"])

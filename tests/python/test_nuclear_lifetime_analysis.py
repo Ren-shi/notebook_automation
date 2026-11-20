@@ -132,6 +132,110 @@ def test_peak_areas_take_shared_edges():
         la.peak_areas([c for c, _ in spectra], 652.0, BETA_RU, 36.5, 2.2)
 
 
+def _box(centres, lo, hi, sigma):
+    """A flat top from ``lo`` to ``hi`` keV folded with a Gaussian of ``sigma``: unit area."""
+    erf = np.vectorize(math.erf)
+    return 0.5 * (erf((centres - lo) / (sigma * math.sqrt(2))) - erf((centres - hi) / (sigma * math.sqrt(2)))) / (hi - lo)
+
+
+def _flat_topped(rng, e0=652.46, fwhm=2.1, half_top=10.0, tail=0.04, counts=60000.0, background=15.0):
+    """⁹⁸Ru-like plunger spectra at 41.5° with a shifted line 20 keV wide and flat-topped (clovers seen over ±13°)
+    and the stopper's slowing tail: a share ``tail`` of the unshifted decays spread evenly between the peaks, which
+    lifetimes.unshifted counts as unshifted. Returns (spectra, true unshifted with the tail, true shifted)."""
+    t = lt.flight_times(D_RU, BETA_RU, proper=True)
+    share = np.exp(-t / TAU_RU)
+    edges = np.arange(e0 - 60.0, e0 + 100.0, 0.5)
+    centres = 0.5 * (edges[1:] + edges[:-1])
+    width = np.diff(edges)
+    sigma = fwhm / 2.3548
+    e_s = e0 + float(lt.peak_separation(e0, BETA_RU, 41.5))
+    stopped = np.exp(-0.5 * ((centres - e0) / sigma) ** 2) / (sigma * math.sqrt(2 * math.pi))
+    slowing = _box(centres, e0, e0 + 0.4 * (e_s - e0), sigma)  # below the windows' split at half the shift
+    flying = _box(centres, e_s - half_top, e_s + half_top, sigma)
+    spectra = []
+    for u in share:
+        mu = background + counts * width * (u * ((1 - tail) * stopped + tail * slowing) + (1 - u) * flying)
+        spectra.append((rng.poisson(mu).astype(float), edges))
+    return spectra, counts * share, counts * (1 - share)
+
+
+def test_peak_areas_count_a_broad_flat_topped_shifted_line_whole():
+    """The shifted line of ⁹⁸Ru's clovers is ~20 keV wide and flat-topped and the stopper's slowing tail fills the
+    gap: one Gaussian on a straight line under-counts it (lifetime wave 4B); the windows (method "auto", the default
+    here) count both components, the tail with the unshifted one, and the DDCM gives τ back."""
+    rng = np.random.default_rng(21)
+    spectra, true_u, true_s = _flat_topped(rng)
+    areas = la.peak_areas(spectra, 652.46, BETA_RU, 41.5, 2.1)
+    s, u, err = (np.array(x, dtype=float) for x in zip(*areas))
+    pulls = np.concatenate([(s - true_s) / err[:, 0], (u - true_u) / err[:, 1]])
+    assert np.all(np.abs(pulls) < 4), pulls
+    assert abs(pulls.mean()) < 1.0
+    r = la.ddcm(D_RU, u, s, (err[:, 1], err[:, 0]), BETA_RU)
+    assert within(r, TAU_RU, 2.5), (r.tau_ps, r.stat_ps)
+    # The old Gaussian fit misplaces the counts: the shifted share is wrong by many errors at mid distances.
+    fs, fu, ferr = (np.array(x, dtype=float) for x in zip(*la.peak_areas(spectra, 652.46, BETA_RU, 41.5, 2.1,
+                                                                            method="fit", fwhm_shifted_kev=4.0)))
+    mid = (D_RU >= 25) & (D_RU <= 200)
+    assert np.max(np.abs(fs[mid] - true_s[mid]) / ferr[mid, 0]) > 5
+    with pytest.raises(ValueError):
+        la.peak_areas(spectra, 652.46, BETA_RU, 41.5, 2.1, method="gauss")
+    with pytest.raises(ValueError, match="too close"):  # 85°: the peaks overlap, windows cannot split them
+        la.window_areas(spectra[0][0], spectra[0][1], 652.46, BETA_RU, 85.0, 2.1)
+
+
+#: Two groups of recoils (Coulex seen over a range of particle angles): β and share of the excitations.
+SPEEDS = ((0.045, 0.4), (0.090, 0.6))
+
+
+def _two_speed_spectra(e0=652.46, theta=41.5, fwhm=2.1, counts=1e6):
+    """Expected (noise-free) plunger spectra of a level of τ = TAU_RU whose recoils fly at two speeds: each group's
+    shifted peak at its own shift, the unshifted share Σ w e^(−t(β)/τ)."""
+    edges = np.arange(e0 - 60.0, e0 + 120.0, 0.25)
+    centres = 0.5 * (edges[1:] + edges[:-1])
+    width = np.diff(edges)
+    sigma = fwhm / 2.3548
+    gauss = lambda e: np.exp(-0.5 * ((centres - e) / sigma) ** 2) / (sigma * math.sqrt(2 * math.pi))  # noqa: E731
+    spectra, share = [], []
+    for d in D_RU:
+        mu = np.zeros(len(centres))
+        u_tot = 0.0
+        for b, w in SPEEDS:
+            u = math.exp(-float(lt.flight_times(d, b, proper=True)) / TAU_RU)
+            u_tot += w * u
+            mu += counts * width * w * (u * gauss(e0) + (1 - u) * gauss(e0 + float(lt.peak_separation(e0, b, theta))))
+        spectra.append((mu, edges))
+        share.append(u_tot)
+    return spectra, np.array(share)
+
+
+def test_speed_weighted_ddcm_and_decay_curve_take_a_spread_of_speeds():
+    """With recoils at two speeds, one β biases τ; the shifted counts weighted by their own speed
+    (window_areas' shifted_beta) give the DDCM τ back exactly, and so does the decay curve given the speeds the
+    shifted line shows at the largest distance (lifetime wave 4B)."""
+    spectra, share = _two_speed_spectra()
+    mean_beta = sum(b * w for b, w in SPEEDS)
+    rows_ = [la.window_areas(c, e, 652.46, mean_beta, 41.5, 2.1) for c, e in spectra]
+    u = np.array([w["unshifted"] for w in rows_])
+    s = np.array([w["shifted"] for w in rows_])
+    sb = np.array([w["shifted_beta"] for w in rows_])
+    assert u / (u + s) == pytest.approx(share, abs=2e-3)
+    b_bar = rows_[-1]["beta"]
+    assert b_bar == pytest.approx(mean_beta, rel=0.03)  # the shifted counts at 450 µm: nearly all decays
+    err = (sqrt_counts(u), sqrt_counts(s))
+    plain = la.ddcm(D_RU, u, s, err, b_bar)
+    weighted = la.ddcm(D_RU, u, sb / b_bar, (err[0], np.sqrt(np.maximum(sb, 1.0)) / b_bar), b_bar, norm=u + s)
+    assert abs(plain.tau_ps / TAU_RU - 1) > 0.03  # one speed: biased
+    assert weighted.tau_ps == pytest.approx(TAU_RU, rel=0.015)
+    r_err = np.full(len(D_RU), 0.002)
+    one = la.decay_curve(D_RU, u / (u + s), r_err, b_bar)
+    spread = la.decay_curve(D_RU, u / (u + s), r_err, b_bar, speeds=rows_[-1]["speeds"])
+    assert abs(one.tau_ps / TAU_RU - 1) > 0.03
+    assert spread.tau_ps == pytest.approx(TAU_RU, rel=0.025)  # the resolution widens the measured spread a little
+    exact = la.decay_curve(D_RU, share, r_err, 0.05, speeds=([b for b, _ in SPEEDS], [w for _, w in SPEEDS]))
+    assert exact.tau_ps == pytest.approx(TAU_RU, rel=1e-4)
+    with pytest.raises(ValueError):
+        la.decay_curve(D_RU, share, r_err, 0.05, speeds=([0.04, 0.07], [1.0]))
+
 # ---------------------------------------------------------------------------------------------------------------
 # Decay curves: the closed forms and closure
 

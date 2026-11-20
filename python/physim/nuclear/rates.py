@@ -194,10 +194,31 @@ def _coulex_at(beam: str, nuclide: str, energy: float, excite: str, e_star: floa
     return Coulex(beam, nuclide, energy, excite=excite, energy=e_star, multipolarity=multipolarity, b_up=b_up)
 
 
-def coulex_for(experiment, channel: Channel, layers: Optional[list] = None):
-    """The :class:`~physim.nuclear.coulex.Coulex` of a channel, at the beam energy in the middle of its layer."""
+def layer_energy(experiment, layer: int, layers: Optional[list] = None) -> float:
+    """The mean beam energy (MeV) in the middle of the part of layer ``layer`` the beam crosses: the layer's
+    middle, or halfway to where the beam stops when it stops inside the layer (a thick backing); 0 when the beam
+    stops before it."""
     layers = layers or stack(experiment)
-    e_mid = float(beam_energy_at(experiment, channel.layer, [layers[channel.layer].thickness / 2], layers)[0])
+    lay = layers[layer]
+    e = float(beam_energy_at(experiment, layer, [lay.thickness / 2], layers)[0])
+    if e > 0:
+        return e
+    entry = float(beam_energy_at(experiment, layer, [0.0], layers)[0])
+    if entry <= 0:
+        return 0.0
+    c = math.cos(math.radians(tilt_deg(experiment)))
+    reached = min(float(stopping(beam_ion(experiment), lay.material).range(entry)) * c, lay.thickness)
+    return float(beam_energy_at(experiment, layer, [reached / 2], layers)[0])
+
+
+def coulex_for(experiment, channel: Channel, layers: Optional[list] = None):
+    """The :class:`~physim.nuclear.coulex.Coulex` of a channel, at the beam energy in the middle of its layer (of
+    the part of it the beam crosses, when the beam stops inside: :func:`layer_energy`). Raises ValueError when the
+    beam stops before the layer."""
+    layers = layers or stack(experiment)
+    e_mid = layer_energy(experiment, channel.layer, layers)
+    if not e_mid > 0:
+        raise ValueError(f"the beam stops before {layers[channel.layer].name}: no Coulomb excitation there")
     e = channel.excitation
     return _coulex_at(beam_ion(experiment), channel.nuclide.name, round(e_mid, 9), e.excite, e.energy_mev,
                       e.multipolarity, e.b_up_e2fm)
@@ -1001,6 +1022,8 @@ class Rates:
             out.append("The beam stops inside the target: reactions happen only down to the depth it reaches.")
         seen = set()
         for ch in self.channels:
+            if ch.excitation is not None and not layer_energy(self.experiment, ch.layer, self.layers) > 0:
+                continue  # the beam stops before this layer
             acc = cm_acceptance(self.experiment, self.layers, ch, self.array, self.theta_floor)
             if acc is None:
                 continue

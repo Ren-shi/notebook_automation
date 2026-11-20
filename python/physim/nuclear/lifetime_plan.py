@@ -886,6 +886,11 @@ def _coulex_spectra(subject, out, i, final, e0, dists, rings, per, bins) -> None
 ANALYSES = ("ddcm", "decay_curve", "ddcm_three_foil", "lineshape")
 #: γ-ray detector rings closer to 90° than this |cos θ| show too small a Doppler shift to analyse.
 MIN_COS = 0.25
+#: The efficiency ratio k = ε_shifted/ε_unshifted per ring of a plunger analysis: from the setup ("model": the Lorentz
+#: boost of the solid angle and the full-energy efficiency at the two energies), fitted from the runs ("fit": I_u +
+#: I_s/k the same at every distance, as Radeck et al.; biased upwards at low counts, ~+4% on τ for ⁹⁸Ru's runs of
+#: 200 000 reactions), or 1 ("off").
+EFFICIENCY_RATIO = "model"
 
 
 def _beta_from_shift(counts, edges, e0: float, theta: float, fwhm: float, beta_guess: float) -> Optional[float]:
@@ -952,42 +957,6 @@ def _beta_of(e_s: float, e0: float, theta: float) -> float:
     roots = [(-b + s * math.sqrt(disc)) / (2 * a) for s in (1, -1)]
     guess = (r - 1.0) / c
     return min(roots, key=lambda x: abs(x - guess))
-
-
-def integrated_areas(counts, edges, e0: float, theta: float, beta: float, fwhm: float) -> tuple:
-    """(shifted, unshifted, (error shifted, error unshifted)): the line's counts split at E₀ + half the planned
-    shift (at least 3σ of the resolution), each side summed over the background, which is a straight line through
-    the counts beyond both ends. The unshifted side runs from E₀ − 3σ and holds the decays while the recoil slows
-    in the stopper (the tail towards the shifted side), as :func:`physim.nuclear.lifetimes.unshifted` counts them;
-    the shifted side reaches twice the planned shift, so a broad spread of speeds (Coulomb excitation, where the
-    particle detector sees beam and recoils over a range of angles) is counted whole, which a Gaussian fit is not."""
-    centres = 0.5 * (edges[1:] + edges[:-1])
-    sigma = fwhm / 2.354820045
-    shift = float(lt.peak_separation(e0, beta, theta))
-    sign = 1.0 if shift >= 0 else -1.0
-    split = e0 + sign * max(3 * sigma, 0.5 * abs(shift))
-    far = e0 + 2.0 * shift + sign * 3 * fwhm
-    near = e0 - sign * 3 * sigma
-    lo, hi = min(near, far), max(near, far)
-    side_lo = (centres >= lo - 8 * fwhm) & (centres < lo - fwhm)
-    side_hi = (centres > hi + fwhm) & (centres <= hi + 8 * fwhm)
-    side = side_lo | side_hi
-    if side.sum() >= 2 and np.ptp(centres[side]) > 0:
-        a, b = np.polyfit(centres[side], counts[side], 1)
-        bg = np.clip(a * centres + b, 0.0, None)
-        n_side = int(side.sum())
-    else:
-        bg, n_side = np.zeros(len(centres)), 0
-    in_u = (centres >= min(near, split)) & (centres < max(near, split))
-    in_s = (centres >= min(split, far)) & (centres < max(split, far))
-    out = []
-    for m in (in_s, in_u):
-        raw = float(counts[m].sum())
-        b = float(bg[m].sum())
-        var_b = (b * b / max(float(counts[side].sum()), 1.0)) if n_side else 0.0
-        out.append((max(raw - b, 0.0), math.sqrt(max(raw, 1.0) + var_b)))
-    (s, es), (u, eu) = out
-    return s, u, (es, eu)
 
 
 def _areas(counts, edges, energies: list, widths: list) -> list:
@@ -1170,99 +1139,300 @@ def _analyse_rdds(subject, out, i, final, e0, series, method):
     out["beta"] = beta
     out["rings_deg"] = [rings[r][0] for r in used]
     if method != "ddcm_three_foil":
-        out["notes"].append(f"Recoil speed from the shifted peaks' positions: β = {100 * beta:.3f}% (planned "
-                            f"{100 * subject.beta:.3f}%); rings at {', '.join(f'{rings[r][0]:g}°' for r in used)} "
-                            "added together.")
-    if lt_.deorientation is not None:
-        out["notes"].append("The setup has deorientation in vacuum: the shifted and unshifted γ rays have different "
-                            "angular distributions, and no correction is applied here "
-                            "(lifetime_analysis.deorientation_correction, with the angular distribution's a_k): τ "
-                            "can be biased (for 98Ru's example by about +10%).")
+        out["notes"].append(f"Rings at {', '.join(f'{rings[r][0]:g}°' for r in used)} added together; the "
+                            f"shifted peaks are where β = {100 * beta:.3f}% puts them (planned "
+                            f"{100 * subject.beta:.3f}%).")
     feeder = _feeder(subject, i, final)
     common = dict(subject=subject, out=out, i=i, final=final, e0=e0, dists=dists, total=total, edges=edges,
                   rings=rings, used=used, betas=betas, beta=beta, beta_err=beta_err, feeder=feeder, lt_=lt_)
     if method == "ddcm_three_foil":
         return _three_foil(**common)
-    return _two_components(method=method, **common)
+    real = np.array([sum(float(getattr(run, "real_s", 0.0) or 0.0) for run in series.runs[d]) for d in dists])
+    return _two_components(method=method, real_s=real, **common)
+
+
+def _ring_cos(experiment, thetas) -> dict:
+    """The mean cos θ over the faces of each ring's crystals: what a Doppler shift at the ring measures (a little
+    less in magnitude than the cosine of the ring's angle, for crystals seen over ±13°)."""
+    from .lifetime_reproduction import ring_cos
+
+    try:
+        return ring_cos(experiment, thetas)
+    except Exception:  # noqa: BLE001 - a ring without crystals of its own: the nominal angle
+        return {th: math.cos(math.radians(th)) for th in thetas}
+
+
+def _alignment(subject, i: int, final: int) -> tuple:
+    """({2: a₂, 4: a₄}, note) of the measured γ rays' unattenuated angular distribution for the deorientation
+    correction, or (None, why not). Coulex's first excited state only: physim's Coulex particle–γ correlation for
+    the particles the setup's detectors see (:func:`lifetime_reproduction.coulex_alignment`, both nuclei: physim's
+    stopper does not take the scattered beam, so the detectors see the beam and the recoils, as the runs have
+    them). Kept with the planner until the setup changes."""
+    exp = subject.experiment
+    if exp.excitation is None:
+        return None, "the deorientation correction needs the alignment of a Coulomb-excited state"
+    if (i, final) != (1, 0):
+        return None, "the deorientation correction is made for the first excited state's line only"
+    cache = getattr(subject.planner, "_cache", {})
+    key = ("lifetime", "alignment")
+    if key not in cache:
+        from .lifetime_reproduction import coulex_alignment
+
+        try:
+            a = coulex_alignment(exp, particle="both")
+            cache[key] = ({2: float(a[2]), 4: float(a[4])}, None)
+        except Exception as e:  # noqa: BLE001 - no correlation (no crystals at 90° and elsewhere, say)
+            cache[key] = (None, f"no alignment for the deorientation correction ({e})")
+    return cache[key]
+
+
+def _component_areas(counts_by_distance, edges, e_line, theta, beta, fwhm, cos_eff) -> dict:
+    """Per distance (arrays): ``unshifted``, ``shifted``, ``shifted_beta`` (shifted counts × their speed) and their
+    errors at one ring, from :func:`lifetime_analysis.window_areas` when the peaks are apart, else from
+    :func:`lifetime_analysis.peak_areas`' fits (the speed of every shifted count then ``beta``). Also ``windows``."""
+    from . import lifetime_analysis as la
+
+    keys = ("unshifted", "shifted", "shifted_beta", "err_unshifted", "err_shifted", "err_shifted_beta")
+    out = {k: [] for k in keys}
+    windows = abs(float(lt.peak_separation(e_line, beta, theta))) >= la.WINDOW_MIN_SEPARATION * fwhm
+    for counts in counts_by_distance:
+        if windows:
+            w = la.window_areas(counts, edges, e_line, beta, theta, fwhm, cos_theta=cos_eff)
+        else:
+            (s, u, (es, eu)), = la.peak_areas([(counts, edges)], e_line, beta, theta, fwhm, method="fit",
+                                              fwhm_shifted_kev=1.5 * fwhm)
+            w = {"unshifted": u, "shifted": s, "err_unshifted": eu, "err_shifted": es, "shifted_beta": s * beta,
+                 "err_shifted_beta": es * beta}
+        for k in keys:
+            out[k].append(float(w[k]))
+    out = {k: np.asarray(v) for k, v in out.items()}
+    out["windows"] = windows
+    # The spread of speeds from the largest distance, where nearly every decay is in flight.
+    out["speeds"] = w.get("speeds") if windows else (np.array([beta]), np.array([1.0]))
+    return out
+
+
+def _efficiency_ratio(u, s, eu, es) -> Optional[float]:
+    """k = ε_shifted/ε_unshifted from I_u + I_s/k being the same at every distance (the runs' counts per real
+    second), or None when the distances do not pin it (the shares hardly change, or k comes out at the edge of 0.5–2).
+    Both intensities are noisy, so k minimises χ²(k) = Σ (I_u + I_s/k − c)² / (σ_u² + σ_s²/k²), c profiled: a
+    regression of I_u on I_s alone would take I_s as exact and pull k high at low counts."""
+    from .lifetime_analysis import _minimise_1d
+
+    u, s, eu, es = (np.asarray(x, dtype=float) for x in (u, s, eu, es))
+    if np.ptp(s / np.maximum(u + s, 1e-300)) < 0.3:
+        return None
+
+    def chi2(ln_k):
+        k = math.exp(ln_k)
+        w = 1.0 / np.maximum(eu * eu + (es / k) ** 2, 1e-300)
+        total = u + s / k
+        c = float(np.sum(w * total) / np.sum(w))
+        return float(np.sum(w * (total - c) ** 2))  # the effective-variance χ² (Orear, NIM 203, 157 (1982))
+
+    lo, hi = math.log(0.5), math.log(2.0)
+    try:
+        ln_k = _minimise_1d(chi2, lo, hi)[0]
+    except Exception:  # noqa: BLE001 - a fit that does not settle
+        return None
+    if not math.isfinite(ln_k) or min(ln_k - lo, hi - ln_k) < 1e-3:
+        return None
+    return math.exp(ln_k)
 
 
 def _two_components(subject, out, i, final, e0, dists, total, edges, rings, used, betas, beta, beta_err, feeder,
-                    lt_, method):
+                    lt_, method, real_s=None):
+    """DDCM or decay curve from the shifted and unshifted components at the rings ``used``.
+
+    Per ring: the components in windows (:func:`lifetime_analysis.window_areas`, the stopper's slowing tail with
+    the unshifted counts), per real second of the runs at each distance; with deorientation in vacuum, each divided
+    by its angular distribution, W_U = 1 + Σ a_k G_k(t) P_k and W_S with G̃_k (Radeck et al.), a_k from physim's
+    Coulex correlation and τ iterated; the shifted ones divided by the efficiency ratio k = ε_s/ε_u
+    (:data:`EFFICIENCY_RATIO`). The rings are then added. The DDCM takes the shifted counts weighted by
+    their own speed (τ(x) = I_u / (c d(Σ β I_s)/dx), exact for any spread of speeds, which Coulex gives: the
+    particle detector sees the beam and the recoils over a range of angles), normalised by I_u + I_s/k."""
     from . import lifetime_analysis as la
 
     exp = subject.experiment
     n = len(dists)
-
-    integrate = exp.excitation is not None
-    if integrate:
-        out["notes"].append("Coulomb excitation: the shifted component is summed over its region (up to twice the "
-                            "planned shift) and the unshifted one from E₀ − 3σ to half the shift, both over a straight "
-                            "background, as the recoils' speeds spread too widely for one Gaussian.")
-    else:
-        out["notes"].append("Peak areas from Gaussian fits (lifetime_analysis.peak_areas), the shifted peak's width "
-                            "free.")
-
-    def areas(e_line, r, b):
-        theta, fwhm, _o = rings[r]
-        fw = fwhm(e_line)
-        if integrate:
-            return [integrated_areas(total[d][r], edges, e_line, theta, b, fw) for d in dists]
-        return la.peak_areas([(total[d][r], edges) for d in dists], e_line, b, theta, fw, fwhm_shifted_kev=1.5 * fw)
-
-    s_, u_, vs, vu = (np.zeros(n) for _ in range(4))
-    fs_, fu_, fvs, fvu = (np.zeros(n) for _ in range(4))
-    feeder_ok = feeder is not None and method == "ddcm"
-    for r, b in zip(used, betas):
-        for k, (s, u, (es, eu)) in enumerate(areas(e0, r, b)):
-            s_[k] += s
-            u_[k] += u
-            vs[k] += es * es
-            vu[k] += eu * eu
-        if feeder_ok:
+    d_arr = np.asarray(dists, dtype=float)
+    real = np.asarray(real_s if real_s is not None else np.ones(n), dtype=float)
+    per_s = np.where(real > 0, float(np.mean(real[real > 0])) / np.where(real > 0, real, 1.0), 1.0) \
+        if np.any(real > 0) else np.ones(n)
+    thetas = [rings[r][0] for r in used]
+    cos_eff = _ring_cos(exp, thetas)
+    lines = [("line", e0)] + ([("feed", feeder[1])] if feeder is not None and method == "ddcm" else [])
+    comps = {}
+    feeder_ok = len(lines) == 2
+    for key, e_line in lines:
+        for r, b in zip(used, betas):
+            theta, fwhm, _o = rings[r]
             try:
-                for k, (s, u, (es, eu)) in enumerate(areas(feeder[1], r, b)):
-                    fs_[k] += s
-                    fu_[k] += u
-                    fvs[k] += es * es
-                    fvu[k] += eu * eu
+                a = _component_areas([total[d][r] for d in dists], edges, e_line, theta, b, fwhm(e_line),
+                                     cos_eff[theta])
             except ValueError:
+                if key == "line":
+                    raise
                 feeder_ok = False
-    tot = s_ + u_
-    if np.any(tot <= 0):
-        raise ValueError("a distance has no counts in the line: take longer runs")
-    s_r = np.sqrt(s_ * s_ * np.maximum(vu, 1.0) + u_ * u_ * np.maximum(vs, 1.0)) / tot ** 2
+                break
+            for k in ("unshifted", "shifted", "shifted_beta", "err_unshifted", "err_shifted", "err_shifted_beta"):
+                a[k] = a[k] * per_s
+            comps[(key, r)] = a
+    windows = all(comps[("line", r)]["windows"] for r in used)
+    if windows:
+        out["notes"].append("Peak areas in windows (lifetime_analysis.window_areas): the unshifted one from E₀ − 3σ "
+                            "to half the shift, with the decays while the recoil slows in the stopper; the shifted "
+                            "one up to twice the planned shift; both over a straight background. Per real second of "
+                            "the runs at each distance.")
+    else:
+        out["notes"].append("Peak areas from Gaussian fits (lifetime_analysis.peak_areas, method \"fit\"): the peaks "
+                            "are too close for windows at some ring; the shifted counts all take the planned speed.")
+
+    # Deorientation in vacuum: the alignment the unshifted and shifted γ rays keep differs.
+    a_k = None
+    dor = lt_.deorientation
+    if dor is not None:
+        a_k, why = _alignment(subject, i, final)
+        if a_k is None:
+            out["notes"].append(f"The setup has deorientation in vacuum, but {why}: no correction, τ can be biased.")
+
+    def attenuation(tau_ps, b):
+        if a_k is None:
+            return None
+        t = lt.flight_times(d_arr + lt_.offset_um, b, proper=True)
+        g_u = lt.deorientation(t, dor.alpha, dor.gamma_per_ps)
+        g_s = lt.deorientation_shifted(t, max(tau_ps, 1e-6), dor.alpha, dor.gamma_per_ps)
+        return {r: (la._w(rings[r][0], a_k, g_u), la._w(rings[r][0], a_k, g_s)) for r in used}
+
+    def summed(w_rings):
+        """The rings added after the deorientation and efficiency corrections: arrays and the k per ring."""
+        acc = {k: np.zeros(n) for k in ("u", "s", "sb", "vu", "vs", "vsb")}
+        ks = {}
+        for r in used:
+            a = comps[("line", r)]
+            w_u, w_s = w_rings[r] if w_rings is not None else (1.0, 1.0)
+            u, eu = a["unshifted"] / w_u, a["err_unshifted"] / w_u
+            s, es = a["shifted"] / w_s, a["err_shifted"] / w_s
+            sb, esb = a["shifted_beta"] / w_s, a["err_shifted_beta"] / w_s
+            k = (_efficiency_ratio(u, s, eu, es) if EFFICIENCY_RATIO == "fit"
+                 else k_model.get(r) if EFFICIENCY_RATIO == "model" else None)
+            ks[r] = k
+            k = k or 1.0
+            acc["u"] += u
+            acc["s"] += s / k
+            acc["sb"] += sb / k
+            acc["vu"] += eu * eu
+            acc["vs"] += (es / k) ** 2
+            acc["vsb"] += (esb / k) ** 2
+            values, weights = a["speeds"]
+            acc.setdefault("speeds", []).append((values, weights / (k * np.atleast_1d(w_s)[-1])))
+        return acc, ks
+
+    def fit(acc):
+        u, s, sb = acc["u"], acc["s"], acc["sb"]
+        tot = u + s
+        if np.any(tot <= 0):
+            raise ValueError("a distance has no counts in the line: take longer runs")
+        b_bar = float(np.sum(sb) / np.sum(s)) if np.sum(s) > 0 else beta
+        if not 0 < b_bar < 1:
+            b_bar = beta
+        if method == "decay_curve":
+            s_r = np.sqrt(s * s * np.maximum(acc["vu"], 1.0) + u * u * np.maximum(acc["vs"], 1.0)) / tot ** 2
+            speeds = (np.concatenate([v for v, _w in acc["speeds"]]), np.concatenate([w for _v, w in acc["speeds"]]))
+            # A free normalisation (Radeck et al.'s a(1 − e^(−t/τ))): the share stays below 1 at the shortest
+            # distances (decays in the target and over the offset, the efficiency ratio's own uncertainty).
+            return la.decay_curve(dists, u / tot, s_r, b_bar, offset_um=lt_.offset_um, beta_error=beta_err,
+                                  speeds=speeds, free_norm=True), b_bar
+        errors = (np.sqrt(np.maximum(acc["vu"], 1.0)), np.sqrt(np.maximum(acc["vsb"], 1e-300)) / b_bar)
+        kw = {}
+        if feeder_ok:
+            scale = _feeder_scale(exp, used, rings, e0, feeder[1])
+            fu = sum(comps[("feed", r)]["unshifted"] for r in used) * scale
+            fs = sum(comps[("feed", r)]["shifted"] for r in used) * scale
+            fvu = sum(comps[("feed", r)]["err_unshifted"] ** 2 for r in used) * scale ** 2
+            fvs = sum(comps[("feed", r)]["err_shifted"] ** 2 for r in used) * scale ** 2
+            errors = errors + (np.sqrt(np.maximum(fvu, 1.0)), np.sqrt(np.maximum(fvs, 1.0)))
+            kw = dict(feeder_unshifted=fu, feeder_shifted=fs, alpha=_alpha(subject, i, final))
+        res = la.ddcm(dists, u, sb / b_bar, errors, b_bar, norm=tot, offset_um=lt_.offset_um, beta_error=beta_err,
+                      **kw)
+        return res, b_bar
+
+    ring_betas = [float(np.sum(comps[("line", r)]["shifted_beta"]) / np.sum(comps[("line", r)]["shifted"]))
+                  for r in used if np.sum(comps[("line", r)]["shifted"]) > 0]
+    if len(ring_betas) > 1:  # the rings' mean speeds differ by the Doppler shift's systematics (cos θ, background)
+        beta_err = float(np.std(ring_betas))
+    # The efficiency ratio the setup gives: the Lorentz boost of the solid angle, (1 − β²)/(1 − β cos θ)², times the
+    # full-energy efficiency at the shifted energy over that at E₀, at each ring's mean speed.
+    k_model = {}
+    for r in used:
+        a = comps[("line", r)]
+        if np.sum(a["shifted"]) <= 0:
+            continue
+        b_r = float(np.sum(a["shifted_beta"]) / np.sum(a["shifted"]))
+        c_r = cos_eff[rings[r][0]]
+        e_s = float(lt.doppler_energy(e0, b_r, c_r))
+        eff0 = _efficiency(exp, e0, rings[r][0])
+        if eff0 > 0 and 0 < b_r < 1:
+            k_model[r] = (1 - b_r * b_r) / (1 - b_r * c_r) ** 2 * _efficiency(exp, e_s, rings[r][0]) / eff0
+    acc, ks = summed(None)
+    res, b_bar = fit(acc)
+    if a_k is not None:
+        for _ in range(6):  # G̃_k of the shifted component depends on τ: iterate
+            acc, ks = summed(attenuation(res.tau_ps, b_bar))
+            new, b_bar = fit(acc)
+            done = abs(new.tau_ps - res.tau_ps) <= 1e-3 * res.tau_ps
+            res = new
+            if done:
+                break
+        out["notes"].append(f"Deorientation in vacuum corrected: each component divided by its angular distribution "
+                            f"(a₂ = {a_k[2]:.3f}, a₄ = {a_k[4]:.3f} from physim's Coulex correlation for the particles "
+                            f"the detectors see; G_k from the setup's α_k and Γ_k at the flight time, G̃_k averaged "
+                            f"over the decays in flight for the fitted τ). The correction is good to about 2% of τ "
+                            f"(⁹⁸Ru's simulated runs: ring-averaged a_k, one flight time per distance); that is not "
+                            f"in the budget.")
+    kept = [f"{rings[r][0]:g}°: {k:.3f}" for r, k in ks.items() if k is not None]
+    how = {"model": "the Lorentz boost of the solid angle times the full-energy efficiency at the shifted energy "
+                    "over that at E₀, at each ring's mean speed",
+           "fit": "fitted from I_u + I_s/k being the same at every distance"}.get(EFFICIENCY_RATIO)
+    if kept:
+        out["notes"].append(f"Efficiency of the shifted over the unshifted component (k, {how}): "
+                            + ", ".join(kept) + ".")
+    if how and any(k is None for k in ks.values()):
+        out["notes"].append("No efficiency ratio at " + ", ".join(f"{rings[r][0]:g}°" for r, k in ks.items()
+                                                                 if k is None) + ": k = 1 there.")
+    out["beta"] = b_bar
+    u, s = acc["u"], acc["s"]
+    tot = u + s
+    s_r = np.sqrt(s * s * np.maximum(acc["vu"], 1.0) + u * u * np.maximum(acc["vs"], 1.0)) / tot ** 2
     if method == "decay_curve":
-        res = la.decay_curve(dists, u_ / tot, s_r, beta, offset_um=lt_.offset_um, beta_error=beta_err)
-        out["notes"].append("Decay curve of the level alone (one exponential): its feeding is not modelled; the "
-                            "DDCM corrects for it.")
+        out["notes"].append(f"Decay curve of the level alone (one exponential per speed, over the spread of speeds "
+                            f"the shifted line shows at the largest distance; mean β = {100 * b_bar:.3f}%; a free "
+                            "normalisation): its feeding is not modelled; the DDCM corrects for it.")
         for k, d in enumerate(dists):
-            out["points"].append({"distance_um": float(d), "unshifted": float(u_[k] / tot[k]),
-                                  "shifted": float(s_[k] / tot[k]), "error": float(s_r[k]), "tau_ps": None,
+            out["points"].append({"distance_um": float(d), "unshifted": float(u[k] / tot[k]),
+                                  "shifted": float(s[k] / tot[k]), "error": float(s_r[k]), "tau_ps": None,
                                   "tau_err_ps": None})
         out["curve"] = {"x": [row["distance_um"] for row in res.per_distance],
                         "y": [row["model"] for row in res.per_distance],
                         "kind": "unshifted share (decay-curve fit)"}
         out["method"] = "decay_curve"
         return res
-    kw = {}
-    errors = (np.sqrt(np.maximum(vu, 1.0)), np.sqrt(np.maximum(vs, 1.0)))
+    out["notes"].append(f"DDCM with the shifted counts weighted by their own speed (mean β = {100 * b_bar:.3f}%), "
+                        "so a spread of the recoils' speeds does not bias τ.")
     if feeder_ok:
-        scale = _feeder_scale(exp, used, rings, e0, feeder[1])
-        errors = errors + (np.sqrt(np.maximum(fvu, 1.0)) * scale, np.sqrt(np.maximum(fvs, 1.0)) * scale)
-        kw = dict(feeder_unshifted=fu_ * scale, feeder_shifted=fs_ * scale, alpha=_alpha(subject, i, final))
         out["notes"].append(f"Feeding corrected with {subject.names[feeder[0]]} → {subject.names[i]} "
                             f"({feeder[1]:.1f} keV), its intensities corrected for the efficiency.")
     elif feeder is not None:
-        out["notes"].append(f"The feeder {subject.names[feeder[0]]} → {subject.names[i]} could not be fitted: no "
+        out["notes"].append(f"The feeder {subject.names[feeder[0]]} → {subject.names[i]} could not be measured: no "
                             "feeding correction.")
-    res = la.ddcm(dists, u_, s_, errors, beta, offset_um=lt_.offset_um, beta_error=beta_err, **kw)
     for k, d in enumerate(dists):
         row = res.per_distance[k]
-        out["points"].append({"distance_um": float(d), "unshifted": float(u_[k] / tot[k]),
-                              "shifted": float(s_[k] / tot[k]), "error": float(s_r[k]),
+        out["points"].append({"distance_um": float(d), "unshifted": float(u[k] / tot[k]),
+                              "shifted": float(s[k] / tot[k]), "error": float(s_r[k]),
                               "tau_ps": row["tau_ps"], "tau_err_ps": row["error_ps"], "used": row["used"]})
     out["curve"] = {"x": [row["distance_um"] for row in res.per_distance],
-                    "y": [row["curve"] for row in res.per_distance], "kind": "shifted intensity (DDCM fit)"}
+                    "y": [row["curve"] for row in res.per_distance],
+                    "kind": "speed-weighted shifted intensity (DDCM fit)"}
     out["method"] = "ddcm"
     return res
 

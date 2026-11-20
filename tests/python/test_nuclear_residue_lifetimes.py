@@ -335,3 +335,25 @@ def test_sm143_events_slow_and_stop_in_the_backing():
         simulate_residue_gammas(exp, events=100, distance_um=10.0)
     with pytest.raises(ValueError, match="plunger"):
         plunger_components(exp)
+
+
+def test_fold_keeps_the_spectrum_length_when_the_resolution_spans_more_bins():
+    """residues._fold with a Gaussian longer than the spectrum (narrow bins, as dsam_lineshapes on 143Sm with
+    ENSDF's scheme): np.convolve's "same" returned the kernel's length and broke the caller (lifetime wave 4B)."""
+    from physim.nuclear.residues import _fold
+
+    centres = np.arange(300) * 0.05  # 0.05 keV bins over 15 keV
+    shape = np.zeros(300)
+    shape[150] = 1.0
+    out = _fold(shape, centres, 3.0)  # 3 keV FWHM: the kernel spans 5σ = 6.4 keV each side, 255 bins
+    assert out.shape == shape.shape
+    assert out.sum() == pytest.approx(1.0, rel=1e-6)  # the spike is central: the whole Gaussian is inside
+    assert np.argmax(out) == 150
+    sigma = 3.0 / 2.354820045
+    mean = np.sum(out * centres)
+    assert math.sqrt(np.sum(out * (centres - mean) ** 2)) == pytest.approx(sigma, rel=0.01)
+    wide = np.ones(300)
+    assert _fold(wide, centres, 30.0).shape == (300,)  # a kernel far longer than the spectrum
+    # A kernel shorter than the spectrum: the same as before.
+    short = _fold(shape, centres, 0.5)
+    assert short.shape == shape.shape and np.argmax(short) == 150 and short.sum() == pytest.approx(1.0)
