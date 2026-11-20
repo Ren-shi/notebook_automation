@@ -84,8 +84,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - Only the last γ ray of a cascade is aimed at the crystals; those before it are drawn over the whole sphere,
     since the next one depends on their direction. The γ rays of a setup with cascades take about twice as long
     (23 s for 300 000 reactions of the ⁶²Ni on ¹⁹⁴Pt template, against 12 s).
-- Lifetime measurements, plunger (RDDS) and Doppler-shift attenuation (DSAM), backlog 73 (waves 1 and 2; the
-  planner, report, MCP tools and app follow).
+- Lifetime measurements, plunger (RDDS) and Doppler-shift attenuation (DSAM), backlog 73: planned, simulated and
+  analysed for Coulex and fusion-evaporation, from the setup to τ and B(Eλ).
   - A `[lifetime]` section in the setup for Coulex and fusion-evaporation: a plunger (stopper, degrader, or a
     differential plunger with a second foil, `set_degrader2`) at a distance with an offset, or a DSAM backing,
     with problems for impossible setups (a stopper too thin to stop the recoil, distances not positive). Units
@@ -110,13 +110,34 @@ workflow builds the wheels, tests them and publishes to PyPI.
     extended and loaded like Coulex runs; γγ matrices and gated spectra; a plunger distance per run.
   - Lifetime analysis (`physim.nuclear.lifetime_analysis`): plunger peak areas, decay-curve fits with Bateman
     feeding, the differential decay-curve method (singles with feeding correction, gated, and three-foil for
-    differential plungers), DSAM line-shape fits, B(Eλ) from τ, and the deorientation correction and fit. Each
-    result has an uncertainty budget (statistics, distance, velocity, feeding, stopping).
+    differential plungers, with the degrader and stopper points gated as Beckers et al.'s Eq. 13 requires), DSAM
+    line-shape fits, B(Eλ) from τ, and the deorientation correction and fit. Each result has an uncertainty budget
+    (statistics, distance, velocity, feeding, stopping).
+  - The planner (`physim.nuclear.lifetime_plan`): `Planner.lifetimes` (per level the method that suits it, τ and its
+    source, plunger distances and sensitive range, the peak separation per γ-ray detector, F(τ), the beam time per
+    distance for a wanted precision, and warnings, including a Coulex plunger with no deorientation),
+    `Planner.lifetime_spectra` (predicted spectra per distance and angle) and `Planner.analyse_lifetimes` (τ from
+    a distance series by DDCM, three-foil DDCM or decay curve, or from DSAM line shapes, then B(Eλ↓) beside ENSDF,
+    the Coulex B(E2) and the shell model); `dataviews.distance_spectra`. The beam-time report has a lifetime
+    section with its limits and the lifetime checks; MCP tools `plan_lifetime_measurement`, `set_plunger`,
+    `lifetime_spectra` and `analyse_lifetimes`; docs page "Lifetime measurements" (`docs/lifetimes.md`).
+  - The planner app: a plunger (RDDS) or DSAM card in Setup for Coulex and fusion (distances, offset, foil kind,
+    material and thickness, a differential plunger's second foil, deorientation as rates or g with C₂, C₄), and the
+    fusion Plan's "Add a plunger…" and "Line shapes (DSAM)…" buttons. "Lifetimes" is a live kind on the start page
+    with three templates. Plan has a lifetimes panel and predicted spectra per distance; Run takes a run at a chosen
+    distance, or one run per distance not yet taken, and takes fusion runs; Data groups the distance series
+    (spectra per distance and ring) and shows fusion runs (singles, γγ matrix, gated spectra); Analysis shows the
+    decay curve and DDCM τ(x), or the line-shape fit, with τ, its budget, B(Eλ) and the comparison rows.
   - Validation: two capabilities, "Lifetimes: recoil distance (RDDS)" and "Lifetimes: Doppler-shift attenuation
     (DSAM)", with analytic, Bateman, deorientation (Radeck et al.) and TRIM checks that pass, and two known
     failures said plainly: against APCAD the DSAM line's shift is 17% off (widths agree), against AhKin its width
-    is 25% off (shift inside AhKin's band). Register page `docs/physics-register/lifetimes.md`, notebook
-    `notebooks/validation/lifetimes.ipynb`. The published reproductions (⁹⁸Ru, ⁵⁰Cr, ¹⁴³Sm) follow.
+    is 25% off (shift inside AhKin's band). The DDCM agrees with NaPyTau on simulated spectra, and τ comes back
+    from simulated runs within its uncertainty (closure, RDDS and DSAM). Published experiments reproduced through
+    `physim.nuclear.lifetime_reproduction` (`scripts/reproduce_lifetimes.py`): Radeck et al.'s ⁹⁸Ru 2⁺₁ (8.35 ±
+    0.27 ps against 8.36(29)) and Beckers et al.'s ⁵⁰Cr 2⁺₁ and 4⁺₁ pass; Rajbanshi et al.'s ¹⁴³Sm DSAM is a known
+    failure (fitted with SRIM's stopping, as the paper did, τ comes out about 20% long: SRIM's range of Sm in Au is
+    19% longer than physim's). Register page `docs/physics-register/lifetimes.md`, notebook
+    `notebooks/validation/lifetimes.ipynb`.
 
 ### Documentation
 - The README shows the application: what the experiment planner does, step by step, with screenshots
@@ -127,6 +148,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- Editing a fusion setup with an ancillary (neutron wall, charged-particle ball, …) could break the app's setup
+  panel: `workbench.card_setup` raised for ancillary cards while a change was pending.
 - A shell-model job reads as finished, with its finish time, as soon as its results are written; before, a status
   read between the results and the worker's last status write saw it still running (a rare test failure).
 - The alignment fit (`alignment.fit_offset`) could come out short of the offset at small statistics: with one
