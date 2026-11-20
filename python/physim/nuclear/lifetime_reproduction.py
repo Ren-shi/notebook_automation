@@ -806,23 +806,6 @@ def lt_level_taus_array(scheme) -> np.ndarray:
     return np.array([found[nm][0] if nm in found else np.inf for nm in level_names(scheme.levels)])
 
 
-class _AtAngle:
-    """A :class:`physim.nuclear.transport.Kernel` seen from one detector angle, β·cos ψ worked out once:
-    :func:`lifetimes.lineshape` asks the kernel for it at every trial τ of a fit, and the projection of every
-    recoil's direction is most of a fit's time."""
-
-    def __init__(self, kernel, theta_deg: float):
-        self.times_ps = kernel.times_ps
-        self.beta = kernel.beta
-        self.theta = float(theta_deg)
-        self._bc = np.asarray(kernel.beta_cos(self.theta, 0.0))
-
-    def beta_cos(self, theta_deg: float, phi_deg: float = 0.0):
-        if abs(float(theta_deg) - self.theta) > 1e-9 or phi_deg:
-            raise ValueError(f"this kernel is for a detector at {self.theta}°")
-        return self._bc
-
-
 @contextmanager
 def _stopping_in(species: str, material, st):
     """Within the block, the transport slows ``species`` in ``material`` (only) with the Stopping ``st``."""
@@ -939,7 +922,7 @@ def sm143(ref=None, *, residues: int = 20_000, n: int = 3000, times: int = 60, s
         # resolution, then put in the 0.5 keV bins.
         fine = np.arange(edges[0] - 10.0, edges[-1] + 10.0, 0.02) + 0.0071
         for th in SM143_ANGLES:
-            row = lt.lineshape(e0, taus, feed, pops, _AtAngle(k_true, th), th, fine)[i]
+            row = lt.lineshape(e0, taus, feed, pops, k_true, th, fine)[i]
             shape = _rebin(fine, _fold_uniform(fine, np.nan_to_num(row), SM143_FWHM_KEV), edges)
             amp = SM143_COUNTS * cas["intensity"][i] / 100.0
             mu = amp * shape / shape.sum() + 0.02 * amp * shape.max() / shape.sum()
@@ -949,7 +932,6 @@ def sm143(ref=None, *, residues: int = 20_000, n: int = 3000, times: int = 60, s
     def fit_all(kernel, labels=None) -> dict:
         """Fits from the top down, each level's feeders at the values just fitted; with ``labels``, only those
         levels, their feeders at the simulated values (the closure)."""
-        at = {th: _AtAngle(kernel, th) for th in SM143_ANGLES}
         fitted = dict(enumerate(taus))
         out = {}
         for lab in (order if labels is None else labels):
@@ -959,7 +941,7 @@ def sm143(ref=None, *, residues: int = 20_000, n: int = 3000, times: int = 60, s
             for th in SM143_ANGLES:
                 f = la.Feeding([fitted[j] for j in sub], feed[np.ix_(sub, sub)], pops[sub],
                                int(np.flatnonzero(sub == i)[0]))
-                r = la.fit_lineshape(spectra[lab]["counts"][th], spectra[lab]["edges"], cas["e_gamma"][lab], at[th],
+                r = la.fit_lineshape(spectra[lab]["counts"][th], spectra[lab]["edges"], cas["e_gamma"][lab], kernel,
                                      th, f, "linear", fwhm_kev=SM143_FWHM_KEV, stopping_uncertainty=0.0)
                 per[th] = (r.tau_ps, r.stat_ps, r.params.get("plus_ps"), r.params.get("minus_ps"))
             w = np.array([1 / per[th][1] ** 2 for th in SM143_ANGLES])

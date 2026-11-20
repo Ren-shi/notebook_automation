@@ -482,6 +482,16 @@ def _directional(kernel) -> bool:
     return callable(kernel.beta_cos)
 
 
+def _kernel_times(kernel) -> np.ndarray:
+    """The kernel's times (nt,), checked."""
+    t = np.asarray(kernel.times_ps, dtype=float)
+    if t.ndim != 1 or len(t) < 1:
+        raise ValueError("the kernel needs times_ps (nt,) and beta_cos (nt, recoils)")
+    if np.any(np.diff(t) <= 0) or t[0] < 0:
+        raise ValueError("the kernel's times must start at or after 0 and increase")
+    return t
+
+
 def _kernel_arrays(kernel, theta_deg: float = 0.0) -> tuple:
     """(times (nt,), speeds β (nt, n), β·cos(angle to a detector at ``theta_deg`` from the beam) (nt, n), weights).
     For an array kernel the recoils move along the beam: β is |β cos θ_recoil| and the projection is
@@ -510,10 +520,31 @@ def _kernel_arrays(kernel, theta_deg: float = 0.0) -> tuple:
     return t, beta, proj, w / w.sum()
 
 
+#: The last few :func:`_emission_weights`, keyed on the cascade and the times: the weights do not depend on the
+#: detector, so line shapes of one cascade at several angles (``residues.dsam_lineshapes``' rings) share them.
+_WEIGHTS: dict = {}
+_WEIGHTS_KEPT = 8
+
+
 def _emission_weights(lam, f, p, t) -> tuple:
     """Per level, the share of its decays in each interval of the kernel's times, (levels, nt − 1), and the node
     weights (levels, nt) that integrate a quantity varying linearly between the times exactly against the decay
-    law (decays before the first time go to the first node, after the last time to the last node)."""
+    law (decays before the first time go to the first node, after the last time to the last node). Read-only
+    arrays, kept for the next call with the same cascade and times."""
+    lam, f, p, t = (np.asarray(a, dtype=float) for a in (lam, f, p, t))
+    key = (lam.shape, t.shape, lam.tobytes(), f.tobytes(), p.tobytes(), t.tobytes())
+    hit = _WEIGHTS.pop(key, None)
+    if hit is None:
+        hit = _emission_weights_of(lam, f, p, t)
+        for a in hit:
+            a.flags.writeable = False
+        while len(_WEIGHTS) >= _WEIGHTS_KEPT:
+            _WEIGHTS.pop(next(iter(_WEIGHTS)), None)
+    _WEIGHTS[key] = hit
+    return hit
+
+
+def _emission_weights_of(lam, f, p, t) -> tuple:
     after, integral = _decays_after(lam, f, p, t, integral=True)
     after, integral = after.T, integral.T  # (levels, nt)
     h = np.diff(t)
@@ -560,15 +591,25 @@ def _spread(lo: np.ndarray, hi: np.ndarray, weight: np.ndarray, edges: np.ndarra
     if len(many):
         lo, length, weight, jlo, span, group = (lo[many], length[many], weight[many], jlo[many], (jhi - jlo)[many],
                                                 group[many])
+        # Offset o adds each segment's share of its o-th bin. Only the segments spanning at least o more bins take
+        # part: narrowing that set (in its original order, so every bin sums the same numbers in the same order)
+        # makes the work the bins crossed rather than the longest segment × the segments.
+        active = np.arange(len(lo))
         for o in range(int(span.max()) + 1):
-            j = jlo + o
-            m = (o <= span) & (j >= 0) & (j < nb)
-            if not m.any():
+            if o:
+                active = active[span[active] >= o]
+            j = jlo[active] + o
+            ok = (j >= 0) & (j < nb)
+            if not ok.any():
                 continue
-            jj = j[m]
+            m = active[ok]
+            jj = j[ok]
             left = np.clip((edges[jj] - lo[m]) / length[m], 0.0, 1.0)
             right = np.clip((edges[jj + 1] - lo[m]) / length[m], 0.0, 1.0)
-            out += np.bincount(group[m] * nb + jj, weights=weight[m] * (right - left), minlength=size)
+            idx = group[m] * nb + jj
+            first = int(idx.min())  # add only over the bins this offset reaches
+            part = np.bincount(idx - first, weights=weight[m] * (right - left))
+            out[first:first + len(part)] += part
     return out.reshape(n_groups, nb)
 
 
@@ -582,20 +623,30 @@ def _ratio(beta: np.ndarray, proj: np.ndarray) -> np.ndarray:
     return np.sqrt(1.0 - beta * beta) / (1.0 - proj)
 
 
-def _kernel_matrix(kernel, t, beta, proj, w, theta_deg: float, x_edges: np.ndarray) -> tuple:
+def _kernel_parts(kernel) -> tuple:
+    """The kernel and the arrays its binning depends on. A kept binning is used only while all of these are the
+    same objects, so a kernel given new arrays is binned again (``transport.Kernel``'s arrays are also read-only;
+    an array kernel's arrays are taken as unchanging once given)."""
+    names = ("times_ps", "beta", "direction", "weights") if _directional(kernel) else ("times_ps", "beta_cos",
+                                                                                       "weights")
+    return (kernel,) + tuple(getattr(kernel, nm, None) for nm in names)
+
+
+def _kernel_matrix(kernel, theta_deg: float, x_edges: np.ndarray, arrays) -> tuple:
     """The kernel binned once, independent of τ (AhKin's idea): (intervals, bins) the share of each interval's
     emissions in each bin of E/E₀, and the bins of the recoils as they are at the first and the last time. The last
-    few are kept, so a fit that calls :func:`lineshape` for many τ bins the kernel once (kernels are taken as
-    unchanging). Keyed on the detector's cos θ for an array kernel, and on θ for a directional one (whose
-    projection is not a function of cos θ alone)."""
+    few are kept, so a fit that calls :func:`lineshape` for many τ bins the kernel once, and asks the kernel for
+    nothing more. Keyed on the detector's cos θ for an array kernel, and on θ for a directional one (whose
+    projection is not a function of cos θ alone). ``arrays()`` gives :func:`_kernel_arrays` when it is binned."""
     if _directional(kernel):
-        key = (id(kernel), id(kernel.times_ps), id(kernel.beta), "theta", float(theta_deg), x_edges.tobytes())
+        key = (id(kernel), "theta", float(theta_deg), x_edges.tobytes())
     else:
-        key = (id(kernel), id(kernel.times_ps), id(kernel.beta_cos), "cos", math.cos(math.radians(float(theta_deg))),
-               x_edges.tobytes())
+        key = (id(kernel), "cos", math.cos(math.radians(float(theta_deg))), x_edges.tobytes())
+    parts = _kernel_parts(kernel)
     hit = _MATRICES.get(key)
-    if hit is not None and hit[0] is kernel:
+    if hit is not None and len(hit[0]) == len(parts) and all(a is b for a, b in zip(hit[0], parts)):
         return hit[1]
+    t, beta, proj, w = arrays()
     ratio = _ratio(beta, proj)  # (nt, recoils): E/E₀
     lo = np.minimum(ratio[:-1], ratio[1:]).ravel()
     hi = np.maximum(ratio[:-1], ratio[1:]).ravel()
@@ -604,9 +655,11 @@ def _kernel_matrix(kernel, t, beta, proj, w, theta_deg: float, x_edges: np.ndarr
     matrix = _spread(lo, hi, weights, x_edges, groups, len(t) - 1)
     first = _spread(ratio[0], ratio[0], w, x_edges)[0]
     last = _spread(ratio[-1], ratio[-1], w, x_edges)[0]
-    if len(_MATRICES) >= 4:
-        _MATRICES.pop(next(iter(_MATRICES)))
-    _MATRICES[key] = (kernel, (matrix, first, last))
+    for a in (matrix, first, last):
+        a.flags.writeable = False
+    while len(_MATRICES) >= 4:
+        _MATRICES.pop(next(iter(_MATRICES)), None)
+    _MATRICES[key] = (parts, (matrix, first, last))
     return matrix, first, last
 
 
@@ -622,7 +675,14 @@ def lineshape(e0_kev, taus_ps, feeding, populations, kernel, theta_deg, edges_ke
     (θ, φ = 0) with each recoil's own direction. Between two kernel times each recoil's energy is spread evenly between its values at the two
     times, with the decays of that interval. The kernel's binning does not depend on τ and is kept for the next
     call, so a fit over τ is fast."""
-    t, beta, proj, w = _kernel_arrays(kernel, theta_deg)
+    t = _kernel_times(kernel)
+    held = []
+
+    def arrays() -> tuple:  # only when the kernel is binned (not kept) or too big to bin
+        if not held:
+            held.append(_kernel_arrays(kernel, theta_deg))
+        return held[0]
+
     lam, f, p = _cascade(taus_ps, feeding, populations)
     edges = np.asarray(edges_kev, dtype=float)
     if edges.ndim != 1 or len(edges) < 2 or np.any(np.diff(edges) <= 0):
@@ -638,9 +698,10 @@ def lineshape(e0_kev, taus_ps, feeding, populations, kernel, theta_deg, edges_ke
         x = edges / e0[i]
         early, late = 1.0 - after[i, 0], after[i, -1]  # before the first time, after the last
         if (len(t) - 1) * (len(edges) - 1) <= _MATRIX_LIMIT:
-            matrix, first, last = _kernel_matrix(kernel, t, beta, proj, w, float(theta_deg), x)
+            matrix, first, last = _kernel_matrix(kernel, float(theta_deg), x, arrays)
             out[i] = shares[i] @ matrix + early * first + late * last
             continue
+        _, beta, proj, w = arrays()
         ratio = _ratio(beta, proj)
         lo = np.minimum(ratio[:-1], ratio[1:]).ravel()
         hi = np.maximum(ratio[:-1], ratio[1:]).ravel()

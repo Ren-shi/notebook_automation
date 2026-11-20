@@ -127,20 +127,6 @@ def test_feeders_and_the_sm143_cascade():
     assert len(five["taus_ps"]) == n + 45 and five["taus_ps"][n] == pytest.approx(0.03)
 
 
-def test_kernel_at_one_angle_refuses_another():
-    class K:
-        times_ps = np.array([0.0, 1.0])
-        beta = np.ones((2, 3))
-
-        def beta_cos(self, theta, phi=0.0):
-            return np.full((2, 3), math.cos(math.radians(theta)))
-
-    at = lr._AtAngle(K(), 148.0)
-    assert at.beta_cos(148.0)[0, 0] == pytest.approx(math.cos(math.radians(148.0)))
-    with pytest.raises(ValueError):
-        at.beta_cos(123.0)
-
-
 def test_pair_stack_sets_both_gaps():
     exp = Experiment.example("fusion_cr50_plunger")
     segs = lr._pair_stack(exp, 42.0, 40.0)
