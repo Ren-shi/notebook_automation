@@ -1567,9 +1567,15 @@ class Planner:
           on the slowing-down kernel of the typical recoil), else None;
         - ``hours_per_distance``: the beam time at each distance (the setup's, else the recommended ones) for the
           wanted precision on τ, from the line's full-energy rate in all γ-ray detectors (``rate_per_s``) and the
-          one-level binomial precision of the unshifted share at each distance, combined over the distances.
+          one-level binomial precision of the unshifted share at each distance, combined over the distances;
+        - ``backing_advice`` (levels in the DSAM range, and every level with a τ in a DSAM setup; else None): the
+          usual backings ranked by the DSAM sensitivity ``|dF/d ln τ|``, each with F(τ), the slowing-down time and the
+          thickness that stops the recoil, and the setup's own backing among them
+          (:func:`physim.nuclear.lifetime_plan.backing_advice`).
 
-        The recoil is the setup's typical one (:meth:`~physim.nuclear.experiment.Experiment.lifetime_recoil`).
+        Also ``stopper``: for a plunger, the beam in each foil it reaches (energy in and out, power deposited
+        against the foil's limit, and the foil's own Coulex lines near the studied peaks); its warnings are in
+        ``warnings``. The recoil is the setup's typical one (:meth:`~physim.nuclear.experiment.Experiment.lifetime_recoil`).
         Kept until the setup changes."""
         key = ("lifetimes", level, float(precision))
         if key not in self._cache:
