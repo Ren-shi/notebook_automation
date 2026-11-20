@@ -342,6 +342,57 @@ def test_three_foil_with_a_feeder():
     assert r.tau_ps == pytest.approx(tau, rel=0.01)
 
 
+def _gated_three_foil(tau_b, tau_a, t1, t2, gate_end):
+    """Exact γγ intensities of level A (mean life tau_a) in coincidence with its only feeder B (tau_b, populated at
+    t = 0), B gated on its decays before each pair's ``gate_end`` (t₁: fully shifted; t₂: fully and reduced
+    shifted): A's decays before t₁, between t₁ and t₂, after t₂. {B_[0,T], A_[a,b]} = ∫₀ᵀ f_B(s) P(a < s + t_A < b) ds
+    by the trapezoidal rule on a fine grid (the integrand is smooth)."""
+    out = []
+    for T, a1, a2 in zip(gate_end, t1, t2):
+        s = np.linspace(0.0, T, 200001)
+        f = np.exp(-s / tau_b) / tau_b
+
+        def after(x):  # P(t_A > x − s) for A formed at s
+            return np.exp(-np.clip(x - s, 0.0, None) / tau_a)
+
+        fs = np.trapezoid(f * (1 - after(a1)), s)
+        rs = np.trapezoid(f * (after(a1) - after(a2)), s)
+        us = np.trapezoid(f * after(a2), s)
+        out.append((fs, rs, us))
+    return [np.array(x) for x in zip(*out)]
+
+
+def test_three_foil_gates_follow_beckers_eq13():
+    """Beckers et al., NIM A 1042, 167418 (2022), Eq. 13: gated on the direct feeder, the degrader (t₁) points take
+    the gate on its fully shifted component and the stopper (t₂) points the gate on its fully and reduced shifted
+    components. One set gated on B_fs used for both parts (what the first version did) puts the stopper points on
+    no single curve: with the feeder as slow as the first flight times τ comes out 30% short (exact intensities)."""
+    b1, b2, tau_a, tau_b = 0.039, 0.015, 12.2, 8.0
+    x1 = np.array([17, 30, 42, 62, 90, 122, 200, 350, 750.0])
+    x2 = np.array([40, 45, 40, 67, 80, 127, 150, 250, 335.0])
+    t1 = lt.flight_times(x1, b1, proper=True)
+    t2 = t1 + lt.flight_times(x2, b2, proper=True)
+    pairs = np.column_stack([x1, x2])
+    n = 1e6
+    g1 = [n * x for x in _gated_three_foil(tau_b, tau_a, t1, t2, t1)]  # gate on B_fs
+    g2 = [n * x for x in _gated_three_foil(tau_b, tau_a, t1, t2, t2)]  # gate on B_fs+rs
+    e1, e2 = tuple(sqrt_counts(x) for x in g1), tuple(sqrt_counts(x) for x in g2)
+    both = la.ddcm_three_foil(pairs, *g1, e1, b1, b2, gated=True, stopper_gated=(*g2, e2))
+    assert both.tau_ps == pytest.approx(tau_a, rel=0.01), both.tau_ps
+    assert [p["foil"] for p in both.per_distance] == ["degrader"] * 9 + ["stopper"] * 9
+    deg = la.ddcm_three_foil(pairs, *g1, e1, b1, b2, gated=True, points="degrader")
+    sto = la.ddcm_three_foil(pairs, *g2, e2, b1, b2, gated=True, points="stopper")
+    assert within(deg, tau_a) and within(sto, tau_a), (deg.tau_ps, deg.stat_ps, sto.tau_ps, sto.stat_ps)
+    assert len(deg.per_distance) == len(sto.per_distance) == 9
+    with pytest.raises(ValueError, match="Eq. 13"):
+        la.ddcm_three_foil(pairs, *g1, e1, b1, b2, gated=True)
+    # The old reading: the B_fs-gated components for the stopper points too.
+    wrong = la.ddcm_three_foil(pairs, *g1, e1, b1, b2, gated=True, stopper_gated=(*g1, e1))
+    assert abs(wrong.tau_ps / tau_a - 1) > 0.2, wrong.tau_ps
+    old_stopper = la.ddcm_three_foil(pairs, *g1, e1, b1, b2, gated=True, points="stopper")
+    assert abs(old_stopper.tau_ps / tau_a - 1) > 0.5, old_stopper.tau_ps
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # DSAM line shapes
 

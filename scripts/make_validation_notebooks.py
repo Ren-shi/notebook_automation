@@ -127,17 +127,19 @@ def reproduction_notebook() -> nbformat.NotebookNode:
 
 
 def lifetimes_notebook() -> nbformat.NotebookNode:
-    """Lifetime measurements (backlog 73, wave 2D): the generic page, plus the ⁹⁸Ru attenuation curves and the ⁸³Y
-    line shape with AhKin's and the measured one."""
+    """Lifetime measurements (backlog 73, waves 2D and 3C): the generic page, plus the ⁹⁸Ru attenuation curves, the
+    ⁸³Y line shape with AhKin's and the measured one, and the three reproduced experiments."""
     nb = notebook(
         "Validation: lifetime measurements (RDDS and DSAM)",
         ["Lifetimes: recoil distance (RDDS)", "Lifetimes: Doppler-shift attenuation (DSAM)"],
         "The plunger's decay curves and Bateman's equations against their closed forms, the deorientation in vacuum "
         "against Radeck et al.'s Table I, the recoil transport against TRIM, the DSAM attenuation against its exact "
         "result for stopping proportional to speed, and DSAM line shapes against APCAD's and AhKin's examples "
-        "(shape only, not a lifetime fit). The DDCM against NaPyTau, the closure tests and the three published "
-        "experiments wait for simulated spectra and the lifetime analysis (wave 3C). The two line-shape comparisons "
-        "fail their tolerances; why is on the register page `docs/physics-register/lifetimes.md`.")
+        "(shape only, not a lifetime fit); the DDCM against NaPyTau on physim's own simulated plunger spectra, τ "
+        "recovered from simulated runs of known τ (closure), and the three published experiments (⁹⁸Ru, ⁵⁰Cr, "
+        "¹⁴³Sm) simulated from the examples made after the papers and analysed as the papers did "
+        "(`physim.nuclear.lifetime_reproduction`). The two line-shape comparisons and the ¹⁴³Sm reproduction fail "
+        "their tolerances; why is on the register page `docs/physics-register/lifetimes.md`.")
     nb.cells += [
         nbformat.v4.new_markdown_cell(
             "## Deorientation in vacuum, ⁹⁸Ru 2⁺₁\n\nRadeck et al.'s Table I parameters: the attenuation of the "
@@ -167,6 +169,70 @@ def lifetimes_notebook() -> nbformat.NotebookNode:
             "ax.set_ylabel('counts per channel')\n"
             "ax.legend(fontsize=8)\n"
             "fig.tight_layout()"),
+        nbformat.v4.new_markdown_cell(
+            "## ⁹⁸Ru after Coulex (Radeck et al. 2012)\n\nThe example simulated at its 11 distances, particle–γ "
+            "with the ²⁴Mg recoils. The unshifted intensity per ring against distance, divided by its angular "
+            "distribution W_U(d) (the deorientation correction), and the decay-curve fit; and τ with and without "
+            "the correction against the paper's 8.36(29) ps."),
+        nbformat.v4.new_code_cell(
+            "import numpy as np\nfrom physim.nuclear import lifetime_reproduction as lr\n\n"
+            "ru = lr.ru98()\n"
+            "fig, ax = plt.subplots(1, 2, figsize=(9, 3.2))\n"
+            "for (ring, r), colour in zip(sorted(ru['rings'].items()), ('#d62728', '#1f77b4')):\n"
+            "    y = np.array(r['unshifted']) / np.array(r['w_unshifted'])\n"
+            "    e = np.array(r['err_unshifted']) / np.array(r['w_unshifted'])\n"
+            "    ax[0].errorbar(ru['distances_um'], y, e, fmt='o', ms=3, color=colour, label=f'{ring:g}°')\n"
+            "    ax[0].plot(ru['distances_um'], r['model'], color=colour, lw=0.8)\n"
+            "ax[0].set_xscale('log'); ax[0].set_yscale('log')\n"
+            "ax[0].set_xlabel('distance (µm)'); ax[0].set_ylabel('unshifted / W_U'); ax[0].legend(fontsize=8)\n"
+            "labels = ['paper', 'physim, corrected', 'physim, uncorrected']\n"
+            "vals = [ru['paper_tau_ps'], ru['tau_ps'], ru['uncorrected_ps']]\n"
+            "errs = [ru['paper_sigma_ps'], ru['stat_ps'], 0]\n"
+            "ax[1].errorbar(range(3), vals, errs, fmt='s', color='#444444')\n"
+            "ax[1].set_xticks(range(3)); ax[1].set_xticklabels(labels, fontsize=8); ax[1].set_ylabel('τ(2⁺₁) (ps)')\n"
+            "fig.tight_layout()\n"
+            "print(ru['detail'])"),
+        nbformat.v4.new_markdown_cell(
+            "## ⁵⁰Cr after fusion-evaporation, three-foil plunger (Beckers et al. 2022)\n\nτ(x) of the 2⁺₁ from "
+            "the degrader (t₁) and stopper (t₂) parts of the γγ DDCM with direct gates (their Eq. 13), against the "
+            "effective distance, with the paper's value and the other published values."),
+        nbformat.v4.new_code_cell(
+            "cr = lr.cr50()\n"
+            "fig, ax = plt.subplots(figsize=(6.5, 3.2))\n"
+            "for part, colour in (('t1', '#d62728'), ('t2', '#1f77b4')):\n"
+            "    pts = [p for p in cr['per_distance'][part] if p['used']]\n"
+            "    ax.errorbar([p['distance_um'] for p in pts], [p['tau_ps'] for p in pts],\n"
+            "                [p['error_ps'] for p in pts], fmt='o', ms=3, color=colour, label=f'{part} part')\n"
+            "for method, tau, unc, _src in cr['states']['2+1']['published']:\n"
+            "    ax.axhspan(tau - unc, tau + unc, alpha=0.12, color='#444444')\n"
+            "ax.axhline(cr['states']['2+1']['tau_ps'], color='#2ca02c', label='physim')\n"
+            "ax.set_xscale('log'); ax.set_xlabel('effective distance (µm)'); ax.set_ylabel('τ(x), 2⁺₁ (ps)')\n"
+            "ax.legend(fontsize=8); fig.tight_layout()\n"
+            "print(cr['detail'])"),
+        nbformat.v4.new_markdown_cell(
+            "## ¹⁴³Sm after fusion-evaporation, DSAM on Au (Rajbanshi et al. 2018)\n\nThe lifetimes fitted with "
+            "SRIM's stopping (as the paper) from line shapes simulated with physim's, against the paper's Table I "
+            "(the two upper limits marked), and one simulated line with the fit."),
+        nbformat.v4.new_code_cell(
+            "sm = lr.sm143()\n"
+            "fig, ax = plt.subplots(1, 2, figsize=(9, 3.4))\n"
+            "order = sm['order']\n"
+            "x = np.arange(len(order))\n"
+            "paper = [sm['levels'][k]['paper_tau_ps'] for k in order]\n"
+            "ax[0].plot(x, paper, 's', mfc='none', color='#444444', label='paper (Table I)')\n"
+            "ax[0].errorbar(x, [sm['levels'][k]['tau_ps'] for k in order], [sm['levels'][k]['stat_ps'] for k in order],\n"
+            "               fmt='o', ms=3, color='#d62728', label='physim, SRIM kernel')\n"
+            "ax[0].set_xticks(x); ax[0].set_xticklabels([f\"{sm['levels'][k]['e_gamma_kev']:.0f}\" for k in order],\n"
+            "                                           rotation=45, fontsize=7)\n"
+            "ax[0].set_xlabel('γ ray (keV)'); ax[0].set_ylabel('τ (ps)'); ax[0].legend(fontsize=8)\n"
+            "lab = '49/2- (DB I)'\n"
+            "edges = sm['spectra'][lab]['edges']\n"
+            "c = 0.5 * (edges[1:] + edges[:-1])\n"
+            "for th, colour in zip(sm['angles'], ('#d62728', '#1f77b4')):\n"
+            "    ax[1].step(c, sm['spectra'][lab]['counts'][th], where='mid', color=colour, label=f'{th:g}°')\n"
+            "ax[1].set_xlabel('energy (keV)'); ax[1].set_ylabel('counts'); ax[1].set_title('444.8 keV', fontsize=9)\n"
+            "ax[1].legend(fontsize=8); fig.tight_layout()\n"
+            "print(sm['detail'])"),
     ]
     return nb
 

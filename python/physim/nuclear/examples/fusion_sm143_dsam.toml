@@ -1,6 +1,6 @@
 schema = "physim.experiment/1"
 title = "Doppler-shift attenuation after fusion-evaporation: 143Sm"
-description = "The Doppler-shift attenuation (DSAM) measurement of S. Rajbanshi et al., Phys. Lett. B 782, 143 (2018), at IUAC with INGA: 124Sn(24Mg,5n)143Sm at 107 MeV on a 0.8 mg/cm2 124Sn target (enriched to 99.9 %) on a 13 mg/cm2 gold backing, in which the residues (beta about 1.6 %) slow down and stop. Eighteen clovers with BGO shields: six at 90 deg, four at 123 deg, four at 148 deg and four at 57 deg; the line shapes were fitted at 148, 123 and 90 deg. The channel cross sections, beam current, detector distances and beam time are illustrative, not from the paper; the high-spin level scheme and side-feeding times of 143Sm are not in the setup yet. A small silicon detector at 30 deg counts the elastically scattered beam as a monitor, as in the other fusion examples (not in the paper)."
+description = "The Doppler-shift attenuation (DSAM) measurement of S. Rajbanshi et al., Phys. Lett. B 782, 143 (2018), at IUAC with INGA: 124Sn(24Mg,5n)143Sm at 107 MeV on a 0.8 mg/cm2 124Sn target (enriched to 99.9 %) on a 13 mg/cm2 gold backing, in which the residues (beta about 1.6 %) slow down and stop. Eighteen clovers with BGO shields: six at 90 deg, four at 123 deg, four at 148 deg and four at 57 deg; the line shapes were fitted at 148, 123 and 90 deg. The level scheme is the paper's: the dipole bands DB I (45/2- to 53/2-, on the 43/2- level at 8614 keV) and DB II (51/2- to 57/2(-)) with their mean lives, mixing ratios and branchings from Table I; the two top levels have only upper limits there (0.78 and 0.66 ps), entered as values. The paper's side-feeding times (0.08 to 0.21 ps, Table I) cannot be written in a setup (physim's side feeding is a rotational band with one quadrupole moment), so the validation's reproduction (physim.nuclear.lifetime_reproduction.sm143) takes them from tests/reference/nuclear/lifetimes/published/setups.toml. The channel cross sections, the entry spin of the 5n channel (57/2, the top of DB II), beam current, detector distances and beam time are illustrative, not from the paper. A small silicon detector at 30 deg counts the elastically scattered beam as a monitor, as in the other fusion examples (not in the paper)."
 
 [reaction]
 type = "fusion-evaporation"
@@ -15,6 +15,7 @@ source = "illustrative"
 residue = "143Sm"
 particles = "5n"
 cross_section = "450 mb"
+entry_spin = 28.5
 source = "illustrative"
 
 [[reaction.channels]]
@@ -360,3 +361,224 @@ shield = "BGO"
 
 [lifetime]
 method = "dsam"
+
+[levels]
+
+[levels.143Sm]
+nuclide = "143Sm"
+reference = "the dipole bands DB I and DB II of 143Sm above the 43/2- level at 8614 keV: S. Rajbanshi et al., Phys. Lett. B 782, 143 (2018) (arXiv:1710.10019), Fig. 1 and Table I: level energies as sums of the transition energies from 8614 keV, mean lives, mixing ratios and branchings; the 53/2- (DB I) and 57/2(-) mean lives are the paper's upper limits (0.78 and 0.66 ps), entered as values; the 43/2- level's own decay (to the 35/2- state at 7027 keV and below) is left out. Ground state 3/2+ from ENSDF"
+
+[[levels.143Sm.level]]
+energy = "0 keV"
+jpi = "3/2+"
+source = "ensdf"
+
+[[levels.143Sm.level]]
+energy = "8614 keV"
+jpi = "43/2-"
+source = "user"
+note = "DB I band head (Rajbanshi et al. 2018); its decay out of the band is not included"
+
+[[levels.143Sm.level]]
+energy = "8853.5 keV"
+jpi = "45/2-"
+half_life = "7.0701e-13 s"
+half_life_unc = 9.7e-14
+source = "user"
+note = "DB I: mean life 1.02 ps (Rajbanshi et al. 2018, Table I)"
+
+[[levels.143Sm.level]]
+energy = "9193.1 keV"
+jpi = "47/2-"
+half_life = "4.0203e-13 s"
+half_life_unc = 5.89e-14
+source = "user"
+note = "DB I: mean life 0.58 ps (Rajbanshi et al. 2018, Table I)"
+
+[[levels.143Sm.level]]
+energy = "9637.9 keV"
+jpi = "49/2-"
+half_life = "3.0498e-13 s"
+half_life_unc = 4.51e-14
+source = "user"
+note = "DB I: mean life 0.44 ps (Rajbanshi et al. 2018, Table I)"
+
+[[levels.143Sm.level]]
+energy = "10165.4 keV"
+jpi = "51/2-"
+half_life = "5.4065e-13 s"
+half_life_unc = 7.28e-14
+source = "user"
+note = "DB II: mean life 0.78 ps (Rajbanshi et al. 2018, Table I)"
+
+[[levels.143Sm.level]]
+energy = "10216.1 keV"
+jpi = "51/2-"
+half_life = "2.8419e-13 s"
+half_life_unc = 4.51e-14
+source = "user"
+note = "DB I: mean life 0.41 ps (Rajbanshi et al. 2018, Table I)"
+
+[[levels.143Sm.level]]
+energy = "10750.3 keV"
+jpi = "53/2-"
+half_life = "3.9509e-13 s"
+half_life_unc = 5.55e-14
+source = "user"
+note = "DB II: mean life 0.57 ps (Rajbanshi et al. 2018, Table I)"
+
+[[levels.143Sm.level]]
+energy = "10944.1 keV"
+jpi = "53/2-"
+half_life = "5.4065e-13 s"
+source = "user"
+note = "DB I, upper limit: mean life below 0.78 ps (Rajbanshi et al. 2018, Table I)"
+
+[[levels.143Sm.level]]
+energy = "11396.5 keV"
+jpi = "55/2-"
+half_life = "3.0498e-13 s"
+half_life_unc = 4.51e-14
+source = "user"
+note = "DB II: mean life 0.44 ps (Rajbanshi et al. 2018, Table I)"
+
+[[levels.143Sm.level]]
+energy = "12094.5 keV"
+jpi = "57/2-"
+half_life = "4.5748e-13 s"
+source = "user"
+note = "DB II, upper limit: mean life below 0.66 ps (Rajbanshi et al. 2018, Table I)"
+
+[[levels.143Sm.transition]]
+from = 2
+to = 1
+energy = "239.5 keV"
+intensity = 100
+multipolarity = "M1+E2"
+mixing = -0.21
+mixing_unc = 0.16
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 3
+to = 1
+energy = "579 keV"
+intensity = 7.7
+multipolarity = "E2"
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 3
+to = 2
+energy = "339.6 keV"
+intensity = 92.3
+multipolarity = "M1+E2"
+mixing = -0.27
+mixing_unc = 0.04
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 4
+to = 2
+energy = "784.3 keV"
+intensity = 14.2
+multipolarity = "E2"
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 4
+to = 3
+energy = "444.8 keV"
+intensity = 85.8
+multipolarity = "M1+E2"
+mixing = -0.12
+mixing_unc = 0.04
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 5
+to = 3
+energy = "972.1 keV"
+intensity = 25.2
+multipolarity = "E2"
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 5
+to = 4
+energy = "527.5 keV"
+intensity = 74.8
+multipolarity = "M1+E2"
+mixing = -0.26
+mixing_unc = 0.08
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 6
+to = 3
+energy = "1023 keV"
+intensity = 14.6
+multipolarity = "E2"
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 6
+to = 4
+energy = "578.2 keV"
+intensity = 85.4
+multipolarity = "M1+E2"
+mixing = -0.08
+mixing_unc = 0.03
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 7
+to = 4
+energy = "1112.3 keV"
+intensity = 26.4
+multipolarity = "E2"
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 7
+to = 5
+energy = "584.9 keV"
+intensity = 73.6
+multipolarity = "M1+E2"
+mixing = -0.12
+mixing_unc = 0.05
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 8
+to = 6
+energy = "728 keV"
+intensity = 100
+multipolarity = "M1+E2"
+mixing = -0.04
+mixing_unc = 0.02
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 9
+to = 5
+energy = "1231.5 keV"
+intensity = 35.7
+multipolarity = "E2"
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 9
+to = 7
+energy = "646.2 keV"
+intensity = 64.3
+multipolarity = "M1"
+source = "user"
+
+[[levels.143Sm.transition]]
+from = 10
+to = 9
+energy = "698 keV"
+intensity = 100
+multipolarity = "M1"
+source = "user"
