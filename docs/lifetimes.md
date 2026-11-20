@@ -172,10 +172,13 @@ What it does, as an experimenter would:
 1. **Spectra per distance and ring** (`dataviews.distance_spectra`), with the Doppler shifts kept;
    the rings closer than about 75° to 90° are left out (too small a shift).
 2. **The recoil's speed** from where the shifted peaks are, not from the plan.
-3. **Shifted and unshifted intensities**, added over the rings. Fusion residues: Gaussian fits
-   (`lifetime_analysis.peak_areas`). Coulomb excitation: the shifted component is summed over its region and the
-   unshifted one up to half the shift, both over a straight background, because the emitters' speeds spread too
-   widely for one Gaussian. A differential plunger: the fully shifted, reduced-shifted and unshifted peaks.
+3. **Shifted and unshifted intensities** per ring (`lifetime_analysis.peak_areas`): counted in windows over a
+   straight background when the shift is at least 3 FWHM (the shifted line is broad and flat-topped, and the
+   stopper's slowing tail fills the gap), else Gaussian fits. Coulomb excitation: the shifted counts are weighted
+   by the speed each bin shows (the emitters' speeds spread widely), each ring's shifted/unshifted efficiency
+   ratio is taken from the setup, and, with deorientation in the setup, the components are corrected for it (the
+   alignment of the particles the detectors see, iterated with τ). A differential plunger: the fully shifted,
+   reduced-shifted and unshifted peaks.
 4. **τ**: `method="ddcm"` (default; the differential decay-curve method, with the strongest feeding line's
    intensities for the feeding correction), `"ddcm_three_foil"` (the default for a differential plunger), or
    `"decay_curve"` (one exponential). DSAM: `"lineshape"`, the line shape at each ring fitted on the transport
@@ -230,9 +233,10 @@ to the suite appears there without a change to the report.
 ## Limits
 
 - **Deorientation in vacuum** follows the static model (G_k(t) = α_k + (1 − α_k)e^(−Γ_k t), α_k and Γ_k given);
-  dynamic deorientation and an a-priori calculation of α_k and Γ_k are left out, and the analysis does not correct
-  the shifted/unshifted ratio for it (`lifetime_analysis.deorientation_correction` does, given the angular
-  distribution). On ⁹⁸Ru's example this biases the DDCM's τ by about +10%.
+  dynamic deorientation and an a-priori calculation of α_k and Γ_k are left out. The planner's analysis corrects
+  Coulomb excitation's first excited state for it; the correction is good to about 2% of τ (the alignment is
+  averaged over a ring, with one flight time per distance at the mean speed), which is not in the budget. Other
+  levels are not corrected, and the result's notes say so.
 - **Stopping powers** set the DSAM line shapes and F(τ): known to about 5–10% for heavy ions; the line-shape fit's
   budget scales the kernel's time axis by ±7%. Two DSAM checks are known failures, with their tolerances kept: the
   APCAD comparison (physim's first-order shift larger) and the AhKin comparison (physim's line wider, from the ZBL
