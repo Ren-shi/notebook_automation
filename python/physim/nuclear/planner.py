@@ -1569,7 +1569,7 @@ class Planner:
           wanted precision on τ, from the line's full-energy rate in all γ-ray detectors (``rate_per_s``) and the
           one-level binomial precision of the unshifted share at each distance, combined over the distances;
         - ``backing_advice`` (levels in the DSAM range, and every level with a τ in a DSAM setup; else None): the
-          usual backings ranked by the DSAM sensitivity |dF/d ln τ|, each with F(τ), the slowing-down time and the
+          usual backings ranked by the DSAM sensitivity ``|dF/d ln τ|``, each with F(τ), the slowing-down time and the
           thickness that stops the recoil, and the setup's own backing among them
           (:func:`physim.nuclear.lifetime_plan.backing_advice`).
 
