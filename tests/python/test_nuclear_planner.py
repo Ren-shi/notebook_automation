@@ -355,3 +355,25 @@ def test_a_heavy_target_nuclide_in_a_hydrogen_rich_backing_warns_too():
     assert p.set("backing", "thickness", "1 mg/cm2")
     (w,) = _shortfalls(p)  # the gold recoils cross the Mylar backing
     assert "197Au" in w.text and "backing (Mylar)" in w.text
+
+
+def test_the_plan_reports_a_beam_stopped_in_a_thick_backing():
+    """98Ru on 24Mg on 40 mg/cm2 Au: the beam stops in the backing. The plan used to raise "the beam energy must
+    be positive" (the backing's Coulex channel taken at the middle of the backing, where the beam has stopped); it
+    now takes that channel halfway to where the beam stops and says where it stops (lifetime wave 4B)."""
+    from physim.nuclear import Experiment
+    from physim.nuclear.rates import layer_energy, stack
+
+    d = Experiment.example("coulex_ru98_plunger").to_dict()
+    d.pop("lifetime")
+    d["target"]["backing"] = {"material": "Au", "thickness": "40 mg/cm2"}
+    p = Planner(Experiment.from_dict(d))
+    out = p.plan()
+    assert out["beam_stops_in"] == "backing"
+    assert out["detectors"] and all(row["rate_per_s"] > 0 for row in out["detectors"])
+    assert any("beam stops inside the target" in w.text for w in p.warnings())
+    layers = stack(p.experiment)
+    assert 0 < layer_energy(p.experiment, 1, layers) < layer_energy(p.experiment, 0, layers)
+    # A thin backing the beam crosses: nothing stops, and the energy is the middle's as before.
+    d["target"]["backing"]["thickness"] = "1 mg/cm2"
+    assert Planner(Experiment.from_dict(d)).plan()["beam_stops_in"] is None

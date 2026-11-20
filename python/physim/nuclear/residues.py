@@ -1698,7 +1698,9 @@ def _fold(shape: np.ndarray, centres_kev: np.ndarray, fwhm_kev: float) -> np.nda
     x = np.arange(-half, half + 1)
     g = np.exp(-0.5 * (x / max(sigma, 1e-9)) ** 2)
     g /= g.sum()
-    return np.convolve(shape, g, mode="same")
+    # The full convolution cut to the spectrum's own bins, centred: np.convolve's "same" returns the longer of
+    # the two, which is the kernel when the resolution spans more bins than the spectrum has.
+    return np.convolve(shape, g, mode="full")[half:half + len(shape)]
 
 
 def plunger_spectra(experiment, distances_um=None, channel: Optional[str] = None, theta_deg=None, bins: int = 200,

@@ -879,15 +879,15 @@ class Planner:
         largest safe one."""
         if "safety" in self._cache:
             return self._cache["safety"]
-        from .rates import coulex_for
+        from .rates import coulex_for, layer_energy
 
         r = self._rates()
         out: dict = {}
         ion = beam_ion(self.experiment)
         th_cm = np.linspace(0.5, 180.0, 720)
         for ch in r.channels:
-            if ch.excitation is None:
-                continue
+            if ch.excitation is None or not layer_energy(self.experiment, ch.layer, r.layers) > 0:
+                continue  # the beam stops before this layer: no collisions there
             safe = coulex_for(self.experiment, ch, r.layers).max_safe_angle()
             if safe >= 180.0:
                 continue
@@ -1210,7 +1210,11 @@ class Planner:
                                "detected_per_s": line["detected_per_s"]}),
                      "chosen": exp.run.channel is not None}
             needed, needed_s = None, row["beam_time_s"]
+        stops_in = next((lay.name for j, lay in enumerate(r.layers)
+                         if float(beam_energy_at(exp, j, [lay.thickness], r.layers)[0]) <= 0), None)
         return {"measured": t["measured"], "counts_wanted": t["counts_wanted"], "beam_time_s": t["beam_time_s"],
+                # The layer the beam stops in (a thick target or backing), or None when it goes through.
+                "beam_stops_in": stops_in,
                 "beam_time_needed_s": needed_s,
                 "limiting_detector": needed["detector"] if needed else None,
                 "enough": (needed_s <= t["beam_time_s"]) if needed_s is not None else None,
@@ -1292,8 +1296,10 @@ class Planner:
 
     def spectra(self, events: int = 200_000, seed: int = 1, bins: int = 200) -> dict:
         """Measured-energy spectra per detector: of the current run's real part (counts per bin), or without a
-        run simulated (counts in the planned beam time per bin)."""
-        if self._beam_run():
+        run simulated (counts in the planned beam time per bin). A fusion run holds the residues' γ rays and no
+        particle events: the spectra are then the setup's simulated ones, and ``note`` says so."""
+        fusion = self._beam_run() is not None and self.run.kind == "fusion"
+        if self._beam_run() and not fusion:
             ev = self.run.events()
         else:
             key = ("events", events, seed)
@@ -1311,7 +1317,11 @@ class Planner:
             hi = float(ev["measured"][m].max()) * 1.03
             h, edges = ev.spectrum(name, bins=bins, range=(0.0, hi))
             out[name] = {"counts": h, "edges": edges}
-        return {"events": ev, "spectra": out, "run": self.run_status() if self._beam_run() else None}
+        result = {"events": ev, "spectra": out, "run": self.run_status() if self._beam_run() and not fusion else None}
+        if fusion:
+            result["note"] = ("The current run is a fusion run: it holds the residues' γ rays and no particle events, "
+                              "so these are the setup's simulated particle spectra (counts in the planned beam time).")
+        return result
 
     def gamma_events(self, events: int = 400_000, seed: int = 1, plain: bool = False):
         """γ rays in coincidence with the detected particles (:func:`physim.nuclear.gamma_events.simulate_gammas`),
@@ -1917,7 +1927,7 @@ class Planner:
         latest source run, if there is one). {"rows": [...], "run": number, "source_run": number or None}."""
         run = run or self.run
         if run is None or run.kind == "source":
-            return {"rows": [], "run": None, "source_run": None}
+            return {"rows": [], "run": None, "source_run": None, "notes": []}
         plan = run.summary.get("plan") or {}
         real = run.real_s
         rows = []
@@ -1931,6 +1941,8 @@ class Planner:
             rows.append({"quantity": quantity, "what": what, "predicted": predicted, "measured": measured,
                          "uncertainty": unc, "unit": unit, "agree": agree})
 
+        if run.kind == "fusion":
+            return self._compare_fusion(run, plan, row, rows)
         counts = run.summary.get("counts", {})
         peak = run.summary.get("peak_coincidences", {})
         for d in plan.get("detectors", []):
@@ -1971,7 +1983,40 @@ class Planner:
                 if sr is not None:
                     measured, unc = _efficiency_at(sr, g["detector"], g["energy_kev"] * 1e-3)
                 row("Efficiency at the transition", g["detector"], g["efficiency"], measured, unc, "")
-        return {"rows": rows, "run": run.number, "source_run": source["number"] if source else None}
+        return {"rows": rows, "run": run.number, "source_run": source["number"] if source else None, "notes": []}
+
+    def _compare_fusion(self, run, plan: dict, row, rows: list) -> dict:
+        """:meth:`compare` for a fusion run, which has no particle detectors: the studied channel's residues per
+        second, and its strongest line's full-energy counts per second (shown, not judged: the run keeps only the
+        events its γ-ray trigger takes, the plan's line rate has no trigger)."""
+        real = run.real_s
+        notes = ["A fusion run has no particle detectors: the plan's particle rates, coincidences and beam time for "
+                 "the counts wanted do not apply to it."]
+        study = plan.get("study")
+        if not study:
+            notes.append("The run's plan has no studied channel (no residue table when it was taken): nothing to "
+                         "compare.")
+            return {"rows": rows, "run": run.number, "source_run": None, "notes": notes}
+        label = study["channel"]
+        per = (run.summary.get("per_channel") or {}).get(label)
+        if per is not None:
+            n = per.get("residues", 0)
+            row("Residues made", label, study.get("rate_per_s"), n / real, math.sqrt(max(n, 1)) / real, "1/s")
+        line = study.get("line")
+        channels = list(run.summary.get("channels") or [])
+        if line and label in channels:
+            g = run.gammas()
+            m = (np.asarray(g["channel"]) == channels.index(label)) & np.asarray(g["full"], dtype=bool)
+            m &= np.abs(1e3 * np.asarray(g["energy0"], dtype=float) - line["energy_kev"]) < 0.05
+            k = int(m.sum())
+            rows.append({"quantity": "Full-energy counts in the line", "what": f"{label} {line['energy_kev']:.1f} keV",
+                         "predicted": line.get("detected_per_s"), "measured": k / real,
+                         "uncertainty": math.sqrt(max(k, 1)) / real, "unit": "1/s", "agree": None})
+            trig = run.summary.get("trigger", {})
+            notes.append(f"The line's counts are those of the events the trigger kept (γ-ray fold ≥ "
+                         f"{trig.get('fold', '?')}); the plan's line rate has no trigger, so the two are shown side by "
+                         "side, not compared.")
+        return {"rows": rows, "run": run.number, "source_run": None, "notes": notes}
 
     def run_yields(self, gate: Optional[str] = None, settings=None) -> dict:
         """The γ-ray yields the current run measured, per particle detector, for the multi-step fit
@@ -1983,6 +2028,9 @@ class Planner:
         run = self._beam_run()
         if run is None:
             raise ValueError("take a beam run first")
+        if run.kind == "fusion":
+            raise ValueError("the current run is a fusion run: it has no particle detectors, so there are no "
+                             "particle-gated γ-ray yields to fit (take a Coulex beam run)")
         a = self.analysis()
         out = {}
         for d in run.events().detectors:

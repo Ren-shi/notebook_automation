@@ -93,6 +93,31 @@ def test_loads_like_a_coulex_run(taken):
     assert folder.runs()[0]["kind"] == "fusion"
 
 
+def test_planner_particle_views_handle_a_fusion_run(tmp_path):
+    """Planner.spectra, run_yields and compare with a fusion run current (no particle events): the particle
+    spectra are the setup's simulated ones with a note, the multi-step yields say why there are none, and compare
+    lists what a fusion run measures instead of comparing the monitor's rate with 0 (lifetime wave 4B)."""
+    from physim.nuclear.planner import Planner
+
+    p = Planner(Experiment.example(EXAMPLE))
+    p.create_experiment(root=tmp_path)
+    run = p.start_run(kind="fusion", duration="1 h", budget="1 s", seed=1)
+    assert run.kind == "fusion" and p.run is run
+    s = p.spectra(events=20_000)
+    assert set(s["spectra"]) == {d.name for d in p.experiment.detectors}
+    assert s["run"] is None and "fusion run" in s["note"]
+    with pytest.raises(ValueError, match="fusion run"):
+        p.run_yields()
+    c = p.compare()
+    quantities = {r["quantity"] for r in c["rows"]}
+    assert "Rate" not in quantities  # the plan's particle rates do not apply
+    residues = next(r for r in c["rows"] if r["quantity"] == "Residues made")
+    assert residues["agree"] and residues["measured"] > 0
+    line = next(r for r in c["rows"] if r["quantity"] == "Full-energy counts in the line")
+    assert line["agree"] is None and line["measured"] > 0 and line["predicted"] > 0
+    assert any("no particle detectors" in n for n in c["notes"])
+
+
 def test_gated_matrix_shows_the_band(taken):
     _, run = taken
     band = _ground_band(run.experiment)

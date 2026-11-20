@@ -387,27 +387,127 @@ def _doublet(counts, edges, e_u, e_s, sigma0, half_width) -> tuple:
     return (float(p[1]), float(p[0])), (float(err[1]), float(err[0]))
 
 
+#: Peak areas: the windows of :func:`window_areas` are used (``method="auto"``) when the planned shift is at least
+#: this many FWHM of the detector; closer peaks are fitted.
+WINDOW_MIN_SEPARATION = 3.0
+#: The split between the unshifted and the shifted window, as a share of the planned shift.
+WINDOW_SPLIT = 0.5
+#: How far the shifted window reaches, in planned shifts (plus 3 FWHM).
+WINDOW_REACH = 2.0
+
+
+def window_areas(counts, edges_kev, e0_kev, beta, theta_deg, fwhm_kev, *, cos_theta: Optional[float] = None,
+                 split: float = WINDOW_SPLIT, reach: float = WINDOW_REACH) -> dict:
+    """The unshifted and shifted components of a plunger line in one spectrum, counted in windows rather than
+    fitted with a line shape: right for any shape of the shifted line (a flat top from the crystals' opening angle,
+    a spread of speeds) and for the decays while the recoil slows in the stopper.
+
+    The line is split at E₀ + ``split`` × the planned shift (:func:`lifetimes.peak_separation` at ``beta`` and
+    ``theta_deg``; at least 3σ of the resolution from E₀). The unshifted window runs from E₀ − 3σ to the split: it
+    holds the stopped peak and the stopper's slowing tail between the peaks, which
+    :func:`physim.nuclear.lifetimes.unshifted` counts as unshifted (decays after the flight). The shifted window runs
+    from the split to E₀ + ``reach`` × the planned shift + 3 FWHM, so a broad spread of speeds is counted whole.
+    Both are summed over a straight background through the counts beyond both ends (from 1 to 8 FWHM outside).
+
+    Also the shifted counts weighted by their own speed: each bin's β cos(recoil, detector) = (E/E₀ − 1)/cos θ
+    (first order; ``cos_theta`` the ring's mean cos θ over its crystals' faces, by default cos ``theta_deg``), so
+    ``shifted_beta`` = Σ counts × β is what the DDCM needs when the recoils fly at a spread of speeds
+    (:func:`ddcm`'s ``shifted`` = shifted_beta / β̄ with β = β̄, any β̄), and ``beta`` = shifted_beta / shifted is
+    the shifted counts' mean speed along the beam.
+
+    Returns {``unshifted``, ``shifted``, ``err_unshifted``, ``err_shifted``, ``shifted_beta``,
+    ``err_shifted_beta``, ``beta``} (counts; errors from the counts in the windows and the background's), and
+    ``speeds`` = (β of each bin of the shifted window, its counts over the background, negatives as 0): the spread
+    of speeds a decay curve can take (:func:`decay_curve`'s ``speeds``, best from the largest distance)."""
+    counts = np.asarray(counts, dtype=float)
+    edges = np.asarray(edges_kev, dtype=float)
+    if not fwhm_kev > 0:
+        raise ValueError("the detector's FWHM must be positive")
+    e0 = float(e0_kev)
+    centres = 0.5 * (edges[1:] + edges[:-1])
+    sigma = fwhm_kev / FWHM_PER_SIGMA
+    shift = float(lt.peak_separation(e0, float(beta), float(theta_deg)))
+    if abs(shift) < 2 * 3 * sigma:
+        raise ValueError(f"the shifted and unshifted peaks are {abs(shift):.3g} keV apart, too close for windows "
+                         f"(at least 6σ = {6 * sigma:.3g} keV): fit them")
+    sign = 1.0 if shift >= 0 else -1.0
+    cut = e0 + sign * max(3 * sigma, split * abs(shift))
+    far = e0 + reach * shift + sign * 3 * fwhm_kev
+    near = e0 - sign * 3 * sigma
+    lo, hi = min(near, far), max(near, far)
+    side = (((centres >= lo - 8 * fwhm_kev) & (centres < lo - fwhm_kev))
+            | ((centres > hi + fwhm_kev) & (centres <= hi + 8 * fwhm_kev)))
+    cov = None
+    if side.sum() >= 3 and np.ptp(centres[side]) > 0:
+        # Equal weights at the side bands' mean variance: weights from each bin's own counts would pull the line
+        # low (bins that fluctuate down weigh more).
+        x_side = centres[side] - e0
+        level = max(float(np.mean(counts[side])), 1.0)
+        (a, b), cov = np.polyfit(x_side, counts[side], 1, w=np.full(int(side.sum()), 1.0 / math.sqrt(level)),
+                                 cov="unscaled")
+        bg = np.clip(a * (centres - e0) + b, 0.0, None)
+    else:
+        bg = np.zeros(len(centres))
+    in_u = (centres >= min(near, cut)) & (centres < max(near, cut))
+    in_s = (centres >= min(cut, far)) & (centres < max(cut, far))
+    if not in_u.any() or not in_s.any():
+        raise ValueError("the spectrum does not cover the line's windows; widen its range")
+    c = math.cos(math.radians(float(theta_deg))) if cos_theta is None else float(cos_theta)
+    speed = (centres - e0) / (e0 * c)  # β along the beam of each bin (first order)
+    net = counts - bg
+
+    def total(m, w, floor):
+        """Σ net × w over the window, and its error: the counts' Poisson variance (at least ``floor``) and the
+        background line's, from the covariance of its fit to the counts beside the line."""
+        ww = np.broadcast_to(np.asarray(w, dtype=float), counts[m].shape)
+        jac = np.array([np.sum(ww * (centres[m] - e0)), np.sum(ww)])
+        var_b = float(jac @ cov @ jac) if cov is not None else 0.0
+        return float(np.sum(net[m] * w)), math.sqrt(max(float(np.sum(counts[m] * w * w)), floor) + var_b)
+
+    u, eu = total(in_u, 1.0, 1.0)
+    s, es = total(in_s, 1.0, 1.0)
+    sb, esb = total(in_s, speed[in_s], float(np.mean(speed[in_s] ** 2)))
+    return {"unshifted": max(u, 0.0), "shifted": max(s, 0.0), "err_unshifted": eu, "err_shifted": es,
+            "shifted_beta": sb, "err_shifted_beta": max(esb, 1e-12), "beta": sb / s if s > 0 else float("nan"),
+            "speeds": (speed[in_s], np.clip(net[in_s], 0.0, None))}
+
+
 def peak_areas(spectra_by_distance, e0_kev, beta, theta_deg, fwhm_kev, *, edges_kev=None,
-               half_width: float = 4.0, fwhm_shifted_kev: Optional[float] = None) -> list:
+               half_width: float = 4.0, fwhm_shifted_kev: Optional[float] = None, method: str = "auto",
+               cos_theta: Optional[float] = None) -> list:
     """The shifted and unshifted peak areas (counts) in each spectrum: ``[(shifted, unshifted, (err_shifted,
     err_unshifted)), ...]``, one per distance.
 
     ``spectra_by_distance``: each a (counts, edges_kev) pair, or counts with the shared ``edges_kev``. The unshifted
     peak is at ``e0_kev``, the shifted one at E₀ + :func:`lifetimes.peak_separation` (β, the detector at
-    ``theta_deg`` to the recoil direction). Peaks further apart than 2 × ``half_width`` × FWHM are fitted one by one
-    with :func:`physim.nuclear.analysis.fit_peak` (a Gaussian on a straight line, the area counted within ±3σ);
-    closer ones together, two Gaussians with their own widths on one straight line (the shifted peak is broadened by
-    the spread of velocities and angles: ``fwhm_shifted_kev`` is its starting width)."""
+    ``theta_deg`` to the recoil direction).
+
+    ``method="window"`` counts the two components in windows (:func:`window_areas`): right for a broad, flat-topped
+    shifted line (crystals seen over ±13°, a spread of speeds) and with the stopper's slowing tail between the peaks
+    counted as unshifted, as :func:`physim.nuclear.lifetimes.unshifted` does; it needs the peaks
+    :data:`WINDOW_MIN_SEPARATION` FWHM apart. ``method="fit"`` fits line shapes: peaks further apart than 2 ×
+    ``half_width`` × FWHM one by one with :func:`physim.nuclear.analysis.fit_peak` (a Gaussian on a straight line,
+    the area counted within ±3σ), closer ones together, two Gaussians with their own widths on one straight line
+    (``fwhm_shifted_kev`` the shifted peak's starting width). A Gaussian under-counts a shifted line that is not
+    one (by ~7% on τ for ⁹⁸Ru's clovers). ``method="auto"`` (default): windows when the peaks are far enough apart,
+    otherwise the fit."""
     if not fwhm_kev > 0:
         raise ValueError("the detector's FWHM must be positive")
+    if method not in ("auto", "window", "fit"):
+        raise ValueError("method is 'auto', 'window' or 'fit'")
     sep = float(lt.peak_separation(float(e0_kev), float(beta), float(theta_deg)))
+    if method == "auto":
+        method = "window" if abs(sep) >= WINDOW_MIN_SEPARATION * fwhm_kev else "fit"
     e_u, e_s = float(e0_kev), float(e0_kev) + sep
     sigma0 = fwhm_kev / FWHM_PER_SIGMA
     sigma_s = (fwhm_shifted_kev or fwhm_kev) / FWHM_PER_SIGMA
     out = []
     for item in spectra_by_distance:
         counts, edges = _spectrum(item, edges_kev)
-        if abs(sep) >= 2 * half_width * fwhm_kev:
+        if method == "window":
+            w = window_areas(counts, edges, e0_kev, beta, theta_deg, fwhm_kev, cos_theta=cos_theta)
+            out.append((w["shifted"], w["unshifted"], (w["err_shifted"], w["err_unshifted"])))
+        elif abs(sep) >= 2 * half_width * fwhm_kev:
             fu = fit_peak(counts, edges, e_u, sigma0, half_width)
             fs = fit_peak(counts, edges, e_s, sigma_s, half_width, max_sigma=6 * sigma_s)
             out.append((fs.area, fu.area, (fs.area_unc, fu.area_unc)))
@@ -428,14 +528,16 @@ def _taus_with(feed: Feeding, values: dict) -> list:
     return taus
 
 
-def _decay_fit(t, r, sr, feed: Feeding, free_norm: bool, guess: Optional[float]) -> tuple:
-    """(τ, σ_τ, χ², ndf, fitted {index: τ}, norm, model) for the unshifted share r(t) of the measured level."""
+def _decay_fit(t, r, sr, feed: Feeding, free_norm: bool, guess: Optional[float], weights=None) -> tuple:
+    """(τ, σ_τ, χ², ndf, fitted {index: τ}, norm, model) for the unshifted share r(t) of the measured level; with
+    ``weights``, ``t`` is (distances, speeds) and the share the weighted mean over the speeds."""
     lev = int(feed.level)
     idx = [lev] + [int(i) for i in feed.free]
     tau0 = guess
+    t_mean = t if weights is None else t @ weights
     if tau0 is None:  # from the data: where the share falls to 1/e, roughly
-        good = (r > 0) & (t > 0) & (r < 0.99)
-        tau0 = float(np.median(-t[good] / np.log(np.clip(r[good], 1e-6, 0.99)))) if good.any() else 10.0
+        good = (r > 0) & (t_mean > 0) & (r < 0.99)
+        tau0 = float(np.median(-t_mean[good] / np.log(np.clip(r[good], 1e-6, 0.99)))) if good.any() else 10.0
         if not np.isfinite(tau0) or tau0 <= 0:
             tau0 = 10.0
     p0 = [math.log(tau0)] + [math.log(max(float(feed.taus_ps[i]), 1e-6)) for i in feed.free]
@@ -445,7 +547,8 @@ def _decay_fit(t, r, sr, feed: Feeding, free_norm: bool, guess: Optional[float])
     def model(p):
         taus = _taus_with(feed, {i: math.exp(v) for i, v in zip(idx, p[:len(idx)])})
         norm = p[len(idx)] if free_norm else 1.0
-        return norm * lt.unshifted(taus, feed.feeding, feed.populations, t)[lev]
+        share = lt.unshifted(taus, feed.feeding, feed.populations, t)[lev]
+        return norm * (share if weights is None else share @ weights)
 
     def resid(p):
         return (r - model(p)) / sr
@@ -462,11 +565,16 @@ def _decay_fit(t, r, sr, feed: Feeding, free_norm: bool, guess: Optional[float])
 
 def decay_curve(distances_um, unshifted, errors, beta, feeding: Optional[Feeding] = None, *, offset_um: float = 0.0,
                 offset_error_um: float = 0.0, beta_error: float = 0.0, free_norm: bool = False, proper: bool = True,
-                cos_recoil: float = 1.0) -> TauResult:
+                cos_recoil: float = 1.0, speeds=None) -> TauResult:
     """τ from a fit of the unshifted share against distance: R(d) = I_u/(I_u + I_s), with ``errors`` its uncertainty
     at each distance. Without ``feeding``, R = exp(−t/τ); with a :class:`Feeding`, R is the measured level's
     :func:`lifetimes.unshifted` for the cascade (Bateman's equations), the feeders' τ fixed except those in
     ``feeding.free``. t = (d + ``offset_um``)/(βc cos θ), divided by γ when ``proper``.
+
+    ``speeds`` = (β values, weights): the recoils fly at a spread of speeds (Coulomb excitation seen over a range of
+    particle angles; the shifted line's own shape gives it, :func:`window_areas`), and R is the weighted mean of the
+    shares at each speed's flight time; ``beta`` is then only the scale the velocity budget moves (each speed by
+    ± ``beta_error``/``beta`` of itself). One speed underestimates or overestimates τ by up to the spread's width.
 
     ``free_norm`` fits a normalisation too (R = a·exp(−t/τ) as Radeck et al. fit), for shares that do not reach 1 at
     d = 0. The statistical uncertainty comes from the fit's covariance, scaled by √(χ²/ndf) when that is above 1.
@@ -481,10 +589,20 @@ def decay_curve(distances_um, unshifted, errors, beta, feeding: Optional[Feeding
     feed = (feeding or _one_level()).checked()
     if n <= 1 + len(feed.free) + int(free_norm):
         raise ValueError("too few distances for the parameters fitted")
+    spread = None
+    if speeds is not None:
+        values, weights = (np.asarray(x, dtype=float).ravel() for x in speeds)
+        keep = (values > 0) & (values < 1) & (weights > 0)
+        if values.shape != weights.shape or not keep.any():
+            raise ValueError("speeds are (β values, weights) of the same length, with some β in (0, 1) and weight > 0")
+        spread = (values[keep], weights[keep] / weights[keep].sum())
 
     def run(off=offset_um, b=beta, f=feed, guess=None):
-        t = _flight(d, b, off, cos_recoil, proper)
-        return _decay_fit(t, r, sr, f, free_norm, guess)
+        if spread is None:
+            t = _flight(d, b, off, cos_recoil, proper)
+            return _decay_fit(t, r, sr, f, free_norm, guess)
+        t = _flight(d[:, None], spread[0][None, :] * (b / beta), off, cos_recoil, proper)
+        return _decay_fit(t, r, sr, f, free_norm, guess, spread[1])
 
     tau, sigma, chi2, ndf, fitted, norm, model = run()
     notes = []
@@ -1374,4 +1492,5 @@ def fit_deorientation(distances_um, angular_unshifted, angular_shifted, a_k0: di
 
 
 __all__ = ["BUDGET_KEYS", "Feeding", "STOPPING_UNCERTAINTY", "TauResult", "b_from_result", "ddcm", "ddcm_three_foil",
-           "decay_curve", "deorientation_correction", "fit_deorientation", "fit_lineshape", "peak_areas"]
+           "decay_curve", "deorientation_correction", "fit_deorientation", "fit_lineshape", "peak_areas",
+           "window_areas"]

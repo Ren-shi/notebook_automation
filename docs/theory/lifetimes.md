@@ -111,15 +111,57 @@ E₀√(1 − β²)/(1 − β cos θ) − E₀ is at least twice the detector's 
 
 ## Analysis
 
-**Peak areas.** Fusion residues fly at nearly one speed, and the shifted and unshifted peaks are fitted as Gaussians
-on a straight background. After Coulomb excitation the emitters' speeds spread widely (a particle detector at 0°
-sees both the target recoil and forward-scattered beam, so the excited projectile's speed ranges over almost a factor
-of two): one Gaussian catches only part of the shifted component, which biases the unshifted share upwards at every
-distance. There the planner sums the counts instead: the unshifted side from E₀ − 3σ to E₀ + half the shift (it
-holds the decays while the recoil slows in the stopper, which `lifetimes.unshifted` counts as unshifted), the
-shifted side from there to twice the planned shift, both over a straight background through the counts beyond. The
-recoil's speed for the flight times comes from the shifted peaks' centroid, E_s/E₀ − 1 ≈ β cos θ (the outermost
-peak, for a differential plunger).
+**Peak areas.** The shifted line is rarely a Gaussian. Crystals seen over ±13° at 41.5° spread the Doppler shift
+into a flat top about 20 keV wide for ⁹⁸Ru at 4.5% of c. After Coulomb excitation the emitters' speeds spread widely:
+a particle detector at 0° sees both the target recoil and the forward-scattered beam, so the excited projectile's
+speed ranges over almost a factor of two. The decays while the recoil slows in the stopper also fill the gap between
+the peaks. One Gaussian on a straight line then catches only part of the shifted component: the unshifted share comes
+out high at every distance, and τ about 7% long for ⁹⁸Ru.
+
+`peak_areas` (``method="auto"``, the default) therefore counts the components in windows when the planned shift is
+at least 3 FWHM (`window_areas`):
+- The unshifted window runs from E₀ − 3σ to E₀ + half the planned shift. It holds the stopped peak and the part of the
+  stopper's slowing tail below the split, which `lifetimes.unshifted` counts as unshifted.
+- The shifted window runs from the split to twice the planned shift plus 3 FWHM.
+- Both are summed over a straight background through the counts 1–8 FWHM beyond either end. The fit gives that line
+  equal weights at the side bands' mean variance: weights from each bin's own counts pull it low. Its covariance goes
+  into the areas' errors.
+
+The part of the slowing tail above the split counts as shifted. It is a fixed share c of the unshifted decays (its
+shape depends on the stopping, not the distance). In the DDCM, normalised by I_u + I_s, that share cancels: τ(x) =
+(1 − c)I_u / ((1 − c) dI_s/dx). A free normalisation absorbs it in a decay curve. Closer peaks are fitted (two
+Gaussians, or one each when far apart: ``method="fit"``, the earlier behaviour).
+
+**A spread of speeds.** With recoils at speeds β_j, I_u(x) = Σ_j w_j e^{−x/(β_j cτ)} is not one exponential: the fast
+recoils remain at large distances, and one β stretches τ (about 10% for ⁹⁸Ru's simulated runs, whose speeds range
+over β ≈ 4–8%). The DDCM is exact for any spread if the shifted counts are weighted by their own speed:
+Σ_j β_j c dI_{s,j}/dx = Σ_j w_j e^{−x/(β_j cτ)}/τ = I_u/τ, so
+
+$$
+\tau(x) = \frac{I_u(x)}{c\,\frac{d}{dx}\sum_j \beta_j I_{s,j}(x)} .
+$$
+
+Each bin of the shifted window gives its own β cos(recoil, detector) = (E/E₀ − 1)/cos θ, to first order. cos θ is the
+ring's mean over its crystals' faces, and the sideways parts average out over the ring's azimuths, so the sum
+Σ counts × β is what the formula needs (`window_areas`' ``shifted_beta``). The planner passes ``shifted_beta``/β̄ to
+`ddcm` with β = β̄ and the normalisation I_u + I_s/k. β̄ cancels, apart from time dilation. The decay curve instead
+takes the spread the shifted line shows at the largest distance, R(d) = Σ_j p_j e^{−t(β_j)/τ}, with a free
+normalisation. The detector's resolution widens that spread a little, so the curve comes out about 2% long.
+
+**Efficiency ratio.** The shifted and unshifted γ rays reach a ring with different efficiencies. The planner divides
+each ring's shifted intensities by k = ε_s/ε_u before adding the rings, and takes k from the setup:
+
+$$
+k = \frac{1-\beta^2}{(1-\beta\cos\theta)^2}\;\frac{\varepsilon(E_s)}{\varepsilon(E_0)} ,
+$$
+
+the Lorentz boost of the solid angle times the full-energy efficiency at the shifted energy over that at E₀, at the
+ring's mean speed. Radeck et al. fitted k instead, from I_u + I_s/k being the same at every distance (runs with the
+same number of reactions). The planner offers that too (`lifetime_plan.EFFICIENCY_RATIO = "fit"`, from the counts per
+real second, with the effective-variance χ²). The fit uses the same counts as the DDCM, so its noise correlates with
+the τ points: on simulated ⁹⁸Ru runs of 200 000 reactions τ came out about 5% long with the fitted k, and 2% with the
+computed one (8 seeds). For ⁹⁸Ru's forward and backward rings the two k (about 1.09 and 0.92) nearly cancel when the
+rings are added.
 
 **DDCM, joint fit.** For a trial τ, the curve P(t) (linear in its coefficients) minimises
 Σ(S − P)²/σ_S² + Σ(N − τP′)²/σ_N². Here N = I_u − α I_u^B (singles) or {B_s, A_u} (gated), and S = I_s or
@@ -141,3 +183,18 @@ to about 5–10%); for one level without feeding this moves τ by exactly that s
 **Deorientation correction.** W(θ) = 1 + Σ a_k G_k P_k(cos θ). The shifted component uses G̃_k(T) (above), the
 unshifted one G_k(T). With f = W_U/W_S, the corrected unshifted share is R/(R + f(1 − R)). The aberration of the
 shifted γ rays' angle is left out.
+
+How the planner corrects (`Planner.analyse_lifetimes`, a Coulex first excited state):
+- At each ring, I_u is divided by W_U and I_s (and Σ β I_s) by W_S. Both use the flight time at the mean speed, and
+  G̃_k is taken for the fitted τ, iterated until τ settles. The efficiency ratio is fitted after that.
+- a_k is the unattenuated alignment of the particle–γ coincidences that physim's Coulex correlation gives for the
+  particles the setup's detectors see (`lifetime_reproduction.coulex_alignment`, ``particle="both"``).
+- physim's stopper does not take the scattered beam, so a planner run holds the γ rays in coincidence with the beam
+  and with the recoils. For ⁹⁸Ru, 84% of them come with the beam: a₂ = 0.26, a₄ = −0.17, against 0.50 and −0.69 gated
+  on the ²⁴Mg recoils alone. The recoil-only a_k is right for data gated on the recoils, as in Radeck et al. and the
+  reproduction. On the planner's runs it over-corrects: τ ≈ 9.1 ps for 8.36.
+- Closure on simulated ⁹⁸Ru runs (τ = 8.36 ps):
+  - 1M reactions at 11 distances, with deorientation: 7.95 ps uncorrected, 8.28 ± 0.12 corrected.
+  - 200 000 reactions at 6 distances, mean of 8 seeds: +1.7% with deorientation, +3.0% without (each ± 2%).
+  - The correction is good to about 2% of τ (a_k averaged over a ring, one flight time per distance at the mean
+    speed). That is inside a planner run's statistics, but it is not in the budget.
