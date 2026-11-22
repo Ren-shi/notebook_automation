@@ -170,6 +170,7 @@ def estimate_view(est: _spaces.Estimate) -> dict:
         "limit": _size(est.limit_bytes),
         "free_ram_now": _size(est.free_bytes),
         "rough_time": _time(est.seconds_guess) + f" on {est.threads} threads (a rough guess: off by 2x either way)",
+        **({"warnings": list(est.warnings)} if est.warnings else {}),
     }
 
 
@@ -215,6 +216,13 @@ def result_view(result: _sm.ShellModelResult) -> dict:
                   "matrix_element": "signed <to||M||from>, Bohr-Mottelson convention"},
         "notes": list(result.notes),
     }
+    if result.eff_charge is not None and result.nuclide and result.interaction:
+        try:
+            warn = _spaces.charge_warnings(result.nuclide, result.interaction, result.eff_charge, how="used")
+        except ValueError:  # an interaction physim does not know (imported results): nothing to check against
+            warn = []
+        if warn:
+            out["warnings"] = warn
     where = _import.provenance(result)
     if where is not None:
         out["imported_from"] = where
@@ -431,6 +439,9 @@ class ShellModelTools:
             }
             if spec.notes:
                 row["notes"] = spec.notes
+            warn = _spaces.charge_warnings(nuclide, spec)
+            if warn:
+                row["warnings"] = warn
             if free is not None:
                 try:
                     req = _sm.ShellModelRequest(nuclide, spec.name, typical)

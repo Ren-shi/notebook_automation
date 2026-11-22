@@ -331,3 +331,18 @@ def test_estimate_accepts_an_interaction_object_and_negative_parity():
     m_pos, _ = _count_dim(PTN_DIR / "o22_sdpf-mu_p.ptn")
     assert est.dimension_by_state == {(2, -1): m_neg[2], (0, 1): m_pos[0]}
     assert est.interaction == "sdpf-mu" and (est.z_val, est.n_val) == (0, 6)
+
+
+def test_an_effective_charge_with_no_valence_particles_is_warned_about():
+    """62Ni in JUN45 (56Ni core): 0 valence protons, 6 neutrons, so e_p has no effect."""
+    (warn,) = sms.charge_warnings("62Ni", "jun45")
+    assert warn.startswith("e_p = 1.5 e (the interaction's default) has no effect") and "56Ni core" in warn
+    (given,) = sms.charge_warnings("62Ni", "jun45", (1.3, 0.6))
+    assert given.startswith("e_p = 1.3 e (given)")
+    assert sms.charge_warnings("62Ni", "jun45", (0.0, 0.6)) == []        # a zero charge is harmless
+    assert sms.charge_warnings("28Si", "usdb") == []                     # both species have valence particles
+    (o22,) = sms.charge_warnings("22O", "usdb")                           # 0 protons above 16O
+    assert o22.startswith("e_p") and "no valence protons" in o22
+    est = sms.estimate(FakeRequest("62Ni", "jun45", ((0, 1, 1),)), free_bytes=6 * GB)
+    assert est.warnings == sms.charge_warnings("62Ni", "jun45") and est.to_dict()["warnings"] == est.warnings
+    assert sms.estimate(SI28, free_bytes=6 * GB).warnings == []
