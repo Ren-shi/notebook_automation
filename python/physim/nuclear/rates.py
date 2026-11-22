@@ -172,19 +172,31 @@ def channels(layers: list, experiment=None) -> list:
     return out
 
 
+def rutherford_factor(e_cm: float, e_star: float) -> float:
+    """Alder and Winther's Rutherford factor of an inelastic cross section over the elastic Rutherford cross section
+    at the initial CM energy ``e_cm`` (MeV), at the same CM angle: v_i/v_f = √(E_cm / (E_cm − E*)) (see
+    :meth:`physim.nuclear.coulex.Coulex.rutherford_cm`). 1 at or below the threshold, where nothing is excited."""
+    return math.sqrt(e_cm / (e_cm - e_star)) if e_cm > e_star > 0 else 1.0
+
+
 class _CoulexReaction:
     """Coulomb excitation at one beam energy, shaped like :class:`~physim.nuclear.rutherford.Rutherford`:
     ``kinematics`` (with Q = −E*) and ``cross_section_cm``. The excitation probability P(θ) is that of
-    ``coulex``, at this energy (:meth:`DepthProbability.at`), and so is the Rutherford factor."""
+    ``coulex``, at this energy (:meth:`DepthProbability.at`). The cross section is P times Alder and Winther's
+    inelastic Rutherford factor, the elastic Rutherford cross section at this energy times v_i/v_f
+    (:func:`rutherford_factor`), as in :meth:`physim.nuclear.coulex.Coulex.cross_section_cm` and in GOSIA; with a
+    level scheme, v_f is that of the ``[reaction]`` state, whose kinematics the channel follows."""
 
     def __init__(self, beam: str, channel: Channel, energy: float, coulex):
         self.kinematics = TwoBody(beam, channel.nuclide.name, energy, **channel.kinematics_args)
         self._ruth = Rutherford(beam, channel.nuclide.name, energy)
+        self._factor = rutherford_factor(self._ruth.e_cm, channel.excitation.energy_mev)
         #: Anything with ``probability(theta_cm)``: see :func:`excitation_probability`.
         self._coulex = coulex
 
     def cross_section_cm(self, theta_cm):
-        return np.asarray(self._ruth.cross_section_cm(theta_cm)) * np.asarray(self._coulex.probability(theta_cm))
+        return (self._factor * np.asarray(self._ruth.cross_section_cm(theta_cm))
+                * np.asarray(self._coulex.probability(theta_cm)))
 
 
 @lru_cache(maxsize=64)
@@ -339,11 +351,15 @@ class DepthProbability:
     solution at its middle (:data:`THIN_SPAN`), so its results are those of the mid-layer P.
 
     - :meth:`at` gives P at one beam energy (the rates take it at each of their depth points).
-    - :meth:`probability` gives P averaged over the depth at given CM angles, each depth weighted by the Rutherford
-      cross section there (∝ 1/E_cm² at a fixed CM angle): ∫ σ_R(E(z), θ) P(E(z), θ) dz / ∫ σ_R(E(z), θ) dz. The
-      Coulomb-excitation cross section integrated over the layer is this times the integrated Rutherford one, so
-      an analysis that divides the excited counts by the elastic ones compares them with this ⟨P⟩.
-    - :meth:`slices` cuts the layer into slices, each with P averaged over it (the event generator).
+    - :meth:`probability` gives P averaged over the depth at given CM angles, each depth weighted by the elastic
+      Rutherford cross section there (∝ 1/E_cm² at a fixed CM angle): ⟨P⟩ = ∫ σ_R(E(z), θ) P(E(z), θ) dz /
+      ∫ σ_R(E(z), θ) dz.
+    - :meth:`ratio` gives σ_Coulex/σ_Rutherford(elastic) integrated over the layer, ⟨P · v_i/v_f⟩: the
+      Coulomb-excitation cross section carries Alder and Winther's inelastic Rutherford factor
+      (:func:`rutherford_factor`). An analysis that divides the excited counts by the elastic ones compares them
+      with this.
+    - :meth:`slices` cuts the layer into slices, each with P (or the ratio) averaged over it (the event
+      generator).
 
     Get one with :func:`depth_probability`."""
 
@@ -401,29 +417,58 @@ class DepthProbability:
             kept = self._at[key] = _InterpolatedProbability(self.nodes, w, e)
         return kept
 
-    def _rutherford_weight(self, energies) -> np.ndarray:
-        """The Rutherford cross section at a fixed CM angle at each beam energy, relative (∝ 1/E_cm²)."""
-        return np.array([float(Rutherford(self.beam, self.channel.nuclide.name, float(e)).cross_section_cm(90.0))
-                         if e > 0 else 0.0 for e in energies])
+    def _rutherford_weight(self, energies) -> tuple:
+        """The elastic Rutherford cross section at a fixed CM angle at each beam energy, relative (∝ 1/E_cm²), and
+        the inelastic Rutherford factor v_i/v_f there (:func:`rutherford_factor`)."""
+        weight, factor = [], []
+        e_star = self.channel.excitation.energy_mev
+        for e in energies:
+            if e > 0:
+                r = Rutherford(self.beam, self.channel.nuclide.name, float(e))
+                weight.append(float(r.cross_section_cm(90.0)))
+                factor.append(rutherford_factor(r.e_cm, e_star))
+            else:
+                weight.append(0.0)
+                factor.append(1.0)
+        return np.array(weight), np.array(factor)
 
-    def _average(self, z_lo: float, z_hi: float, theta_cm, points: int):
+    def _average(self, z_lo: float, z_hi: float, theta_cm, points: int, ratio: bool = False):
         x, w = np.polynomial.legendre.leggauss(points)
         zs = z_lo + (x + 1) / 2 * (z_hi - z_lo)
         es = beam_energy_at(self._experiment, self.channel.layer, zs, self._layers)
-        wr = w * self._rutherford_weight(es)
+        weight, factor = self._rutherford_weight(es)
+        wr = w * weight
         if wr.sum() <= 0:
             return np.zeros(np.shape(theta_cm)) if np.ndim(theta_cm) else 0.0
         ps = np.array([np.asarray(self.at(e).probability(theta_cm), dtype=float) for e in es])
-        out = np.tensordot(wr, ps, axes=1) / wr.sum()
+        out = np.tensordot(wr * factor if ratio else wr, ps, axes=1) / wr.sum()
         return float(out) if np.ndim(theta_cm) == 0 else out
 
+    def _mid_factor(self) -> float:
+        """v_i/v_f at the energy of a thin layer's one solution."""
+        r = Rutherford(self.beam, self.channel.nuclide.name, float(self.energies[0]))
+        return rutherford_factor(r.e_cm, self.channel.excitation.energy_mev)
+
     def probability(self, theta_cm, points: int = DEPTH_AVERAGE_POINTS):
-        """P at CM angles ``theta_cm`` (degrees, of the scattered beam) averaged over the depth of the layer the
-        beam crosses, weighted by the Rutherford cross section at each depth: the ratio of the
-        Coulomb-excitation cross section integrated over the layer to the Rutherford one, at those angles."""
+        """⟨P⟩: P at CM angles ``theta_cm`` (degrees, of the scattered beam) averaged over the depth of the layer
+        the beam crosses, weighted by the elastic Rutherford cross section at each depth. What elastic scattering
+        loses to the excitation (1 − ⟨P⟩); the ratio of the Coulomb-excitation cross section to the elastic one is
+        :meth:`ratio`."""
         if self.thin:
             return self.nodes[0].probability(theta_cm)
         return self._average(0.0, self.reached, theta_cm, points)
+
+    def ratio(self, theta_cm, points: int = DEPTH_AVERAGE_POINTS):
+        """σ_Coulex / σ_Rutherford(**elastic**) at CM angles ``theta_cm`` (degrees, of the scattered beam), each
+        integrated over the depth of the layer: ⟨P · v_i/v_f⟩ with the elastic Rutherford weight of each depth.
+        The Coulomb-excitation cross section carries Alder and Winther's inelastic Rutherford factor, v_i/v_f
+        above the elastic one (:meth:`physim.nuclear.coulex.Coulex.rutherford_cm`); this is what an analysis that
+        divides the excited counts by the elastic ones (at the same CM angle) compares them with. GOSIA's ratios
+        divide by its own, inelastic, Rutherford cross section instead (``"R_G"``), which is larger."""
+        if self.thin:
+            p = self.nodes[0].probability(theta_cm)
+            return self._mid_factor() * (float(p) if np.ndim(theta_cm) == 0 else np.asarray(p, dtype=float))
+        return self._average(0.0, self.reached, theta_cm, points, ratio=True)
 
     def slice_count(self, theta_cm: float = 170.0) -> int:
         """How many slices :meth:`slices` should cut the layer into: enough that ln P changes by at most
@@ -439,19 +484,22 @@ class DepthProbability:
             return 1
         return int(min(max(math.ceil(change / SLICE_LOG_STEP), 1), MAX_SLICES))
 
-    def slices(self, n: int, theta_cm) -> list:
+    def slices(self, n: int, theta_cm, ratio: bool = False) -> list:
         """The layer cut into ``n`` slices of equal thickness: [(depth of the slice's front, its thickness, P at
-        ``theta_cm`` averaged over the slice as :meth:`probability` averages it)]. The part of the layer beyond
-        where the beam stops has P = 0."""
+        ``theta_cm`` averaged over the slice as :meth:`probability` averages it)]. With ``ratio``, the average is
+        :meth:`ratio`'s instead (P × v_i/v_f, the weight of the excitation events on the elastic Rutherford cross
+        section). The part of the layer beyond where the beam stops has P = 0."""
         edges = np.linspace(0.0, self.thickness, n + 1)
+        mid = self._mid_factor() if self.thin and ratio else 1.0
         out = []
         for lo, hi in zip(edges[:-1], edges[1:]):
             if self.thin:
-                p = np.asarray(self.nodes[0].probability(theta_cm), dtype=float)
+                p = mid * np.asarray(self.nodes[0].probability(theta_cm), dtype=float)
             elif lo >= self.reached:
                 p = np.zeros(np.shape(theta_cm))
             else:
-                p = np.asarray(self._average(lo, min(hi, self.reached), theta_cm, SLICE_POINTS), dtype=float)
+                p = np.asarray(self._average(lo, min(hi, self.reached), theta_cm, SLICE_POINTS, ratio),
+                               dtype=float)
             out.append((float(lo), float(hi - lo), p))
         return out
 
@@ -474,8 +522,9 @@ def depth_probability(experiment, channel: Channel, layers: Optional[list] = Non
     depth of its layer. Kept by the setup's physics, so the rates, the events and the analysis of one setup share
     it. Raises ValueError when the beam stops before the layer.
 
-    For an analysis (σ_Coulex/σ_Rutherford per detector): ``depth_probability(experiment, channel).probability(
-    theta_cm)`` is P at those CM angles averaged over the layer with the Rutherford weight of each depth."""
+    For an analysis (σ_Coulex/σ_Rutherford(elastic) per detector): ``depth_probability(experiment, channel).ratio(
+    theta_cm)`` is that ratio at those CM angles, integrated over the layer (P × v_i/v_f averaged with the
+    elastic Rutherford weight of each depth); ``.probability(theta_cm)`` is ⟨P⟩ alone."""
     layers = layers or stack(experiment)
     key = _depth_key(experiment, channel, layers)
     kept = _DEPTH_KEPT.get(key)
@@ -491,7 +540,8 @@ class _ElasticReaction:
     """Elastic scattering beside Coulomb excitation, shaped like :class:`~physim.nuclear.rutherford.Rutherford`:
     a collision either excites the nucleus or leaves it as it was, so elastic scattering is the Rutherford cross
     section times 1 − P(θ), P being the excitation probability of the channel that excites it (``coulex``, at this
-    energy). Elastic and excited together are Rutherford scattering: one particle per collision."""
+    energy). Elastic and excited together are Rutherford scattering, one particle per collision (to (v_i/v_f − 1) P:
+    the excitation carries Alder and Winther's inelastic Rutherford factor, :func:`rutherford_factor`)."""
 
     def __init__(self, beam: str, channel: Channel, energy: float, coulex):
         self._ruth = Rutherford(beam, channel.nuclide.name, energy)

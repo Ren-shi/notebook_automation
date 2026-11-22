@@ -44,8 +44,31 @@ $$
 
 When ξ ≳ 1 the collision is slower than the nuclear motion, and the excitation dies away (the adiabatic cutoff).
 
-**The cross section.** It is dσ/dΩ = P(θ) dσ_R/dΩ, with the symmetrised Rutherford cross section
-(a²/4)/sin⁴(θ/2), in the CM frame. The lab cross section and the total follow as for elastic scattering.
+**The cross section.** In the CM frame (Alder, Bohr, Huus, Mottelson and Winther, Rev. Mod. Phys. 28, 432 (1956),
+section II A; Alder and Winther, *Electromagnetic Excitation*, 1975, ch. II):
+
+$$
+\frac{d\sigma}{d\Omega} = P(\theta)\,\frac{v_f}{v_i}\,\frac{a^2}{4}\,\frac{1}{\sin^4(\theta/2)}
+= P(\theta)\,\frac{v_i}{v_f}\,\frac{d\sigma_R^{\rm el}}{d\Omega}(E_{cm}),
+$$
+
+with the symmetrised a above. The second form is the same thing: the elastic Rutherford cross section at the
+initial CM energy, (Z₁Z₂e²/4E_cm)²/sin⁴(θ/2), times v_i/v_f = √(E_cm/(E_cm − E*)). It is the convention of GOSIA
+too (its CMLAB: 250 r₃ √(E/(E − ΔE)) d² ε⁴, d the head-on half-distance at the initial energy); integrated over
+the ⁶²Ni-on-carbon rings and target below, the app's Rutherford factor and GOSIA's printed integrated Rutherford
+agree to 0.03 %. The factor v_i/v_f is 1.04 for ⁶²Ni at 90 MeV on carbon (E_cm 14.7 MeV, E* 1.17 MeV), 1.03 in
+`coulex_ni58`, and under 1 % in the other examples. Every place the app forms a Coulomb-excitation cross section
+uses it: `Coulex.cross_section_cm` and `rutherford_cm`, the rates and the event generator (`rates.
+rutherford_factor`), the Doppler table, and the all-orders yields (each level with its own v_f; the rates and the
+events with that of the `[reaction]` state, whose kinematics the channel follows, as GOSIA does with its NCM level).
+
+**Which Rutherford a ratio divides by.** An experiment divides its excited counts by the elastic ones, so the
+app's ratios σ_Coulex/σ_Rutherford divide by the **elastic** Rutherford cross section: `Coulex.ratio_to_elastic`
+(P × v_i/v_f at one angle) and `DepthProbability.ratio` (the same integrated through a thick layer). GOSIA's
+ratios divide by its own integrated Rutherford, which is the inelastic one above, with the inelastic kinematics
+(for the ⁶²Ni rings, 11 % and 16 % above the elastic integral); P alone is the ratio to that one at one angle.
+
+The lab cross section and the total follow as for elastic scattering.
 
 **Numerics.**
 - The integrand at −w is the conjugate of that at w, so I_μ = 2 Re ∫₀^∞. That half is done in Gauss–Legendre
@@ -126,7 +149,8 @@ at 4%.
 
 **One particle per collision.** A collision either excites the nucleus or leaves it as it was, so elastic
 scattering is the Rutherford cross section times 1 − P(θ): 20% fewer elastic particles at backward angles in the
-⁶²Ni example, and elastic and excited particles together are Rutherford scattering.
+⁶²Ni example, and elastic and excited particles together are Rutherford scattering (to the inelastic orbit's
+(v_i/v_f − 1)·P, a few 10⁻⁴: semiclassical theory conserves the flux only on the symmetrised orbit).
 
 **What this leaves out.**
 
@@ -182,12 +206,12 @@ A Coulomb-excitation setup adds excitation channels next to the elastic ones (`r
 Each excitation channel works like an elastic one:
 
 - **Kinematics** use Q = −E*.
-- **Cross section:** Rutherford's at each depth times P(θ). P is computed once, at the beam energy in the middle of
-  the layer, because it changes slowly through a thin target. With a level scheme it is the probability of
-  exciting any level (previous section).
+- **Cross section:** Rutherford's at each depth times v_i/v_f times P(θ) (the cross section above). P follows the
+  beam energy through the layer (`rates.depth_probability`; a thin layer keeps the one P at its middle). With a
+  level scheme it is the probability of exciting any level (previous section).
 - **Event generator:** the excitation channel is picked as often as the elastic one, the masses include E*, and
-  each event's weight is multiplied by P(θ*) from a table every 0.25°. The rare inelastic events therefore get as
-  many samples as the elastic ones.
+  each event's weight is multiplied by P(θ*) × v_i/v_f, averaged over its slice of the target, from a table every
+  0.25°. The rare inelastic events therefore get as many samples as the elastic ones.
 - **Expected peaks:** Coulomb-excitation peaks are always listed, however weak.
 
 The app has an **Excitation and γ rays** tab (P(θ), events per detector, the Doppler table). The report adds a

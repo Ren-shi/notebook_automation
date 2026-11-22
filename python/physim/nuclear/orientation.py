@@ -439,8 +439,8 @@ class Excitation:
         """Cross sections integrated over all scattering angles, mb: {"direct": {level: σ}, "populated":
         {level: σ with feeding}, "gamma": {(initial, final): σ of the γ ray}}.
 
-        Each level's excitation probability is multiplied by the Rutherford cross section of its own symmetrised
-        orbit and integrated on the grid of :meth:`table`; the decay then shares the cross sections out."""
+        Each level's excitation probability is multiplied by the Rutherford factor of its own orbit (Alder and
+        Winther's, :meth:`physim.nuclear.coulex.Coulex.rutherford_cm`: the elastic one times v_i/v_f) and integrated on the grid of :meth:`table`; the decay then shares the cross sections out."""
         grid, states = self.table(step)
         th = np.radians(grid)
         direct = {}
