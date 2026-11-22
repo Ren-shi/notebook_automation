@@ -402,6 +402,29 @@ def options(nuclide: str) -> list[Option]:
     return out
 
 
+def charge_warnings(nuclide: str, inter: Union[str, Interaction], eff_charge: Optional[tuple] = None,
+                    how: Optional[str] = None) -> list[str]:
+    """Warnings for effective charges that act on nothing: e_p when ``nuclide`` has no valence protons in the
+    interaction's space, e_n when it has no valence neutrons (⁶²Ni in JUN45: ⁵⁶Ni core, 0 protons, 6 neutrons, so
+    e_p has no effect). ``eff_charge`` (e_p, e_n) is the request's, None for the interaction's defaults; ``how``
+    names where the charges come from in the text (default "given" or "the interaction's default"). A charge of 0
+    is not warned about. ValueError if the nuclide does not fit the space."""
+    spec = interaction(inter)
+    z_val, n_val = nuclide_valence(nuclide, spec)
+    if eff_charge is None:
+        charges, how = spec.eff_charge, how or "the interaction's default"
+    else:
+        charges, how = tuple(float(x) for x in eff_charge), how or "given"
+    out = []
+    for name, count, value, kind, other, other_kind in (("e_p", z_val, charges[0], "protons", "e_n", "neutrons"),
+                                                        ("e_n", n_val, charges[1], "neutrons", "e_p", "protons")):
+        if count == 0 and value != 0:
+            out.append(f"{name} = {value:g} e ({how}) has no effect: {nuclide} has no valence {kind} in the "
+                       f"{spec.space.name} space of {spec.name.upper()} ({spec.space.core_label} core), so its E2 "
+                       f"values and quadrupole moments come from the valence {other_kind} and {other} alone.")
+    return out
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Dimensions
 
@@ -604,6 +627,8 @@ class Estimate:
     - ``mode_lv_hdd``: 0 (Lanczos vectors in memory, fastest) when that fits the limit, else 1 (on disk).
     - ``limit_bytes``: half of ``free_bytes``, the RAM free when the estimate was made.
     - ``fits`` and ``reason``: whether it can run here, in plain language.
+    - ``warnings``: effective charges that act on nothing (:func:`charge_warnings`), for the request's charges
+      or the interaction's defaults.
     - ``seconds_guess``: a **rough** time, scaled from two wave 0 runs on a 6-core desktop (Ryzen 5 3600): expect
       it to be off by a factor of two either way, more for spaces much larger than ⁴⁸Cr in the fp shell.
     """
@@ -623,6 +648,7 @@ class Estimate:
     interaction: str = ""
     z_val: int = 0
     n_val: int = 0
+    warnings: list = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-safe: states as ``[{"j2", "parity", "label", "dimension"}]``."""
@@ -635,6 +661,7 @@ class Estimate:
             "memory_bytes_in_memory_mode": self.memory_bytes_in_memory_mode,
             "memory_bytes_on_disk_mode": self.memory_bytes_on_disk_mode, "threads": self.threads,
             "interaction": self.interaction, "z_val": self.z_val, "n_val": self.n_val,
+            "warnings": list(self.warnings),
         }
 
 
@@ -735,4 +762,5 @@ def estimate(request: Any, free_bytes: Optional[int] = None) -> Estimate:
 
     return Estimate(dimension_by_state, memory, disk, mode, limit, fits, reason, round(seconds, 1),
                     free_bytes=free_bytes, memory_bytes_in_memory_mode=mem0, memory_bytes_on_disk_mode=mem1,
-                    threads=int(threads), interaction=spec.name, z_val=z_val, n_val=n_val)
+                    threads=int(threads), interaction=spec.name, z_val=z_val, n_val=n_val,
+                    warnings=charge_warnings(request.nuclide, spec, getattr(request, "eff_charge", None)))

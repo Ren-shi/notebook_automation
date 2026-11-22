@@ -421,3 +421,32 @@ def test_si28_usdb_for_real_through_the_tools(tools, monkeypatch):
         assert got["ex_kev"] == pytest.approx(1000 * want.ex_mev, abs=1.0)
     e2 = next(t for t in res["transitions"] if t["kind"] == "E2" and (t["from"], t["to"]) == ("2+1", "0+1"))
     assert e2["b_down_e2fm4"] == pytest.approx(ref.transition("E2", (4, 1, 1), (0, 1, 1)).b_down, rel=1e-3)
+
+
+def test_an_effective_charge_with_no_valence_particles_is_warned_about_where_it_is_read(tools, fake_install,
+                                                                                        monkeypatch):
+    """62Ni in JUN45: no valence protons, so e_p has no effect; options, estimate and run say so."""
+    opts = tools.shell_model_options("62Ni")
+    jun45 = next(o for o in opts["interactions"] if o["interaction"] == "jun45")
+    assert jun45["valence_protons"] == 0 and jun45["effective_charges"]["e_p"] == 1.5
+    assert any(w.startswith("e_p = 1.5 e") and "no effect" in w for w in jun45["warnings"])
+    assert "warnings" not in tools.shell_model_options("28Si")["interactions"][0]
+    est = tools.estimate_shell_model("62Ni", "jun45", "0+1")
+    assert any("no valence protons" in w for w in est["warnings"])
+    assert "warnings" not in tools.estimate_shell_model("28Si", "usdb", SI28_STATES)
+    monkeypatch.setattr(jobs, "submit", lambda req, **kw: "job-62ni")
+    monkeypatch.setattr(jobs, "status", lambda job: {"job": job, "state": jobs.QUEUED})
+    run = tools.run_shell_model("62Ni", "jun45", "0+1", eff_charge="1.3, 0.6")
+    assert any(w.startswith("e_p = 1.3 e (given)") for w in run["estimate"]["warnings"])
+
+
+def test_results_warn_about_an_effective_charge_with_no_valence_particles():
+    from dataclasses import replace
+
+    from physim.mcp.tools_shellmodel import result_view
+
+    si28 = shellmodel.read_folder(LOGS)
+    assert "warnings" not in result_view(si28)
+    ni62 = replace(si28, nuclide="62Ni", interaction="jun45", eff_charge=(1.5, 1.1))
+    (warn,) = result_view(ni62)["warnings"]
+    assert warn.startswith("e_p = 1.5 e (used) has no effect")
