@@ -580,7 +580,7 @@ ms = Multistep(exp, scheme, role="target")
 y = ms.yields()                     # γ rays per second of each transition in each detector and ring
 ms.shapes(level=1)                  # Q(2⁺) prolate, zero, oblate: can the run tell them apart?
 ms.fit({"CD": {(1, 0): (counts, unc)}}, free=[(0, 1, "E2"), (1, 1, "E2")])
-ms.gosia_input(y)                   # a GOSIA input file for this setup, with the yields
+ms.gosia_input()                    # a GOSIA input that integrates the same yields over target and detectors
 ```
 
 - The probabilities are solved on a grid of CM angles at a few beam energies through the target and interpolated
@@ -590,9 +590,14 @@ ms.gosia_input(y)                   # a GOSIA input file for this setup, with th
   at zero and at its opposite; the yields per ring are compared with the counting uncertainties of the run.
 - **The fit** adjusts up to three matrix elements by Gauss–Newton least squares to measured counts; its
   uncertainties come from the curvature at the minimum.
-- **GOSIA** is not part of physim. The input file follows the published format so that GOSIA, run elsewhere, can
-  check these numbers or fit the matrix elements; it has not been checked against a run, since no GOSIA
-  installation exists on the development machine.
+- **GOSIA** is not part of physim. `gosia_input` writes an input for GOSIA 20110524, checked against its runs, that
+  integrates the γ yields over the target (OP,INTI, with the app's stopping powers) and each particle detector.
+  It writes one experiment per detector and per nucleus reaching it, and a detected recoil gets a negative angle.
+  GOSIA reads a negative partner Z as projectile excitation. `physim.external.gosia.integrated` reads the yields
+  and the integrated Rutherford back. GOSIA's Rutherford uses the inelastic kinematics, so a ratio built from it
+  divides by that, not by the elastic one. For ⁶²Ni on carbon the input reproduces an independent hand-written
+  GOSIA run within 0.1 % per ring. With `gamma="4pi"`, write `GOSIA_4PI_FORT9` as `fort.9` beside the input; its
+  yield ×4π is then the angle-integrated γ yield.
 
 In the app, **Solve with all orders** in the "Excitation and γ rays" tab (once a level scheme is looked up) shows
 the yields with all orders and with first order, the prolate–zero–oblate comparison per ring, and offers the

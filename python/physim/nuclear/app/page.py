@@ -2797,11 +2797,13 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                                    for r_ in sh["rings"]]).props("dense flat").classes("max-h-80")
                 for note in m["notes"][:4]:
                     ui.label(note).classes("text-xs ps-muted")
-                ui.button("GOSIA input file for this setup", icon="download",
-                          on_click=lambda: ui.download.content(m["gosia_input"].encode("utf-8"),
-                                                               "gosia.inp")).props("dense flat no-caps").tooltip(
-                    "Written from the GOSIA manual's format and not checked against a run: GOSIA is not on this "
-                    "machine.")
+                if m.get("gosia_input"):
+                    ui.button("GOSIA input file for this setup", icon="download",
+                              on_click=lambda: ui.download.content(m["gosia_input"].encode("utf-8"),
+                                                                   "gosia.inp")).props("dense flat no-caps").tooltip(
+                        "For GOSIA 20110524 (OP,INTI): the γ yields integrated over the target and each particle "
+                        "detector. GOSIA's integrated Rutherford cross section uses the inelastic kinematics. "
+                        "Without γ detectors in the setup it needs a fort.9 with zero attenuation beside it.")
 
         ui.button("Solve with all orders", icon="calculate", on_click=solve).props("dense flat no-caps")
         fit_box = ui.column().classes("w-full")

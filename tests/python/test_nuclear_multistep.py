@@ -6,11 +6,12 @@ import time
 import numpy as np
 import pytest
 
+from physim.external import gosia, programs
 from physim.nuclear import Experiment
 from physim.nuclear.coupled import CoupledChannels
 from physim.nuclear.coulex import Coulex
 from physim.nuclear.levels import Level, LevelScheme, Transition, Value, quadrupole_factor
-from physim.nuclear.multistep import Multistep
+from physim.nuclear.multistep import GOSIA_4PI_FORT9, Multistep
 from physim.nuclear.orientation import Excitation, simple_scheme
 from physim.nuclear.planner import Planner
 from physim.nuclear.rates import Rates
@@ -182,15 +183,192 @@ def test_the_fit_recovers_the_matrix_elements_put_in():
         ms.fit(measured, [])
 
 
+#: ⁶²Ni at 111.6 MeV on ~1 mg/cm² carbon, carbon recoils counted in two full rings at 14–28° and 28–44°
+#: (Allmond et al., PRC 90, 034309 (2014)): projectile excitation in inverse kinematics, the beam never reaching
+#: the rings.
+NI62_ON_C = """
+schema = "physim.experiment/1"
+title = "62Ni on 12C, recoils detected"
+[reaction]
+type = "coulex"
+excite = "projectile"
+energy = "1172.91 keV"
+multipolarity = "E2"
+b_up = "884.111 e2fm4"
+[beam]
+nuclide = "62Ni"
+energy = "111.6 MeV"
+current = "5 ppA"
+charge_state = 10
+[target]
+material = "12C"
+thickness = "1.03741 mg/cm2"
+[run]
+beam_time = "24 h"
+[[detectors]]
+name = "Ring2"
+shape = "annular"
+theta = "0 deg"
+distance = "50 mm"
+inner_radius = "12.4664 mm"
+outer_radius = "26.5855 mm"
+rings = 7
+sectors = 10
+thickness = "1000 um"
+[[detectors]]
+name = "Ring3"
+shape = "annular"
+theta = "0 deg"
+distance = "50 mm"
+inner_radius = "26.5855 mm"
+outer_radius = "48.2844 mm"
+rings = 7
+sectors = 12
+thickness = "1000 um"
+"""
+
+
+def ni62_scheme() -> LevelScheme:
+    s = LevelScheme("62Ni")
+    s.levels = [Level(v(0.0), 0.0, 1), Level(v(1172.91), 2.0, 1)]
+    s.transitions = [Transition(1, 0, v(1172.91), v(100.0), "E2")]
+    s.set_matrix_element(0, 1, "E2", 29.734)       # ⟨0⁺‖E2‖2⁺⟩ = 0.29734 e b, Q(2⁺) = 0
+    return s
+
+
+def expt_lines(text: str) -> list:
+    lines = text.splitlines()
+    i = lines.index("EXPT")
+    return lines[i + 2:i + 2 + int(lines[i + 1].split()[0])]
+
+
 def test_the_gosia_input_is_written_from_the_scheme():
     exp = Experiment.example("coulex_ni58")
     ms = Multistep(exp, two_levels(26.4, q_efm2=15.0), "target")
-    text = ms.gosia_input()
+    text = ms.gosia_input(gamma="4pi")
     assert text.startswith("OP,TITL") and "OP,GOSI" in text and "LEVE" in text and "ME" in text
     assert "1 +1 0 0.000000" in text and "2 +1 2 1.454200" in text
-    assert "1 2 0.26400" in text                               # e fm² → e b
-    assert "EXPT" in text and "-8 16 30.000" in text          # target excited: the projectile's Z negative
-    assert text.rstrip().endswith("OP,EXIT")
+    assert "1 2 0.264000" in text                              # e fm² → e b
+    assert "OP,YIEL" in text and "OP,INTI" in text and text.rstrip().endswith("OP,EXIT")
+
+
+def test_gosia_sign_rule_for_the_target_scheme():
+    """GOSIA (20110524, CMLAB and INVKIN): a positive partner Z means the TARGET is the investigated nucleus. The
+    app wrote it negative before, which GOSIA reads as ⁵⁸Ni the projectile on ¹⁶O and stops ("maximum scattering
+    angle is 14.06 degrees")."""
+    exp = Experiment.example("coulex_ni58")
+    text = Multistep(exp, two_levels(26.4), "target").gosia_input(gamma="4pi")
+    lines = text.splitlines()
+    assert lines[lines.index("EXPT") + 1].split()[1:] == ["28", "58"]          # the investigated nucleus: ⁵⁸Ni
+    expt = expt_lines(text)
+    assert expt and all(line.split()[:2] == ["8", "16"] for line in expt)    # the beam, Z positive
+    assert all(float(line.split()[2]) == pytest.approx(30.0) for line in expt)
+
+
+def test_gosia_sign_rule_for_the_beam_scheme():
+    """The beam's scheme: the partner (the target) is written with a negative Z, the projectile being the
+    investigated nucleus."""
+    exp = Experiment.from_toml(NI62_ON_C)
+    text = Multistep(exp, ni62_scheme(), "beam").gosia_input(gamma="4pi")
+    lines = text.splitlines()
+    assert lines[lines.index("EXPT") + 1].split()[1:] == ["28", "62"]          # the investigated nucleus: ⁶²Ni
+    assert all(line.split()[:2] == ["-6", "12"] for line in expt_lines(text))
+
+
+def test_gosia_cont_options_and_the_blank_line_after_end():
+    exp = Experiment.from_toml(NI62_ON_C)
+    text = Multistep(exp, ni62_scheme(), "beam").gosia_input(gamma="4pi")
+    lines = text.splitlines()
+    cont = lines[lines.index("CONT"):lines.index("OP,YIEL")]
+    assert cont == ["CONT", "ACC,7.", "DIP,3.8", "SPL,1.", "END,", ""]      # splines; GOSIA needs the blank line
+
+
+def test_gosia_recoil_detection_in_inverse_kinematics():
+    """⁶²Ni on carbon with the carbon recoils counted: the beam (at most ~10.8°) cannot reach the rings, so each
+    ring is one experiment with the recoil detected: a negative angle on the EXPT line that is the BEAM's lab
+    angle, and OP,INTI's mesh in recoil angles (OP,INTG would want the beam's angles, two-valued in ring 3)."""
+    exp = Experiment.from_toml(NI62_ON_C)
+    ms = Multistep(exp, ni62_scheme(), "beam")
+    xs = ms.gosia_experiments()
+    assert [(x["detector"], x["particle"]) for x in xs] == [("Ring2", "recoil"), ("Ring3", "recoil")]
+    assert all(x["phi"] is None for x in xs)                                  # full rings: axial symmetry
+    assert xs[0]["theta"] == pytest.approx((14.0, 28.0), abs=1e-3)
+    assert xs[1]["theta"] == pytest.approx((28.0, 44.0), abs=1e-3)
+    text = ms.gosia_input(gamma="4pi")
+    for line, x in zip(expt_lines(text), xs):
+        f = line.split()
+        theta = float(f[3])
+        assert theta < 0 and -theta < 11.2                                    # the beam's angle, below its maximum
+        assert f[6:9] == ["0", "0.00", "360.00"] and f[9] == str(x["ikin"])
+    inti = text.splitlines()[text.splitlines().index("OP,INTI") + 1:]
+    head = inti[0].split()
+    assert head[:2] == ["9", "9"] and float(head[4]) == pytest.approx(14.0, abs=1e-3)
+    assert float(head[2]) < 75.0 and float(head[3]) == pytest.approx(111.6)    # exit to entry energy
+    assert [float(t) for t in inti[2].split()][-1] == pytest.approx(28.0, abs=1e-3)
+
+
+def test_gosia_side_detectors_cover_their_azimuth():
+    """Square DSSDs at the side: IAX = 1, a negative angle count in OP,INTI and the azimuths covered at each angle;
+    forward of 90° the ⁵⁸Ni recoil reaches them too, so each has a second experiment with the recoil detected."""
+    exp = Experiment.example("coulex_ni58")
+    ms = Multistep(exp, two_levels(26.4), "target")
+    xs = ms.gosia_experiments()
+    assert [(x["detector"], x["particle"]) for x in xs] == [
+        ("CD", "ejectile"), ("DSSD-L", "ejectile"), ("DSSD-L", "recoil"), ("DSSD-R", "ejectile"),
+        ("DSSD-R", "recoil")]
+    assert xs[0]["phi"] is None and all(x["phi"] is not None for x in xs[1:])
+    expt = expt_lines(ms.gosia_input(gamma="4pi"))
+    assert expt[0].split()[6] == "0" and all(line.split()[6] == "1" for line in expt[1:])
+    assert all(float(line.split()[3]) < 0 for line in (expt[2], expt[4]))
+
+
+def test_gosia_input_with_the_gamma_array_runs_gdet_first():
+    exp = Experiment.example("coulex_ni58")
+    if not exp.gamma_detectors:
+        with pytest.raises(ValueError, match="no γ detectors"):
+            Multistep(exp, two_levels(26.4), "target").gosia_input()
+        return
+    text = Multistep(exp, two_levels(26.4), "target").gosia_input()
+    lines = text.splitlines()
+    assert lines.index("OP,GDET") < lines.index("OP,GOSI")
+    assert lines[lines.index("OP,GDET") + 1] == str(len(exp.gamma_detectors))
+
+
+def test_gosia_integrated_output_is_read_back():
+    out = """
+     INTEGRATED RUTHERFORD CROSS SECTION=.5746E+03  FOR EXP. 1
+
+                                                  INTEGRATED YIELDS
+
+     EXPERIMENT  1  DETECTOR  1
+     ENERGY RANGE   69.209--- 111.600 MEV   SCATTERING ANGLE RANGE  14.000--- 28.000 DEG
+
+     NI     NF     II     IF     YIELD     NORMALIZED YIELD
+
+      2      1    2.0    0.0   0.41474E-01   0.10000E+01
+"""
+    res = gosia.integrated(out)
+    assert res[1]["rutherford"] == pytest.approx(574.6)
+    assert res[1]["yields"][1][(2, 1)] == pytest.approx(0.041474)
+
+
+def _gosia_exe():
+    folder = programs.find("gosia")
+    exe = folder / "gosia.exe" if folder is not None else None
+    return exe if exe is not None and exe.is_file() else None
+
+
+@pytest.mark.skipif(_gosia_exe() is None, reason="GOSIA is not on this machine")
+def test_gosia_run_reproduces_the_allmond_ratios(tmp_path):
+    """The app's input run through gosia.exe gives the γ yield over GOSIA's (inelastic) integrated Rutherford of an
+    independent hand-written GOSIA input for the same setup (SRIM stopping and thickness; 9.076e-4 in ring 2 and
+    6.647e-4 in ring 3) within 0.5 %. The app's thickness is tuned with its own stopping to the same energy loss."""
+    exp = Experiment.from_toml(NI62_ON_C)
+    ms = Multistep(exp, ni62_scheme(), "beam")
+    (tmp_path / "fort.9").write_text(GOSIA_4PI_FORT9)
+    res = gosia.integrated(gosia.run(_gosia_exe(), ms.gosia_input(gamma="4pi"), tmp_path).output)
+    ratios = [4 * math.pi * res[k]["yields"][1][(2, 1)] / res[k]["rutherford"] for k in (1, 2)]
+    assert ratios == pytest.approx([9.076e-4, 6.647e-4], rel=5e-3)
 
 
 def test_the_planner_solves_all_orders_with_a_scheme():
