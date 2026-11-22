@@ -85,7 +85,7 @@ def test_every_check_passes_or_waits_for_its_reference():
 def test_literature_checks_run_without_reference_files(tmp_path):
     for r in validation.run(kind="literature", reference=tmp_path):
         if r.name in ("stopping_hydrogen_vs_data", "stopping_heavy_vs_data", "fusion_vs_data", "residues_vs_data", "carbon_vs_endf",
-                      "reproduction_usman2020", "rdds_one_level_analytic", "rdds_two_levels_bateman",
+                      "reproduction_usman2020", "reproduction_allmond2014", "rdds_one_level_analytic", "rdds_two_levels_bateman",
                       "deorientation_ru98", "dsam_exponential_analytic") or r.name in LIFETIME_SIMULATED:
             # measured or evaluated data kept as reference files (the lifetime closed forms, published values and
             # parameters are files of tests/reference/nuclear/lifetimes/ too)
