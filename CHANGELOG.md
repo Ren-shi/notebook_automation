@@ -148,6 +148,24 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- Thick-target Coulomb excitation: the excitation probability P(θ) is now integrated over the depth of the layer,
+  each depth at its own beam energy and weighted by the Rutherford cross section there, as the Rutherford factor
+  already was. Before, P was taken at the mid-layer energy alone, which for 62Ni at 111.6 MeV on 1.04 mg/cm² of
+  carbon (Allmond et al. 2014, a 38 % energy loss, P changing 150-fold) put σ_C/σ_R 21–23 % low.
+  - `rates.DepthProbability` (from `rates.depth_probability`) solves P at a few energies through the layer (up to
+    8 Chebyshev points, by the energy loss) and interpolates in ln P; a layer the beam loses under 0.2 % of its
+    energy in keeps the mid-layer P exactly. The rates take P at each depth point; the event generator cuts such a
+    layer into up to 16 slices, each with P averaged over it; the Doppler table weights each depth with its own P.
+    `DepthProbability.probability(theta_cm)` is the depth-averaged P at given CM angles, for an analysis.
+  - The 62Ni on carbon setup now gives 9.904e-4 (ring 14–28°) and 7.530e-4 (28–44°) in first order, and
+    9.835e-4 and 7.500e-4 to all orders: 2.4 % and 2.6 % below GOSIA (1.0080e-3, 7.699e-4). The remainder is the
+    Rutherford convention (backlog 58), left to its own fix. `coulex_ni58` (a 7 % energy loss) moves by +0.6 %,
+    `coulex_ru98_plunger` by −0.5 %, `coulex_ni62_pt194` by −0.01 %: the depth average itself, which a brute-force
+    average over the depth reproduces.
+- A single 0⁺ → 2⁺ transition with a diagonal matrix element (Q_s) in the beam's or target's `[levels]` is solved
+  with the coupled equations (to all orders, unless `[reaction] order = "first"`). Before, it fell back to the
+  first-order one-γ-ray chain and Q_s was ignored; now Q_s = ±0.1 eb moves the 62Ni ratios by +2.9/−2.8 % and
+  +2.0/−2.0 %, as GOSIA's +2.7/−2.7 % and +1.9/−1.9 %.
 - Editing a fusion setup with an ancillary (neutron wall, charged-particle ball, …) could break the app's setup
   panel: `workbench.card_setup` raised for ancillary cards while a change was pending.
 - A shell-model job reads as finished, with its finish time, as soon as its results are written; before, a status

@@ -48,9 +48,9 @@ from .rates import (
     beam_energy_at,
     channels,
     cm_ranges,
+    depth_probability,
     energy_cut,
     energy_sigma,
-    excitation_probability,
     excited_partner,
     spot_sigma_mm,
     stack,
@@ -150,9 +150,15 @@ def generator_config(experiment, theta_floor: float = 0.5, pilot: bool = True) -
 
     Returns (config dict for :func:`physim._core.nuclear_events`, list of :class:`~physim.nuclear.rates.Channel`).
     ``config["channels"]`` has one entry per range of CM angle a channel is sampled over
-    (:func:`~physim.nuclear.rates.cm_ranges`), and ``config["channel_of"]`` the channel each belongs to
-    (:func:`channel_index` turns the generator's ``channel`` column into channel numbers). With ``pilot``, and a
-    channel that has more than one range, a pilot run sets how the events are shared out (:func:`share_out`).
+    (:func:`~physim.nuclear.rates.cm_ranges`) and per slice of its layer, and ``config["channel_of"]`` the channel
+    each belongs to (:func:`channel_index` turns the generator's ``channel`` column into channel numbers). With
+    ``pilot``, and a channel that has more than one range, a pilot run sets how the events are shared out
+    (:func:`share_out`).
+
+    A layer in which a Coulomb excitation's probability changes with the beam's energy loss is cut into slices
+    (:meth:`~physim.nuclear.rates.DepthProbability.slice_count`), each a layer of ``config["layers"]`` with the
+    excitation probability averaged over it; a thin layer stays one, with P at its middle. The ``depth`` column
+    still counts from the front of the stack.
     """
     layers = stack(experiment)
     array = Array.from_experiment(experiment)
@@ -170,7 +176,23 @@ def generator_config(experiment, theta_floor: float = 0.5, pilot: bool = True) -
         materials.append(mat)
         return len(materials) - 1
 
-    layer_cfg = [{"thickness": lay.thickness, "material": material_index(lay.material)} for lay in layers]
+    # A layer in which the beam slows down enough to change the excitation probability is cut into slices, each
+    # a layer of its own for the generator with its own table of P averaged over the slice (the generator takes
+    # one table per channel): the excitations happen where the beam still has the energy for them. The slices
+    # are of one material, so the energy losses, the depths and the straggling are those of the whole layer.
+    probe = np.linspace(0.0, 180.0, 721)
+    depth = {}
+    for ch in channels(layers, experiment):
+        if ch.excitation is not None:
+            try:
+                depth[(ch.layer, ch.nuclide.name)] = depth_probability(experiment, ch, layers)
+            except ValueError:  # the beam stops before the layer
+                pass
+    n_slices = [max([dp.slice_count() for (j, _), dp in depth.items() if j == i], default=1)
+                for i in range(len(layers))]
+    first_slice = np.r_[0, np.cumsum(n_slices)[:-1]].astype(int).tolist()
+    layer_cfg = [{"thickness": lay.thickness / n, "material": material_index(lay.material)}
+                 for lay, n in zip(layers, n_slices) for _ in range(n)]
     faces = []
     for g, d in zip(array, experiment.detectors):
         mat = d.material_data()
@@ -201,10 +223,12 @@ def generator_config(experiment, theta_floor: float = 0.5, pilot: bool = True) -
     z1 = experiment.beam.Z
     pps = experiment.beam.particles_per_second
     chan_cfg, used, channel_of = [], [], []
+    several_ranges = False
     for ch in channels(layers, experiment):
         ranges = cm_ranges(experiment, layers, ch, array, theta_floor)
         if not ranges:
             continue
+        several_ranges |= len(ranges) > 1
         k = z1 * ch.nuclide.Z * E2_MEV_FM
         # Rate at the middle of the layer: sets how often the channel is picked (any choice is unbiased). The
         # rate into a range is ``amplitude`` × (1/u_min − 1/u_max).
@@ -213,26 +237,35 @@ def generator_config(experiment, theta_floor: float = 0.5, pilot: bool = True) -
         e_cm = max(e_mid * m2 / (m1 + m2), 1e-6)
         cfg = {"layer": ch.layer, "target": species.index(ch.nuclide.name), "atoms_per_cm2": ch.atoms_per_cm2,
                "k": k, "amplitude": pps * ch.atoms_per_cm2 * 4 * math.pi * (k / (4 * e_cm)) ** 2 * 1e-26}
+        n = n_slices[ch.layer]
+        cfg.update(atoms_per_cm2=ch.atoms_per_cm2 / n, amplitude=cfg["amplitude"] / n)
         partner = excited_partner(experiment, ch, layers)
-        if partner is not None:
-            # One particle per collision: elastic scattering is what the excitation on this nuclide leaves,
-            # 1 − P at each angle, so that elastic and excited together are Rutherford scattering.
-            p = np.asarray(excitation_probability(experiment, partner, layers).probability(
-                np.linspace(0.0, 180.0, 721)), dtype=float)
-            cfg.update(p_table=(1.0 - np.clip(p, 0.0, 1.0)).tolist())
-        if ch.excitation is not None:
-            # Excitation probability every 0.25°, at mid-layer, the one the analytic rates use: of the
-            # [reaction] state in first order, or with a level scheme that decays by cascades, of every level
-            # its solution populates (to all orders unless the setup says first; backlog item 71).
-            p = np.asarray(excitation_probability(experiment, ch, layers).probability(np.linspace(0.0, 180.0, 721)))
-            # Picked as often as elastic scattering on the same nuclei (the weights carry P), so the rare
-            # inelastic events get as many samples as the elastic ones.
-            cfg.update(excitation=ch.excitation.energy_mev, excite_recoil=ch.excitation.excite == "target",
-                       p_table=p.tolist())
-        for lo, hi in ranges:
-            u_min, u_max = (math.sin(math.radians(a) / 2) ** 2 for a in (lo, hi))
-            chan_cfg.append(dict(cfg, u_min=u_min, u_max=u_max))
-            channel_of.append(len(used))
+        dp = depth.get((ch.layer, ch.nuclide.name)) if (partner is not None or ch.excitation is not None) else None
+        if dp is None and (partner is not None or ch.excitation is not None):
+            continue  # the beam stops before the layer: nothing to excite, nor to scatter
+        # Excitation probability every 0.25° in each slice, averaged over it with the Rutherford weight of each
+        # depth (DepthProbability.slices; the rates take the same P through the depth): of the [reaction] state
+        # in first order, or with a level scheme that the events follow, of every level its solution populates
+        # (to all orders unless the setup says first; backlog item 71).
+        if dp is None:
+            tables = [None] * n
+        else:
+            tables = [np.clip(np.asarray(p, dtype=float), 0.0, 1.0) for _, _, p in dp.slices(n, probe)]
+        for s, table in enumerate(tables):
+            part = dict(cfg, layer=first_slice[ch.layer] + s)
+            if partner is not None:
+                # One particle per collision: elastic scattering is what the excitation on this nuclide leaves,
+                # 1 − P at each angle, so that elastic and excited together are Rutherford scattering.
+                part.update(p_table=(1.0 - table).tolist())
+            if ch.excitation is not None:
+                # Picked as often as elastic scattering on the same nuclei (the weights carry P), so the rare
+                # inelastic events get as many samples as the elastic ones.
+                part.update(excitation=ch.excitation.energy_mev, excite_recoil=ch.excitation.excite == "target",
+                            p_table=table.tolist())
+            for lo, hi in ranges:
+                u_min, u_max = (math.sin(math.radians(a) / 2) ** 2 for a in (lo, hi))
+                chan_cfg.append(dict(part, u_min=u_min, u_max=u_max))
+                channel_of.append(len(used))
         used.append(ch)
     if not chan_cfg:
         raise ValueError("no detector can see any scattered particle or recoil: nothing to simulate")
@@ -259,7 +292,7 @@ def generator_config(experiment, theta_floor: float = 0.5, pilot: bool = True) -
         "halo_radius": _q(experiment.beam.halo_radius).to("mm") if experiment.beam.halo_radius is not None else 0.0,
     }
     share_out(config)
-    if pilot and len(chan_cfg) > len(used):
+    if pilot and several_ranges:
         share_out(config, _counted_fractions(config))
     return config, used
 

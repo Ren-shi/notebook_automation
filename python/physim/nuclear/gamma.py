@@ -62,11 +62,12 @@ def doppler_table(experiment, depth_points: int = 8, order: int = 10) -> list:
     nucleus, for the scattered particle reaching that particle detector (first kinematic solution).
 
     Each sample (a point of the particle detector, a direction into the γ detector, a depth in the target) is
-    weighted by the Coulomb-excitation cross section there; the kinematics are exact at each depth, the excitation
-    probability is that at mid-target energy."""
+    weighted by the Coulomb-excitation cross section there; the kinematics and the excitation probability are those
+    at the beam energy of each depth (:func:`~physim.nuclear.rates.depth_probability`)."""
     from . import data
-    from .coulex import Coulex
     from .kinematics import TwoBody
+    from .rates import channels, depth_probability
+    from .rutherford import Rutherford
 
     exc = experiment.excitation
     if exc is None:
@@ -81,9 +82,9 @@ def doppler_table(experiment, depth_points: int = 8, order: int = 10) -> list:
     excite = "recoil" if exc.excite == "target" else "ejectile"
     emitter = target if exc.excite == "target" else beam
     m_emitter = data.nuclide(emitter).nuclear_mass_mev + e0
-    e_mid = float(beam_energy_at(experiment, 0, [lay.thickness / 2], layers)[0])
-    cx = Coulex(beam, target, e_mid, excite=exc.excite, energy=e0, multipolarity=exc.multipolarity,
-                b_up=exc.b_up_e2fm)
+    channel = next(ch for ch in channels(layers, experiment)
+                   if ch.excitation is not None and ch.layer == 0 and ch.nuclide.name == target)
+    depth = depth_probability(experiment, channel, layers)
     # One entry per crystal: a clover's four crystals are corrected for the Doppler shift separately.
     gammas = []
     for i, gd in enumerate(experiment.gamma_detectors):
@@ -108,7 +109,9 @@ def doppler_table(experiment, depth_points: int = 8, order: int = 10) -> list:
             ok = ~np.isnan(th_cm)
             if not ok.any():
                 continue
-            sigma = np.where(ok, np.asarray(cx.cross_section_cm(np.where(ok, th_cm, 90.0)))
+            safe = np.where(ok, th_cm, 90.0)
+            sigma = np.where(ok, np.asarray(depth.at(float(e)).probability(safe))
+                             * np.asarray(Rutherford(beam, target, float(e)).cross_section_cm(safe))
                              * np.nan_to_num(np.asarray(first.jacobian)), 0.0)
             if excite == "recoil":
                 rec = tb.recoil_for(np.where(ok, th_cm, 90.0))
@@ -167,7 +170,7 @@ def excitation_of(experiment, isotropic=None):
 EVENT_TOLERANCE = 1e-4
 #: The solutions kept (one per beam, partner nucleus, energy, level scheme and order), and how many.
 _SOLVED: OrderedDict = OrderedDict()
-_SOLVED_MOST = 16
+_SOLVED_MOST = 48
 _SOLVING = threading.Lock()
 
 
@@ -264,11 +267,22 @@ def level_names(levels: list) -> list:
     return out
 
 
-def cascade_excitation(experiment, isotropic=None, order=None, channel=None, nucleus: str = "reaction"):
+def has_static_moment(scheme) -> bool:
+    """Whether a level scheme sets a diagonal matrix element (a static moment, such as the E2 one that gives the
+    spectroscopic quadrupole moment Q_s): then the excitation needs the coupled equations even for one
+    transition (the reorientation effect)."""
+    return any(me.a == me.b for me in getattr(scheme, "matrix_elements", []) or [])
+
+
+def cascade_excitation(experiment, isotropic=None, order=None, channel=None, nucleus: str = "reaction",
+                       energy=None):
     """The excitation of the excited nucleus's whole level scheme (the setup's ``[levels]`` of the target or the
     beam, whichever the reaction excites), when its decays follow more than one transition: then each excitation
     starts in a level drawn from this solution's populations and decays by a cascade (backlog item 71). None
-    when the setup has no such scheme, so a single state keeps the one-γ-ray chain of item 55.
+    when the setup has no such scheme, so a single state keeps the one-γ-ray chain of item 55; but a single
+    transition whose scheme sets a diagonal matrix element (:func:`has_static_moment`, such as Q_s of the 2⁺
+    state) is solved to all orders too, unless the order is "first": the reorientation effect of Q_s needs the
+    coupled equations.
 
     It is the coupled equations' solution to all orders (:class:`~physim.nuclear.coupled.CoupledChannels`: the
     levels reached in two steps, the reorientation, and the orientation of every level), or with ``order``
@@ -276,9 +290,10 @@ def cascade_excitation(experiment, isotropic=None, order=None, channel=None, nuc
     (:class:`~physim.nuclear.orientation.Excitation`: each level in one step from the ground state).
 
     ``channel`` (a :class:`~physim.nuclear.rates.Channel` with an excitation) picks the nucleus the excited one
-    scatters on and the layer; by default the target's main nuclide. The solution is at the beam energy in the
-    middle of the layer, and is kept with its table of angles: the events, the rates and the γ rays of one setup
-    share it.
+    scatters on and the layer; by default the target's main nuclide. The solution is at beam energy ``energy``
+    (MeV), by default the energy in the middle of the layer, and is kept with its table of angles: the events,
+    the rates and the γ rays of one setup share it. Through a thick layer the rates and the events take it at
+    several energies (:func:`physim.nuclear.rates.depth_probability`).
 
     ``nucleus`` "other" gives the same for the other nucleus of the collision (:func:`other_excitation`), whose
     scheme may hold a single transition."""
@@ -301,7 +316,9 @@ def cascade_excitation(experiment, isotropic=None, order=None, channel=None, nuc
     lay = layers[layer]
     target = (data.nuclide(max(lay.nuclides.items(), key=lambda kv: kv[1])[0]).name if channel is None
               else channel.nuclide.name)
-    e_mid = round(float(beam_energy_at(experiment, layer, [lay.thickness / 2], layers)[0]), 9)
+    if energy is None:
+        energy = beam_energy_at(experiment, layer, [lay.thickness / 2], layers)[0]
+    e_mid = round(float(energy), 9)
     flat = (exc.emission == "isotropic") if isotropic is None else isotropic
     order = order or excitation_order(experiment)
     if order not in ("all", "first"):
@@ -321,9 +338,11 @@ def cascade_excitation(experiment, isotropic=None, order=None, channel=None, nuc
                                      tolerance=EVENT_TOLERANCE)
         except ValueError:
             ex = None
-        # The [reaction] nucleus keeps its one-γ-ray chain for a single transition; the other nucleus has no
-        # such chain, so one transition is enough for it.
-        if ex is not None and (not ex.paths or len(ex.transitions()) < (2 if nucleus == "reaction" else 1)):
+        # The [reaction] nucleus keeps its one-γ-ray chain for a single transition, unless a static moment asks
+        # for the coupled equations (to all orders); the other nucleus has no such chain, so one transition is
+        # enough for it.
+        least = 1 if nucleus == "other" or (order == "all" and has_static_moment(scheme)) else 2
+        if ex is not None and (not ex.paths or len(ex.transitions()) < least):
             ex = None
         if ex is not None:
             ex.table()
@@ -507,5 +526,5 @@ def _correlation_rows(experiment, solution, order: int, crystal_points: int, tra
 
 
 __all__ = ["cascade_excitation", "correlation_table", "doppler_energy", "doppler_table", "emitters",
-           "excitation_of", "excitation_order", "level_names", "other_excitation", "other_role", "start_levels",
-           "state_transition", "transition_lines", "unreached_levels"]
+           "excitation_of", "excitation_order", "has_static_moment", "level_names", "other_excitation", "other_role",
+           "start_levels", "state_transition", "transition_lines", "unreached_levels"]
