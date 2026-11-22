@@ -1,0 +1,196 @@
+schema = "physim.experiment/1"
+title = "Coulomb excitation of a 62Ni beam on carbon (Allmond 2014)"
+description = "The Coulomb-excitation measurement of J. M. Allmond et al., Phys. Rev. C 90, 034309 (2014), at the HRIBF (Oak Ridge), in inverse kinematics: a 62Ni beam at 1.8 MeV/u (111.6 MeV, about 5 pA) on a natural-carbon target of about 1 mg/cm2 excites the beam's first 2+ state (1172.91 keV); the carbon recoils are counted in two full rings of the BareBall CsI array, ring 2 at 14-28 deg and ring 3 at 28-44 deg, and the gamma rays in nine CLARION clovers at 21.75 cm (five at 90 deg, three at 132 deg, one at 154 deg; 2.24 % total efficiency at 1173 keV). From the paper: the beam, its energy and intensity, the target, the ring angles, the clover angles, distance and efficiency. Assumed here: the thickness (1.037 mg/cm2) is tuned with physim's stopping so that the 58Ni and 60Ni energy losses the paper measured (42.7(8) and 42.1(8) MeV) come out right, which gives 42.4 MeV for 62Ni; the target is pure 12C (the 1.1 % of 13C in natural carbon is ignored); the CsI crystals are modelled as two silicon rings, ring 2 at 50 mm and ring 3 at 55 mm from the target (the angles are the paper's); the clovers' phi angles are spread evenly and their crystal size is tuned to the stated efficiency; the 5 pA are taken as particle current (charge state 10+ assumed); the beam time (1 day, a quarter of the paper's 4 days for four Ni isotopes) is illustrative. B(E2) up is ENSDF's (0.0884 e2b2); the paper found 0.0906(37) e2b2. The validation case physim.nuclear.coulex_reproduction (scripts/reproduce_allmond2014.py) checks the app against GOSIA and the paper with this setup."
+
+[reaction]
+type = "coulex"
+excite = "projectile"
+energy = "1172.91 keV"
+multipolarity = "E2"
+b_up = "884.111 e2fm4"
+
+[beam]
+nuclide = "62Ni"
+energy = "111.6 MeV"
+current = "5 ppA"
+charge_state = 10
+
+[target]
+material = "12C"
+thickness = "1.03741 mg/cm2"
+
+[run]
+beam_time = "24 h"
+counts_wanted = 1000
+
+[[detectors]]
+name = "Ring2"
+shape = "annular"
+theta = "0 deg"
+distance = "50 mm"
+inner_radius = "12.4664 mm"
+outer_radius = "26.5855 mm"
+rings = 7
+sectors = 10
+thickness = "1000 um"
+dead_layer = "0.5 um"
+resolution = "500 keV"
+threshold = "1 MeV"
+
+[[detectors]]
+name = "Ring3"
+shape = "annular"
+theta = "0 deg"
+distance = "55 mm"
+inner_radius = "29.244 mm"
+outer_radius = "53.1129 mm"
+rings = 7
+sectors = 12
+thickness = "1000 um"
+dead_layer = "0.5 um"
+resolution = "500 keV"
+threshold = "1 MeV"
+
+[[gamma_detectors]]
+name = "G90_0"
+model = "clover"
+theta = "90 deg"
+phi = "0 deg"
+distance = "217.5 mm"
+crystals = 4
+crystal_diameter = "54.5131 mm"
+crystal_length = "70 mm"
+crystal_pitch = "49.0618 mm"
+housing_side = "109.1237 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+
+[[gamma_detectors]]
+name = "G90_72"
+model = "clover"
+theta = "90 deg"
+phi = "72 deg"
+distance = "217.5 mm"
+crystals = 4
+crystal_diameter = "54.5131 mm"
+crystal_length = "70 mm"
+crystal_pitch = "49.0618 mm"
+housing_side = "109.1237 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+
+[[gamma_detectors]]
+name = "G90_144"
+model = "clover"
+theta = "90 deg"
+phi = "144 deg"
+distance = "217.5 mm"
+crystals = 4
+crystal_diameter = "54.5131 mm"
+crystal_length = "70 mm"
+crystal_pitch = "49.0618 mm"
+housing_side = "109.1237 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+
+[[gamma_detectors]]
+name = "G90_216"
+model = "clover"
+theta = "90 deg"
+phi = "216 deg"
+distance = "217.5 mm"
+crystals = 4
+crystal_diameter = "54.5131 mm"
+crystal_length = "70 mm"
+crystal_pitch = "49.0618 mm"
+housing_side = "109.1237 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+
+[[gamma_detectors]]
+name = "G90_288"
+model = "clover"
+theta = "90 deg"
+phi = "288 deg"
+distance = "217.5 mm"
+crystals = 4
+crystal_diameter = "54.5131 mm"
+crystal_length = "70 mm"
+crystal_pitch = "49.0618 mm"
+housing_side = "109.1237 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+
+[[gamma_detectors]]
+name = "G132_60"
+model = "clover"
+theta = "132 deg"
+phi = "60 deg"
+distance = "217.5 mm"
+crystals = 4
+crystal_diameter = "54.5131 mm"
+crystal_length = "70 mm"
+crystal_pitch = "49.0618 mm"
+housing_side = "109.1237 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+
+[[gamma_detectors]]
+name = "G132_180"
+model = "clover"
+theta = "132 deg"
+phi = "180 deg"
+distance = "217.5 mm"
+crystals = 4
+crystal_diameter = "54.5131 mm"
+crystal_length = "70 mm"
+crystal_pitch = "49.0618 mm"
+housing_side = "109.1237 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+
+[[gamma_detectors]]
+name = "G132_300"
+model = "clover"
+theta = "132 deg"
+phi = "300 deg"
+distance = "217.5 mm"
+crystals = 4
+crystal_diameter = "54.5131 mm"
+crystal_length = "70 mm"
+crystal_pitch = "49.0618 mm"
+housing_side = "109.1237 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true
+
+[[gamma_detectors]]
+name = "G154_0"
+model = "clover"
+theta = "154 deg"
+phi = "0 deg"
+distance = "217.5 mm"
+crystals = 4
+crystal_diameter = "54.5131 mm"
+crystal_length = "70 mm"
+crystal_pitch = "49.0618 mm"
+housing_side = "109.1237 mm"
+window_gap = "5 mm"
+resolution = "2.1 keV"
+material = "Ge"
+addback = true

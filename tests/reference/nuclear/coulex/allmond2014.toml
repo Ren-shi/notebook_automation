@@ -1,0 +1,162 @@
+# Allmond et al., PRC 90, 034309 (2014): 62Ni Coulomb excitation on natural carbon, the reproduced experiment of
+# physim.nuclear.coulex_reproduction (scripts/reproduce_allmond2014.py; the check reproduction_allmond2014).
+# The setup is the example coulex_ni62_c_allmond. Written by hand on 2026-11-23 (Claude Code) from the paper card,
+# the outside tools' report and the GOSIA reruns of the Allmond 2014 verification (Round 2 and fix wave 2); the
+# bands below were fixed before the reproduction was first run.
+
+[provenance]
+tool = "GOSIA 20110524.14 (tools/gosia/gosia.exe, gfortran 16.2.0 build); SRIM 2013 SR Module; LISE++ ATIMA 1.4"
+produced_by = "Claude Code, 2026-11-23, from the Allmond 2014 verification (paper card, outside tools, fix wave 2)"
+paper = "J. M. Allmond, B. A. Brown, A. E. Stuchbery et al., Phys. Rev. C 90, 034309 (2014), doi:10.1103/PhysRevC.90.034309; read from the accepted manuscript (https://link.aps.org/accepted/10.1103/PhysRevC.90.034309)"
+
+# -- the paper -------------------------------------------------------------------------------------------------------
+
+[paper]
+beam = "62Ni, 1.8 MeV/u (111.6 MeV), ~5 pA (p. 4 para. 3; p. 5 top)"
+target = "~1 mg/cm2 natural carbon, 98.9 % 12C (p. 4 paras. 2-3)"
+rings = "BareBall CsI ring 2 at 14-28 deg, ring 3 at 28-44 deg lab, carbon recoils (p. 5 para. 1)"
+gamma = "9 CLARION clovers at 21.75 cm: 5 at 90, 3 at 132, 1 at 154 deg; 2.24 % total efficiency at 1173 keV (p. 5)"
+analysis = "GOSIA, Q(2+) = 0; sigma_C/sigma_R per ring -> <0+||E2||2+> per ring; no yields printed (p. 6, Table I)"
+
+[paper.ring2]
+me_eb = 0.3038
+me_stat_eb = 0.0037
+where = "Table I, row 62Ni (N = 34); footnote a: statistical uncertainty only"
+
+[paper.ring3]
+me_eb = 0.3002
+me_stat_eb = 0.0024
+where = "Table I, row 62Ni; statistical only"
+
+[paper.final]
+me_eb = 0.301
+me_unc_eb = 0.006
+b_e2b2 = 0.0906
+b_unc_e2b2 = 0.0037
+where = "Table I, row 62Ni; footnote b: statistical and systematic combined (4.1 % on B(E2))"
+
+# The beam's energy loss in the target at 1.8 MeV/u, measured with the zero-degree Bragg detector for 58Ni and 60Ni
+# only. The 62Ni value is the verification's approved assumption: same speed and charge, so about the same loss;
+# SRIM 2013 and LISE++ ATIMA 1.4, each tuned to the 58Ni and 60Ni losses, give 42.39 and 42.42 MeV.
+[paper.energy_loss.58Ni]
+value_mev = 42.7
+unc_mev = 0.8
+source = "measured, p. 4 para. 3"
+
+[paper.energy_loss.60Ni]
+value_mev = 42.1
+unc_mev = 0.8
+source = "measured, p. 4 para. 3"
+
+[paper.energy_loss.62Ni]
+value_mev = 42.4
+unc_mev = 0.8
+source = "assumed (not in the paper): SRIM 42.39, LISE++ ATIMA 42.42 MeV at the thickness fitting 58Ni and 60Ni"
+
+# -- GOSIA -----------------------------------------------------------------------------------------------------------
+# sigma_C(2+ -> 0+)/sigma_R per ring, integrated over the target, at <0+||E2||2+> = 0.29734 e b (ENSDF), Q = 0, all
+# orders. ratio_elastic divides 4 pi x the integrated 2+ -> 0+ gamma yield (fort.9 with Q1 = Q3 = 0, Q2 = 1) by the
+# ELASTIC Rutherford integral of the ring; ratio_gosia by GOSIA's own integrated Rutherford (inelastic kinematics with
+# Alder and Winther's factor, 11 % (ring 2) and 16 % (ring 3) above the elastic one).
+
+[gosia]
+version = "GOSIA 20110524.14 (gfortran 16.2.0 build)"
+me_eb = 0.29734
+q_eb = 0.0
+
+# As the outside tools ran it (Round 2): an independent hand-written input (outside-tools/gosia_lib.py), not the
+# app's writer. OP,INTI over 9 energies x 9 recoil lab angles per ring, NI1 = NI2 = 40; EXPT "2 28 62" and
+# "-6 12 111.6 -theta_p 5 5 0 0 360 IKIN 1" (integer mass numbers; projectile excited, target recoil detected);
+# CONT ACC,7. DIP,3.8 SPL,1.; SRIM 2013 stopping of 62Ni in C every 2 MeV (67.5-113.5 MeV) and the SRIM thickness,
+# 1.0696 mg/cm2, from 111.6 to 69.209 MeV. Elastic Rutherford integrals 533.286 and 1571.299 mb mg/cm2.
+[gosia.as_run]
+settings = "integer masses (62, 12), DIP 3.8 (E1 polarisation on), SRIM stopping and thickness, OP,INTI, ACC 7, SPL 1"
+[gosia.as_run.ring2]
+ratio_elastic = 1.0080221e-3
+ratio_gosia = 9.075877e-4
+rutherford_gosia_mb_mg_cm2 = 592.3
+rutherford_elastic_mb_mg_cm2 = 533.286
+[gosia.as_run.ring3]
+ratio_elastic = 7.699377e-4
+ratio_gosia = 6.647265e-4
+rutherford_gosia_mb_mg_cm2 = 1820.0
+rutherford_elastic_mb_mg_cm2 = 1571.299
+
+# GOSIA on the app's own input (Multistep.gosia_input(gamma="4pi"): the app's stopping and thickness, 1.03741 mg/cm2
+# of 12C) with the nuclear masses in EXPT (61.91303 u and 11.99671 u for 62 and 12) and DIP,0.001 (E1 polarisation
+# off): the two simplifications of GOSIA's that physim does not make. Rerun 2026-11-23 (first run by fix wave 2,
+# session S5); ratio_elastic over physim's elastic Rutherford integral of the same ring and target (517.441 and
+# 1524.611 mb mg/cm2), as GOSIA prints only its inelastic one.
+[gosia.matched]
+settings = "nuclear masses (61.91303, 11.99671 u), DIP 0.001 (E1 polarisation off), the app's input otherwise (ACC 7, SPL 1)"
+[gosia.matched.ring2]
+ratio_elastic = 1.019292e-3
+ratio_gosia = 9.196567e-4
+yield_4pi = 0.5274231
+rutherford_gosia_mb_mg_cm2 = 573.5
+[gosia.matched.ring3]
+ratio_elastic = 7.779044e-4
+ratio_gosia = 6.730996e-4
+yield_4pi = 1.186001
+rutherford_gosia_mb_mg_cm2 = 1762.0
+
+# For the record, the same app input as written (integer masses, DIP 3.8) and the two switches one at a time;
+# ratio_elastic as in [gosia.matched]. The as-written run agrees with [gosia.as_run] to 0.1 %.
+[gosia.app_input]
+as_written = { ring2 = 1.007222e-3, ring3 = 7.693241e-4 }
+dip_off = { ring2 = 1.012540e-3, ring3 = 7.729260e-4 }
+nuclear_masses = { ring2 = 1.013925e-3, ring3 = 7.742860e-4 }
+nuclear_masses_dip_off = { ring2 = 1.019292e-3, ring3 = 7.779044e-4 }
+
+# GOSIA's ratio(M), M = <0+||E2||2+> in e b: R = a M^2 + b M^4, fitted to ten [gosia.as_run] runs, M = 0.26-0.34 e b
+# and 0.29734 e b (largest relative residual 1.6e-5). For ratio_elastic; the ratio_gosia fits are a_g, b_g.
+[gosia.fit]
+form = "R = a M^2 + b M^4"
+[gosia.fit.ring2]
+a = 1.1479762535634853e-2
+b = -8.85933123935079e-4
+a_g = 1.0335974984316605e-2
+b_g = -7.97663068233875e-4
+[gosia.fit.ring3]
+a = 8.742419631382026e-3
+b = -3.8164707046473695e-4
+a_g = 7.547776953592906e-3
+b_g = -3.294953896424533e-4
+
+# Relative change of ratio_elastic in [gosia.as_run] runs: Q_s(2+) = +-0.1 e b; and the full scheme (0+2 2049,
+# 2+2 2302, 4+1 2336 keV with ENSDF's E2 matrix elements 0-2+2 0.062153, 2+-0+2 0.280565, 2+-2+2 0.307817, 2+-4+
+# 0.524889 e b and the M1 2+-2+2 0.0936, Q = 0) against 0+, 2+ alone.
+[gosia.sensitivity]
+q_eb = 0.1
+[gosia.sensitivity.ring2]
+q_plus = 0.027116742
+q_minus = -0.026602459
+feeding = 0.011735004
+[gosia.sensitivity.ring3]
+q_plus = 0.019081155
+q_minus = -0.018821476
+feeding = 0.007686475
+
+# -- the bands, fixed before the reproduction was run -----------------------------------------------------------------
+
+[bands]
+thickness = "each loss within its error: the paper's 0.8 MeV for 58Ni and 60Ni; 0.8 MeV around the assumed 42.4 MeV for 62Ni (the spread the measured errors allow; SRIM and LISE++ agree to 0.03 MeV)"
+
+[bands.gosia]
+matched_rel = 0.005
+as_run_rel = 0.02
+why = "Against GOSIA with the same physics (nuclear masses, no E1 polarisation, the app's own input): 0.5 %, the numerical agreement two codes solving the same coupled equations through the same target should reach (found 0.2 % by fix wave 2). Against GOSIA as run: 2 %, because GOSIA's integer mass numbers (A = 62 and 12 for 61.913 and 11.997 u) shift the energy scale and P, steep in the energy here, by about -0.6 %, and its E1 polarisation (DIP 3.8, not modelled in physim) lowers the ratio by about 0.5 %; with the different inputs (SRIM stopping and thickness against physim's) and the outside tools' independent input, about 1.3 % is expected."
+
+[bands.closure]
+rel = 0.01
+mc_sigmas = 3
+why = "The known residual of the analysis (0.3 % from <P>/B against the events' own excited share, 0.3-0.6 % from gamma.correlation_table taking the kinematics of the middle of the target; up to +1.9 % found in ring 2 on one seed), plus three Monte Carlo standard deviations of the run (Result.monte_carlo)."
+
+[bands.paper]
+rel = 0.041
+physim_scan_me_eb = [0.28, 0.29734, 0.32]
+why = "The paper's total uncertainty on B(E2) (0.0037 of 0.0906 e2b2, 4.1 %) applied to each ring's B(E2) = M^2; the per-ring statistical errors (2.4 % and 1.6 % on M^2) are reported as pulls, not judged, because GOSIA as run and physim differ by about 1.3 % by construction (the integer masses and E1 polarisation above). physim's ratio(M) is fitted to all-order runs at physim_scan_me_eb, in the same form as GOSIA's."
+
+[bands.sensitivity]
+pp = 0.5
+why = "Q_s = +-0.1 e b moves the ratio by about +-2.7 % (ring 2) and +-1.9 % (ring 3) in GOSIA, the feeding by +1.2 % and +0.8 %; physim must give the same changes within 0.5 percentage points (about a fifth of the Q effect: enough to catch a wrong sign or a missing reorientation term, not the E1 polarisation and mass-number differences, which cancel in a relative change)."

@@ -85,6 +85,7 @@ examples come with it:
 | `coulex_ni58` | Safe Coulomb excitation of 58Ni's first 2+ state with a 30 MeV 16O beam and four germanium detectors |
 | `coulex_ni62_pt194` | A 62Ni beam on 194Pt seen at backward angles, with ENSDF level schemes, multi-step excitation, and the γ rays of both nuclei |
 | `coulex_ni62_pt194_clovers` | The same experiment with four clover detectors, with add-back and BGO Compton-suppression shields |
+| `coulex_ni62_c_allmond` | A 62Ni beam Coulomb-excited on carbon, carbon recoils in two rings and nine clovers: Allmond et al., PRC 90, 034309 (2014), the reproduced Coulomb-excitation experiment of the validation |
 
 Without the app:
 
