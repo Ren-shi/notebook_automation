@@ -282,6 +282,10 @@ SLICE_POINTS = 4
 #: slices keep 70 % of its 0.24 MeV, the 5 it gets now 96 %).
 SLICE_LOG_STEP = 0.15
 MAX_SLICES = 16
+#: A layer through which ln P changes by less than this stays one slice: the depth the excitations move to then
+#: shifts their peaks by less than 2.5 % of the layer's own energy spread, and the events of such a setup (thin,
+#: or nearly so: coulex_ni62_pt194, a 2.7 % energy loss) stay those of before.
+SLICE_MIN_LOG_CHANGE = 0.3
 _DEPTH_KEPT: dict = {}
 _DEPTH_KEPT_MOST = 32
 
@@ -423,13 +427,17 @@ class DepthProbability:
 
     def slice_count(self, theta_cm: float = 170.0) -> int:
         """How many slices :meth:`slices` should cut the layer into: enough that ln P changes by at most
-        :data:`SLICE_LOG_STEP` across each (at CM angle ``theta_cm``), at most :data:`MAX_SLICES`."""
+        :data:`SLICE_LOG_STEP` across each (at CM angle ``theta_cm``), at most :data:`MAX_SLICES`; one when it
+        changes by less than :data:`SLICE_MIN_LOG_CHANGE` through the whole layer."""
         if self.thin:
             return 1
         p = [float(self.at(e).probability(theta_cm)) for e in (self.e_front, self.e_low)]
         if min(p) <= 0:
             return MAX_SLICES
-        return int(min(max(math.ceil(abs(math.log(p[0] / p[1])) / SLICE_LOG_STEP), 1), MAX_SLICES))
+        change = abs(math.log(p[0] / p[1]))
+        if change < SLICE_MIN_LOG_CHANGE:
+            return 1
+        return int(min(max(math.ceil(change / SLICE_LOG_STEP), 1), MAX_SLICES))
 
     def slices(self, n: int, theta_cm) -> list:
         """The layer cut into ``n`` slices of equal thickness: [(depth of the slice's front, its thickness, P at
