@@ -166,6 +166,17 @@ workflow builds the wheels, tests them and publishes to PyPI.
   with the coupled equations (to all orders, unless `[reaction] order = "first"`). Before, it fell back to the
   first-order one-γ-ray chain and Q_s was ignored; now Q_s = ±0.1 eb moves the 62Ni ratios by +2.9/−2.8 % and
   +2.0/−2.0 %, as GOSIA's +2.7/−2.7 % and +1.9/−1.9 %.
+- Three misleading outputs found while checking the app against Allmond et al. 2014 (⁶²Ni Coulomb excitation):
+  - The lifetime planner no longer names a method when the recoil does not fly forward out of the target (β = 0,
+    as for ⁶²Ni backscattered off ¹⁹⁴Pt in `coulex_ni62_pt194`): each level's method is "none", and the warning
+    says plainly that no Doppler-shift method (RDDS or DSAM) fits this geometry and why. Before, it named "rdds"
+    beside a β of zero.
+  - In DSAM mode (the setup's DSAM, or a recoil that stops in the target) the lifetime plan lists no plunger
+    distances, sensitive range or counts per distance, even for levels whose τ would suit a plunger.
+  - Shell model: an effective charge for a particle type with no valence particles in the chosen space (e_p for
+    ⁶²Ni in JUN45, ⁵⁶Ni core) is warned about, since it has no effect: `shellmodel_spaces.charge_warnings`, the
+    estimate's `warnings`, and `warnings` in the MCP tools `shell_model_options`, `estimate_shell_model`,
+    `run_shell_model` and `shell_model_results`.
 - Editing a fusion setup with an ancillary (neutron wall, charged-particle ball, …) could break the app's setup
   panel: `workbench.card_setup` raised for ancillary cards while a change was pending.
 - A shell-model job reads as finished, with its finish time, as soon as its results are written; before, a status
