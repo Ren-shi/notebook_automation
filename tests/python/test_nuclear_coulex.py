@@ -137,6 +137,49 @@ def test_cross_sections():
     assert 0 < total < 100  # mb
 
 
+def test_rutherford_factor_is_alder_and_winthers():
+    """dσ = P (v_f/v_i) (a²/4)/sin⁴(θ/2) with the symmetrised a (Alder and Winther, GOSIA): the elastic Rutherford
+    cross section at the initial E_cm times v_i/v_f, at every angle; 1.033 for ¹⁶O on ⁵⁸Ni at 30 MeV."""
+    c = ni58()
+    th = np.array([30.0, 90.0, 150.0, 179.0])
+    vi_vf = math.sqrt(c.e_cm / (c.e_cm - c.e_star))
+    assert c.rutherford_factor == pytest.approx(vi_vf, rel=1e-12)
+    assert c.rutherford_factor == pytest.approx(1.033, abs=1e-3)
+    elastic = Rutherford("16O", "58Ni", 30.0).cross_section_cm(th)
+    np.testing.assert_allclose(c.elastic_rutherford_cm(th), elastic, rtol=1e-12)
+    np.testing.assert_allclose(c.rutherford_cm(th), vi_vf * elastic, rtol=1e-12)
+    s4 = np.sin(np.radians(th) / 2) ** 4
+    np.testing.assert_allclose(c.rutherford_cm(th), c.a**2 / 4 * c.beta_f / c.beta_i / s4 * 10.0, rtol=1e-12)
+    # The ratio to the elastic Rutherford cross section that an experiment divides by.
+    np.testing.assert_allclose(c.ratio_to_elastic(th), c.probability(th) * vi_vf, rtol=1e-12)
+    np.testing.assert_allclose(c.cross_section_cm(th) / elastic, c.ratio_to_elastic(th), rtol=1e-12)
+    # High above the state the factor goes to 1.
+    assert ni58(beam_energy=3000.0).rutherford_factor == pytest.approx(1.0, abs=5e-4)
+
+
+def test_rates_use_the_same_rutherford_factor():
+    """The rates' Coulomb-excitation reaction is :meth:`Coulex.cross_section_cm` at the same energy (a thin target),
+    and the depth average's ratio to the elastic Rutherford cross section is P × v_i/v_f."""
+    from physim.nuclear.planner import Planner
+    from physim.nuclear.rates import channels, depth_probability, reaction_at, rutherford_factor, stack
+
+    exp = Planner.example("coulex_ni58").experiment
+    layers = stack(exp)
+    ch = next(c for c in channels(layers, exp) if c.excitation is not None)
+    dp = depth_probability(exp, ch, layers)
+    e = float(dp.energies[0])
+    reac = reaction_at(exp, ch, e, layers)
+    cx = Coulex("16O", "58Ni", e, excite="target", energy=ch.excitation.energy_mev, b_up=ch.excitation.b_up_e2fm)
+    th = np.array([60.0, 120.0, 170.0])
+    p = np.asarray(dp.at(e).probability(th))
+    np.testing.assert_allclose(reac.cross_section_cm(th), p * np.asarray(cx.rutherford_cm(th)), rtol=1e-9)
+    assert rutherford_factor(cx.e_cm, cx.e_star) == pytest.approx(cx.rutherford_factor, rel=1e-12)
+    assert rutherford_factor(1.0, 2.0) == 1.0  # below the threshold nothing is excited
+    ratio, mean = np.asarray(dp.ratio(th)), np.asarray(dp.probability(th))
+    assert np.all(ratio > mean)
+    np.testing.assert_allclose(ratio / mean, cx.rutherford_factor, rtol=3e-3)
+
+
 def test_safe_distance():
     safe = ni58()  # 30 MeV: safe at every angle
     assert safe.max_safe_angle() == 180.0 and not any("safe distance" in w for w in safe.warnings())

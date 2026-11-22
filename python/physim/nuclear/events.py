@@ -247,19 +247,24 @@ def generator_config(experiment, theta_floor: float = 0.5, pilot: bool = True) -
         # depth (DepthProbability.slices; the rates take the same P through the depth): of the [reaction] state
         # in first order, or with a level scheme that the events follow, of every level its solution populates
         # (to all orders unless the setup says first; backlog item 71).
+        # The excitation events' table is P × v_i/v_f (DepthProbability.ratio): the generator weighs every event
+        # by the elastic Rutherford cross section at its depth, and the Coulomb-excitation cross section carries
+        # Alder and Winther's inelastic Rutherford factor, v_i/v_f above it (rates.rutherford_factor).
         if dp is None:
             tables = [None] * n
-        else:
+        elif partner is not None:
             tables = [np.clip(np.asarray(p, dtype=float), 0.0, 1.0) for _, _, p in dp.slices(n, probe)]
+        else:
+            tables = [np.maximum(np.asarray(p, dtype=float), 0.0) for _, _, p in dp.slices(n, probe, ratio=True)]
         for s, table in enumerate(tables):
             part = dict(cfg, layer=first_slice[ch.layer] + s)
             if partner is not None:
                 # One particle per collision: elastic scattering is what the excitation on this nuclide leaves,
-                # 1 − P at each angle, so that elastic and excited together are Rutherford scattering.
+                # 1 − P at each angle.
                 part.update(p_table=(1.0 - table).tolist())
             if ch.excitation is not None:
-                # Picked as often as elastic scattering on the same nuclei (the weights carry P), so the rare
-                # inelastic events get as many samples as the elastic ones.
+                # Picked as often as elastic scattering on the same nuclei (the weights carry P × v_i/v_f), so the
+                # rare inelastic events get as many samples as the elastic ones.
                 part.update(excitation=ch.excitation.energy_mev, excite_recoil=ch.excitation.excite == "target",
                             p_table=table.tolist())
             for lo, hi in ranges:
