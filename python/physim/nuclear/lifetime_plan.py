@@ -51,6 +51,11 @@ B_UNITS = {"E1": "e2fm2", "E2": "e2fm4", "E3": "e2fm6", "E4": "e2fm8", "M1": "mu
            "M3": "mu_N2fm4"}
 
 
+#: A level's note when the recoil has no forward speed: its method is then "none", whatever its τ.
+NO_DOPPLER_NOTE = ("No Doppler-shift method fits: the nucleus does not fly forward out of the target (β = 0), so "
+                   "there is no shifted peak for a plunger (RDDS) or DSAM.")
+
+
 def method_for(tau_ps: Optional[float]) -> str:
     """"rdds", "dsam" or "outside" for a mean life (ps): see :data:`RDDS_RANGE_PS` and :data:`DSAM_RANGE_PS`. A
     level without a known τ is "outside"."""
@@ -938,9 +943,9 @@ def plan(planner, level=None, precision: float = DEFAULT_PRECISION) -> dict:
         tau, source = subject.tau(i)
         if tau is not None and not math.isfinite(tau):
             tau = None
-        meth = method_for(tau)
-        e_gamma = line[1] if line else None
         beta = subject.beta
+        meth = method_for(tau) if beta > 0 else "none"
+        e_gamma = line[1] if line else None
         row = {"level": name, "index": i, "energy_kev": float(subject.scheme.levels[i].energy.value),
                "gamma_kev": e_gamma, "final": subject.names[line[0]] if line else None,
                "tau_ps": tau, "tau_source": source, "beta": beta, "method": meth,
@@ -950,7 +955,11 @@ def plan(planner, level=None, precision: float = DEFAULT_PRECISION) -> dict:
         if tau is None:
             no_tau.append(name)
             row["note"] = "No known lifetime: give the level a half-life, or its transition a B(E2), in the scheme."
-        if meth == "rdds" and beta > 0:
+        elif meth == "none":
+            row["note"] = NO_DOPPLER_NOTE
+        # DSAM mode (the setup's DSAM, or a recoil that stops in the target): no plunger distances.
+        plunger = meth == "rdds" and beta > 0 and not dsam_possible
+        if plunger:
             row["recommended_distances_um"] = lt.recommend_distances(tau, beta)
             row["sensitive_um"] = [float(x) for x in lt.sensitive_range(tau, beta)]
         if e_gamma is not None:
@@ -962,7 +971,7 @@ def plan(planner, level=None, precision: float = DEFAULT_PRECISION) -> dict:
                                           "fwhm_kev": fw, "resolved": bool(abs(sep) >= RESOLVED_FWHM * fw)})
         if kernel is not None and tau is not None:
             row["attenuation"] = float(lt.dsam_attenuation(tau, kernel))
-        if meth == "rdds" and beta > 0:
+        if plunger:
             used = flights if flights else [d for d in row["recommended_distances_um"]]
             row["distances_used_um"] = [float(d) for d in used]
             xs = [float(lt.flight_times(d, beta, proper=True)) / tau for d in used if d > 0]
@@ -1035,8 +1044,11 @@ def _plan_warnings(subject: Subject, out: dict, no_tau: list, long_lived: list) 
     if studied is None:
         return
     if subject.beta <= 0:
-        w.append("The recoil does not leave the target with a speed (it stops, or flies backwards): no Doppler "
-                 "shift to measure a lifetime from in flight.")
+        w.append(f"No Doppler-shift method fits this geometry: {subject.species or 'the studied nucleus'} does not "
+                 "fly forward out of the target (β = 0: it stops, or it is a projectile scattered backwards), so "
+                 "neither a plunger (RDDS) nor DSAM has a shifted peak to measure the lifetime from. Excite it in "
+                 "inverse kinematics (the studied nucleus as the beam on a lighter target, flying forward), or use "
+                 "another method (electronic timing for long lives).")
     elif subject.beta < 0.005:
         w.append(f"The recoil is slow (β = {100 * subject.beta:.2f}% of c): the Doppler shifts are small; check "
                  "the peak separations.")

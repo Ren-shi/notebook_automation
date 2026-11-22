@@ -1558,9 +1558,11 @@ class Planner:
           setup's Coulex B(E2), with its source), ``beta`` (the recoil's speed: in the plunger's gap, or where it
           is made for DSAM);
         - ``method``: "rdds" for τ of about 1 ps to 1 ns, "dsam" for 10 fs to 1 ps, else "outside" (also for a
-          level without a known τ);
+          level without a known τ); "none" for every level when the recoil does not fly forward out of the target
+          (β = 0: no Doppler-shift method fits; the warnings say why);
         - ``recommended_distances_um`` and ``sensitive_um`` (:func:`~physim.nuclear.lifetimes.recommend_distances`,
-          :func:`~physim.nuclear.lifetimes.sensitive_range`) for a plunger level;
+          :func:`~physim.nuclear.lifetimes.sensitive_range`) for a plunger level; empty in DSAM mode (the setup's
+          DSAM, or a recoil that stops in the target);
         - ``separation``: per γ-ray detector its angle, the shifted − unshifted separation against its FWHM, and
           whether they are ``resolved`` (at least two FWHM apart);
         - ``attenuation``: F(τ) on the setup's backing for DSAM (:func:`~physim.nuclear.lifetimes.dsam_attenuation`
