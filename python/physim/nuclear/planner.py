@@ -2110,7 +2110,11 @@ class Planner:
                            "first_order": {d: first.levels[d].get(n, 0.0) for d in first.levels}}
                           for n in range(1, len(scheme.levels)) if any(full.levels[d].get(n, 0.0) > 0
                                                                        for d in full.levels)],
-               "notes": full.notes, "gosia_input": ms.gosia_input(full), "beam_time_s": _q(exp.run.beam_time).to("s")}
+               "notes": full.notes, "gosia_input": None, "beam_time_s": _q(exp.run.beam_time).to("s")}
+        try:
+            out["gosia_input"] = ms.gosia_input(gamma="array" if exp.gamma_detectors else "4pi")
+        except ValueError as e:
+            out["notes"] = list(out["notes"]) + [f"No GOSIA input: {e}."]
         if shapes:
             twos = [n for n, lev in enumerate(scheme.levels) if n and lev.spin == 2 and scheme.b(0, n, "E2")]
             if twos:

@@ -148,6 +148,26 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The GOSIA input writer (`Multistep.gosia_input`) is rewritten and checked against runs of GOSIA 20110524
+  (Allmond 2014 verification, fix 5).
+  - The sign of the partner Z was backwards for both roles. In GOSIA a negative partner Z means the projectile is
+    the investigated nucleus. GOSIA's source says so, and its runs print "PROJECTILE EXCITATION"; a comment in its
+    own CMLAB states the rule the other way round. Target excitation (¹⁶O on ⁵⁸Ni) used to stop in GOSIA with
+    "maximum scattering angle 14.06°".
+  - One experiment per particle detector and per nucleus that reaches it. A detected recoil gets a negative angle
+    (the beam's lab angle, from GOSIA's INVKIN), and OP,INTI's mesh is in recoil angles, not OP,INTG's
+    two-valued beam angles. Side detectors get IAX = 1 and the azimuth they cover at each angle.
+  - The yields are integrated over the target with OP,INTI, using the app's stopping powers for the beam. CONT
+    writes `SPL,1.`: the default single polynomial through the stopping table puts a thick target's Rutherford
+    17 % low. CONT also writes `DIP,3.8` and the blank line GOSIA needs after `END,`.
+  - OP,YIEL is written in GOSIA's real format. The γ detectors come from OP,GDET, in the same file, or from a 4π
+    detector (`gamma="4pi"` with `GOSIA_4PI_FORT9` as `fort.9`). The old OP,INTI lines of "measured yields"
+    are gone.
+  - `physim.external.gosia.integrated` reads the integrated Rutherford and yields back. Ratios built from them
+    divide by GOSIA's inelastic Rutherford, 11–16 % above the elastic one for ⁶²Ni on carbon.
+  - Checked against the outside-tools GOSIA run for ⁶²Ni on carbon (carbon recoils at 14–28° and 28–44°):
+    - γ yield over GOSIA's Rutherford: 9.070e-4 against 9.076e-4 (ring 2), 6.642e-4 against 6.647e-4 (ring 3);
+    - over the elastic Rutherford: 1.0077e-3 against 1.0080e-3, 7.696e-4 against 7.699e-4.
 - Editing a fusion setup with an ancillary (neutron wall, charged-particle ball, …) could break the app's setup
   panel: `workbench.card_setup` raised for ancillary cards while a change was pending.
 - A shell-model job reads as finished, with its finish time, as soon as its results are written; before, a status

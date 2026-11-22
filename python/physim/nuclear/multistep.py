@@ -17,8 +17,9 @@ The excitation probabilities come from :class:`~physim.nuclear.coupled.CoupledCh
 quadrature direction of each detector segment, weighted by the Rutherford cross section of the orbit, and the
 decay of :mod:`physim.nuclear.orientation` shares the populations out into γ rays.
 
-GOSIA itself is not here: the input file is written from the published format so that GOSIA, run elsewhere,
-can check these numbers or fit the matrix elements from measured yields.
+GOSIA itself is not here: :meth:`Multistep.gosia_input` writes an input (checked against runs of GOSIA 20110524)
+that integrates the γ yields over the target and each particle detector, so that GOSIA can check these numbers;
+:func:`physim.external.gosia.integrated` reads its integrated yields and Rutherford cross sections back.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from .coupled import CoupledChannels
 from .detectors import Array
 from .levels import LevelScheme, quadrupole_factor
 from .orientation import Excitation
-from .rates import Rates, _q, beam_energy_at, beam_ion, stack
+from .rates import Rates, _q, beam_energy_at, beam_ion, stack, stopping
 
 
 def _target_name(experiment) -> str:
@@ -261,63 +262,287 @@ class Multistep:
 
     # -- GOSIA ------------------------------------------------------------------------------------------------------
 
-    def gosia_input(self, yields: Optional[Yields] = None, title: Optional[str] = None) -> str:
-        """A GOSIA input file for this setup, in the format of the GOSIA manual (OP.TITL, OP.GOSI with LEVE,
-        ME, EXPT and CONT, then OP.YIEL and OP.INTI). The levels and matrix elements are the scheme's (with
-        GOSIA's level numbering from 1 and its units, e b^λ/2 ... given as e fm^λ converted to eb and e b²), each
-        experiment is one particle detector at its mean angle, and ``yields`` (if given) are written after
-        OP.YIEL as the measured yields to fit. It is written from the manual, not checked against a run, since
-        GOSIA is not on this machine."""
+    def gosia_experiments(self, mesh_theta: int = 9) -> list:
+        """The GOSIA experiments :meth:`gosia_input` writes, in order: one for each particle detector and each
+        nucleus that can reach it (the scattered beam, the target recoil, or both, as :meth:`yields` counts them),
+        and for a beam detected below its largest angle in inverse kinematics one for each branch of the
+        kinematics. Each is a dict: ``detector``, ``particle`` ("ejectile" for the scattered beam, "recoil" for the
+        target nucleus), ``ikin``, ``theta`` (the (lowest, highest) lab angle of the detected nucleus, degrees,
+        clipped below the largest angle it reaches), ``theta_expt`` (the EXPT line's angle: negative for a detected
+        recoil, and then the beam's lab angle, as GOSIA wants), ``phi`` (None for the full azimuth, else the
+        azimuth ranges (degrees) at each angle of the mesh) and ``notes``."""
+        a_p, a_t = data.nuclide(self.beam).A, data.nuclide(self.target).A
+        e_in, e_out = self._gosia_energy_range()
+        e_x = self._gosia_ncm_energy()
+        out = []
+        for g in self.array:
+            lo, hi = g.theta_range()
+            for particle in ("ejectile", "recoil"):
+                top = _gosia_max_angle(e_out, e_x, a_p, a_t, particle)
+                if lo >= top:
+                    continue
+                notes = []
+                t_lo, t_hi = lo, (hi if hi < top else top - 0.01 * (top - lo))
+                if hi >= top:
+                    notes.append(f"{g.name}: the {'beam' if particle == 'ejectile' else 'recoil'} reaches only "
+                                 f"{top:.2f}° at the target's exit energy; its range is cut at {t_hi:.2f}°.")
+                if particle == "ejectile" and t_lo < 0.5:
+                    notes.append(f"{g.name}: the beam's Rutherford cross section diverges at 0°; the range starts "
+                                 "at 0.5°.")
+                    t_lo = 0.5
+                thetas = np.linspace(t_lo, t_hi, mesh_theta)
+                phi = _phi_intervals(g, thetas)
+                if all(len(p) == 1 and p[0][1] - p[0][0] >= 359.9 for p in phi):
+                    phi = None
+                mean = float(np.clip(g.mean_theta(), t_lo, t_hi))
+                if particle == "recoil":
+                    tp, ikin = _gosia_invkin(e_in, e_x, a_p, a_t, mean)
+                    out.append(dict(detector=g.name, particle="recoil", ikin=ikin, theta=(t_lo, t_hi),
+                                    theta_expt=-tp, phi=phi, notes=notes))
+                    continue
+                tau = _gosia_tau(e_out, e_x, a_p, a_t)
+                branches = (1, 0) if tau > 1.0 else (1,)
+                for ikin in branches:
+                    out.append(dict(detector=g.name, particle="ejectile", ikin=ikin, theta=(t_lo, t_hi),
+                                    theta_expt=mean, phi=phi, notes=list(notes)))
+        return out
+
+    def _gosia_energy_range(self) -> tuple:
+        """Beam energy (MeV) entering and leaving the target layer."""
+        th = self.layers[0].thickness
+        e_in, e_out = (float(x) for x in beam_energy_at(self.experiment, 0, np.array([0.0, th]), self.layers))
+        if e_in - e_out < 1e-3:
+            e_out = e_in - 1e-3
+        return e_in, e_out
+
+    def _gosia_ncm_energy(self) -> float:
+        """Energy (MeV) of GOSIA's NCM level, whose excitation sets the kinematics: the first excited level."""
+        s = self.scheme
+        return (s.levels[1].energy.value - s.levels[0].energy.value) * 1e-3 if len(s.levels) > 1 else 0.0
+
+    def gosia_input(self, title: Optional[str] = None, gamma: str = "array", mesh: tuple = (9, 9),
+                    integration: tuple = (40, 40), stopping_points: int = 20, accuracy: int = 7,
+                    substates: tuple = (5, 5), dipole: float = 3.8) -> str:
+        """A GOSIA (20110524) input that integrates the γ yields of this setup over the target's thickness and
+        each particle detector, to check :meth:`yields` against GOSIA.
+
+        - OP,GOSI with LEVE and ME from the scheme (levels numbered from 1; matrix elements in e b^(λ/2)).
+        - EXPT: the investigated nucleus is the scheme's. GOSIA's sign rule (its CMLAB and INVKIN): a *negative*
+          partner Z means the investigated nucleus is the *projectile*, a positive one the target. So the beam's
+          scheme (``role="beam"``) writes the target's Z negative, the target's scheme the beam's Z positive. A
+          negative angle means the target recoil is detected, with the beam's lab angle given (the mesh of OP,INTI
+          then holds recoil angles). One experiment per detector and per nucleus that reaches it
+          (:meth:`gosia_experiments`); IAX = 0 for a ring around the beam, else the azimuths covered at each angle.
+        - CONT: ``ACC``; ``DIP`` (the E1 polarisation; 3.8 is GOSIA's own default, written out so that it does not
+          warn); ``SPL,1.`` (splines: GOSIA's default, one polynomial through the whole stopping table, puts the
+          integrated Rutherford of a thick target well off, 17 % low on ⁶²Ni + C); ``END,`` and the blank line
+          GOSIA needs after it.
+        - OP,YIEL: no internal conversion. ``gamma="array"`` places one GOSIA detector on the axis of each of the
+          setup's γ detectors, sized by OP,GDET (written first, so the file runs as it is) as a cylinder of the
+          crystals' front area and length; ``gamma="4pi"`` uses one detector with all attenuation coefficients
+          zero, so its yield ×4π is the angle-integrated γ yield. GOSIA reads that detector from ``fort.9``:
+          write :data:`GOSIA_4PI_FORT9` there beside the input.
+        - OP,INTI: the beam energy from the target's exit to its entry (``mesh[0]`` points), the detected nucleus's
+          lab angles (``mesh[1]`` points), the beam's stopping power in the target from the app's tables
+          (``stopping_points``), and ``integration`` steps in energy and angle.
+
+        GOSIA's "integrated Rutherford cross section" uses the kinematics of the inelastic scattering (its orbit
+        of the NCM level), not the elastic: a ratio γ yield / Rutherford built from its output divides by that
+        one (11–16 % above the elastic integral for ⁶²Ni on carbon at 14–44° recoil angles)."""
+        if gamma not in ("array", "4pi"):
+            raise ValueError("gamma must be 'array' or '4pi'")
         exp = self.experiment
         s = self.scheme
-        lines = ["OP,TITL", title or exp.title, "OP,GOSI", "LEVE"]
+        lines = ["OP,TITL", title or exp.title]
+        gdets = list(exp.gamma_detectors) if gamma == "array" else []
+        if gamma == "array" and not gdets:
+            raise ValueError("the setup has no γ detectors; use gamma='4pi'")
+        if len(gdets) > 32:
+            raise ValueError("GOSIA takes at most 32 γ detectors per experiment")
+        if gdets:
+            lines += ["OP,GDET", str(len(gdets))]
+            for gd in gdets:
+                n = gd.crystals or 1
+                radius_cm = gd.crystal_radius_mm() * math.sqrt(n) / 10.0
+                length_cm = _q(gd.crystal_length).to("cm") if gd.crystal_length is not None else 7.0
+                lines.append(f"0.01 {radius_cm:.4f} {length_cm:.4f} {gd.distance_mm() / 10.0:.4f}")
+                lines.append("0 0 0 0 0 0 0")
+        lines += ["OP,GOSI", "LEVE"]
         for i, lev in enumerate(s.levels, start=1):
             parity = "+1" if (lev.parity or 1) > 0 else "-1"
             lines.append(f"{i} {parity} {lev.spin if lev.spin is not None else 0:g} {lev.energy.value * 1e-3:.6f}")
         lines.append("0 0 0 0")
         lines.append("ME")
+        lams = []
         for mult in ("E1", "E2", "E3"):
             mes = [me for me in s.matrix_elements if me.multipolarity == mult]
             if not mes:
                 continue
             lam = int(mult[1])
+            lams.append(lam)
             lines.append(f"{lam} 0 0 0 0")
-            unit = 100.0 ** lam / 1e4 if lam == 2 else (10.0 if lam == 1 else 1e6)  # e fm^λ → e b^(λ/2)... see note
             for me in sorted(mes, key=lambda m: (m.a, m.b)):
-                value = me.value.value / {1: 10.0, 2: 100.0, 3: 1000.0}[lam]
-                # GOSIA takes ⟨a‖M‖b⟩ in e b^(λ/2): e fm → e b^½ is /10, e fm² → e b is /100, e fm³ → /1000.
-                lines.append(f"{me.a + 1} {me.b + 1} {value:.5f} {-5 * abs(value) - 0.1:.5f} {5 * abs(value) + 0.1:.5f}")
-            del unit
+                # ⟨a‖Eλ‖b⟩ in e fm^λ → e b^(λ/2): /10, /100, /1000 for λ = 1, 2, 3.
+                value = me.value.value / 10.0 ** lam
+                lim = 5 * abs(value) + 0.1
+                lines.append(f"{me.a + 1} {me.b + 1} {value:.6f} {-lim:.5f} {lim:.5f}")
         lines.append("0 0 0 0 0")
-        lines.append("EXPT")
-        dets = list(self.array)
-        z_p, a_p = exp.beam.Z, exp.beam.A
-        nuc_t = data.nuclide(self.target)
-        lines.append(f"{len(dets)} {nuc_t.Z if self.role == 'target' else z_p} {nuc_t.A if self.role == 'target' else a_p}")
-        for g in dets:
-            theta = g.mean_theta()
-            sign = -1 if self.role == "target" else 1  # GOSIA: negative Z_p for target excitation (projectile detected)
-            lines.append(f"{sign * (z_p if self.role == 'target' else nuc_t.Z)} {a_p if self.role == 'target' else nuc_t.A} "
-                         f"{exp.beam.energy_mev:.3f} {theta:.2f} 1 0 0 0 360 0 1")
-        lines.append("CONT")
-        lines.append("END,")
-        lines.append("0 0 0")
-        lines.append("OP,YIEL")
-        lines.append("0")
-        lines.append("1 1")
-        lines.append(f"{len(exp.gamma_detectors) or 1}")
-        for gd in exp.gamma_detectors or [None]:
-            theta = _q(gd.theta).to("deg") if gd is not None else 90.0
-            phi = _q(gd.phi).to("deg") if gd is not None and gd.phi is not None else 0.0
-            lines.append(f"{theta:.2f} {phi:.2f}")
-        if yields is not None:
-            lines.append("OP,INTI")
-            for i, g in enumerate(dets, start=1):
-                for (a, b), v in sorted(yields.detectors.get(g.name, {}).items()):
-                    counts = v * _q(exp.run.beam_time).to("s")
-                    lines.append(f"{i} {a + 1} {b + 1} {counts:.4g} {math.sqrt(max(counts, 1.0)):.4g}")
+
+        expts = self.gosia_experiments(mesh[1])
+        if not expts:
+            raise ValueError("no particle detector sees the beam or the target recoil")
+        a_p, a_t = data.nuclide(self.beam).A, data.nuclide(self.target).A
+        z_p, z_t = data.nuclide(self.beam).Z, data.nuclide(self.target).Z
+        if self.excite == "projectile":
+            inv, partner = (z_p, a_p), (-z_t, a_t)        # negative partner Z: the projectile is investigated
+        else:
+            inv, partner = (z_t, a_t), (z_p, a_p)         # positive partner Z: the target is investigated
+        e_in, e_out = self._gosia_energy_range()
+        lines += ["EXPT", f"{len(expts)} {inv[0]} {inv[1]}"]
+        dets = [g.name for g in self.array]
+        for x in expts:
+            iax, phi1, phi2 = (0, 0.0, 360.0) if x["phi"] is None else (1, *_phi_span(x["phi"]))
+            lines.append(f"{partner[0]} {partner[1]} {e_in:.4f} {x['theta_expt']:.4f} {substates[0]} "
+                         f"{substates[1]} {iax} {phi1:.2f} {phi2:.2f} {x['ikin']} {dets.index(x['detector']) + 1}")
+        # GOSIA needs the blank line after END,
+        lines += ["CONT", f"ACC,{accuracy}.", f"DIP,{dipole:g}", "SPL,1.", "END,", ""]
+
+        # OP,YIEL: no internal conversion; the γ detectors at each experiment; normalised to the first transition.
+        offd = sorted((me.b, me.a) for me in s.matrix_elements if me.a != me.b)
+        trans = offd or [(1, 0)]
+        e_top = max([lev.energy.value * 1e-3 for lev in s.levels] + [0.1])
+        energies = [0.05, e_top / 2, e_top + 0.5]
+        if gdets:
+            ids = list(range(1, len(gdets) + 1))
+            angles = [(_q(gd.theta).to("deg"), _q(gd.phi).to("deg") if gd.phi is not None else 0.0) for gd in gdets]
+        else:
+            ids, angles = [1], [(90.0, 0.0)]
+        lines += ["OP,YIEL", "0", f"{len(energies)} {len(lams)}", " ".join(f"{e:.4f}" for e in energies)]
+        for lam in lams:
+            lines += [str(lam), " ".join("0.0" for _ in energies)]
+        lines.append(" ".join(str(len(ids)) for _ in expts))
+        for _ in expts:
+            lines += [" ".join(map(str, ids)), " ".join(f"{a[0]:.2f}" for a in angles),
+                      " ".join(f"{a[1]:.2f}" for a in angles)]
+        lines.append(f"{trans[0][0] + 1} {trans[0][1] + 1}")
+        for _ in expts:
+            lines += [str(len(ids)), " ".join("1.0" for _ in ids), " ".join("1.0" for _ in ids)]
+        lines += ["0", "0 0", "0 0", "0 0", "0 0"]
+
+        # OP,INTI: the meshes of all experiments, then the stopping powers and the integration steps.
+        lines.append("OP,INTI")
+        e_mesh = np.linspace(e_out, e_in, mesh[0])
+        for x in expts:
+            th = np.linspace(*x["theta"], mesh[1])
+            nt = mesh[1] if x["phi"] is None else -mesh[1]
+            lines.append(f"{mesh[0]} {nt} {e_out:.4f} {e_in:.4f} {x['theta'][0]:.4f} {x['theta'][1]:.4f}")
+            lines.append(" ".join(f"{e:.4f}" for e in e_mesh))
+            lines.append(" ".join(f"{t:.4f}" for t in th))
+            if x["phi"] is not None:
+                # GOSIA divides each mesh point's yield by the azimuth it covers; where the face only touches an
+                # angle (a corner), a sliver at the face's middle azimuth stands in. The widths that weigh the
+                # integration (below) stay exact.
+                mid = sum(_phi_span(x["phi"])) / 2
+                for ivs in x["phi"]:
+                    ivs = [(a, b) for a, b in ivs if b - a > 0.05] or [(mid - 0.05, mid + 0.05)]
+                    lines += [str(len(ivs)), " ".join(f"{a:.3f} {b:.3f}" for a, b in ivs)]
+        st = stopping(self.beam, self.layers[0].material)
+        pad = 0.05 * (e_in - e_out) + 0.1
+        e_sp = np.linspace(max(e_out - pad, 0.01), e_in + pad, stopping_points)
+        npce, npct = (int(v) + int(v) % 2 for v in integration)
+        for k, x in enumerate(expts):
+            if k == 0:
+                lines += [str(stopping_points), " ".join(f"{e:.4f}" for e in e_sp),
+                          " ".join(f"{float(st.stopping_power(e)):.5f}" for e in e_sp)]
+            else:
+                lines.append("0")
+            if x["phi"] is None:
+                lines.append(f"{npce} {npct}")
+            else:
+                lines.append(f"{npce} {-npct}")
+                t_int = np.linspace(*x["theta"], npct + 1)
+                widths = [sum(b - a for a, b in ivs) for ivs in _phi_intervals(self.array[x["detector"]], t_int)]
+                lines.append(" ".join(f"{w:.3f}" for w in widths))
         lines.append("OP,EXIT")
         return "\n".join(lines) + "\n"
 
 
-__all__ = ["Multistep", "Yields"]
+#: GOSIA's γ-detector file (``fort.9``, normally written by OP,GDET) for one detector whose attenuation
+#: coefficients Q_k are zero for every k ≥ 1: the yield it gives, times 4π, is the angle-integrated γ yield. Put it
+#: beside an input written with ``gosia_input(gamma="4pi")``.
+GOSIA_4PI_FORT9 = "1\n1.0\n0.0\n" + "0.0 1.0 0.0\n" * 8
+
+
+def _gosia_tau(e: float, e_x: float, a_p: float, a_t: float) -> float:
+    """GOSIA's τ (CMLAB): (A_p/A_t)·sqrt(E/(E − E_x(1 + A_p/A_t))), non-relativistic with integer masses."""
+    return a_p / a_t * math.sqrt(e / (e - e_x * (1 + a_p / a_t)))
+
+
+def _gosia_max_angle(e: float, e_x: float, a_p: float, a_t: float, particle: str) -> float:
+    """Largest lab angle (degrees) of the scattered beam or of the target recoil in GOSIA's kinematics."""
+    taup = math.sqrt(e / (e - e_x * (1 + a_p / a_t)))
+    if particle == "ejectile":
+        tau = taup * a_p / a_t
+        return math.degrees(math.asin(1.0 / tau)) if tau > 1.0 else 180.0
+    # Recoil: tan θ_r = sin z / (cos z + τ'), largest where cos z = −1/τ'.
+    return math.degrees(math.atan(1.0 / math.sqrt(taup * taup - 1.0))) if taup > 1.0 else 90.0
+
+
+def _gosia_invkin(e: float, e_x: float, a_p: float, a_t: float, theta_r: float) -> tuple:
+    """GOSIA's INVKIN: the beam's lab angle (degrees) for a target recoil at ``theta_r`` (the larger of the two
+    roots, as OP,INTI takes it) and the IKIN branch it lies on."""
+    taup = math.sqrt(e / (e - e_x * (1 + a_p / a_t)))
+    tau = taup * a_p / a_t
+    y = math.tan(math.radians(theta_r))
+    t = math.sqrt(taup**2 * y**4 - (1 + y * y) * (taup**2 * y * y - 1))
+    xs = [(taup * y * y + sg * t) / (1 + y * y) for sg in (1, -1)]
+    tp = max(math.atan2(math.sqrt(max(1 - x * x, 0.0)), tau + x) for x in xs)
+    if tau * math.sin(tp) > 1.0:
+        tp = math.asin(1.0 / tau)
+    if tau < 1.0:
+        return math.degrees(tp), 1
+    tc = math.acos(-1.0 / tau)
+    thres = math.sin(tc) / (taup - math.cos(tc))
+    return math.degrees(tp), 1 if abs(y) > abs(thres) else 0
+
+
+def _phi_intervals(g, thetas, step: float = 0.25) -> list:
+    """For each lab angle, the azimuth ranges (degrees, within [0, 360], merged across 0°) the detector face
+    covers there."""
+    phis = np.arange(0.0, 360.0, step) + step / 2
+    lo, hi = g.theta_range()
+    eps = 1e-4 * max(hi - lo, 1e-3)
+    out = []
+    for th in np.atleast_1d(thetas):
+        # The ends of the mesh lie on the face's edges: look just inside them.
+        t = math.radians(float(np.clip(th, lo + eps, hi - eps)))
+        dirs = np.column_stack([np.sin(t) * np.cos(np.radians(phis)), np.sin(t) * np.sin(np.radians(phis)),
+                                np.full(phis.shape, np.cos(t))])
+        hit = np.array([h is not None for h in g.hits(dirs)])
+        if hit.all():
+            out.append([(0.0, 360.0)])
+            continue
+        ivs, start = [], None
+        for k, h in enumerate(hit):
+            if h and start is None:
+                start = phis[k] - step / 2
+            if not h and start is not None:
+                ivs.append((start, phis[k] - step / 2))
+                start = None
+        if start is not None:
+            if ivs and ivs[0][0] <= 0.0:          # the run through 360° continues at 0°
+                ivs[0] = (start - 360.0, ivs[0][1])
+            else:
+                ivs.append((start, 360.0))
+        out.append(ivs)
+    return out
+
+
+def _phi_span(phi: list) -> tuple:
+    """The overall azimuth range (degrees) of a detector's mesh, for the EXPT line."""
+    a = [iv[0] for ivs in phi for iv in ivs]
+    b = [iv[1] for ivs in phi for iv in ivs]
+    return (min(a), max(b)) if a else (0.0, 360.0)
+
+
+__all__ = ["GOSIA_4PI_FORT9", "Multistep", "Yields"]

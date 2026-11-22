@@ -11,6 +11,7 @@ given.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,3 +42,20 @@ def run(exe: PathLike, input_text: str, folder: Optional[PathLike] = None, timeo
     if not r.ok or "fort.22" not in files:
         raise ProgramFailed("GOSIA failed: " + r.describe(), r)
     return GosiaRun(output=files["fort.22"], files=files, run=r)
+
+
+def integrated(output: str) -> Dict[int, dict]:
+    """OP,INTI's results from ``fort.22``, by experiment (numbered from 1): ``rutherford``, GOSIA's integrated
+    Rutherford cross section (mb·mg/cm² over the energy range, per radian of azimuth times the azimuth covered —
+    as printed, to four digits; it uses the kinematics of the inelastic scattering, not the elastic), and
+    ``yields``, the integrated γ yield of each transition per detector: {detector: {(initial, final): yield}},
+    with GOSIA's level numbers (from 1)."""
+    res: Dict[int, dict] = {}
+    for m in re.finditer(r"INTEGRATED RUTHERFORD CROSS SECTION=\s*([\d.E+-]+)\s+FOR EXP\.\s*(\d+)", output):
+        res.setdefault(int(m.group(2)), {"yields": {}})["rutherford"] = float(m.group(1))
+    for m in re.finditer(r"INTEGRATED YIELDS\s+EXPERIMENT\s+(\d+)\s+DETECTOR\s+(\d+)(.*?)(?=INTEGRATED|\Z)", output,
+                         re.S):
+        y = {(int(ni), int(nf)): float(val) for ni, nf, val in re.findall(
+            r"^\s+(\d+)\s+(\d+)\s+[\d.]+\s+[\d.]+\s+([\d.E+-]+)\s+[\d.E+-]+\s*$", m.group(3), re.M)}
+        res.setdefault(int(m.group(1)), {"yields": {}})["yields"][int(m.group(2))] = y
+    return res
