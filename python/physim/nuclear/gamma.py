@@ -66,7 +66,7 @@ def doppler_table(experiment, depth_points: int = 8, order: int = 10) -> list:
     at the beam energy of each depth (:func:`~physim.nuclear.rates.depth_probability`)."""
     from . import data
     from .kinematics import TwoBody
-    from .rates import channels, depth_probability
+    from .rates import channels, depth_probability, rutherford_factor
     from .rutherford import Rutherford
 
     exc = experiment.excitation
@@ -113,8 +113,10 @@ def doppler_table(experiment, depth_points: int = 8, order: int = 10) -> list:
             if not ok.any():
                 continue
             safe = np.where(ok, th_cm, 90.0)
+            # P times Alder and Winther's inelastic Rutherford factor: the elastic one times v_i/v_f.
+            ruth = Rutherford(beam, target, float(e))
             sigma = np.where(ok, np.asarray(depth.at(float(e)).probability(safe))
-                             * np.asarray(Rutherford(beam, target, float(e)).cross_section_cm(safe))
+                             * rutherford_factor(ruth.e_cm, e0) * np.asarray(ruth.cross_section_cm(safe))
                              * np.nan_to_num(np.asarray(first.jacobian)), 0.0)
             if excite == "recoil":
                 rec = tb.recoil_for(np.where(ok, th_cm, 90.0))

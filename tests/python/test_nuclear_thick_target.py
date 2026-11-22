@@ -6,9 +6,12 @@ recoils counted in two rings (14–28° and 28–44° lab). The beam loses 42 Me
 150-fold through it. GOSIA (all orders, integrated over the target, elastic Rutherford) gives σ_C/σ_R = 1.0080e-3
 (ring 2) and 7.699e-4 (ring 3) for <0⁺‖E2‖2⁺> = 0.29734 eb and Q = 0.
 
-What remains, about −2 % on both rings, is the Rutherford factor (plain Rutherford at the initial energy against
-Alder–Winther's (v_f/v_i)·a²/4, backlog item 58): a later change makes the two one convention and tightens
-:data:`GOSIA_TOLERANCE`.
+The Coulomb-excitation cross section carries Alder and Winther's inelastic Rutherford factor, the elastic one times
+v_i/v_f (GOSIA's convention). Against those GOSIA numbers the app is then about 1.3 % (ring 2) and 1.2 % (ring 3)
+high, and the whole of it is two simplifications of GOSIA's, measured by rerunning GOSIA through the app's own
+writer (:data:`GOSIA_MATCHED`): its integer mass numbers (A = 62 and 12; the app uses the nuclear masses, and P,
+steep in the energy here, moves ~0.6 %) and its E1 polarisation (DIP 3.8, −0.5 %), which the app does not model.
+With the nuclear masses and DIP off GOSIA and the app agree within 0.2 %.
 """
 
 import numpy as np
@@ -30,9 +33,19 @@ GOSIA = {"Ring2": 1.0080e-3, "Ring3": 7.699e-4}
 #: the depth the app finds about −0.7 % and −0.4 %: the front of the target, where P and the higher orders are
 #: largest, weighs most.
 ALL_VS_FIRST = {"Ring2": -0.0049, "Ring3": -0.0028}
-#: The Rutherford convention leaves about −2.2 % (ring 2) and −2.5 % (ring 3); to be tightened to 1 % once the app
-#: has one Rutherford factor.
-GOSIA_TOLERANCE = 0.03
+#: Against :data:`GOSIA` the app is +1.3 % (ring 2) and +1.2 % (ring 3): GOSIA's mass numbers and E1 polarisation.
+GOSIA_TOLERANCE = 0.02
+#: GOSIA (20110524.14) run on the app's own input (``Multistep.gosia_input(gamma="4pi")``, the app's stopping and
+#: thickness) with the nuclear masses of ⁶²Ni and ¹²C (61.91298 u and 11.99671 u, for 62 and 12) and DIP,0.001 (E1
+#: polarisation off): γ yield ×4π over the app's elastic Rutherford integral (R_el) and over GOSIA's own, inelastic,
+#: integrated Rutherford (R_G).
+GOSIA_MATCHED = {"Ring2": 1.01929e-3, "Ring3": 7.77906e-4}
+GOSIA_MATCHED_RG = {"Ring2": 9.19657e-4, "Ring3": 6.73100e-4}
+#: GOSIA's integrated Rutherford (mb·mg/cm², full azimuth) on the app's unmodified input (mass numbers, DIP 3.8):
+#: the inelastic kinematics with its Rutherford factor (CMLAB), against which the app's own factor is checked.
+GOSIA_RUTHERFORD = {"Ring2": 574.6, "Ring3": 1766.0}
+#: The ring edges (recoil lab angles, degrees).
+RING_DEG = {"Ring2": (14.0, 28.0), "Ring3": (28.0, 44.0)}
 #: GOSIA's change of the ratio for Q_s = +0.1 eb (−0.1 eb is the same, of the other sign), in percent.
 GOSIA_Q_EFFECT = {"Ring2": 2.7, "Ring3": 1.9}
 
@@ -216,22 +229,90 @@ def test_slices_average_to_the_whole_layer():
     assert parts[0][2][1] > 3 * parts[-1][2][1]
 
 
-def test_rates_integrate_p_over_the_depth(first_order):
-    """Rates with P through the depth: converged with the default four depth points, and the 40-slice workaround of
-    Round 2 (9.903e-4 and 7.529e-4) is reproduced."""
+def test_rates_integrate_p_over_the_depth(first_order, monkeypatch):
+    """Rates with P through the depth: converged with the default four depth points; with the elastic Rutherford
+    factor in place of Alder and Winther's, the 40-slice workaround of Round 2 (9.903e-4 and 7.529e-4) is
+    reproduced, and the inelastic factor (v_i/v_f, 1.04–1.10 through this target) raises both rings by 3.8 %."""
     fine = ratios(allmond(), depth_points=16)
     for r in RINGS:
         assert first_order[r] == pytest.approx(fine[r], rel=2e-4)
-    assert first_order["Ring2"] == pytest.approx(9.903e-4, rel=2e-3)
-    assert first_order["Ring3"] == pytest.approx(7.529e-4, rel=2e-3)
+    assert first_order["Ring2"] == pytest.approx(1.0285e-3, rel=2e-3)
+    assert first_order["Ring3"] == pytest.approx(7.820e-4, rel=2e-3)
+    monkeypatch.setattr(rates_module, "rutherford_factor", lambda e_cm, e_star: 1.0)
+    rates_module._DEPTH_KEPT.clear()
+    elastic = ratios(allmond())
+    rates_module._DEPTH_KEPT.clear()
+    assert elastic["Ring2"] == pytest.approx(9.903e-4, rel=2e-3)
+    assert elastic["Ring3"] == pytest.approx(7.529e-4, rel=2e-3)
+    for r in RINGS:
+        assert first_order[r] / elastic[r] == pytest.approx(1.038, abs=0.003)
 
 
 @pytest.mark.parametrize("ring", RINGS)
 def test_first_order_against_gosia(first_order, ring):
-    """First order, corrected to all orders, against GOSIA: within the Rutherford-convention residual."""
+    """First order, corrected to all orders, against GOSIA: +1.1 to +1.5 %, GOSIA's mass numbers and E1
+    polarisation (module docstring)."""
     ours = first_order[ring] * (1 + ALL_VS_FIRST[ring])
     assert ours == pytest.approx(GOSIA[ring], rel=GOSIA_TOLERANCE)
-    assert -0.03 < ours / GOSIA[ring] - 1 < -0.015  # the known residual, to be removed with one Rutherford factor
+    assert 0.008 < ours / GOSIA[ring] - 1 < 0.02
+
+
+def ring_integrals(exp, depth_points: int = 24, angle_points: int = 200) -> dict:
+    """Per ring, over the target's depth and the ring's recoil angles (the first branch of the inelastic
+    kinematics, the one GOSIA integrates): (∫σ_Coulex, ∫ Alder–Winther's Rutherford factor alone, ∫σ_R elastic),
+    mb·mg/cm²."""
+    layers = stack(exp)
+    ch, _ = excited_channel(exp)
+    dp = depth_probability(exp, ch, layers)
+    x, w = np.polynomial.legendre.leggauss(depth_points)
+    zs, wz = (x + 1) / 2 * dp.reached, w * dp.reached / 2
+    es = beam_energy_at(exp, 0, zs, layers)
+    xt, wt = np.polynomial.legendre.leggauss(angle_points)
+    out = {}
+    for r in RINGS:
+        lo, hi = RING_DEG[r]
+        th = lo + (xt + 1) / 2 * (hi - lo)
+        dom = 2 * np.pi * np.sin(np.radians(th)) * wt * np.radians(hi - lo) / 2
+        sums = np.zeros(3)
+        for e, we in zip(es, wz):
+            sums[2] += we * np.sum(np.nan_to_num(Rutherford("62Ni", "12C", float(e)).cross_section_lab(th, "recoil")[0])
+                                   * dom)
+            cx = Coulex("62Ni", "12C", float(e), excite="projectile", energy=1.17291, b_up=884.111)
+            pt = cx.kinematics.at_lab(th, "recoil")[0]
+            tej = 180.0 - np.asarray(pt.theta_cm)
+            ok = ~np.isnan(tej)
+            aw = np.where(ok, np.asarray(cx.rutherford_cm(np.where(ok, tej, 90.0)))
+                          * np.nan_to_num(np.asarray(pt.jacobian)), 0.0) * dom
+            sums[0] += we * np.sum(aw * np.asarray(dp.at(float(e)).probability(np.where(ok, tej, 90.0))))
+            sums[1] += we * np.sum(aw)
+        out[r] = sums
+    return out
+
+
+@pytest.fixture(scope="module")
+def integrals_q0():
+    return ring_integrals(allmond(0.0))
+
+
+@pytest.mark.parametrize("ring", RINGS)
+def test_rutherford_factor_is_gosias(integrals_q0, ring):
+    """The app's Coulomb-excitation Rutherford factor (Alder and Winther: elastic × v_i/v_f, on the inelastic
+    kinematics), integrated over the ring and the target, is GOSIA's integrated Rutherford on the same input; and
+    it is 11 % (ring 2) and 16 % (ring 3) above the elastic integral, which is why a ratio must say which it
+    divides by."""
+    _, aw, el = integrals_q0[ring]
+    assert aw == pytest.approx(GOSIA_RUTHERFORD[ring], rel=2e-3)
+    assert aw / el == pytest.approx({"Ring2": 1.111, "Ring3": 1.158}[ring], abs=0.003)
+
+
+@pytest.mark.parametrize("ring", RINGS)
+def test_all_orders_against_gosia_with_matched_masses(all_orders, integrals_q0, ring):
+    """Against GOSIA run on the app's input with the nuclear masses and without E1 polarisation, the app agrees
+    within 0.5 % (0.2 % found), both divided by the elastic Rutherford integral (R_el, from the rates) and by
+    GOSIA's own inelastic one (R_G)."""
+    assert all_orders[0.0][ring] == pytest.approx(GOSIA_MATCHED[ring], rel=5e-3)
+    c, aw, _ = integrals_q0[ring]
+    assert c / aw == pytest.approx(GOSIA_MATCHED_RG[ring], rel=5e-3)
 
 
 def test_thin_layers_keep_the_mid_layer_probability():
@@ -305,11 +386,12 @@ def test_a_static_moment_keeps_the_coupled_equations_for_one_transition():
 
 @pytest.mark.parametrize("ring", RINGS)
 def test_all_orders_against_gosia(all_orders, first_order, ring):
-    """The {0⁺, 2⁺} scheme with Q = 0, to all orders through the depth, against GOSIA directly; and against first
-    order: a few tenths of a percent lower, more so for ring 2 (larger CM angles, larger P)."""
+    """The {0⁺, 2⁺} scheme with Q = 0, to all orders through the depth, against GOSIA directly (+1.3 % and +1.2 %:
+    GOSIA's mass numbers and E1 polarisation); and against first order: a few tenths of a percent lower, more so
+    for ring 2 (larger CM angles, larger P)."""
     ours = all_orders[0.0][ring]
     assert ours == pytest.approx(GOSIA[ring], rel=GOSIA_TOLERANCE)
-    assert -0.03 < ours / GOSIA[ring] - 1 < -0.015  # the known residual, to be removed with one Rutherford factor
+    assert 0.008 < ours / GOSIA[ring] - 1 < 0.018
     assert -0.010 < ours / first_order[ring] - 1 < -0.002
     if ring == "Ring2":
         assert all_orders[0.0]["Ring2"] / first_order["Ring2"] < all_orders[0.0]["Ring3"] / first_order["Ring3"]

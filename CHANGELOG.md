@@ -175,6 +175,24 @@ workflow builds the wheels, tests them and publishes to PyPI.
     +0.5 to +1 % is 0.3 % in ⟨P⟩/B against the events' own excited share and 0.3–0.6 % in the angular-correlation
     table, which takes the kinematics of the middle of the target (`gamma.correlation_table`).
     `tests/python/test_nuclear_analysis_closure.py` checks it.
+- Coulomb excitation has one Rutherford convention (backlog 58): Alder and Winther's dσ = P (v_f/v_i)(a²/4)/
+  sin⁴(θ/2) with the symmetrised orbit, the elastic Rutherford cross section at the initial E_cm times v_i/v_f, as
+  in GOSIA. Before, the rates and the event generator used the elastic Rutherford cross section and
+  `Coulex.rutherford_cm` the symmetrised a²/4 without v_f/v_i (8.7 % apart for ⁶²Ni on carbon at mid-target).
+  - `Coulex.rutherford_cm` and `cross_section_cm` (and `total`, `cross_section_lab`), the rates
+    (`rates.rutherford_factor`), the generator's weights (`DepthProbability.slices(..., ratio=True)`), the Doppler
+    table, and the all-orders yields of `multistep` and `orientation` all use it.
+  - Ratios say which Rutherford they divide by: `Coulex.ratio_to_elastic` and the new `DepthProbability.ratio`
+    divide by the elastic one, as an experiment normalises to the elastic singles; `Coulex.elastic_rutherford_cm`
+    is that cross section. GOSIA's ratios divide by its own inelastic integrated Rutherford (11–16 % larger on the
+    ⁶²Ni rings).
+  - Allmond 2014 (⁶²Ni on carbon): the app's integrated Rutherford factor equals GOSIA's to 0.03 %; σ_C/σ_R per
+    ring is now +1.3 % and +1.2 % against GOSIA's 1.0080e-3 and 7.699e-4 (was −2.4 % and −2.6 %). The rest is
+    GOSIA's integer mass numbers and its E1 polarisation: rerun on the app's input with the nuclear masses and
+    DIP off, GOSIA agrees within 0.2 % for both the elastic and the inelastic ratio. `test_nuclear_thick_target`
+    tightens to that.
+  - The shipped examples' excitation rates rise by v_i/v_f: +3.4 % (`coulex_ni58`), +0.6 % (`coulex_ru98_plunger`),
+    +0.3 % (`coulex_ni62_pt194`, `_clovers`); the all-orders yields fall by v_f/v_i from the old symmetrised factor.
 - Thick-target Coulomb excitation: the excitation probability P(θ) is now integrated over the depth of the layer,
   each depth at its own beam energy and weighted by the Rutherford cross section there, as the Rutherford factor
   already was. Before, P was taken at the mid-layer energy alone, which for 62Ni at 111.6 MeV on 1.04 mg/cm² of
