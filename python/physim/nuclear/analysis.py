@@ -16,7 +16,8 @@ The steps are those of a Coulomb-excitation analysis, each shown and adjustable:
 
 1. **Particle gate:** the particle must sit in the inelastic group of its detector: its measured energy nearer
    the kinematic energy of a particle that excited the state than that of an elastic one, and within
-   ``gate_width`` of the first. Rings (or strips) can be chosen.
+   ``gate_width`` of the first. Rings (or strips) can be chosen. When the two groups overlap through the depth of
+   the target, the result warns and says to use the gate "all" (:attr:`Result.gate_warning`).
 2. **Doppler correction** for the emitting nucleus (or the other one, to see what happens).
 3. **Peak search:** each corrected spectrum (for the projectile, and for the recoil) is searched for peaks over
    its whole range (:func:`find_peaks`), each peak found is fitted, and those that sit on a transition of the
@@ -24,8 +25,8 @@ The steps are those of a Coulomb-excitation analysis, each shown and adjustable:
    the wrong correction: each nucleus shows its peaks in its own spectrum.
 4. **Peak fit:** a Gaussian on a straight line, by weighted least squares within ``fit_half_width`` resolutions
    of the transition energy, with the random coincidences expected in the window subtracted.
-5. **Yield:** the area over the full-energy-peak efficiency, the γ-ray branch (internal conversion) and the
-   angular-correlation factor.
+5. **Yield:** the area over the full-energy-peak efficiency (each crystal's at the Doppler-shifted energy it sees
+   the line at), the γ-ray branch (internal conversion) and the angular-correlation factor.
 6. **Normalisation**, chosen by the user: ``"rutherford"``, to the particles counted in the same rings,
    so the beam current and the target thickness cancel; or ``"target"``, to a transition of the other nucleus of
    the collision whose strength is known. When the events hold that nucleus's γ rays (the setup has its level
@@ -33,7 +34,9 @@ The steps are those of a Coulomb-excitation analysis, each shown and adjustable:
    yield is compared with what its level scheme gives to all orders (:attr:`Result.lines`); otherwise the
    reference is ``Settings.reference``, its peak taken from its analytic rate with Poisson noise (noted in the
    result).
-7. **B(E2)** from the first-order proportionality of the excitation probability to B(E2), in e²fm⁴, e²b² and
+7. **B(E2)** from the first-order proportionality of the excitation probability to B(E2), the excitations
+   expected per particle taken from the forward model's cross sections through the depth of the target and with
+   the excited particle's kinematics (:meth:`Analysis._mean_probability`), in e²fm⁴, e²b² and
    Weisskopf units, with the statistical uncertainty of the fit and a budget of systematic contributions, each
    found by changing its input by one standard deviation and running again. When the events follow a level
    scheme to all orders, first order is only the start: the scheme's coupled equations are solved with the
@@ -61,11 +64,30 @@ from .gamma import correlation_table, emitters, transition_lines
 from .kinematics import TwoBody
 from .levels import weisskopf_unit
 from .quantity import Quantity
-from .rates import Rates, _q, beam_energy_at, beam_ion, exit_energy, stack
+from .rates import (Rates, SchemeProbability, _q, beam_energy_at, beam_ion, channels, coulex_for, depth_probability,
+                    exit_energy, reaction_at, stack, stopping, tilt_deg)
 from .response import FWHM_PER_SIGMA, Response
 
 #: Hours in a shift, for the counts per shift.
 SHIFT_H = 8.0
+#: The expected excitations per particle (:meth:`Analysis._mean_probability`) are tabulated against the particle's
+#: lab angle in steps of this many degrees, from the forward cross sections integrated over the depth of each layer
+#: with this many Gauss–Legendre points.
+FORWARD_STEP_DEG = 0.05
+FORWARD_DEPTH_POINTS = 24
+#: The elastic and inelastic groups of a particle detector overlap at a lab direction when the energies of the
+#: elastic group, from every depth of the target, cover more than this share of the inelastic group's
+#: (:meth:`Analysis._groups_overlap`); the inelastic particle gate is called unreliable when they overlap for more
+#: than ``GATE_OVERLAP_WARN`` of the excitations in the chosen rings.
+GATE_GROUP_COVER = 0.5
+GATE_OVERLAP_WARN = 0.5
+
+
+class _Zero:
+    """P = 0 at every angle: below the excitation threshold."""
+
+    def probability(self, theta_cm):
+        return 0.0 if np.ndim(theta_cm) == 0 else np.zeros(np.shape(theta_cm))
 
 
 @dataclass
@@ -393,6 +415,12 @@ class Result:
     #: What first-order theory makes of the same yield, e²fm⁴ (equal to :attr:`b_e2fm4` when first order is all
     #: there is: one state, or first-order events).
     b_first_order: Optional[float] = None
+    #: The particle gate the result used ("inelastic" or "all"), and for the inelastic gate the share of the
+    #: excitations in the rings at whose lab direction the elastic and inelastic groups overlap through the depth
+    #: of the target; above :data:`GATE_OVERLAP_WARN` :attr:`gate_warning` says to use "all" (the first note too).
+    gate: Optional[str] = None
+    gate_overlap: Optional[float] = None
+    gate_warning: Optional[str] = None
 
     @property
     def total_unc(self) -> float:
@@ -528,6 +556,14 @@ class Analysis:
             spread = np.abs(self._measured_energy(rows, pred["inelastic"], depth="back") - expect["inelastic"])
             near = np.abs(measured - expect["inelastic"]) <= s.gate_width * np.maximum(fwhm, 0.02) + spread / 2
             closer = np.abs(measured - expect["inelastic"]) < np.abs(measured - expect["elastic"])
+            # Whether the two groups can be told apart at all: through a thick target they spread over the
+            # energies of every depth, and may overlap (backlog: Allmond 2014, fix 7).
+            base = keep & self._own
+            overlap = np.zeros(len(rows), dtype=bool)
+            if base.any():
+                overlap[base] = self._groups_overlap(rows[base], fwhm[base])
+            w_base = g["weight"][base].sum()
+            self._gate_overlap = float(g["weight"][base & overlap].sum() / w_base) if w_base > 0 else 0.0
             keep &= near & closer
         # What the gate does, known here because the simulation knows the truth: the share of the excitations it
         # keeps, and the particles it lets through (they carry no γ ray, so they only add to the randoms).
@@ -535,6 +571,45 @@ class Analysis:
         w_all = g["weight"][in_dets & self._own].sum()
         self._gate_efficiency = float(g["weight"][keep & self._own].sum() / w_all) if w_all > 0 else 1.0
         return keep, float(np.sum(c["weight"][elastic]) * ev.beam_time_s * g.live_fraction)
+
+    def _groups_overlap(self, rows: np.ndarray, fwhm: np.ndarray) -> np.ndarray:
+        """For each particle row: whether the elastic and the inelastic group overlap at its lab direction. Each
+        group spans the energies it is measured with from every depth of the target (the kinematic energy at the
+        beam energy there, less the losses on the way out from there), widened by half the detector's resolution
+        on each side; the two overlap when the elastic span covers more than :data:`GATE_GROUP_COVER` of the
+        inelastic one."""
+        exp, exc = self.experiment, self.experiment.excitation
+        lay = self._layers[0]
+        ion = beam_ion(exp)
+        target = data.nuclide(max(lay.nuclides.items(), key=lambda kv: kv[1])[0]).name
+        m1, m2 = data.nuclide(ion).atomic_mass_u, data.nuclide(target).atomic_mass_u
+        threshold = 1.05 * self.e0 * (m1 + m2) / m2
+        depths = {"front": 0.0, "middle": 0.5 * lay.thickness, "back": 0.999 * lay.thickness}
+        energies = {k: float(beam_energy_at(exp, 0, [z], self._layers)[0]) for k, z in depths.items()}
+        th, recoil = self.events.columns["theta"][rows], self.events.columns["recoil"][rows]
+        span = {}
+        for name, kw in (("elastic", {}), ("inelastic", {"excitation_mev": self.e0, "excite": "recoil"
+                                                          if exc.excite == "target" else "ejectile"})):
+            values = []
+            for where, e_beam in energies.items():
+                if name == "inelastic":
+                    e_beam = max(e_beam, threshold)  # deeper, nothing is excited
+                if not e_beam > 0:
+                    continue
+                tb = TwoBody(ion, target, e_beam, **kw)
+                e = np.full(len(rows), np.nan)
+                for particle, m in (("ejectile", ~recoil), ("recoil", recoil)):
+                    if m.any():
+                        e[m] = np.asarray(tb.at_lab(th[m], particle)[0].energy, dtype=float)
+                values.append(self._measured_energy(rows, np.nan_to_num(e), depth=where))
+            if not values:
+                return np.zeros(len(rows), dtype=bool)
+            values = np.array(values)
+            span[name] = (values.min(axis=0) - fwhm / 2, values.max(axis=0) + fwhm / 2)
+        (el_lo, el_hi), (in_lo, in_hi) = span["elastic"], span["inelastic"]
+        common = np.clip(np.minimum(el_hi, in_hi) - np.maximum(el_lo, in_lo), 0.0, None)
+        cover = common / np.maximum(in_hi - in_lo, 1e-9)
+        return cover > GATE_GROUP_COVER
 
     def _in_rings(self, s: Settings) -> np.ndarray:
         """Mask over the γ rays whose particle was counted in the detectors and rings of the settings, whatever
@@ -550,7 +625,7 @@ class Analysis:
 
     def _measured_energy(self, rows, energy: np.ndarray, depth: str = "middle") -> np.ndarray:
         """The energy a particle leaving the reaction with ``energy`` along each row's track would measure: after
-        the way out of the target (from its middle, or from its back) and the detector's dead layer, as the
+        the way out of the target (from its front, middle or back) and the detector's dead layer, as the
         generator does."""
         from .detectors import Array
 
@@ -566,7 +641,7 @@ class Analysis:
             if not m.any():
                 continue
             species = ion if particle == "ejectile" else target
-            z = self._layers[0].thickness * (0.5 if depth == "middle" else 0.999)
+            z = self._layers[0].thickness * {"front": 0.001, "middle": 0.5, "back": 0.999}[depth]
             e_out = exit_energy(self.experiment, self._layers, 0, np.full(m.sum(), z), species,
                                 np.nan_to_num(energy[m]), dirs[m])
             for i, g in enumerate(array.geometries):
@@ -634,23 +709,121 @@ class Analysis:
 
         return recorrect(self.gammas, with_offset(self.experiment, offset))[key]
 
-    def _mean_probability(self, s: Settings, keep: np.ndarray, beam_energy: Optional[float] = None,
-                          energy: Optional[float] = None, b_up: Optional[float] = None) -> float:
-        """The first-order excitation probability per unit B(E2↑), averaged over the particles in the gate
-        (weighted as the events are), at the given beam energy and state."""
-        exc = self.experiment.excitation
-        e_beam = beam_energy if beam_energy is not None else self._e_mid
-        e_star = energy if energy is not None else self.e0
-        b = b_up if b_up is not None else exc.b_up_e2fm
-        ion = beam_ion(self.experiment)
-        target = data.nuclide(max(self._layers[0].nuclides.items(), key=lambda kv: kv[1])[0]).name
-        cx = Coulex(ion, target, e_beam, excite=exc.excite, energy=e_star, multipolarity=exc.multipolarity, b_up=b)
-        # Averaged over the particles in the gate's rings, as the Rutherford normalisation divides by them.
-        elastic = self._elastic_rows(s)
-        th = self.events.columns["theta_cm"][elastic]
-        w = self.events.columns["weight"][elastic]
-        p = np.asarray(cx.probability(th))
-        return float(np.average(p, weights=w) / b) if elastic.any() else 0.0
+    def _mean_probability(self, s: Settings, keep: Optional[np.ndarray] = None, energy_scale: float = 1.0,
+                          mode: str = "first", exact: bool = False) -> float:
+        """⟨P⟩/B: the excitations of the ``[reaction]`` state expected per particle counted in the gate's rings, per
+        unit B(E2↑), in first order. The Rutherford normalisation divides the excitations by those particles, so
+        this is what B(E2) is read against.
+
+        It comes from the forward model itself, the cross sections the rates and the event generator use
+        (:func:`physim.nuclear.rates.reaction_at`), not from a formula of its own: at each particle's lab angle,
+        the Coulomb-excitation cross section over that of every particle that reaches the angle (elastic and
+        excited together), each integrated over the depth of its layer with the beam energy there
+        (:meth:`_forward_ratio`), then averaged over the particles in the rings, weighted as the events are. So
+        the excited particle's own CM angle and lab-to-CM Jacobian, the excitation probability through the depth
+        of a thick target, and whatever Rutherford factor the forward cross section carries all enter as they do
+        in the simulation.
+
+        ``energy_scale`` multiplies the beam energy at every depth (the beam-energy systematic); ``exact`` takes P
+        from the first-order Coulomb excitation at each energy rather than from the forward model's interpolation
+        through the depth (the two agree to a few parts in 10⁴; the budget compares like with like). ``mode`` =
+        "forward" gives instead the forward model's own excitations per particle (every level a level scheme
+        populates, to all orders if the events are), not per unit B(E2)."""
+        rows = self._elastic_rows(s)
+        if not rows.any():
+            return 0.0
+        c = self.events.columns
+        th, rec, w = c["theta"][rows], c["recoil"][rows], c["weight"][rows]
+        r = np.zeros(len(th))
+        for particle, m in (("ejectile", ~rec), ("recoil", rec)):
+            if m.any():
+                grid, ratio = self._forward_ratio(particle, energy_scale, mode, exact)
+                r[m] = np.interp(th[m], grid, ratio)
+        out = float(np.average(r, weights=w)) if w.sum() > 0 else 0.0
+        return out / self.experiment.excitation.b_up_e2fm if mode == "first" else out
+
+    def _first_order(self, channel, energy: float, exact: bool):
+        """P(θ) of the ``[reaction]`` state alone, in first order, at beam energy ``energy`` for a
+        Coulomb-excitation channel: the forward model's own P through the depth when that is first order of the
+        one state (``exact`` False, and no level scheme), else the first-order Coulomb excitation at that energy."""
+        try:
+            dp = depth_probability(self.experiment, channel, self._layers)
+        except ValueError:
+            return _Zero()
+        if not exact and not isinstance(dp.nodes[0], SchemeProbability):
+            return dp.at(energy)
+        try:
+            return coulex_for(self.experiment, channel, self._layers, energy=energy)
+        except ValueError:  # below the excitation threshold
+            return _Zero()
+
+    def _forward_ratio(self, particle: str, energy_scale: float = 1.0, mode: str = "first",
+                       exact: bool = False) -> tuple:
+        """(lab angles, excited over all) for ``particle`` ("ejectile" or "recoil"): the forward model's
+        Coulomb-excitation cross section in the lab, summed over the channels that excite the ``[reaction]``
+        nucleus, over the lab cross section of every channel that sends that particle there (elastic scattering,
+        which the excitation reduces by 1 − P, and the excitation itself; for a run taken before the events had
+        one particle per collision, elastic scattering alone, as the normalisation counts). Each channel is
+        integrated over the depth of its layer the beam crosses (:data:`FORWARD_DEPTH_POINTS`), at the beam
+        energy at each depth, through the kinematics of its own reaction (the excited particle's CM angle and
+        Jacobian, both branches) as :class:`~physim.nuclear.rates.Rates` integrates it. With ``mode`` "first"
+        the excitation is the first-order one of the ``[reaction]`` state (:meth:`_first_order`) inside the same
+        cross section. Tabulated every :data:`FORWARD_STEP_DEG` over the lab angles of the counted particles,
+        and kept."""
+        key = (particle, round(float(energy_scale), 12), mode, bool(exact))
+        kept = self.__dict__.setdefault("_forward", {})
+        if key in kept:
+            return kept[key]
+        exp, layers = self.experiment, self._layers
+        c = self.events.columns
+        th = c["theta"][c["counted"] & (c["recoil"] == (particle == "recoil"))]
+        step = FORWARD_STEP_DEG
+        lo = max(math.floor(float(th.min()) / step) - 1, 1) * step if len(th) else 0.0
+        hi = min(math.ceil(float(th.max()) / step) + 1, round(180.0 / step) - 1) * step if len(th) else 180.0
+        grid = np.arange(lo, hi + step / 2, step) if hi > lo else np.array([lo, lo + step])
+        num, den = np.zeros(len(grid)), np.zeros(len(grid))
+        beam = beam_ion(exp)
+        x, wq = np.polynomial.legendre.leggauss(FORWARD_DEPTH_POINTS)
+        cos_t = math.cos(math.radians(tilt_deg(exp)))
+        for ch in channels(layers, exp):
+            lay = layers[ch.layer]
+            entry = float(beam_energy_at(exp, ch.layer, [0.0], layers)[0])
+            if not entry > 0:
+                continue
+            # The part of the layer the beam crosses, and the share of the layer's nuclei at each depth point.
+            reach = min(float(stopping(beam, lay.material).range(entry)) * cos_t, lay.thickness)
+            zs = (x + 1) / 2 * reach
+            share = wq / 2 * reach / lay.thickness
+            es = np.asarray(beam_energy_at(exp, ch.layer, zs, layers), dtype=float) * energy_scale
+            excited = ch.excitation is not None
+            reacs, ws, firsts = [], [], []
+            for e, wz in zip(es, share):
+                if not e > 0:
+                    continue
+                try:
+                    reac = reaction_at(exp, ch, float(e), layers)
+                except ValueError:  # below the excitation threshold, or no energy left
+                    continue
+                reacs.append(reac)
+                ws.append(wz)
+                if excited and mode == "first":
+                    # The same forward cross section, with P that of the [reaction] state alone in first order.
+                    firsts.append(type(reac)(beam, ch, float(e), self._first_order(ch, float(e), exact)))
+            if not reacs:
+                continue
+            weights = np.asarray(ws)[:, None] * ch.atoms_per_cm2
+            total = (weights * sum(sig for sig, _ in self.rates._branches_many(reacs, grid, particle))).sum(axis=0)
+            if not excited or self._whole:
+                den += total
+            if excited:
+                if mode == "first":
+                    num += (weights * sum(sig for sig, _ in self.rates._branches_many(firsts, grid, particle))
+                            ).sum(axis=0)
+                else:
+                    num += total
+        ratio = np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0)
+        kept[key] = (grid, ratio)
+        return kept[key]
 
     def _elastic_rows(self, s: Settings) -> np.ndarray:
         c = self.events.columns
@@ -736,7 +909,9 @@ class Analysis:
             # Excitations / particles in the same rings = ⟨P⟩ in first order.
             b = yield_ / norm_counts / p_per_b if norm_counts > 0 and p_per_b > 0 else float("nan")
             steps.append({"step": "normalisation", "text": f"to the {norm_counts:.4g} particles in the same "
-                          f"rings: ⟨P⟩ = {yield_ / norm_counts:.3e}, and ⟨P⟩/B(E2) = {p_per_b:.3e} per e²fm⁴"})
+                          f"rings: ⟨P⟩ = {yield_ / norm_counts:.3e}, and ⟨P⟩/B(E2) = {p_per_b:.3e} per "
+                          "e²fm⁴ (first order, from the forward cross sections at each particle's lab angle, through "
+                          "the depth of the target)"})
             ref_unc = 0.0
         else:
             if not s.reference:
@@ -781,8 +956,20 @@ class Analysis:
         per_shift = area / t_s * SHIFT_H * 3600 if t_s > 0 else 0.0
         # Precision 1/√N for the peak alone: N = 1/precision² counts.
         hours = (1 / s.wanted_precision**2) / (area / t_s) / 3600 if area > 0 else float("inf")
+        gate_overlap, gate_warning = None, None
         if s.particle_gate == "inelastic":
             notes.append(notes_gate)
+            gate_overlap = getattr(self, "_gate_overlap", 0.0)
+            if gate_overlap > GATE_OVERLAP_WARN:
+                gate_warning = (
+                    f"This result used the inelastic particle gate, which cannot separate the groups here: for "
+                    f"{gate_overlap:.0%} of the excitations in these rings the energies of the elastic group, "
+                    "from every depth of the target, reach into those of the inelastic group. The gate then keeps "
+                    f"only part of the excitations ({gate_eff:.1%}), from the depths it happens to pick out, and "
+                    "the result leans on the simulation's word for that share. Use the gate \"all\" "
+                    "(particle_gate=\"all\"): with the Rutherford normalisation every particle in the rings counts.")
+                notes.insert(0, gate_warning)
+                steps[0]["text"] += f". Warning: the elastic and inelastic groups overlap ({gate_overlap:.0%})"
         whole = None
         source = "the Monte Carlo sample"
         if self.taken is not None:
@@ -812,7 +999,8 @@ class Analysis:
                          f"orders; measured over expected {other['ratio']:.3f}.")
         result = Result(s.as_dict(), steps, fit, area, eff, corr, branch, s.normalisation, norm_counts, b,
                         statistical, systematic, mc, b * 1e-4, b / wu, budget, truth, pull, shape, per_shift, hours,
-                        notes, source, whole, spectrum, search, lines, b_first)
+                        notes, source, whole, spectrum, search, lines, b_first, s.particle_gate, gate_overlap,
+                        gate_warning)
         if self.history:
             changed = {k: v for k, v in s.as_dict().items() if v != self.history[-1].settings.get(k)}
             if changed:
@@ -1002,7 +1190,7 @@ class Analysis:
         fit.randoms = float(rnd[window].sum()) if s.subtract_randoms else 0.0
         area = fit.area - fit.randoms
         area_unc = math.hypot(fit.area_unc, math.sqrt(max(fit.randoms, 0.0)))
-        eff, corr = self._efficiency_and_correlation(keep, e_line, o["correlation"], ~self._own)
+        eff, corr = self._efficiency_and_correlation(keep, e_line, o["correlation"], ~self._own, which)
         yield_ = area / (eff * corr) if eff > 0 and corr > 0 else float("nan")
         # What the level scheme gives per particle in the same rings: the transition's yield per
         # collision at each particle's CM angle (no excitation on the other nuclides of the target stack).
@@ -1088,10 +1276,17 @@ class Analysis:
         th, w = c["theta_cm"][rows], c["weight"][rows]
         measured = b_first * p_per_b  # γ rays per particle: what the yield and the normalisation gave
         lo, hi = float(th.min()), float(th.max())
+        # The scheme's solution is at the middle of the target and its yields are taken at the particles' CM
+        # angles; the forward model excites through the depth, with the excited particle's own kinematics. The
+        # ratio of the two for the excitations of the scheme as it is set (the forward model's excitations per
+        # particle over the solution's at the particles' angles) carries the difference over to the yields.
+        mid = float(np.average(SchemeProbability(sol).probability(th), weights=w))
+        forward = self._mean_probability(s, mode="forward")
+        kappa = forward / mid if mid > 0 and forward > 0 else 1.0
 
         def expected(b_up: float, which: tuple = lines) -> float:
             grid, y = self._scheme_yield(b_up, level, lo, hi)
-            return float(np.average(np.interp(th, grid, sum(y[k] for k in which if k in y)), weights=w))
+            return kappa * float(np.average(np.interp(th, grid, sum(y[k] for k in which if k in y)), weights=w))
 
         # The yield is nearly proportional to B(E2): one pass by proportion, then the straight line through the
         # two points, which is good to a few parts in ten thousand; a third pass only if the two were far apart.
@@ -1118,6 +1313,9 @@ class Analysis:
                 + (", and " + ", ".join(f"{ln['label']} ({ln['energy_kev']:.1f} keV)" for ln in others)
                    + f", which the window also holds ({100 * (1 - own_share):.1f}% of its γ rays)" if others else "")
                 + ". Every other matrix element is taken from the scheme."
+                + (f" The scheme's yields, solved at the middle of the target, are scaled by {kappa:.4f}: the "
+                   "forward model's excitations per particle (through the depth of the target, with the excited "
+                   "particle's kinematics) over the solution's." if abs(kappa - 1) > 1e-3 else "")
                 + (f" The excitation is strong enough to saturate: the yield grows as B(E2) to the power "
                    f"{1 / gain:.2f}, so a 1% change of the yield is a {gain:.2f}% change of B(E2), and every "
                    "uncertainty of the yield counts that much more." if gain > 1.02 else ""))
@@ -1138,20 +1336,40 @@ class Analysis:
         return math.hypot(peak, elastic)
 
     def _efficiency_and_correlation(self, keep: np.ndarray, energy: Optional[float] = None,
-                                    correlation: Optional[dict] = None, own: Optional[np.ndarray] = None) -> tuple:
-        """The full-energy-peak efficiency of all crystals together (the spectrum is summed) and the
-        angular-correlation factor averaged over the excitations in the gate: for each excitation, the
-        efficiency-weighted mean of its particle detector's factors. For the ``[reaction]`` transition, or for
-        another one at ``energy`` (MeV) with its ``correlation`` factors and the γ rays ``own`` of its nucleus."""
+                                    correlation: Optional[dict] = None, own: Optional[np.ndarray] = None,
+                                    correction: Optional[str] = None) -> tuple:
+        """The full-energy-peak efficiency of all crystals together (the spectrum is summed), each crystal's at the
+        energy it sees the line at (Doppler shifted), and the angular-correlation factor averaged over the
+        excitations in the gate: for each excitation, the efficiency-weighted mean of its particle detector's
+        factors. For the ``[reaction]`` transition, or for another one at ``energy`` (MeV) with its
+        ``correlation`` factors, the γ rays ``own`` of its nucleus and the Doppler ``correction`` right for it."""
         g = self.gammas
+        exc = self.experiment.excitation
+        if correction is None:
+            correction = "recoil" if exc.excite == "target" else "projectile"
         energy = self.e0 if energy is None else energy
         correlation = self._correlation if correlation is None else correlation
-        rows = np.unique(g["particle"][keep & (self._own if own is None else own)])
+        mine = keep & (self._own if own is None else own)
+        rows = np.unique(g["particle"][mine])
         c = self.events.columns
+        # Each crystal sees the line at its Doppler-shifted energy, and its efficiency is that at this energy: the
+        # shift is read from the data, as the measured energy over the Doppler-corrected one of the γ rays in the
+        # gate that the crystal counted (the correction for the nucleus that emits the line).
+        measured = np.asarray(g["measured"], dtype=float)
+        fixed = np.asarray(g[{"projectile": "corrected_projectile", "recoil": "corrected_recoil"}[correction]],
+                           dtype=float)
+        good = mine & g["counted"] & (measured > 0) & (fixed > 0)
+        crystal = np.asarray(g["crystal"])
+        shift = np.ones(len(g.crystals))
+        if good.any():
+            wsum = np.bincount(crystal[good], weights=g["weight"][good], minlength=len(g.crystals))
+            ratio = np.bincount(crystal[good], weights=g["weight"][good] * measured[good] / fixed[good],
+                                minlength=len(g.crystals))
+            shift = np.where(wsum > 0, ratio / np.where(wsum > 0, wsum, 1.0), 1.0)
         effs = {}
-        for cr in g.crystals:
+        for k, cr in enumerate(g.crystals):
             name = cr.name.rsplit(" ", 1)[0] if cr.element is not None else cr.name
-            effs[name] = effs.get(name, 0.0) + float(cr.response.peak_efficiency(energy, cr.element))
+            effs[name] = effs.get(name, 0.0) + float(cr.response.peak_efficiency(energy * shift[k], cr.element))
         total_eff = sum(effs.values())
         per_det = {d: sum(e * correlation.get((d, n), 1.0) for n, e in effs.items()) / total_eff
                    for d in self.events.detectors}
@@ -1190,9 +1408,12 @@ class Analysis:
         if not b == b or b <= 0:
             return {}
         out = {"efficiency": s.efficiency_unc, "angular correlation": s.correlation_unc}
-        # Beam energy: ⟨P⟩/B changes with the orbit.
-        shifted = self._mean_probability(s, keep, beam_energy=self._e_mid * (1 + s.beam_energy_unc))
-        out["beam energy"] = abs(shifted / p_per_b - 1) if p_per_b > 0 else 0.0
+        # Beam energy: ⟨P⟩/B changes with the orbit. The beam energy at every depth is raised by its uncertainty;
+        # both sides with the first-order P at each energy (the forward model's P is only tabulated through the
+        # depth the nominal beam crosses).
+        base = self._mean_probability(s, keep, exact=True)
+        shifted = self._mean_probability(s, keep, energy_scale=1 + s.beam_energy_unc, exact=True)
+        out["beam energy"] = abs(shifted / base - 1) if base > 0 else 0.0
         # The target's place: the Doppler correction with the target moved by its uncertainty shifts and broadens
         # the peak, and the γ-ray efficiency goes as 1/d²; the peak area is found again with the moved target.
         d_mm = float(np.mean([gd.distance_mm() for gd in self.experiment.gamma_detectors]))

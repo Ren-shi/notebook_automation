@@ -471,7 +471,10 @@ The steps, each adjustable through `Settings`:
 1. **Particle gate:** the particle must sit in the inelastic group of its detector (its measured energy nearer
    the kinematic value for a particle that excited the state than for an elastic one, within `gate_width`
    resolutions), in the chosen `detectors` and `rings`. The share of excitations the gate keeps is known from the
-   simulation and divided out, as an experimentalist takes it from one.
+   simulation and divided out, as an experimentalist takes it from one. Through a thick target the two groups
+   spread over the energies of every depth and may overlap; when they do for most of the excitations in the
+   rings, the result warns (`Result.gate_warning`, also the first note) and says to use `particle_gate="all"`.
+   It does not switch by itself; `Result.gate` says which gate was used.
 2. **Doppler correction** for the excited nucleus, or for the other one to see what that does.
 3. **Peak search:** each corrected spectrum (for the projectile, and for the recoil) is searched for peaks over
    its whole range (`analysis.find_peaks`): at every energy the counts in a window are compared with the level
@@ -481,10 +484,16 @@ The steps, each adjustable through `Settings`:
    nucleus shows its peaks in its own spectrum. `Result.search` holds both spectra and their peaks.
 4. **Peak fit:** a Gaussian on a straight line within `fit_half_width` resolutions, then the counts within ±3σ
    over the line, with the random coincidences expected in the window subtracted.
-5. **Yield:** the area over the full-energy-peak efficiency, the γ-ray branch and the angular-correlation factor.
+5. **Yield:** the area over the full-energy-peak efficiency (each crystal's at the Doppler-shifted energy it sees
+   the line at, read from the measured over the corrected energies), the γ-ray branch and the angular-correlation
+   factor.
 6. **Normalisation:** `"rutherford"`, to the particles counted in the same rings (beam current and target
    thickness cancel); or `"target"`, to a transition of the other nucleus of the collision whose strength is
-   known.
+   known. The excitations expected per particle, ⟨P⟩/B, come from the forward model's own cross sections (those
+   of the rates and the event generator): at each particle's lab angle, the Coulomb-excitation cross section
+   over that of every particle reaching the angle, each integrated over the depth of the target at the beam
+   energy there and through its own kinematics (the excited particle's CM angle and Jacobian), then averaged
+   over the particles in the rings.
    - With a level scheme of that nucleus in the setup its γ rays are in the events (see *Both nuclei* under
      {ref}`Particle–γ events <particle-gamma-events>`). Its first transition's peak is then found, fitted and
      integrated in its own corrected spectrum, in coincidence with every particle counted in the same rings.
