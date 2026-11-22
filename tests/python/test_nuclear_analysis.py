@@ -108,9 +108,9 @@ def test_each_systematic_is_found_by_changing_its_input(ni):
                              "matrix elements assumed"}
     assert r.budget["efficiency"] == 0.05 and r.budget["angular correlation"] == 0.03
     assert r.systematic == pytest.approx(math.sqrt(sum(v**2 for v in r.budget.values())))
-    # Beam energy: ⟨P⟩/B at E(1 + δ) against E, as the budget computes it.
-    p0 = a._mean_probability(Settings(particle_gate="all"), None)
-    p1 = a._mean_probability(Settings(particle_gate="all"), None, beam_energy=a._e_mid * 1.005)
+    # Beam energy: ⟨P⟩/B with the beam energy at every depth raised by δ, against nominal, as the budget computes it.
+    p0 = a._mean_probability(Settings(particle_gate="all"), exact=True)
+    p1 = a._mean_probability(Settings(particle_gate="all"), energy_scale=1.005, exact=True)
     assert r.budget["beam energy"] == pytest.approx(abs(p1 / p0 - 1))
     assert 0.01 < r.budget["beam energy"] < 0.1
     # Doubling the assumed efficiency uncertainty doubles its entry and grows the total.

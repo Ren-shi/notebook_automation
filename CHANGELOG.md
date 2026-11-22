@@ -148,6 +148,33 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The analysis reads B(E2) against the forward model (Allmond 2014 verification, fixes 1 analysis side, 2 and 7).
+  Simulate-then-analyse on 62Ni at 111.6 MeV on 1.04 mg/cm² of carbon read B(E2) 35 % high: ⟨P⟩/B took P at
+  the mid-target energy and at the CM angles of the elastic particles, while the forward model excites through
+  the depth and gives the excited carbon recoil its own CM angle and lab-to-CM Jacobian (4 % larger here).
+  - `Analysis._mean_probability` now takes the excitations expected per particle from the forward model's own
+    cross sections (`rates.reaction_at`, as `Rates` integrates them): at each particle's lab angle, the
+    Coulomb-excitation cross section over that of every particle reaching the angle, each integrated over the
+    depth of the target at the beam energy there and through its own kinematics, then averaged over the particles
+    in the rings. A change of the forward cross section (its Rutherford factor, say) reaches the analysis by
+    itself. With a level scheme, first order still uses the [reaction] state's first-order P inside the same
+    cross section, and the all-orders step scales the scheme's mid-target yields by the forward model's
+    excitations per particle over the solution's. The beam-energy systematic raises the beam energy at every
+    depth.
+  - Each crystal's full-energy efficiency is taken at the Doppler-shifted energy it sees the line at (the measured
+    over the corrected energy of the gated γ rays), not at the rest energy: +0.6 % in the efficiency here, where
+    most clovers stand backward of 90°.
+  - The inelastic particle gate warns (`Result.gate_warning`, also the first note and in the gate step) when the
+    elastic and inelastic groups overlap through the depth of the target for most of the excitations in the
+    rings, and says to use the gate "all"; it does not switch. `Result.gate` and `Result.gate_overlap` say which
+    gate was used and how much the groups overlap. The groups overlap in this sense in most shipped examples too
+    (the depth spread is wider than E*'s shift of the energy).
+  - Closure on the 62Ni on carbon setup with gate "all" (ring 14–28°, ring 28–44°, both): +1.9/+0.6/+0.9 % with
+    4 000 000 weighted events (Monte Carlo 0.4/0.25/0.2 %), +0.9/+0.0/+0.2 % with 2 000 000 and another seed;
+    before, +36/+35/+35 % on the wave-1 forward model (+9.7/+8.5/+8.8 % before wave 1). The residual of about
+    +0.5 to +1 % is 0.3 % in ⟨P⟩/B against the events' own excited share and 0.3–0.6 % in the angular-correlation
+    table, which takes the kinematics of the middle of the target (`gamma.correlation_table`).
+    `tests/python/test_nuclear_analysis_closure.py` checks it.
 - Coulomb excitation has one Rutherford convention (backlog 58): Alder and Winther's dσ = P (v_f/v_i)(a²/4)/
   sin⁴(θ/2) with the symmetrised orbit, the elastic Rutherford cross section at the initial E_cm times v_i/v_f, as
   in GOSIA. Before, the rates and the event generator used the elastic Rutherford cross section and
