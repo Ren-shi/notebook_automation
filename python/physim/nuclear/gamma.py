@@ -103,7 +103,10 @@ def doppler_table(experiment, depth_points: int = 8, order: int = 10) -> list:
         for z, e in zip(zs, es):
             if e <= e0:
                 continue
-            tb = TwoBody(beam, target, float(e), excitation_mev=e0, excite=excite)
+            try:
+                tb = TwoBody(beam, target, float(e), excitation_mev=e0, excite=excite)
+            except ValueError:  # below the excitation threshold at this depth
+                continue
             first, _ = tb.at_lab(theta, "ejectile")
             th_cm = np.asarray(first.theta_cm)
             ok = ~np.isnan(th_cm)

@@ -276,8 +276,11 @@ DEPTH_NODES = ((0.03, 3), (0.12, 4), (0.25, 5), (0.4, 6), (0.6, 7), (math.inf, 8
 DEPTH_AVERAGE_POINTS = 24
 SLICE_POINTS = 4
 #: Largest change of ln P across one slice of a layer in the event generator (:meth:`DepthProbability.slice_count`),
-#: and the most slices.
-SLICE_LOG_STEP = 0.5
+#: and the most slices. The rates of the events are right with any number of slices (P is averaged over each);
+#: the slices give the excitations their depth, and so the inelastic peaks their energies: with n slices the
+#: generator keeps about 1 − 1/n² of the shift of the peak (coulex_ni58, where P doubles through the target: 2
+#: slices keep 70 % of its 0.24 MeV, the 5 it gets now 96 %).
+SLICE_LOG_STEP = 0.15
 MAX_SLICES = 16
 _DEPTH_KEPT: dict = {}
 _DEPTH_KEPT_MOST = 32
@@ -1199,12 +1202,16 @@ class Rates:
                 continue
 
             def lab(energy):
-                pt = TwoBody(self.beam, ch.nuclide.name, energy, **ch.kinematics_args).at_lab(theta, particle)[branch]
+                try:
+                    tb = TwoBody(self.beam, ch.nuclide.name, energy, **ch.kinematics_args)
+                except ValueError:  # below the excitation threshold at the middle of the layer
+                    return math.nan
+                pt = tb.at_lab(theta, particle)[branch]
                 return float(pt.energy) if pt is not None else math.nan
 
             h = 1e-4 * e
             e_out = lab(e)
-            if not np.isfinite(e_out):
+            if not (np.isfinite(e_out) and np.isfinite(lab(e - h))):
                 results.append(0.0)
                 continue
             var *= ((lab(e + h) - lab(e - h)) / (2 * h)) ** 2
