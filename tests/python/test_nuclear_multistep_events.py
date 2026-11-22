@@ -17,7 +17,7 @@ from physim.nuclear.gamma_events import simulate_gammas
 from physim.nuclear.multistep import Multistep
 from physim.nuclear.orientation import Excitation
 from physim.nuclear.planner import Planner
-from physim.nuclear.rates import Rates, channels, excitation_probability, stack
+from physim.nuclear.rates import Rates, channels, depth_probability, excitation_probability, stack
 
 #: Levels of ⁶²Ni in the example's scheme: the first 2⁺, the second 0⁺ (2048.55 keV) and the 4⁺ (2336.46 keV).
 TWO, ZERO, FOUR = 1, 2, 4
@@ -90,7 +90,10 @@ def test_the_rates_and_the_generator_share_the_excitation_probability():
         assert float(p.probability(grid[60])) == pytest.approx(sum(states[60].direct.values()))
         config, used = generator_config(exp)
         entry = next(c for c, k in zip(config["channels"], config["channel_of"]) if used[k].excitation is not None)
-        assert np.allclose(entry["p_table"], p.probability(np.linspace(0.0, 180.0, 721)))
+        # The generator's table is P averaged over the depth of its (first) slice of the target, as the rates
+        # take P through the depth (rates.DepthProbability).
+        dp = depth_probability(exp, ch, layers)
+        assert np.allclose(entry["p_table"], dp.slices(dp.slice_count(), np.linspace(0.0, 180.0, 721))[0][2])
     # To all orders more is excited than in first order: the 2⁺ state is fed from the levels above it.
     all_orders, first = Rates(ni62().experiment), Rates(ni62(order="first").experiment)
     ratio = all_orders.rate("CD", what="excitations") / first.rate("CD", what="excitations")
