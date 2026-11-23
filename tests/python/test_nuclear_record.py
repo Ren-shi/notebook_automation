@@ -85,6 +85,7 @@ def test_the_record_holds_the_same_content_as_the_app_view(ni):
         assert f'id="{x.key}"' in page
     for line in LEFT_OUT:
         assert line[:40] in page
+    assert "Target thickness: no uncertainty given" in page and "Matrix elements assumed: the setup has no" in page
     # The app shows the body of the same page; the planner method gives it with the last analysis.
     body = page.split("<body>", 1)[1].rsplit("</body>", 1)[0]
     assert "Every number, explained" in body

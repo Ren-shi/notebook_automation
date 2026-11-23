@@ -281,7 +281,9 @@ def analysis_explanations(planner, result) -> list:
             "⟨P⟩ = Y / N_particles",
             f"⟨P⟩ = {_g(yield_)} / {_g(result.norm_counts)} = {_g(p_mean, 4)}",
             "The excitations per particle scattered into the same rings. Normalising to the particles "
-            "cancels the beam current and the target thickness, which are hard to know precisely.",
+            "cancels the beam current and the number of target nuclei, which are hard to know precisely. (How far the "
+            "beam slows down in the target still enters the expected ⟨P⟩/B(E2): the budget has a term for the target's "
+            "thickness when its uncertainty is given.)",
             "The same rings see both; the particles are counted above threshold.",
             f"{DOCS}nuclear-setup.html#automatic-analysis",
             {"yield_": yield_, "n_particles": result.norm_counts}, lambda yield_, n_particles: yield_ / n_particles))
@@ -379,7 +381,9 @@ def analysis_explanations(planner, result) -> list:
         + f") = {_g(result.total_unc, 3)}",
         "The statistical part comes from the counts in the peak and in the normalisation; each systematic part is "
         "what B(E2) moves by when one input is changed by its own uncertainty. Added in quadrature as independent.",
-        "The systematic inputs are independent and their effects linear.",
+        "The systematic inputs are independent and their effects linear."
+        + ("" if not getattr(result, "budget_notes", None) else " " + " ".join(
+            n[0].upper() + n[1:] + "." for n in result.budget_notes)),
         f"{DOCS}nuclear-setup.html#automatic-analysis",
         {"stat": result.statistical, "sys": list(result.budget.values())},
         lambda stat, sys: math.sqrt(stat**2 + sum(v**2 for v in sys))))
@@ -500,6 +504,8 @@ def record_html(planner, result=None, title: Optional[str] = None, scene_png: Op
                      f"<tr><td>statistical</td><td>{100 * result.statistical:.2f}</td></tr>"
                      + "".join(f"<tr><td>{e(k)}</td><td>{100 * v:.2f}</td></tr>" for k, v in result.budget.items())
                      + f"<tr><td><b>total</b></td><td><b>{100 * result.total_unc:.2f}</b></td></tr></tbody></table>"
+                     + ("<ul>" + "".join(f"<li>{e(n[0].upper() + n[1:])}.</li>" for n in result.budget_notes) + "</ul>"
+                        if getattr(result, "budget_notes", None) else "")
                      + (f"<p>The Monte Carlo sample itself adds {100 * result.monte_carlo:.1f}%, which more "
                         "simulated events reduce. "
                         if getattr(result, "whole_run_statistical", None) is None else

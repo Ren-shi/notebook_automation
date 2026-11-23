@@ -2226,6 +2226,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 "w-40")
             eff_u = ui.number("Efficiency unc. (%)", value=5.0, min=0, max=100).props("dense outlined").classes(
                 "w-40")
+            thick_u = ui.number("Target thickness unc. (%)", placeholder="not given", min=0, max=100).props(
+                "dense outlined").classes("w-48").tooltip(
+                "How well the target's thickness is known: the beam slows down in it, and the expected excitation with "
+                "it. Left empty, the budget has no term for it and says so")
             prec = ui.number("Wanted precision (%)", value=5.0, min=0.1, max=100).props("dense outlined").classes(
                 "w-40")
         ui.button("Analyse", icon="functions", on_click=lambda: analyse()).props("dense unelevated no-caps")
@@ -2245,6 +2249,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         async def analyse() -> None:
             settings = {"normalisation": norm.value, "particle_gate": gate.value, "correction": corr.value,
                         "fit_half_width": float(width.value), "efficiency_unc": float(eff_u.value) / 100,
+                        "thickness_unc": None if thick_u.value in (None, "") else float(thick_u.value) / 100,
                         "wanted_precision": float(prec.value) / 100}
             try:
                 settings["rings"] = parse_rings(rings.value)
@@ -2477,6 +2482,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                             ui.label(f"{100 * value:.2f} %")
                         with ui.element("div").classes("ps-bar"):
                             ui.element("div").style(f"width: {100 * value / top:.0f}%")
+                for note in r.get("budget_notes") or []:
+                    ui.label(note[0].upper() + note[1:] + ".").classes("text-xs ps-muted")
             sh = r["shape"]
             if sh:
                 rows = [("β₂", f"{sh['beta2']:.3f}"), ("B(E2↑) in W.u.", f"{r['b_wu']:.3g}"),
