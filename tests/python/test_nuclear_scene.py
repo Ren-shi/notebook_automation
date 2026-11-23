@@ -1,8 +1,10 @@
 """The interactive scene (backlog 52): solids to scale, where a detector may be moved, and the quick numbers that
 follow a drag."""
 
+import asyncio
 import math
 import re
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -101,6 +103,148 @@ def test_overlaps_are_found_even_between_thin_plates():
     inside = scene.problems(Experiment.from_dict(setup([dict(PAD, theta="90 deg", phi="90 deg", distance="220 mm")],
                                                        [CLOVER])))
     assert [p.kind for p in inside] == ["overlap"]
+
+
+def annulus(name, r_in, r_out, distance=50.0, **extra) -> dict:
+    return dict({"name": name, "shape": "annular", "theta": "0 deg", "distance": f"{distance} mm",
+                 "inner_radius": f"{r_in} mm", "outer_radius": f"{r_out} mm", "rings": 4, "thickness": "1000 um"},
+                **extra)
+
+
+def kinds(detectors, gammas=()) -> list:
+    return [p.kind for p in scene.problems(Experiment.from_dict(setup(detectors, gammas)))]
+
+
+def stands_there(detectors) -> list:
+    return [w.text for w in Planner(Experiment.from_dict(setup(detectors))).warnings() if "both stand" in w.text]
+
+
+def roof(theta, gap=0.0, tilt=45.0) -> list:
+    """Two pads that share a front edge at 80 mm in the direction theta, each tilted by ``tilt`` away from the
+    plane square to that direction, and pulled apart by ``gap``."""
+    t, k = math.radians(theta), math.radians(tilt)
+    u, e = np.array([math.sin(t), 0, math.cos(t)]), np.array([math.cos(t), 0, -math.sin(t)])
+    out = []
+    for name, s in (("A", 1), ("B", -1)):
+        c = 80 * u + s * (gap / 2) * e + 10 * (s * math.cos(k) * e - math.sin(k) * u)
+        n = -math.cos(k) * u - s * math.sin(k) * e  # the normal: towards the target, leaning to the shared plane
+        d = {"name": name, "shape": "rectangle", "width": "20 mm", "height": "20 mm", "thickness": "300 um"}
+        out.append(dict(d, position=[f"{x:.9f} mm" for x in c], facing=[float(x) for x in n]))
+    return out
+
+
+def test_rings_that_share_an_edge_only_touch():
+    # Allmond 2014: two rings in one plane that meet at 28 degrees.
+    r = 26.5855
+    touching = [annulus("In", 12.4664, r), annulus("Out", r, 48.2844)]
+    assert kinds(touching) == [] and stands_there(touching) == []
+    for gap in (0.01, 0.5):
+        assert kinds([annulus("In", 12, r), annulus("Out", r + gap, 48)]) == []
+    for depth in (0.1, 0.5, 5):
+        over = [annulus("In", 12.4664, r), annulus("Out", r - depth, 48.2844)]
+        assert kinds(over) == ["overlap"], depth
+        assert stands_there(over) == ["In overlaps Out. They cannot both stand there."]
+    # Within the tolerance on one side, beyond it on the other.
+    assert kinds([annulus("In", 12, 30), annulus("Out", 30 - 0.9 * scene.TOUCH_MM, 48)]) == []
+    assert kinds([annulus("In", 12, 30), annulus("Out", 30 - 1.1 * scene.TOUCH_MM, 48)]) == ["overlap"]
+
+
+def test_nested_and_identical_detectors_overlap():
+    ring, pad = annulus("A", 12, 40), PAD
+    assert kinds([ring, dict(ring, name="B")]) == ["overlap"]
+    assert kinds([pad, dict(pad, name="B")]) == ["overlap"]
+    assert kinds([S3], [CLOVER, dict(CLOVER, name="B")]) == ["overlap"]
+    assert kinds([ring, annulus("B", 20, 30)]) == ["overlap"]  # one within the other
+    assert kinds([ring, annulus("B", 12, 30)]) == ["overlap"]  # sharing the inner edge
+    assert kinds([ring, annulus("B", 20, 40)]) == ["overlap"]  # sharing the outer edge
+    # Three rings, each in the hole of the next.
+    assert kinds([annulus("A", 10, 20), annulus("B", 20, 30), annulus("C", 30, 40)]) == []
+
+
+def test_stacked_detectors_touch_face_to_face():
+    # The second starts where the first (1 mm thick) ends.
+    assert kinds([annulus("dE", 12, 40), annulus("E", 12, 40, 51.0)]) == []
+    assert kinds([annulus("dE", 12, 40), annulus("E", 12, 40, 50.5)]) == ["overlap"]
+    thin = {"thickness": "20 um"}
+    assert kinds([annulus("dE", 12, 40, **thin), annulus("E", 12, 40, 50.02)]) == []
+    assert kinds([annulus("dE", 12, 40, **thin), annulus("E", 12, 40, 50.01)]) == ["overlap"]
+
+
+def test_rectangles_that_share_an_edge_only_touch():
+    # Side by side in one plane at 80 mm: their centres are 20 mm apart.
+    flat = {k: v for k, v in PAD.items() if k not in ("theta", "phi", "distance")}
+    side = lambda x: dict(flat, name=f"P{x}", position=[f"{x} mm", "30 mm", "80 mm"], facing=[0, 0, -1])  # noqa: E731
+    assert kinds([side(-10), side(10)]) == []
+    assert kinds([side(-10), side(9.5)]) == ["overlap"]
+    assert kinds([side(-10), side(9.9)]) == ["overlap"]
+    # A corner in the other's corner.
+    assert kinds([side(-10), dict(side(10), position=["10 mm", "50 mm", "80 mm"])]) == []
+    assert kinds([side(-10), dict(side(10), position=["9.5 mm", "49.5 mm", "80 mm"])]) == ["overlap"]
+    for theta, tilt in ((50, 45), (73, 20), (90, 60)):
+        assert kinds(roof(theta, tilt=tilt)) == [], (theta, tilt)
+        assert kinds(roof(theta, gap=-0.5, tilt=tilt)) == ["overlap"], (theta, tilt)
+
+
+def test_thin_bars_that_cross_overlap():
+    bar = {"shape": "rectangle", "thickness": "300 um", "facing": [0, 0, -1]}
+    a = dict(bar, name="A", width="100 mm", height="1 mm", position=["0 mm", "30 mm", "80 mm"])
+    b = dict(bar, name="B", width="1 mm", height="100 mm", position=["17 mm", "60 mm", "80 mm"])
+    assert kinds([a, b]) == ["overlap"]
+    assert kinds([a, dict(b, position=["17 mm", "80.5 mm", "80 mm"])]) == []
+    assert kinds([a, dict(b, position=["17 mm", "80 mm", "80 mm"])]) == ["overlap"]
+
+
+def test_a_detector_can_be_dragged_until_it_touches_another():
+    exp = Experiment.from_dict(setup([annulus("dE", 12, 40), annulus("E", 12, 40, 60.0)]))
+    lim = scene.limits(exp, "detector:1")
+    assert "dE would overlap E" in lim.lo_why and lim.lo == pytest.approx(51.0, abs=0.1)
+    p = Planner(exp)
+    pos = lim.apply((0.0, 0.0, 20.0))  # dragged right through the first
+    fields = scene.move_fields(exp, "detector:1", pos, lim.mode)
+    assert scene.blocked(exp, "detector:1", fields) is None and p.move("detector:1", pos)
+    assert scene.problems(p.experiment) == []
+    assert lim.stopped(pos) == lim.lo_why
+    assert "overlap" in scene.blocked(exp, "detector:1", {"distance": "50.5 mm"})
+    # Sideways, against a neighbour.
+    exp = Experiment.from_dict(setup([PAD, dict(PAD, name="Pad2", theta="100 deg")]))
+    touch = 60 + 2 * math.degrees(math.atan(10 / 80))  # where the front edges meet
+    assert scene.blocked(exp, "detector:1", {"theta": f"{touch:.9f} deg"}) is None
+    assert "Pad would overlap Pad2" in scene.blocked(exp, "detector:1", {"theta": f"{touch - 0.5:.2f} deg"})
+
+
+def test_a_drop_in_the_view_stops_where_the_detectors_touch():
+    """The same through the app's 3D view: its drag and drop handlers in NiceGUI's simulated browser."""
+    pytest.importorskip("nicegui")
+    from nicegui.testing import user_simulation
+
+    from physim.nuclear.scene_view import SceneView
+
+    p = Planner(Experiment.from_dict(setup([annulus("dE", 12, 40), annulus("E", 12, 40, 60.0)])))
+    views, lives = [], []
+
+    def page():
+        views.append(SceneView(lambda: p, on_live=lives.append, on_moved=p.move))
+
+    async def main():
+        async with user_simulation(page) as user:
+            await user.open("/")
+            with user:
+                view = views[-1]
+                view.select("detector:1")
+                at = dict(object_name="detector:1", x=0.0, y=0.0, z=20.0)
+                view._dragging(SimpleNamespace(args=at))
+                view._dropped(SimpleNamespace(**at))
+
+    asyncio.run(main())
+    assert lives and lives[-1]["problem"] is None
+    assert p.draft["detectors"][1]["distance"] == "51 mm" and scene.problems(p.experiment) == []
+
+
+def test_the_beam_is_kept_clear_to_its_radius():
+    # The overlaps' tolerance is not given to the beam: a hole must hold the whole beam.
+    hole = scene.BEAM_RADIUS_MM
+    assert kinds([annulus("A", hole + 0.01, 30)]) == []
+    assert kinds([annulus("A", hole - 0.01, 30)]) == ["beam"]
 
 
 def test_a_move_through_the_chamber_wall_is_blocked():

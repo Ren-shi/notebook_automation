@@ -7,13 +7,17 @@ and lab-to-CM Jacobian differ from the elastic one's (by 4 % in the Jacobian). B
 from the forward model it read B(E2) +9.7/+8.5/+8.8 % high (P at mid-target, elastic kinematics, before the forward
 model integrated P over the depth), and +35 % once it did."""
 
+import json
 import math
+from dataclasses import asdict, replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from physim.nuclear import Experiment
-from physim.nuclear.analysis import GATE_OVERLAP_WARN, Analysis, Settings
+from physim.nuclear import analysis as analysis_module
+from physim.nuclear.analysis import GATE_OVERLAP_WARN, Analysis, PeakFit, Settings
 from physim.nuclear.gamma_events import simulate_gammas
 
 B_UP = 884.105  # e²fm⁴, ENSDF
@@ -101,17 +105,144 @@ def test_the_efficiency_and_correlation_are_those_of_the_events(allmond, det):
     assert unc < 0.006 and abs(mean) < 2.5 * unc, (det, mean, unc)
 
 
-@pytest.mark.parametrize("det", ["Ring2", "Ring3", None])
-def test_b_e2_comes_back_per_ring_and_for_both(allmond, det):
+@pytest.mark.parametrize("det, beyond", [("Ring2", 0.008), ("Ring3", 0.020), (None, 0.017)])
+def test_b_e2_comes_back_per_ring_and_for_both(allmond, det, beyond):
     """Within the Monte Carlo error alone. Over twelve samples −0.1 ± 0.4 %, +0.1 ± 0.2 % and −0.1 ± 0.2 %. The peak
     has the tails that the depth of the target gives it: with the area of a Gaussian alone it was −1.6, −3.2 and
-    −2.7 %."""
+    −2.7 %.
+
+    The tails are used: every sample shows them, and over the samples the peak has more than ``beyond`` of itself
+    outside ±3σ (a Gaussian has 0.27 %). One sample knows that share to 0.24, 0.16 and 0.13 % (the scatter of twelve:
+    the inner ring has few entries there), so the bound is on the mean, three of its errors under the 1.18, 2.30 and
+    1.87 % of these five with the segment centre of the Doppler correction as it is or as it is being corrected (1.24,
+    2.35, 1.88 % and 1.18, 2.30, 1.87 %)."""
     results = [a.run(every_particle(det)) for a in allmond[1]]
     dev, mc = mean_and_error([r.b_e2fm4 / B_UP - 1 for r in results], [r.monte_carlo for r in results])
     assert mc < 0.007, (det, mc)
     assert abs(dev) < 2.5 * mc, (det, 100 * dev, 100 * mc)
     assert all(r.gate == "all" and r.gate_warning is None and r.gate_overlap is None for r in results)
-    assert all(r.fit.tails is not None and r.fit.tails["inside"] < 0.99 for r in results)
+    assert all(r.fit.tails is not None for r in results)
+    assert np.mean([1 - r.fit.tails["inside"] for r in results]) > beyond
+
+
+def full_energy_counts(a, keep) -> tuple:
+    """The simulation's own counts in the full-energy peak, and their relative Monte Carlo error."""
+    g = a.gammas
+    w = g["weight"][keep & (np.abs(g["deposited"] - g["energy_lab"]) < 1e-6)] * g.events.beam_time_s * g.live_fraction
+    return float(w.sum()), math.sqrt(float((w**2).sum())) / float(w.sum())
+
+
+@pytest.mark.parametrize("det", ["Ring2", "Ring3", None])
+def test_the_fitted_area_is_the_full_energy_counts(allmond, det):
+    """Round 3, fix 4. The peak has a flat top and tails that end: the share that two Gaussians have within ±3σ lost
+    of it; the counts over the background of the whole window depend on it less. Over 36 samples of the rebuilt setup
+    the area is +0.10, +0.09 and +0.09 % off with them summed (±0.06, 0.04, 0.04 % one by one), before −0.11, −0.13
+    and −0.14 %. (What is left: the wider Gaussian reaches further than the tails do.)"""
+    s = replace(every_particle(det), subtract_randoms=False)
+    dev = []
+    for a in allmond[1]:
+        true, _ = full_energy_counts(a, a._gate(s)[0])
+        dev.append(a.run(s).area / true - 1)
+    mean, err = float(np.mean(dev)), float(np.std(dev, ddof=1)) / math.sqrt(len(dev))
+    assert abs(mean) < 0.001 + 2.5 * err and err < 0.003, (det, mean, err)
+
+
+# -- a run of few counts ----------------------------------------------------------------------------------------------
+
+
+def as_run(a, hours: float, seed: int) -> Analysis:
+    """A run of ``hours`` drawn from a weighted sample's γ rays: each as often as its rate says, all of weight one
+    over the run's time. (The particles keep their weights: they are only counted.)"""
+    g = a.gammas
+    real = 3600.0 * hours
+    picked = np.random.default_rng(seed).poisson(g["weight"] * real)
+    rows = np.repeat(np.arange(len(g)), picked)
+    cols = {k: np.asarray(v)[rows] for k, v in g.columns.items()}
+    cols["weight"] = np.full(len(rows), 1.0 / real)
+    run = SimpleNamespace(summary={"one_particle": True}, scale=1.0, real_s=real, duration_s=real)
+    return Analysis(a.experiment, replace(g, columns=cols, events=replace(g.events, beam_time_s=real), seed=seed),
+                    run=run)
+
+
+@pytest.fixture(scope="module")
+def hours(allmond):
+    """Seven hours of beam: about 400 counts in the inner ring, too few to fix the tails."""
+    return as_run(allmond[1][0], 7.0, 5)
+
+
+def test_a_run_of_few_counts_takes_its_tails_from_a_simulation(hours, monkeypatch):
+    """Round 3, fix 3: the tail shape comes from a simulation of the run's own setup, once; the step, a note and a line
+    of the budget say so."""
+    s = replace(every_particle("Ring2"), subtract_randoms=False)
+    r = hours.run(s)
+    assert 250 < r.area < 600
+    t = r.fit.tails
+    assert t is not None and t["simulated"] and r.fit.failed is None and r.fit.shape.startswith("Gaussian with simulated")
+    step = next(x["text"] for x in r.steps if x["step"] == "peak fit")
+    assert "simulation of this setup" in step and any("simulation of this setup" in n for n in r.notes)
+    assert 0 < r.budget["peak tails (simulated)"] < 0.02
+    assert r.systematic == pytest.approx(math.sqrt(sum(v**2 for v in r.budget.values())))
+    assert PeakFit.of(json.loads(json.dumps(asdict(r.fit)))).tails["simulated"]
+    # The simulated peak: many more counts, its own tails, and a width like the run's.
+    sim = hours.simulated_peak(s)
+    assert sim.tails is not None and not sim.tails["simulated"]
+    assert t["share"] == sim.tails["share"] and r.fit.sigma == pytest.approx(sim.sigma, rel=0.2)
+    assert r.budget["peak tails (simulated)"] >= analysis_module.SHAPE_KNOWN * t["simulated_loss"]
+    # A second fit, and a change that leaves the peak alone, do not simulate again.
+    monkeypatch.setattr(Analysis, "_simulated_gammas", lambda *a: pytest.fail("simulated again"))
+    assert hours.run(s).area == r.area
+    hours.run(replace(s, efficiency_unc=0.1))
+
+
+def test_a_weighted_sample_is_not_simulated_again(allmond, monkeypatch):
+    monkeypatch.setattr(Analysis, "_simulated_gammas", lambda *a: pytest.fail("simulated again"))
+    r = allmond[1][0].run(every_particle("Ring3"))
+    assert "peak tails (simulated)" not in r.budget and not r.fit.tails["simulated"]
+
+
+def test_a_failed_fit_has_no_area(hours, monkeypatch):
+    """A fit that ends at a bound is reported as failed: no area, no B(E2), and the result says why."""
+    real = analysis_module.fit_tails
+
+    def failing(*args, **kw):
+        return replace(real(*args, **kw), failed="the peak's width ran to 2 times more than the setup gives", area=1e6)
+
+    monkeypatch.setattr(analysis_module, "fit_tails", failing)
+    r = hours.run(replace(every_particle("Ring2"), subtract_randoms=False))
+    assert r.fit.failed and r.area == 0 and r.fit.area == 0 and r.b_e2fm4 != r.b_e2fm4 and not r.budget
+    assert "failed" in next(x["text"] for x in r.steps if x["step"] == "peak fit")
+    assert any(n.startswith("The peak fit failed") for n in r.notes)
+
+
+# -- the beam-energy systematic -------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("det, expected", [("Ring2", 0.0525), ("Ring3", 0.0514), (None, 0.0517)])
+def test_the_beam_energy_systematic_is_a_change_of_the_entry_energy(allmond, det, expected):
+    """Round 3, fix 5: the same as a setup whose beam has 0.5 % more energy. Scaled at every depth instead, the
+    systematic was 17 % too small (4.3 %), since the energy lost changes little and what is left is less."""
+    exp, samples = allmond
+    a, s = samples[0], every_particle(det)
+    d = exp.to_dict()
+    d["beam"]["energy"] = f"{exp.beam.energy_mev * 1.005!r} MeV"
+    up = Analysis(Experiment.from_dict(d), a.gammas)
+    real = up._mean_probability(s, exact=True) / a._mean_probability(s, exact=True) - 1
+    app = a._mean_probability(s, energy_scale=1.005, exact=True) / a._mean_probability(s, exact=True) - 1
+    assert app == pytest.approx(real, rel=0.02) and real == pytest.approx(expected, rel=0.02)
+
+
+def test_feeding_is_named_only_when_there_is_a_level_to_feed_from():
+    """Round 3, fix 8: a scheme of one excited state (with its static moment, so to all orders) has no feeding."""
+    from physim.nuclear.orientation import simple_scheme
+
+    scheme = simple_scheme("62Ni", "1172.91 keV", "E2", f"{B_UP} e2fm4")
+    scheme.set_matrix_element(1, 1, "E2", 0.0, source="user")
+    d = allmond_setup().to_dict()
+    d["levels"] = {"beam": scheme.to_dict()}
+    exp = Experiment.from_dict(d)
+    r = Analysis(exp, simulate_gammas(exp, 60_000, seed=4)).run(every_particle(None))
+    text = next(x["text"] for x in r.steps if x["step"] == "all orders")
+    assert "feeding" not in text and "levels above" not in text and "coupled equations" in text
 
 
 def test_the_inelastic_gate_warns_when_the_groups_overlap(allmond):

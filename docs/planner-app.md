@@ -308,10 +308,10 @@ The steps:
      its whole range, with the peaks the search found marked and listed (energy, width, area, significance).
      A peak on a transition of the level scheme is named. Each nucleus's lines are sharp in its own spectrum; in
      the other they are smeared, and the table says so.
-  2. *Integrate the peaks:* the peak of each nucleus with its fitted Gaussian on a line and the ±3σ window
-     shaded, and under it the numbers: the counts over the line, the random coincidences subtracted, the area,
-     the efficiency, the angular correlation, the γ rays emitted, and the yield per particle. For the
-     other nucleus (¹⁹⁴Pt in the opening template) the yield its level scheme gives is beside the measured one.
+  2. *Integrate the peaks:* the peak of each nucleus with its fit (a Gaussian on a line, with tails where the
+     peak has them) and the ±3σ window shaded, and under it the numbers: the counts over the background, the
+     random coincidences subtracted, the area, the efficiency, the angular correlation, the γ rays emitted, and the
+     yield per particle. For the other nucleus (¹⁹⁴Pt in the opening template) the yield its level scheme gives is beside the measured one.
   3. *From the area to B(E2):* the chain in numbers and the result. **Normalisation** chooses between the
      particles in the same rings and the other nucleus's peak. When the events follow a level scheme, the last
      step solves its coupled equations for B(E2) (the feeding of the state and a line the peak blends with are

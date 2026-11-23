@@ -162,6 +162,32 @@ workflow builds the wheels, tests them and publishes to PyPI.
 - The live counters of a run, its beam time and its sample of particles go together: `RunTaker.step` shows a chunk
   only when all of it is stored. The beam time was shown first, and for 20–30 ms `run_progress()` had progress while
   `run_sample()` had no particles, or columns of different lengths. The runs themselves are unchanged.
+- The peak fit of the analysis at few and at many counts (Allmond 2014 verification, round 3, fixes 3 and 4).
+  `analysis.fit_peak` fits by Poisson likelihood with a line that is nowhere negative (least squares with the
+  variances 1/max(counts, 1) before; a weighted sample keeps its own variances), and `fit_tails` gives the area of the
+  fitted peak, the counts of the whole window less the background, where it divided the counts within ±3σ by the
+  share of two Gaussians there.
+  - A run of too few counts to fix the tails takes their share, offset and width, relative to the core, from a peak of
+    15 000 counts simulated with its own setup, gate, rings, Doppler correction and window, and a seed of its own
+    (`Analysis.simulated_peak`, kept with the analysis; about 10 s for nine clovers, once per choice of rings). The
+    counts fix the area, centre, core width and background. The step, a note and the record say so, and the budget has
+    the line "peak tails (simulated)". A closure test cannot test this assumption.
+  - A fit whose width or centre ends at its bound (twice the simulated peak's, where there is one), or that finds no
+    counts above the background, is `PeakFit.failed`: reported with the reason, without an area and a B(E2).
+  - ⁶²Ni on carbon, toys of 60, 140, 1400 and 5000 counts in the three ring choices: the area is within 0.4 % (it was
+    1 to 4 % low below 2000 counts, and 7 of 6000 toys of 60 counts ran away); many counts: +0.10, +0.09, +0.09 %
+    against the true counts (−0.11, −0.13, −0.14 %). A Gaussian peak of 1400 counts on 20 per bin: 0.0 % (+6 %).
+  - The target's misplacement in the budget refits with the same kind of tails, not with whatever the counts of each
+    shifted spectrum allow (3.5 % from the scatter of 68 counts, now 0.9 %).
+- The beam-energy systematic raises the energy at the entry of the target and slows the beam down from there; it
+  scaled the energy at every depth (fix 5): 5.2 % for 0.5 % on ⁶²Ni through 1 mg/cm² of carbon, as a setup with that
+  energy gives, where it said 4.3 %.
+- The "all orders" step names the feeding from the levels above only when the scheme has some (fix 8).
+- Detectors that only touch are no longer reported as overlapping (Allmond 2014 verification): two rings in one
+  plane whose radii meet, pads that share an edge, or detectors stacked face to face. Solids overlap when they reach
+  into each other by more than 0.05 mm (`scene.TOUCH_MM`, half the step a dragged detector's place is rounded to;
+  less for pieces thinner than 0.2 mm). The check is exact along every edge, where it took nine points of each, so
+  thin bars that cross are found too. The check for detectors in the beam is unchanged.
 - The γ rays of a thick target come from the emitter of their own depth (Allmond 2014 verification):
   `gamma_events.simulate_gammas` takes the undetected emitter's two-body kinematics, and for a single state its
   orientation, at each event's own beam energy where the generator cuts the target into slices. It took those of

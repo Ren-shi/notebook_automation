@@ -240,14 +240,18 @@ def analysis_explanations(planner, result) -> list:
         gate_eff = float(gate.split("gate efficiency")[1].split(")")[0])
     out.append(Explanation(
         "area", "Peak area", result.area, "counts",
-        "A = Σ counts within ±3σ of the peak − background under them − random coincidences",
-        f"A = {_g(result.fit.area)} (counts over the fitted line) "
+        ("A = Σ counts within ±3σ of the peak − background under them − random coincidences"
+         if result.fit.tails is None else
+         "A = Σ counts in the fit window − background under the peak − random coincidences"),
+        f"A = {_g(result.fit.area)} (counts over the fitted background) "
         f"− {_g(result.fit.randoms)} (randoms) = {_g(result.area)} ± {_g(math.hypot(result.fit.area_unc, math.sqrt(max(result.fit.randoms, 0))))}",
         "The γ rays of the transition that the detectors recorded in full, after the Doppler correction put them "
         "in one peak, over the continuum of other γ rays and the chance coincidences.",
         ("A Gaussian peak on a straight-line background" if result.fit.tails is None else
-         "A peak of two Gaussians (a core and wider tails) on a background that steps down across it, counted within "
-         "±3σ and divided by its share there") + "; the random coincidences expected from the singles rates and the "
+         "A peak of two Gaussians (a core and wider tails) on a background that steps down across it, counted over "
+         "the whole fit window" + (" (the counts are too few to fix the tails: their share and shape are those of a "
+                                   "simulation of the setup, with a line of their own in the uncertainty budget)"
+                                   if result.fit.tails.get("simulated") else "")) + "; the random coincidences expected from the singles rates and the "
         "coincidence window.",
         f"{DOCS}nuclear-setup.html#automatic-analysis",
         {"fit_area": result.fit.area, "randoms": result.fit.randoms}, lambda fit_area, randoms: fit_area - randoms))
