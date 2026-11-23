@@ -105,17 +105,24 @@ def test_the_efficiency_and_correlation_are_those_of_the_events(allmond, det):
     assert unc < 0.006 and abs(mean) < 2.5 * unc, (det, mean, unc)
 
 
-@pytest.mark.parametrize("det", ["Ring2", "Ring3", None])
-def test_b_e2_comes_back_per_ring_and_for_both(allmond, det):
+@pytest.mark.parametrize("det, beyond", [("Ring2", 0.008), ("Ring3", 0.020), (None, 0.017)])
+def test_b_e2_comes_back_per_ring_and_for_both(allmond, det, beyond):
     """Within the Monte Carlo error alone. Over twelve samples −0.1 ± 0.4 %, +0.1 ± 0.2 % and −0.1 ± 0.2 %. The peak
     has the tails that the depth of the target gives it: with the area of a Gaussian alone it was −1.6, −3.2 and
-    −2.7 %."""
+    −2.7 %.
+
+    The tails are used: every sample shows them, and over the samples the peak has more than ``beyond`` of itself
+    outside ±3σ (a Gaussian has 0.27 %). One sample knows that share to 0.24, 0.16 and 0.13 % (the scatter of twelve:
+    the inner ring has few entries there), so the bound is on the mean, three of its errors under the 1.18, 2.30 and
+    1.87 % of these five with the segment centre of the Doppler correction as it is or as it is being corrected (1.24,
+    2.35, 1.88 % and 1.18, 2.30, 1.87 %)."""
     results = [a.run(every_particle(det)) for a in allmond[1]]
     dev, mc = mean_and_error([r.b_e2fm4 / B_UP - 1 for r in results], [r.monte_carlo for r in results])
     assert mc < 0.007, (det, mc)
     assert abs(dev) < 2.5 * mc, (det, 100 * dev, 100 * mc)
     assert all(r.gate == "all" and r.gate_warning is None and r.gate_overlap is None for r in results)
-    assert all(r.fit.tails is not None and r.fit.tails["inside"] < 0.99 for r in results)
+    assert all(r.fit.tails is not None for r in results)
+    assert np.mean([1 - r.fit.tails["inside"] for r in results]) > beyond
 
 
 def full_energy_counts(a, keep) -> tuple:
@@ -128,9 +135,9 @@ def full_energy_counts(a, keep) -> tuple:
 @pytest.mark.parametrize("det", ["Ring2", "Ring3", None])
 def test_the_fitted_area_is_the_full_energy_counts(allmond, det):
     """Round 3, fix 4. The peak has a flat top and tails that end: the share that two Gaussians have within ±3σ lost
-    0.2 to 0.3 % of it; the counts over the background of the whole window do not depend on that. Over 36 samples of
-    the rebuilt setup the area is +0.04, +0.01 and +0.01 % off with them summed (±0.06, 0.04, 0.04 % one by one),
-    before −0.17, −0.21 and −0.22 %."""
+    of it; the counts over the background of the whole window depend on it less. Over 36 samples of the rebuilt setup
+    the area is +0.10, +0.09 and +0.09 % off with them summed (±0.06, 0.04, 0.04 % one by one), before −0.11, −0.13
+    and −0.14 %. (What is left: the wider Gaussian reaches further than the tails do.)"""
     s = replace(every_particle(det), subtract_randoms=False)
     dev = []
     for a in allmond[1]:

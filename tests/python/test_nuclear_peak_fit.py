@@ -3,7 +3,7 @@ likelihood, bounds and failed fits, the tail shape of a simulated peak, and the 
 
 Before: least squares with the variances 1/max(counts, 1) and a Gaussian counted within ±3σ lost 1 to 4 % of a peak
 of 60 to 1400 counts with the tails of a thick target (one fit in a thousand ran away at 60 counts), the share of two
-Gaussians within ±3σ lost 0.2 to 0.3 % of one of a million, and a peak on a background gained several percent."""
+Gaussians within ±3σ was 0.2 % too large for one of a million, and a peak on a background gained several percent."""
 
 import json
 import math

@@ -431,7 +431,7 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
     crossed. The area is that of the fitted peak. At the maximum of the likelihood the model holds as many counts as
     the window does, so it is the counts of the whole window less the background under them. (Counting within ±3σ
     and dividing by the share of the model there takes that share from the model: a peak with a flat top, and tails
-    that end, is no sum of two Gaussians, and 0.2–0.3 % was lost on one.)
+    that end, is no sum of two Gaussians, and its share there was 0.2 % too large on one.)
 
     The fit is by maximum likelihood (:func:`_likeliest`), and the tails are kept when they fit better than a Gaussian
     on the same background by more than ``worth`` (:data:`TAILS_WORTH`); without them the result is ``fit``.
