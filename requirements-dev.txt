@@ -2,7 +2,6 @@
 maturin>=1.5,<2
 numpy>=1.21
 pytest
-pytest-xdist
 matplotlib
 nbformat
 nbclient

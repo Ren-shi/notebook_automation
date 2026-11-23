@@ -16,7 +16,7 @@ on:
       - "!benches/**"
       - "!installer/**"
       - "!third_party/**"
-      - "!.github/workflows/**"
+      - "!.github/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
