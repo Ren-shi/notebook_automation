@@ -184,7 +184,7 @@ python benches/python_overhead.py    # Python call overhead and CustomForce cost
 ```
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the tests plus `cargo fmt --check` and
-`cargo clippy --all-targets --features python -- -D warnings` on every push and pull request. Baseline benchmark
+`cargo clippy --all-targets --features python -- -D warnings` on every pull request and on main. Baseline benchmark
 numbers are in [`backlog/02-benchmarks.md`](backlog/02-benchmarks.md).
 
 **Adding a force or an integrator:** prototype it in Python with `ps.CustomForce`, then port it to Rust (implement

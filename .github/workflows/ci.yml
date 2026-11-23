@@ -1,7 +1,10 @@
 name: CI
 
+# A pull request runs once, on the code as it would be merged; pushes to main and version tags run everything.
 on:
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
 
 concurrency:
@@ -12,8 +15,30 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Whether a pull request touches the Rust code. Anywhere else the Rust job always runs.
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.find.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # a pull request is checked out merged into its base, which is the first parent
+      - id: find
+        run: |
+          rust=true
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            files=$(git diff --name-only HEAD^1 HEAD)
+            echo "$files"
+            grep -qE '^(src/|benches/|examples/|tests/[^/]+\.rs$|Cargo\.|\.cargo/|[^/]*\.toml$|rust-toolchain|\.github/workflows/ci\.yml$)' <<< "$files" || rust=false
+          fi
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+
   rust:
     name: Rust (fmt, clippy, tests)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,9 +55,15 @@ jobs:
       - name: Tests without the parallel feature
         run: cargo test --release --no-default-features --lib --test physics --test world_api --test force_reuse --test events --test checkpoint --test constraints --test adaptive --test forces --test integrators --test chaos --test em --test tree --test collisions --test md --test rigid --test fields --test quantum --test rng --test nuclear_events
 
+  # The test files are shared out over runners (scripts/ci_shard.py): the tests use every core themselves, so
+  # running several at once on one runner gains little and slows the ones with time limits.
   python:
-    name: Python (bindings, notebooks)
+    name: Python (${{ matrix.shard }} of 5)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -50,7 +81,10 @@ jobs:
         run: |
           source .venv/bin/activate
           maturin develop --release
+      # The slowest tests and what was skipped, and why, are listed at the end.
       - name: Binding tests
-        run: .venv/bin/pytest tests/python
+        run: .venv/bin/pytest $(python scripts/ci_shard.py ${{ matrix.shard }} 5) --durations=15 -rs
+      # Docs executes the notebooks of a pull request; this also looks for errors in their outputs.
       - name: Execute notebooks
+        if: github.event_name != 'pull_request' && matrix.shard == 1
         run: .venv/bin/python scripts/run_notebooks.py

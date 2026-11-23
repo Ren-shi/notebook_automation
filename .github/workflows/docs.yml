@@ -1,12 +1,23 @@
 name: Docs
 
 # Builds the documentation (Sphinx with the example notebooks executed, plus the Rust API from
-# cargo doc) on every push and pull request, failing on any warning. Version tags (and manual
-# runs) publish it to GitHub Pages.
+# cargo doc) on pushes to main and on every pull request that can change it, failing on any warning.
+# Version tags (and manual runs) publish it to GitHub Pages.
 
 on:
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
+    paths:
+      - "**"
+      - "!tests/python/**"
+      - "!tests/*.rs"
+      - "!benches/**"
+      - "!installer/**"
+      - "!third_party/**"
+      - "!.github/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 concurrency:
