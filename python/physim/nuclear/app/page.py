@@ -2329,8 +2329,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             if not lines:
                 return
             part(2, "Integrate the peaks", "The peak of each nucleus in its own corrected spectrum: a Gaussian on a "
-                 "straight line is fitted, and the area is the counts within ±3σ of its centre over that line "
-                 "(with its share beyond ±3σ, where the peak has tails), less the random coincidences expected there. The area over the efficiency and the angular "
+                 "straight line is fitted, and the area is the counts within ±3σ of its centre over that line. Where "
+                 "the peak has tails it is the area of the peak fitted with them (the tails of a simulation of the "
+                 "setup, if the counts are too few to fix them). The random coincidences expected within ±3σ are "
+                 "subtracted. The area over the efficiency and the angular "
                  "correlation is the number of γ rays emitted.")
             with ui.element("div").classes("w-full grid gap-3").style(
                     "grid-template-columns: repeat(auto-fit, minmax(360px, 1fr))"):
@@ -2356,7 +2358,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                              if found else "no: fitted at the transition energy"),
                             ("Fitted centre and width", f"{1e3 * fit['centroid']:.1f} keV, FWHM "
                                                         f"{1e3 * 2.3548 * fit['sigma']:.1f} keV"),
-                            ("Counts over the line, ±3σ", f"{fit['area']:,.1f} ± {fit['area_unc']:,.1f}"),
+                            ("Counts over the background", f"{fit['area']:,.1f} ± {fit['area_unc']:,.1f}"),
                             ("Random coincidences in the window", f"{ln['randoms']:,.1f}, subtracted"),
                             ("Area", f"{ln['area']:,.1f} ± {ln['area_unc']:,.1f} counts"),
                             ("Full-energy efficiency", f"{100 * ln['efficiency']:.3f} %"),

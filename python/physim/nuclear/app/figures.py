@@ -780,8 +780,8 @@ def figure_search(spectrum: dict, correction: str, height: int = 300):
 
 def figure_peak(line: dict, fit_half_width: float = 4.0, height: int = 300):
     """One integrated peak (an entry of an analysis result's ``lines``): the gated, corrected spectrum round the
-    transition, the random coincidences expected, the fitted peak on its background, and the ±3σ window whose
-    counts over the background are the area."""
+    transition, the random coincidences expected, the fitted peak on its background, and its ±3σ window
+    (whose counts over the background are the area of a peak without tails)."""
     from ..analysis import PeakFit
     from ..response import FWHM_PER_SIGMA
 

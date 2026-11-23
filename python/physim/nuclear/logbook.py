@@ -687,7 +687,7 @@ def level_schemes_html(planner) -> str:
 
 def analysis_png(result, dpi: int = 130) -> bytes:
     """The spectrum an analysis fitted, with the fit: the gated, Doppler-corrected counts, the Gaussian on its
-    line within the fit window, the ±3σ band the area is counted in, and the random coincidences expected.
+    line within the fit window (with its tails, where it has them), the ±3σ band, and the random coincidences expected.
     Empty for a result without its spectrum (one made before spectra were kept). Needs matplotlib."""
     sp = getattr(result, "spectrum", None)
     if not sp:
@@ -714,7 +714,7 @@ def analysis_png(result, dpi: int = 130) -> bytes:
         x = np.linspace(fit.centroid - half, fit.centroid + half, 400)
         ax.plot(1e3 * x, k * fit.curve(x), color="#D55E00", lw=1.3, label=f"fit: {fit.shape}")
         ax.axvspan(1e3 * (fit.centroid - 3 * fit.sigma), 1e3 * (fit.centroid + 3 * fit.sigma), color="#D55E00",
-                   alpha=0.10, lw=0, label="±3σ: the area")
+                   alpha=0.10, lw=0, label="±3σ: the area" if fit.tails is None else "±3σ")
     if sp.get("energy"):
         ax.axvline(1e3 * sp["energy"], color="#444444", lw=0.7, ls=":", label=f"{1e3 * sp['energy']:.1f} keV")
     ax.set_xlabel("corrected γ-ray energy (keV)", fontsize=8)
@@ -771,7 +771,7 @@ def search_png(result, dpi: int = 130) -> bytes:
 
 def line_png(line: dict, fit_half_width: float = 4.0, dpi: int = 130) -> bytes:
     """One integrated peak (an entry of an analysis result's ``lines``), as :func:`analysis_png` draws the first:
-    the gated, corrected counts, the fitted peak on its background, the ±3σ band of the area and the random
+    the gated, corrected counts, the fitted peak on its background, the ±3σ band and the random
     coincidences expected. Needs matplotlib."""
     from matplotlib.figure import Figure
 
@@ -797,7 +797,7 @@ def line_png(line: dict, fit_half_width: float = 4.0, dpi: int = 130) -> bytes:
         peak = PeakFit.of(fit)
         ax.plot(1e3 * x, k * peak.curve(x), color="#D55E00", lw=1.3, label=f"fit: {peak.shape}")
         ax.axvspan(1e3 * (centre - 3 * sigma), 1e3 * (centre + 3 * sigma), color="#D55E00", alpha=0.10, lw=0,
-                   label="±3σ: the area")
+                   label="±3σ: the area" if peak.tails is None else "±3σ")
     ax.axvline(line["energy_kev"], color="#444444", lw=0.7, ls=":", label=f"{line['energy_kev']:.1f} keV")
     ax.set_xlabel("corrected γ-ray energy (keV)", fontsize=8)
     ax.set_ylabel(f"counts per {edges[1] - edges[0]:.2g} keV in the run", fontsize=8)
@@ -857,7 +857,7 @@ def _lines_html(result, e) -> str:
              else "no: fitted at the transition energy"),
             ("Fitted centre and FWHM", lambda ln: f"{1e3 * ln['fit']['centroid']:.1f} keV, "
                                                   f"{1e3 * 2.3548 * ln['fit']['sigma']:.1f} keV"),
-            ("Counts over the line, ±3σ", lambda ln: f"{ln['fit']['area']:,.1f} ± {ln['fit']['area_unc']:,.1f}"),
+            ("Counts over the background", lambda ln: f"{ln['fit']['area']:,.1f} ± {ln['fit']['area_unc']:,.1f}"),
             ("Random coincidences in the window", lambda ln: f"{ln['randoms']:,.1f}"),
             ("Area", lambda ln: f"{ln['area']:,.1f} ± {ln['area_unc']:,.1f}"),
             ("Full-energy efficiency", lambda ln: f"{100 * ln['efficiency']:.3f}%"),
@@ -869,8 +869,10 @@ def _lines_html(result, e) -> str:
              else f"{ln['expected_per_particle']:.4g} (measured / expected {ln['ratio']:.3f})"),
             ("Also inside the window", lambda ln: ", ".join(ln.get("blends") or []))]
     parts = ["<h4>The peaks integrated</h4><p>The peak of each nucleus in its own corrected spectrum: a Gaussian "
-             "on a straight line is fitted, and the area is the counts within ±3σ of its centre over that line "
-             "(with its share beyond ±3σ, where the peak has tails), less the random coincidences expected there. The area over the efficiency and the angular "
+             "on a straight line is fitted, and the area is the counts within ±3σ of its centre over that line. "
+             "Where the peak has tails it is the area of the peak fitted with them (the tails of a simulation of the "
+             "setup, if the counts are too few to fix them). The random coincidences expected within ±3σ are "
+             "subtracted. The area over the efficiency and the angular "
              "correlation is the number of γ rays emitted.</p>"]
     for ln in lines[1:]:
         try:
