@@ -369,6 +369,9 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
   particle is in the backward ring, and those at 45° and 135° see 1.5 times. With a level scheme that the events
   follow, the table is for the `[reaction]` state in that scheme's solution (to all orders unless the setup
   says first order), with its feeding from above: the plan and the events then share one angular correlation.
+  Through a target that slows the beam the factors are averaged over the depth, each depth at its own beam energy
+  and weighted by the excitation cross section there, with the emitting nucleus slowed down on its way out; a thin
+  target keeps the kinematics of its middle.
 - **Not included:** excitation in two or more steps and reorientation (first order only, so the matrix elements
   enter through their size and not their sign), deorientation in vacuum, and lifetimes: every state decays in
   flight with the orientation it was given. The simulated events of a setup with a level scheme do have the

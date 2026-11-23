@@ -149,6 +149,19 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The particle–γ correlation table follows the beam through a thick target (Allmond 2014 verification):
+  `gamma.correlation_table` averages its kinematics and angular correlation over the depth as
+  `rates.depth_probability` averages the excitation, each depth at its own beam energy and weighted by the
+  Coulomb-excitation cross section there, with the emitting nucleus slowed down on its way out. It took the
+  kinematics of the middle of the target, with the emitter at its speed just after the reaction. A thin target (a
+  beam energy loss below 0.2 %) keeps its factors to 10⁻¹⁵, as do lifetime measurements and the other nucleus of
+  the collision; thicker targets move by up to 0.8 % (`coulex_ni58`, `coulex_ni62_pt194`) and 2.5 %
+  (`coulex_ni62_c_allmond`) in single crystals.
+  - ⁶²Ni on carbon (rings 14–28°, 28–44°, both; twelve samples of 400 000 events): efficiency × correlation against
+    the γ rays detected per excitation −0.3 ± 0.4, −0.2 ± 0.2, −0.1 ± 0.2 % (before −0.9, −1.1, −1.0 %); B(E2)
+    simulated then analysed +0.9 ± 0.4, −0.1 ± 0.2, +0.1 ± 0.2 % (before +1.5, +0.8, +0.9 %). The closure test
+    (`tests/python/test_nuclear_analysis_closure.py`) now allows the Monte Carlo error alone, not 1 % more, and
+    averages five samples of 400 000 events instead of taking one of 2 000 000 (3 GB of memory instead of 10).
 - The analysis reads B(E2) against the forward model (Allmond 2014 verification, fixes 1 analysis side, 2 and 7).
   Simulate-then-analyse on 62Ni at 111.6 MeV on 1.04 mg/cm² of carbon read B(E2) 35 % high: ⟨P⟩/B took P at
   the mid-target energy and at the CM angles of the elastic particles, while the forward model excites through

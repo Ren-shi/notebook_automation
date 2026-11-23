@@ -404,18 +404,39 @@ class DepthProbability:
         if self.thin:
             return self.nodes[0]
         e = min(max(float(energy), self.e_low), self.e_front)
-        if float(energy) < self.e_low and self.e_low > self.e_back:  # near or below the threshold
+        if self.closed(energy):
             return _NoExcitation()
         key = round(e, 9)
         kept = self._at.get(key)
         if kept is None:
-            es = self.energies
-            w = np.array([np.prod([(e - es[m]) / (es[j] - es[m]) for m in range(len(es)) if m != j])
-                          for j in range(len(es))])
             if len(self._at) > 256:
                 self._at.clear()
-            kept = self._at[key] = _InterpolatedProbability(self.nodes, w, e)
+            kept = self._at[key] = self.between(self.nodes, e)
         return kept
+
+    def closed(self, energy: float) -> bool:
+        """Whether beam energy ``energy`` (MeV) is near or below the excitation threshold, where :meth:`at` is 0."""
+        return not self.thin and float(energy) < self.e_low and self.e_low > self.e_back
+
+    def lagrange(self, energies) -> np.ndarray:
+        """Weights of the solutions at :attr:`energies` for the beam energies ``energies`` (MeV, clamped to the
+        layer's), one row per solution: a quantity solved at :attr:`energies` is interpolated between them by
+        their weighted sum (the polynomial through the Chebyshev points)."""
+        e = np.atleast_1d(np.asarray(energies, dtype=float))
+        if self.thin:
+            return np.ones((1, len(e)))
+        e = np.clip(e, self.e_low, self.e_front)
+        es = self.energies
+        return np.array([np.prod([(e - es[m]) / (es[j] - es[m]) for m in range(len(es)) if m != j], axis=0)
+                         for j in range(len(es))])
+
+    def between(self, nodes: list, energy: float):
+        """What ``nodes`` (objects with ``probability(theta_cm)``, one per energy of :attr:`energies`) give at beam
+        energy ``energy`` (MeV, inside the layer's), interpolated in ln P between them: an object with
+        ``probability(theta_cm)``. :meth:`at` is this for the whole excitation's probability."""
+        if self.thin:
+            return nodes[0]
+        return _InterpolatedProbability(nodes, self.lagrange(energy)[:, 0], float(energy))
 
     def _rutherford_weight(self, energies) -> tuple:
         """The elastic Rutherford cross section at a fixed CM angle at each beam energy, relative (∝ 1/E_cm²), and
