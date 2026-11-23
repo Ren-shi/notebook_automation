@@ -11,7 +11,7 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
-- A reproduced Coulomb-excitation experiment in the validation (Allmond 2014 verification, fix wave 3, S6): Allmond et al., PRC 90, 034309 (2014), ⁶²Ni at 111.6 MeV on carbon, as the example `coulex_ni62_c_allmond` and the check `reproduction_allmond2014` (`physim.nuclear.coulex_reproduction`, `scripts/reproduce_allmond2014.py`; the paper's numbers, the GOSIA references and the bands, fixed before the first run, in `tests/reference/nuclear/coulex/allmond2014.toml`). Five checks, all passing: the thickness gives the measured ⁵⁸Ni/⁶⁰Ni losses; σ_C/σ_R per ring within 0.2% of GOSIA with nuclear masses and DIP off and 1.3% of GOSIA as run; closure within 1% + 3 MC σ; the paper's per-ring B(E2), rebuilt through GOSIA's ratio(M) (the paper gives no yields), recovered 1.2–1.3% low, inside its 4.1%; the Q_s and feeding sensitivities within 0.25 percentage points of GOSIA's.
+- A reproduced Coulomb-excitation experiment in the validation (Allmond 2014 verification, fix wave 3, S6): Allmond et al., PRC 90, 034309 (2014), ⁶²Ni at 111.6 MeV on carbon, as the example `coulex_ni62_c_allmond` and the check `reproduction_allmond2014` (`physim.nuclear.coulex_reproduction`, `scripts/reproduce_allmond2014.py`; the paper's numbers, the GOSIA references and the bands in `tests/reference/nuclear/coulex/allmond2014.toml`). The thickness gives the measured ⁵⁸Ni/⁶⁰Ni losses; σ_C/σ_R per ring within 0.2% of GOSIA with nuclear masses and DIP off and 1.3% of GOSIA as run (outside its 1%: a known, explained miss, see below); closure; the paper's per-ring B(E2), rebuilt through GOSIA's ratio(M) (the paper gives no yields), recovered 1.2–1.3% low, inside its 4.1%; the Q_s and feeding sensitivities within 0.25 percentage points of GOSIA's.
 - Outside programs run out of sight (`physim.external`): GOSIA, SRIM's SR Module and TRIM, PACE4 and GEMINI++
   start on a hidden Windows desktop with no console window, so nothing shows or takes the focus, and in a job
   object that stops them and everything they started at the timeout or when physim exits. One runner holds this;
@@ -149,6 +149,21 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The Allmond 2014 reproduction says what it misses (Allmond 2014 verification, second fix plan, 9 and 13). The band
+  against GOSIA as run is the 1 % the verification's plan had fixed; the 2 % in the reference file had been written
+  after about 1.3 % was found, as had the 0.5 % against GOSIA with nuclear masses and DIP off (0.2 %), and the file says
+  so now. No band is raised. physim is +1.32 % (ring 2) and +1.16 % (ring 3) above GOSIA as run: the check
+  `reproduction_allmond2014` fails, as a known and explained miss (GOSIA's integer masses, E1 polarisation,
+  non-relativistic kinematics), worst 1.32 of its band (0.46 without the miss), and the tests assert its size
+  (±0.05 %). All orders are what is judged; first order is a second line. The closure is the mean of four seeds fixed
+  beforehand (1001–1004) instead of seed 11, to all orders, with its Monte Carlo and scatter errors, within a quarter of
+  the paper's statistical error + 3 Monte Carlo errors (it was 1 % + 3 of one seed): −0.25/−0.57/−0.48 % for
+  2.6/1.6/1.4 %. New: the closure sample as a stored run, and a run taken in the app, give B(E2) back ring by ring
+  (`coulex_reproduction.stored_run`). `Result.monte_carlo` against the scatter of 100 seeds: 1.08(9), 1.12(7), 1.06(7)
+  for ring 2, ring 3 and both, no significant difference, so it is unchanged.
+- The report's section on the Doppler correction says at what depth of the target it takes the reaction
+  (`gamma_events.reaction_depths`) instead of "the middle of the target", and that a segment stands for the mean
+  direction of its particles.
 - The analysis of a stored run averages the expected excitation over each segment (Allmond 2014 verification, second
   fix plan, 2). A run knows only the segment a particle hit, and ⟨P⟩/B was read at the segment's mean angle: 0.6 and
   1.2 % too large with one ring per detector (⁶²Ni on carbon, 14–28° and 28–44°). Now the cross sections of the

@@ -997,6 +997,25 @@ def multistep_html(m: dict) -> str:
     return "".join(parts)
 
 
+def _doppler_depth(experiment) -> str:
+    """At what depth of the target the Doppler correction takes the reaction (for the nucleus the ``[reaction]``
+    excites, :func:`~physim.nuclear.gamma_events.reaction_depths`), in words."""
+    from .gamma_events import reaction_depths
+    from .rates import stack
+
+    layers = stack(experiment)
+    depths = reaction_depths(experiment, layers)
+    if depths is None:
+        return ("It is the middle of the target: the "
+                "excitation hardly changes through this target, or this is a lifetime measurement.")
+    lo, hi = min(depths.values()), max(depths.values())
+    value = f"{lo:.3g}" if f"{lo:.3g}" == f"{hi:.3g}" else f"{lo:.3g} to {hi:.3g}"
+    return (f"It is one for each particle detector and kind of particle: the mean depth of the excitations that the "
+            f"setup's cross sections give there, here {value} of {layers[0].thickness:.3g} mg/cm². A thick target "
+            "excites mostly near its front, where the beam is fastest. (For the other nucleus of the collision it is "
+            "the middle of the target, where its excitation is taken.)")
+
+
 def doppler_html(planner, analyses: Optional[dict] = None, seen: Optional[dict] = None) -> str:
     """The Doppler correction of the experiment for the report: which nucleus is corrected for and why, the
     formula, where each quantity in it comes from, the geometry it uses, the speeds and shifts it deals with for
@@ -1015,20 +1034,23 @@ def doppler_html(planner, analyses: Optional[dict] = None, seen: Optional[dict] 
 
     emitter = "recoil" if exc.excite == "target" else "projectile"
     who = "the target nucleus, which recoils" if emitter == "recoil" else "the beam nucleus, which is scattered"
+    depth = _doppler_depth(exp)
     parts = [f"<p>{e(dv.correction_reason(exp, emitter))} The spectra and the analysis correct for {who}.</p>",
              '<p class="f">E₀ = E_measured × (1 − β cos α) / √(1 − β²)</p>',
              "<p>with β the emitter's speed in units of c and α the angle between its direction and the "
              "direction of the γ ray. Neither is measured directly; each event's are worked out from the "
              "segment of the particle detector and the crystal that fired:</p><ol>"
-             "<li><b>The particle's direction</b> is the centre of the ring and sector (or the two strips) it "
-             "hit, seen from the target at the position the analysis assumes.</li>"
-             "<li><b>The orbit.</b> Two-body kinematics at the beam energy in the middle of the target, with the "
+             "<li><b>The particle's direction</b> is the mean direction, in the ring and sector (or the two strips) "
+             "it hit, of the particles of its kind (scattered beam or recoil), seen from the target at the position "
+             "the analysis assumes.</li>"
+             f"<li><b>The depth</b> of the reaction. {e(depth)}</li>"
+             "<li><b>The orbit.</b> Two-body kinematics at the beam energy there, with the "
              f"excitation energy of {1e3 * exc.energy_mev:g} keV taken from the motion, gives the CM angle of "
              "the collision from that direction, whichever of the two nuclei was detected.</li>"
              "<li><b>The emitter.</b> The same kinematics gives the direction and the energy of the nucleus "
              "that emits: the detected particle itself, or its partner on the other side of the beam.</li>"
              "<li><b>Its speed β</b> is that energy less what the nucleus loses on its way out of the target "
-             "from the middle of it.</li>"
+             "from that depth.</li>"
              "<li><b>The γ ray's direction</b> is the centre of the crystal that fired. A crystal sees the "
              "emitter over its whole opening angle, so the corrected line keeps a width: the larger β and the "
              "crystal's opening angle, the wider.</li></ol>"]

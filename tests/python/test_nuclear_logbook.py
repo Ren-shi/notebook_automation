@@ -179,6 +179,15 @@ def test_the_report_is_one_document_with_every_section(experiment):
     assert png[:4] == b"\x89PNG" and "“CD rings 3-10”" in caption
 
 
+def test_the_report_says_at_what_depth_the_doppler_correction_takes_the_reaction():
+    """It said "the middle of the target"; the correction takes the mean depth of the excitations in a thick one."""
+    thick = logbook.doppler_html(Planner.example("coulex_ni62_c_allmond"))
+    assert "mean depth of the excitations" in thick and "0.276 to 0.28 of 1.04 mg/cm²" in thick
+    assert "in the middle of the target" not in thick
+    thin = logbook.doppler_html(Planner.example("coulex_ni62_pt194"))
+    assert "It is the middle of the target" in thin and "mean depth" not in thin
+
+
 def test_the_gamma_ray_spectra_reach_the_top_of_the_level_scheme(tmp_path):
     """They stopped at 1.3 × the transition energy (1525 keV for 62Ni's 1173 keV), short of the 2302 keV γ ray of
     its second 2+ state."""

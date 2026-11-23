@@ -1,8 +1,19 @@
 # Allmond et al., PRC 90, 034309 (2014): 62Ni Coulomb excitation on natural carbon, the reproduced experiment of
 # physim.nuclear.coulex_reproduction (scripts/reproduce_allmond2014.py; the check reproduction_allmond2014).
 # The setup is the example coulex_ni62_c_allmond. Written by hand on 2026-11-23 (Claude Code) from the paper card,
-# the outside tools' report and the GOSIA reruns of the Allmond 2014 verification (Round 2 and fix wave 2); the
-# bands below were fixed before the reproduction was first run.
+# the outside tools' report and the GOSIA reruns of the Allmond 2014 verification (Round 2 and fix wave 2).
+#
+# Not every band below was fixed without knowing its answer. Where that is so:
+# - physim against GOSIA: the verification's plan (2026-11-22) fixed 1 % per ring before the reproduction existed.
+#   This file then said 2 % for GOSIA as run and 0.5 % for GOSIA with nuclear masses and DIP off, and that all bands
+#   were fixed before the run. Those two were not: they were written after fix wave 2 had found about 1.3 % and
+#   0.2 %. GOSIA as run is judged by the plan's 1 % again (2026-11-23), misses it, and is reported as a miss. The
+#   0.5 % is kept, tighter than the plan's 1 %, but it is not a blind test.
+# - closure and stored run: band and seeds were written down, and committed, before those seeds were run; closures
+#   of other seeds were known then (first order: within 0.4 % of the input; all orders, three seeds: -1.0(8), -0.1(5)
+#   and -0.5(6) %). The band comes from the paper's statistical errors.
+# - paper: the plan's 4.1 %. thickness: the measured errors. sensitivity: 0.5 pp, a choice of the session that wrote
+#   the reproduction, after fix wave 1 had found the Q_s effect of the app.
 
 [provenance]
 tool = "GOSIA 20110524.14 (tools/gosia/gosia.exe, gfortran 16.2.0 build); SRIM 2013 SR Module; LISE++ ATIMA 1.4"
@@ -137,25 +148,43 @@ q_plus = 0.019081155
 q_minus = -0.018821476
 feeding = 0.007686475
 
-# -- the bands, fixed before the reproduction was run -----------------------------------------------------------------
+# -- the bands (the header says which were fixed without knowing the answer) ------------------------------------------
 
 [bands]
 thickness = "each loss within its error: the paper's 0.8 MeV for 58Ni and 60Ni; 0.8 MeV around the assumed 42.4 MeV for 62Ni (the spread the measured errors allow; SRIM and LISE++ agree to 0.03 MeV)"
 
+# All orders (the coupled equations of the 0+, 2+ scheme) is what is judged, here and in every check; first order is
+# shown beside it as a second line and not judged.
 [bands.gosia]
+as_run_rel = 0.01
 matched_rel = 0.005
-as_run_rel = 0.02
-why = "Against GOSIA with the same physics (nuclear masses, no E1 polarisation, the app's own input): 0.5 %, the numerical agreement two codes solving the same coupled equations through the same target should reach (found 0.2 % by fix wave 2). Against GOSIA as run: 2 %, because GOSIA's integer mass numbers (A = 62 and 12 for 61.913 and 11.997 u) shift the energy scale and P, steep in the energy here, by about -0.6 %, and its E1 polarisation (DIP 3.8, not modelled in physim) lowers the ratio by about 0.5 %; with the different inputs (SRIM stopping and thickness against physim's) and the outside tools' independent input, about 1.3 % is expected."
+why = "GOSIA as run: 1 % per ring, the band the plan fixed before the reproduction was run. It is missed, by a known and explained amount: see known_miss. (For some time this file had 2 % here, written after about 1.3 % had been found.) GOSIA with the same physics (nuclear masses, no E1 polarisation, the app's own input): 0.5 %, the agreement two codes that solve the same coupled equations through the same target should reach; also written after the answer, about 0.2 %, was known, so not a blind test."
+
+# The misses of as_run_rel, as found: physim above GOSIA. A miss is the known one while it stays within size_abs of
+# these numbers; anything else is a new disagreement.
+[bands.gosia.known_miss]
+ring2 = 0.0132
+ring3 = 0.0116
+size_abs = 0.0005
+why = "GOSIA as run takes integer mass numbers (A = 62 and 12 for 61.913 and 11.997 u; about 0.6 %) and E1 polarisation (DIP 3.8, not modelled in physim; about 0.5 %); its own runs with nuclear masses and DIP off are higher by 1.1 % (ring 2) and 1.0 % (ring 3). The remaining +0.20 % and +0.12 % is GOSIA's non-relativistic kinematics (0.24 %, worked out for the verification), which leaves about 0.04 % and 0.12 % without an explanation."
 
 [bands.closure]
-rel = 0.01
+seeds = [1001, 1002, 1003, 1004]
+events = 400000
+share_of_paper_stat = 0.25
 mc_sigmas = 3
-why = "The known residual of the analysis (0.3 % from <P>/B against the events' own excited share, 0.3-0.6 % from gamma.correlation_table taking the kinematics of the middle of the target; up to +1.9 % found in ring 2 on one seed), plus three Monte Carlo standard deviations of the run (Result.monte_carlo)."
+why = "The mean of B(E2) over its input, over the seeds, within a quarter of the paper's statistical error of B(E2) for that row (0.61 % ring 2, 0.40 % ring 3, 0.33 % both: a bias of a quarter of the error would add 3 % to it) plus three Monte Carlo errors of the mean. Seeds: the first four of a block no earlier work had used, chosen before they were run; 400 000 events is the sample in which the peak's tails are fitted (a smaller one in places keeps a Gaussian). Events and analysis to all orders; what the same analysis reads in first order is the second line."
+
+[bands.stored]
+hours = 200
+draw_seed = 1
+probability_rel = 0.001
+why = "The first closure sample as a stored run has it (segments instead of angles, the stored columns and their precision, each gamma ray counting once), analysed as the app analyses a run. The excitations expected per particle within 0.1 % (the plan's threshold for the segment averages, fixed before they were written) plus three errors of the sample's share of the segments, of the rates' integral over the ring; B(E2) within a quarter of the paper's statistical error plus three times the statistical and Monte Carlo errors together."
 
 [bands.paper]
 rel = 0.041
 physim_scan_me_eb = [0.28, 0.29734, 0.32]
-why = "The paper's total uncertainty on B(E2) (0.0037 of 0.0906 e2b2, 4.1 %) applied to each ring's B(E2) = M^2; the per-ring statistical errors (2.4 % and 1.6 % on M^2) are reported as pulls, not judged, because GOSIA as run and physim differ by about 1.3 % by construction (the integer masses and E1 polarisation above). physim's ratio(M) is fitted to all-order runs at physim_scan_me_eb, in the same form as GOSIA's."
+why = "The paper's total uncertainty on B(E2) (0.0037 of 0.0906 e2b2, 4.1 %) applied to each ring's B(E2) = M^2; the per-ring statistical errors (2.4 % and 1.6 % on M^2) are reported as pulls, not judged, because GOSIA as run and physim differ by about 1.3 % (the known miss above), which is in them. physim's ratio(M) is fitted to all-order runs at physim_scan_me_eb, in the same form as GOSIA's."
 
 [bands.sensitivity]
 pp = 0.5

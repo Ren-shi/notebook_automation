@@ -38,11 +38,14 @@ needs_reference = pytest.mark.skipif(not REFERENCE.is_dir(), reason="reference f
 #: along the beam only), so its χ² against the measured line is above AhKin's band. The ¹⁴³Sm DSAM reproduction
 #: (Rajbanshi et al. 2018): the spectra simulated with physim's stopping and fitted with SRIM's, as the paper did,
 #: give lifetimes 3–27% above the paper's (physim's stopping slows ¹⁴³Sm in Au faster: its range is 19% shorter);
-#: seven of the nine levels stay within the tolerance, the two upper limits come out above their limits.
+#: seven of the nine levels stay within the tolerance, the two upper limits come out above their limits. The Allmond
+#: 2014 Coulex reproduction: one of its bands (1 % of GOSIA as run) is missed by +1.32 % and +1.16 %, which GOSIA's
+#: integer masses, its E1 polarisation and its non-relativistic kinematics explain to about 0.1 %; everything else in
+#: it is inside its band (test_nuclear_allmond2014.py asserts both, with the size of the miss).
 KNOWN_FAILURES = {"stopping_compounds_vs_srim", "spectra_vs_trim", "stopping_hydrogen_vs_data", "fusion_vs_pace4",
                   "evaporation_channels_vs_pace4", "evaporation_spectra_vs_pace4", "evaporation_channels_vs_gemini",
                   "evaporation_spectra_vs_gemini", "dsam_lineshape_vs_apcad", "dsam_lineshape_vs_ahkin",
-                  "dsam_sm143_reproduction"}
+                  "dsam_sm143_reproduction", "reproduction_allmond2014"}
 
 #: Lifetime checks on simulated runs (wave 3C) that read files of tests/reference/nuclear/lifetimes/ (the published
 #: values, the simulated areas NaPyTau analysed, SRIM's stopping).
@@ -391,6 +394,18 @@ def test_sm143_reproduction_disagrees_as_documented():
     assert len(values) == 7 and len(limits) == 2
     assert all(r["levels"][k]["passed"] for k in values)
     assert not any(r["levels"][k]["passed"] for k in limits)
+
+
+@needs_reference
+def test_the_allmond_reproduction_fails_by_its_known_miss():
+    """The check is shown as not passed, with the worst deviation in units of its band and what it is without the
+    miss (its numbers: test_nuclear_allmond2014.py)."""
+    (r,) = validation.run(reference=REFERENCE, names=["reproduction_allmond2014"])
+    assert r.status == "fail" and r.worst == pytest.approx(1.32, abs=0.05), r.detail
+    assert r.detail.startswith("NOT PASSED: a known, explained miss") and "every other number inside its band" in r.detail
+    assert f"worst {r.worst:.2f} of its band" in r.detail and "without the known miss" in r.detail
+    line = next(x for x in validation.report([r]).splitlines() if "Allmond" in x)
+    assert "❌ NOT PASSED" in line
 
 
 def test_lifetime_pictures():
