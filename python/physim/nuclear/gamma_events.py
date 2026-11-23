@@ -493,7 +493,7 @@ def _distribution(a_kq: dict, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
     x, sn = np.cos(theta), np.sin(theta)
     phases: dict = {}
     legendre: dict = {}
-    total = np.zeros(len(theta))
+    total = np.zeros(np.shape(theta))
     for (k, q), v in a_kq.items():
         m = abs(q)
         if m not in phases:

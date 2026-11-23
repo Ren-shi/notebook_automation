@@ -17,10 +17,11 @@ from physim.nuclear.analysis import GATE_OVERLAP_WARN, Analysis, Settings
 from physim.nuclear.gamma_events import simulate_gammas
 
 B_UP = 884.105  # e²fm⁴, ENSDF
-#: Events of the weighted sample. With 2 000 000 the Monte Carlo uncertainty of B(E2) (Result.monte_carlo, the
-#: scatter between seeds) is about 0.6 % for the inner ring, 0.35 % for the outer one and 0.3 % for both; the
-#: excited share of the particles in the rings is known to 0.35 %, 0.22 % and 0.18 %.
-EVENTS = 2_000_000
+#: Events and seeds of the weighted samples. They are averaged: five samples of 400 000 know what one of 2 000 000
+#: does (B(E2) to about 0.6 % in the inner ring, 0.35 % in the outer one and 0.3 % in both; the excited share of the
+#: particles to 0.35 %, 0.22 % and 0.18 %) and need 3 GB at the most, where that one needs about 10 GB.
+EVENTS = 400_000
+SEEDS = (21, 22, 23, 24, 25)
 
 
 def allmond_setup() -> Experiment:
@@ -49,48 +50,73 @@ def allmond_setup() -> Experiment:
 @pytest.fixture(scope="module")
 def allmond():
     exp = allmond_setup()
-    return exp, Analysis(exp, simulate_gammas(exp, EVENTS, seed=11))
+    return exp, [Analysis(exp, simulate_gammas(exp, EVENTS, seed=seed)) for seed in SEEDS]
 
 
-def test_the_expected_excitations_per_particle_are_those_of_the_events(allmond):
+def mean_and_error(values, errors) -> tuple:
+    """The mean of the samples' values, and its error from theirs."""
+    return float(np.mean(values)), math.sqrt(float(np.sum(np.square(errors)))) / len(errors)
+
+
+def excited_rows(a) -> np.ndarray:
+    return np.isin(a.events.columns["channel"], [i for i, lab in enumerate(a.events.channels) if "excited" in lab])
+
+
+def every_particle(det) -> Settings:
+    return Settings(detectors=None if det is None else [det], particle_gate="all")
+
+
+@pytest.mark.parametrize("det", ["Ring2", "Ring3", None])
+def test_the_expected_excitations_per_particle_are_those_of_the_events(allmond, det):
     """⟨P⟩/B comes from the forward cross sections (through the depth, with the excited recoil's kinematics): it
-    is the share of the particles in the rings that the simulation excited, per unit B(E2), within the sample's
+    is the share of the particles in the rings that the simulation excited, per unit B(E2), within the samples'
     own uncertainty."""
-    exp, a = allmond
-    ev = a.events
-    c = ev.columns
-    excited = np.isin(c["channel"], [i for i, lab in enumerate(ev.channels) if "excited" in lab])
-    for det in ("Ring2", "Ring3", None):
-        s = Settings(detectors=None if det is None else [det], particle_gate="all")
-        rows = a._elastic_rows(s)
-        w = c["weight"]
-        share = w[rows & excited].sum() / w[rows].sum() / B_UP
-        unc = math.sqrt(float((w[rows & excited] ** 2).sum())) / float(w[rows & excited].sum())
-        p = a._mean_probability(s)
-        assert p == pytest.approx(share, rel=max(3 * unc, 0.004)), (det, p, share, unc)
+    s = every_particle(det)
+    dev, err = [], []
+    for a in allmond[1]:
+        rows, w = a._elastic_rows(s), a.events.columns["weight"]
+        hit = rows & excited_rows(a)
+        dev.append(a._mean_probability(s) / (w[hit].sum() / w[rows].sum() / B_UP) - 1)
+        err.append(math.sqrt(float((w[hit] ** 2).sum())) / float(w[hit].sum()))
+    mean, unc = mean_and_error(dev, err)
+    assert abs(mean) < max(3 * unc, 0.004), (det, mean, unc)
 
 
-def test_b_e2_comes_back_per_ring_and_for_both(allmond):
-    exp, a = allmond
-    for det in ("Ring2", "Ring3", None):
-        r = a.run(Settings(detectors=None if det is None else [det], particle_gate="all"))
-        dev = r.b_e2fm4 / B_UP - 1
-        assert r.monte_carlo < 0.007, (det, r.monte_carlo)
-        # A residual of about +0.5 to +1 % remains, not from the Monte Carlo: seed 11 with 2 000 000 events gives
-        # +0.9/+0.0/+0.2 % (MC 0.6/0.35/0.3 %), seed 7 with 4 000 000 gives +1.9/+0.6/+0.9 % (MC 0.4/0.25/0.2 %).
-        # Of it, about 0.3 % is ⟨P⟩/B against the events' own excited share (the test above), and 0.3 to 0.6 % the
-        # efficiency × angular-correlation factor against the γ rays the simulation detects per excitation (the
-        # correlation table takes the kinematics of the middle of the target: gamma.correlation_table). So: 1 %
-        # plus three Monte Carlo standard deviations.
-        assert abs(dev) < 0.01 + 3 * r.monte_carlo, (det, 100 * dev, 100 * r.monte_carlo)
-        assert r.gate == "all" and r.gate_warning is None and r.gate_overlap is None
+@pytest.mark.parametrize("det", ["Ring2", "Ring3", None])
+def test_the_efficiency_and_correlation_are_those_of_the_events(allmond, det):
+    """The efficiency × angular-correlation factor is the full-energy γ rays the simulation detects per excitation.
+    Over twelve samples it is −0.3 ± 0.4 %, −0.2 ± 0.2 % and −0.1 ± 0.2 % off; with the correlation table at the
+    middle of the target it was −0.9, −1.1 and −1.0 % off."""
+    s = every_particle(det)
+    dev, err = [], []
+    for a in allmond[1]:
+        g, w = a.gammas, a.events.columns["weight"]
+        keep, _ = a._gate(s)
+        eff, corr = a._efficiency_and_correlation(keep)
+        full = keep & g["counted"] & (np.abs(g["deposited"] - g["energy_lab"]) < 1e-6)
+        seen = g["weight"][full]
+        dev.append(eff * corr / (seen.sum() / w[a._elastic_rows(s) & excited_rows(a)].sum()) - 1)
+        err.append(math.sqrt(float((seen**2).sum())) / float(seen.sum()))
+    mean, unc = mean_and_error(dev, err)
+    assert unc < 0.006 and abs(mean) < 2.5 * unc, (det, mean, unc)
+
+
+@pytest.mark.parametrize("det", ["Ring2", "Ring3", None])
+def test_b_e2_comes_back_per_ring_and_for_both(allmond, det):
+    """Within the Monte Carlo error alone. Over twelve samples +0.9 ± 0.4 %, −0.1 ± 0.2 % and +0.1 ± 0.2 %; with
+    the correlation table at the middle of the target +1.5, +0.8 and +0.9 %."""
+    results = [a.run(every_particle(det)) for a in allmond[1]]
+    dev, mc = mean_and_error([r.b_e2fm4 / B_UP - 1 for r in results], [r.monte_carlo for r in results])
+    assert mc < 0.007, (det, mc)
+    assert abs(dev) < 2.5 * mc, (det, 100 * dev, 100 * mc)
+    assert all(r.gate == "all" and r.gate_warning is None and r.gate_overlap is None for r in results)
 
 
 def test_the_inelastic_gate_warns_when_the_groups_overlap(allmond):
     """Through 38 % energy loss the elastic and inelastic carbon groups overlap: the inelastic gate keeps a
     fraction of the excitations from the depths it happens to pick out, and the result says so and points to
     the gate "all". It does not switch by itself."""
-    exp, a = allmond
+    a = allmond[1][0]
     r = a.run(Settings(particle_gate="inelastic"))
     assert r.gate == "inelastic" and r.settings["particle_gate"] == "inelastic"
     assert r.gate_overlap > GATE_OVERLAP_WARN

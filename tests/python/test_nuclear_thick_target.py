@@ -14,16 +14,22 @@ steep in the energy here, moves ~0.6 %) and its E1 polarisation (DIP 3.8, −0.5
 With the nuclear masses and DIP off GOSIA and the app agree within 0.2 %.
 """
 
+import math
+
 import numpy as np
 import pytest
 
-from physim.nuclear import Experiment
+from physim.nuclear import Experiment, data
 from physim.nuclear import rates as rates_module
 from physim.nuclear.coulex import Coulex
+from physim.nuclear.detectors import Array, angles
 from physim.nuclear.events import generator_config, simulate
-from physim.nuclear.gamma import cascade_excitation, has_static_moment
+from physim.nuclear.gamma import (_disc_directions, cascade_excitation, correlation_table, depth_orientation,
+                                  excitation_of, has_static_moment)
+from physim.nuclear.kinematics import TwoBody
 from physim.nuclear.levels import quadrupole_factor
-from physim.nuclear.rates import Rates, beam_energy_at, channels, depth_probability, stack
+from physim.nuclear.rates import (Rates, beam_energy_at, beam_ion, channels, depth_probability, exit_energy,
+                                  stack)
 from physim.nuclear.rutherford import Rutherford
 
 RINGS = ("Ring2", "Ring3")
@@ -425,3 +431,115 @@ def test_gamma_events_follow_the_single_transition_scheme():
     g = simulate_gammas(exp, events=40_000, seed=2)
     assert len(g.columns["energy0"]) > 0
     np.testing.assert_allclose(np.unique(np.round(g.columns["energy0"], 4)), [1.17289], atol=2e-4)
+
+
+# -- the particle–γ angular correlation through the depth ------------------------------------------------------------
+
+
+def reference_factors(exp, order: int = 4, crystal_points: int = 3) -> list:
+    """The factors of :func:`physim.nuclear.gamma.correlation_table` at the middle of the target, one orbit at a
+    time, with the emitter at its speed just after the reaction."""
+    ex = excitation_of(exp)
+    e0, excite = exp.excitation.energy_mev, "recoil" if exp.excitation.excite == "target" else "ejectile"
+    tb = TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=e0, excite=excite)
+    mass = data.nuclide(ex.scheme.nuclide).nuclear_mass_mev + e0
+    cx = ex.paths[1][0][2]
+    faces = []
+    for gd in exp.gamma_detectors:
+        for _, centre, radius in gd.elements():
+            d = math.sqrt(sum(c * c for c in centre))
+            faces.append(_disc_directions(tuple(c / d for c in centre), math.degrees(math.atan2(radius, d)),
+                                          crystal_points))
+    dirs_all, out = np.concatenate(faces), []
+    for g in Array.from_experiment(exp):
+        dirs, dom = g.directions(None, order)
+        theta, phi = angles(dirs)
+        sums, weight = np.zeros(len(faces)), 0.0
+        for particle in ("ejectile", "recoil"):
+            for point in tb.at_lab(theta, particle):
+                if point is None:
+                    continue
+                th_p, jac = np.asarray(point.theta_cm), np.nan_to_num(np.asarray(point.jacobian))
+                for k in np.flatnonzero(~np.isnan(th_p) & (jac > 0)):
+                    th = float(th_p[k] if particle == "ejectile" else 180.0 - th_p[k])
+                    ph = float(phi[k] if particle == "ejectile" else phi[k] + 180.0)
+                    if not 0 < th <= 180:
+                        continue
+                    state = ex.near(th)
+                    w = state.direct[1] * float(cx.rutherford_cm(th)) * jac[k] * dom[k]
+                    em = tb.recoil_for(th) if excite == "recoil" else tb.at_cm(th)
+                    t, f = math.radians(em.theta_lab), math.radians(ph + (180.0 if excite == "recoil" else 0.0))
+                    beta = math.sqrt(1 - 1 / (1 + float(em.energy) / mass) ** 2)
+                    v = beta * np.array([math.sin(t) * math.cos(f), math.sin(t) * math.sin(f), math.cos(t)])
+                    seen = state.w_lab(1, 0, dirs_all, ph, v).reshape(len(faces), -1).mean(axis=1)
+                    sums += w * seen * 4 * math.pi / state.gamma_yield(1, 0)
+                    weight += w
+        out += list(sums / weight)
+    return out
+
+
+@pytest.mark.parametrize("name", ["coulex_ni58", "coulex_ni62_c_allmond"])
+def test_a_thin_target_keeps_the_correlation_of_its_middle(name):
+    d = Experiment.example(name).to_dict()
+    d["target"]["thickness"] = "0.001 mg/cm2"
+    d["detectors"], d["gamma_detectors"] = d["detectors"][:2], d["gamma_detectors"][:3]
+    exp = Experiment.from_dict(d)
+    assert depth_orientation(exp).thin
+    table = [r["factor"] for r in correlation_table(exp, order=4, crystal_points=3)]
+    assert table == pytest.approx(reference_factors(exp), rel=1e-10)
+
+
+def test_the_correlation_goes_smoothly_from_thin_to_thick():
+    """Just past the limit of a thin target the depth average gives what the middle gives."""
+    def factors(mg):
+        d = Experiment.example("coulex_ni62_c_allmond").to_dict()
+        d["target"]["thickness"] = f"{mg} mg/cm2"
+        exp = Experiment.from_dict(d)
+        return depth_orientation(exp).thin, np.array([r["detector_factor"] for r in correlation_table(exp, order=4)])
+
+    (thin, a), (thick, b) = factors(0.004), factors(0.006)
+    assert thin and not thick
+    assert np.max(np.abs(b / a - 1)) < 1e-3
+
+
+def test_the_correlation_is_that_of_the_events_through_the_depth():
+    """The table is the mean of 4π W over the excited events, each with the two-body kinematics and the orientation
+    of its own beam energy and the emitter slowed down on its way out. With the kinematics of the middle of the
+    target it was 0.5 % (inner ring) and 0.9 % (outer ring) lower."""
+    exp = Experiment.example("coulex_ni62_c_allmond")
+    ev = simulate(exp, 300_000, seed=3)
+    c = ev.columns
+    layers = stack(exp)
+    e0, emitter = exp.excitation.energy_mev, beam_ion(exp)
+    mass = data.nuclide(emitter).nuclear_mass_mev + e0
+    target = data.nuclide(max(layers[0].nuclides.items(), key=lambda kv: kv[1])[0]).name
+    faces = []
+    for gd in exp.gamma_detectors:
+        for _, centre, radius in gd.elements():
+            d = math.sqrt(sum(x * x for x in centre))
+            faces.append(_disc_directions(tuple(x / d for x in centre), math.degrees(math.atan2(radius, d)), 3))
+    dirs_all = np.concatenate(faces)
+    table: dict = {}
+    for r in correlation_table(exp):
+        table.setdefault(r["particle_detector"], []).append(r["factor"])
+    excited = np.isin(c["channel"], [i for i, lab in enumerate(ev.channels) if "excited" in lab]) & c["counted"]
+    rng = np.random.default_rng(1)
+    for d, det in enumerate(ev.detectors):
+        rows = np.flatnonzero(excited & (c["detector"] == d))
+        w = c["weight"][rows]
+        rows = rng.choice(rows, size=4000, p=w / w.sum())
+        assert c["recoil"][rows].all()
+        total = 0.0
+        points = [TwoBody(emitter, target, float(c["beam_energy"][i]), excitation_mev=e0,
+                          excite="ejectile").at_cm(float(c["theta_cm"][i])) for i in rows]
+        t = np.radians([float(p.theta_lab) for p in points])
+        f = np.radians(c["phi"][rows] + 180.0)
+        u = np.c_[np.sin(t) * np.cos(f), np.sin(t) * np.sin(f), np.cos(t)]
+        e_out = exit_energy(exp, layers, 0, c["depth"][rows], emitter, np.array([float(p.energy) for p in points]), u)
+        beta = np.sqrt(1 - 1 / (1 + e_out / mass) ** 2)
+        for k, i in enumerate(rows):
+            state = excitation_of(exp, energy=4.0 * round(float(c["beam_energy"][i]) / 4)).near(float(c["theta_cm"][i]))
+            total += (float(state.w_lab(1, 0, dirs_all, float(c["phi"][i]) + 180.0, beta[k] * u[k]).mean())
+                      * 4 * math.pi / state.gamma_yield(1, 0))
+        # The statistical error of the mean of 4000 events is 0.1 %.
+        assert np.mean(table[det]) == pytest.approx(total / len(rows), rel=4e-3), det
