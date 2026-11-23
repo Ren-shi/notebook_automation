@@ -38,6 +38,9 @@ BOARD_THICKNESS_MM = 1.6
 BEAM_RADIUS_MM = 1.0
 #: Closest a dragged detector may come to the target, mm.
 MIN_DISTANCE_MM = 2.0
+#: Solids that reach into each other by less than this only touch, mm: half the 0.1 mm to which a dragged detector's
+#: place is rounded. (Less for a piece so thin that this would be more than a quarter of its smallest size.)
+TOUCH_MM = 0.05
 
 
 def _q(x) -> Optional[Quantity]:
@@ -91,23 +94,58 @@ class Part:
         return math.hypot(self.cx, self.cy) + far
 
     def edges(self) -> np.ndarray:
-        """Line segments along the piece's edges, as an array (n, 2, 3) in local coordinates."""
+        """Line segments along the piece's edges, as an array (n, 2, 3) in local coordinates, drawn in from the
+        surface by ``TOUCH_MM`` (and, between the points along a circle, by up to half as much again)."""
+        widths = (self.w, self.h) if self.kind == "box" else (self.r_out - self.r_in,)
+        dz = min(TOUCH_MM, self.depth / 4)
+        d = min(TOUCH_MM, min(widths) / 4)
+        z_planes = (self.z0 - dz, self.z0 - self.depth + dz)
         if self.kind == "box":
-            a, b = self.w / 2, self.h / 2
+            a, b = self.w / 2 - d, self.h / 2 - d
             c = np.array([[-a, -b], [a, -b], [a, b], [-a, b]]) + [self.cx, self.cy]
-            loops = [np.c_[c, np.full(4, z)] for z in (self.z0, self.z0 - self.depth)]
+            loops = [np.c_[c, np.full(4, z)] for z in z_planes]
         else:
-            t = np.linspace(0.0, 2 * math.pi, 49)[:-1]
             loops = []
-            for r in ([self.r_out, self.r_in] if self.r_in > 0 else [self.r_out]):
-                for z in (self.z0, self.z0 - self.depth):
-                    loops.append(np.c_[self.cx + r * np.cos(t), self.cy + r * np.sin(t), np.full(len(t), z)])
+            for r, hole in ([(self.r_out - d, False), (self.r_in + d, True)] if self.r_in > 0
+                            else [(self.r_out - d, False)]):
+                # Chords depart from the circle by r (1 − cos(π/n)) ≈ r (π/n)²/2, always to the piece's inside.
+                n = int(np.clip(math.ceil(math.pi * math.sqrt(r / d)), 24, 720)) if d > 0 else 24
+                if hole:
+                    r /= math.cos(math.pi / n)
+                t = 2 * math.pi * np.arange(n) / n
+                loops += [np.c_[self.cx + r * np.cos(t), self.cy + r * np.sin(t), np.full(n, z)] for z in z_planes]
         segs = [np.stack([lp, np.roll(lp, -1, axis=0)], axis=1) for lp in loops]
-        # The edges along the axis join the front loop to the back one (every sixth point of a circle).
-        step = 1 if self.kind == "box" else 6
+        # The edges along the axis join the front loop to the back one.
         for front, back in zip(loops[0::2], loops[1::2]):
-            segs.append(np.stack([front[::step], back[::step]], axis=1))
+            segs.append(np.stack([front, back], axis=1))
         return np.concatenate(segs)
+
+    def meets(self, p0: np.ndarray, p1: np.ndarray) -> bool:
+        """Whether any of the line segments from ``p0`` to ``p1`` (local coordinates) has a point in the piece."""
+        run = p1 - p0
+        t0, t1 = np.zeros(len(p0)), np.ones(len(p0))
+        slabs = [(2, self.z0 - self.depth, self.z0)]
+        if self.kind == "box":
+            slabs += [(0, self.cx - self.w / 2, self.cx + self.w / 2), (1, self.cy - self.h / 2, self.cy + self.h / 2)]
+        # The stretch of each segment between each pair of opposite faces ...
+        for k, lo, hi in slabs:
+            x, dx = p0[:, k], run[:, k]
+            flat = np.abs(dx) < 1e-12
+            safe = np.where(flat, 1.0, dx)
+            ta, tb = (lo - x) / safe, (hi - x) / safe
+            within = (x >= lo) & (x <= hi)
+            t0 = np.maximum(t0, np.where(flat, 0.0, np.minimum(ta, tb)))
+            t1 = np.minimum(t1, np.where(flat, np.where(within, 1.0, -1.0), np.maximum(ta, tb)))
+        ok = t1 >= t0
+        if self.kind == "box" or not ok.any():
+            return bool(ok.any())
+        # ... and, for a ring, the range of distances from its axis along that stretch.
+        q, v = p0[ok, :2] - [self.cx, self.cy], run[ok, :2]
+        t0, t1 = t0[ok], t1[ok]
+        vv = np.einsum("ij,ij->i", v, v)
+        nearest = np.clip(-np.einsum("ij,ij->i", q, v) / np.where(vv > 0, vv, 1.0), t0, t1)
+        near, first, last = (np.hypot(*(q + t[:, None] * v).T) for t in (nearest, t0, t1))
+        return bool(((near <= self.r_out) & (np.maximum(first, last) >= self.r_in)).any())
 
 
 @dataclass
@@ -166,8 +204,14 @@ class Solid:
                     return True
         return False
 
+    def meets(self, segments: np.ndarray) -> bool:
+        """Whether any of the line segments (n, 2, 3), in laboratory coordinates, has a point in the solid."""
+        p0, p1 = self.local(segments[:, 0]), self.local(segments[:, 1])
+        return any(part.meets(p0, p1) for part in self.hull())
+
     def edges(self) -> np.ndarray:
-        """The edges of the solid's hull, as line segments (n, 2, 3) in laboratory coordinates."""
+        """The edges of the solid's hull, drawn in as :meth:`Part.edges` does, as line segments (n, 2, 3) in
+        laboratory coordinates."""
         segs = np.concatenate([p.edges() for p in self.hull()])
         return self.world(segs.reshape(-1, 3)).reshape(-1, 2, 3)
 
@@ -330,9 +374,11 @@ class Problem:
 
 
 def _overlap(a: Solid, b: Solid) -> bool:
+    """Whether two solids share some volume. An edge of one, drawn in from its surface by ``TOUCH_MM``, must have a
+    point in the other: solids with only an edge or a face in common touch, and identical solids overlap."""
     if float(np.linalg.norm(a.centre - b.centre)) > a.reach() + b.reach():
         return False
-    return b.crossed_by(a.edges()) or a.crossed_by(b.edges())
+    return b.meets(a.edges()) or a.meets(b.edges())
 
 
 def problems(experiment, only: Optional[str] = None, all_solids: Optional[list] = None) -> list:
@@ -704,5 +750,5 @@ def ancillary_reach_mm(shapes: list) -> float:
 
 
 __all__ = ["BEAM_RADIUS_MM", "BOARD_THICKNESS_MM", "Limits", "MIN_DISTANCE_MM", "Part", "Problem", "Solid",
-           "TARGET_DIAMETER_MM", "advice", "ancillaries", "ancillary_reach_mm", "beam_radius_mm", "blocked", "extent_mm", "limits", "move_fields",
+           "TARGET_DIAMETER_MM", "TOUCH_MM", "advice", "ancillaries", "ancillary_reach_mm", "beam_radius_mm", "blocked", "extent_mm", "limits", "move_fields",
            "moved", "on_axis", "position_of", "problems", "solids", "target_thickness_mm"]

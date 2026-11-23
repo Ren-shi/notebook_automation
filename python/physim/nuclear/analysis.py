@@ -1790,7 +1790,8 @@ class Analysis:
                 f"give the measured {measured:.4g} γ rays per particle in the window for B(E2↑) = {b:.4g} "
                 f"e²fm⁴ ({100 * (b / b_first - 1):+.1f}%)"
                 + (": they count the feeding of the state from the levels above" if fed else "")
-                + ((", and " if fed else ": they count ") + ", ".join(f"{ln['label']} ({ln['energy_kev']:.1f} keV)" for ln in others)
+                + ((", and " if fed else ": they count ")
+                   + ", ".join(f"{ln['label']} ({ln['energy_kev']:.1f} keV)" for ln in others)
                    + f", which the window also holds ({100 * (1 - own_share):.1f}% of its γ rays)" if others else "")
                 + ". Every other matrix element is taken from the scheme."
                 + (f" The scheme's yields, solved at the middle of the target, are scaled by {kappa:.4f}: the "
