@@ -114,7 +114,7 @@ def test_a_3mm_spot_broadens_the_corrected_peak_by_what_the_geometry_gives():
     def corrected(shift):
         p_dir = _unit(seg - shift)
         th = np.degrees(np.arccos(np.clip(p_dir[:, 2], -1, 1)))
-        d_em, b_em = _reconstruct(sharp, tb, layers, p_dir, th, c["recoil"][rows], "recoil", ex.beam_energy)
+        d_em, b_em = _reconstruct(sharp, tb, layers, p_dir, th, c["recoil"][rows], "recoil")
         cos_a = np.einsum("ij,ij->i", _unit(centres[crystals] - shift), d_em)
         return measured_e * (1 - b_em * cos_a) / np.sqrt(1 - b_em**2)
 

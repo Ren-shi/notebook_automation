@@ -159,6 +159,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
   0.39° and 0.37° too small (0.001° now); ring by ring the CD of `coulex_ni58` was 0.08° off. The kinematic lines of
   the Data tab use the same angles, for each line's particle. The Doppler correction counts on a segment's azimuth
   only as far as the segment fixes it.
+- The Doppler correction takes the speed the emitters have in a thick target (Allmond 2014 verification, second fix
+  plan, 14). It took two-body kinematics at the mid-target energy and let the emitter out from the middle; it takes
+  both at one depth now, the excitation-weighted mean depth of the forward model per particle detector and kind of
+  particle (`gamma_events.reaction_depths`). In `coulex_ni62_c_allmond` the speed was 8.0 % and 4.7 % too high (inner
+  and outer ring; 0.2 % and 0.1 % now), the corrected peak 1.35 and 0.77 keV too high (0.08 and 0.05 keV now) and
+  7.8 % and 3.8 % wider (rms). Thin targets, targets the generator keeps in one slice, lifetime measurements and the
+  correction for the nucleus the `[reaction]` does not name are unchanged, and so are the events.
 - The live counters of a run, its beam time and its sample of particles go together: `RunTaker.step` shows a chunk
   only when all of it is stored. The beam time was shown first, and for 20–30 ms `run_progress()` had progress while
   `run_sample()` had no particles, or columns of different lengths. The runs themselves are unchanged.

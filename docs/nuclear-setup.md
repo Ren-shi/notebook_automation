@@ -399,12 +399,18 @@ g["corrected_recoil"], g["weight"]            # per γ ray (see gamma_events.GAM
   correlation for that orbit, and the γ ray is transformed to the laboratory. A crystal it meets records it with
   the response: full energy, Compton deposit or escape peak, then the resolution and the threshold.
 - **Doppler correction** from what the detectors know: the segment that fired, the centre of the crystal, and
-  two-body kinematics at the nominal beam energy. A segment stands for the mean polar angle of the particles that
+  two-body kinematics at one beam energy. A segment stands for the mean polar angle of the particles that
   hit it, weighted by the elastic cross section of the particle's kind in the laboratory: Rutherford's for the
   scattered beam (1/sin⁴(θ/2) on a heavy target; with the setup's masses for any other, up to the largest angle of a
   beam heavier than its target) and 1/cos³θ for the target recoil, at the azimuth of the segment's middle. A ring
   without sectors knows no azimuth: only the motion along the beam is then corrected for. A stored run takes its
-  particles' angles from the same means. It is made for the scattered beam and for the
+  particles' angles from the same means. The kinematics and the emitter's way out of the target are those of one
+  reaction depth, the mean depth of the excitations that go with a particle of that kind in that detector, each depth
+  weighted by the Coulomb-excitation cross section at the beam energy there (`gamma_events.reaction_depths`): 0.28 of
+  1.04 mg/cm² for ⁶²Ni at 111.6 MeV on carbon, where the probability falls 150-fold through the target. It is worked
+  out from the setup alone; the depth of each event stays unknown and widens the peak of a thick target. A thin
+  target, one the generator keeps in one slice and a lifetime measurement take the middle of the target, and so does
+  the correction for the nucleus that the `[reaction]` does not name. It is made for the scattered beam and for the
   target recoil (`corrected_projectile`, `corrected_recoil`): the right one puts the peak at the transition
   energy, the wrong one smears it. The width that remains comes from the sizes of segments and crystals.
 - **Coincidences.** Every γ ray is a true coincidence with its particle, weighted as the particle events are.
