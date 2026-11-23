@@ -188,6 +188,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
 - The live counters of a run, its beam time and its sample of particles go together: `RunTaker.step` shows a chunk
   only when all of it is stored. The beam time was shown first, and for 20–30 ms `run_progress()` had progress while
   `run_sample()` had no particles, or columns of different lengths. The runs themselves are unchanged.
+- The same for a fusion run: `FusionRunTaker.step` shows a block's beam time, counters and events together, only when
+  all of it is stored. `progress()` had beam time with no residues or events while the first block was made, and
+  counters half added up. The runs themselves are unchanged.
 - The peak fit of the analysis at few and at many counts (Allmond 2014 verification, round 3, fixes 3 and 4).
   `analysis.fit_peak` fits by Poisson likelihood with a line that is nowhere negative (least squares with the
   variances 1/max(counts, 1) before; a weighted sample keeps its own variances), and `fit_tails` gives the area of the
