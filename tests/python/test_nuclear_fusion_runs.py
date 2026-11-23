@@ -5,6 +5,7 @@ with γγ coincidences that show the band."""
 import json
 import math
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -210,6 +211,7 @@ def test_a_watched_run_has_the_events_of_its_seed(tmp_path):
         p = bg.taker.progress()
         assert p["events"] == p["counts"]["trigger"]
         assert bool(p["real_s"]) == bool(p["residues"])
+        time.sleep(0.005)  # without a pause the loop starves the run it watches
     watched = bg.join()
     a, b = plain._arrays(), watched._arrays()
     assert set(a) == set(b) and all(np.array_equal(a[k], b[k]) for k in a)

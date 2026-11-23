@@ -1,11 +1,14 @@
 name: CI
 
-# A pull request runs once, on the code as it would be merged; pushes to main and version tags run everything.
+# A pull request runs once, on the code as it would be merged, and leaves out the slow tests of what it does not
+# change (.github/slow-tests.txt, scripts/ci_shard.py). Pushes to main, version tags and runs started by hand
+# (gh workflow run ci.yml --ref BRANCH) run everything.
 on:
   push:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -15,25 +18,29 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Whether a pull request touches the Rust code. Anywhere else the Rust job always runs.
+  # Whether a pull request touches the Rust code, and the test files it runs whole. Anywhere else everything runs.
   changes:
     name: What changed
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.find.outputs.rust }}
+      shards: ${{ steps.find.outputs.shards }}
+      tests: ${{ steps.find.outputs.tests }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2  # a pull request is checked out merged into its base, which is the first parent
       - id: find
         run: |
-          rust=true
+          rust=true shards='[1, 2, 3, 4, 5, 6, 7, 8]' tests=''
           if [ "${{ github.event_name }}" = pull_request ]; then
             files=$(git diff --name-only HEAD^1 HEAD)
             echo "$files"
+            shards='[1, 2, 3, 4, 5, 6]'
+            tests="--quick --slow-in $(python3 scripts/ci_shard.py --changed <<< "$files")"
             grep -qE '^(src/|benches/|examples/|tests/[^/]+\.rs$|Cargo\.|\.cargo/|[^/]*\.toml$|rust-toolchain|\.github/workflows/ci\.yml$)' <<< "$files" || rust=false
           fi
-          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          { echo "rust=$rust"; echo "shards=$shards"; echo "tests=$tests"; } | tee -a "$GITHUB_OUTPUT"
 
   rust:
     name: Rust (fmt, clippy, tests)
@@ -58,12 +65,13 @@ jobs:
   # The test files are shared out over runners (scripts/ci_shard.py): the tests use every core themselves, so
   # running several at once on one runner gains little and slows the ones with time limits.
   python:
-    name: Python (${{ matrix.shard }} of 5)
+    name: Python (${{ matrix.shard }} of ${{ strategy.job-total }})
+    needs: changes
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: ${{ fromJSON(needs.changes.outputs.shards) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -83,8 +91,10 @@ jobs:
           maturin develop --release
       # The slowest tests and what was skipped, and why, are listed at the end.
       - name: Binding tests
-        run: .venv/bin/pytest $(python scripts/ci_shard.py ${{ matrix.shard }} 5) --durations=15 -rs
+        env:
+          TESTS: ${{ needs.changes.outputs.tests }}
+        run: .venv/bin/pytest $(python scripts/ci_shard.py ${{ matrix.shard }} ${{ strategy.job-total }} $TESTS) --durations=0 --durations-min=2 -rs
       # Docs executes the notebooks of a pull request; this also looks for errors in their outputs.
       - name: Execute notebooks
-        if: github.event_name != 'pull_request' && matrix.shard == 1
+        if: github.event_name != 'pull_request' && matrix.shard == 8
         run: .venv/bin/python scripts/run_notebooks.py

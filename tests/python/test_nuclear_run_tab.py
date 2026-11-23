@@ -112,6 +112,7 @@ def test_a_watched_run_has_the_events_of_its_seed(tmp_path):
     while bg.running:
         p.run_progress()
         p.run_sample(5)
+        time.sleep(0.005)  # without a pause the loop starves the run it watches
     watched = bg.join()
     a, b = plain._arrays(), watched._arrays()
     assert set(a) == set(b) and all(np.array_equal(a[k], b[k]) for k in a)
