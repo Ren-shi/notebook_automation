@@ -149,6 +149,11 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- Detectors that only touch are no longer reported as overlapping (Allmond 2014 verification): two rings in one
+  plane whose radii meet, pads that share an edge, or detectors stacked face to face. Solids overlap when they reach
+  into each other by more than 0.05 mm (`scene.TOUCH_MM`, half the step a dragged detector's place is rounded to;
+  less for pieces thinner than 0.2 mm). The check is exact along every edge, where it took nine points of each, so
+  thin bars that cross are found too. The check for detectors in the beam is unchanged.
 - The γ rays of a thick target come from the emitter of their own depth (Allmond 2014 verification):
   `gamma_events.simulate_gammas` takes the undetected emitter's two-body kinematics, and for a single state its
   orientation, at each event's own beam energy where the generator cuts the target into slices. It took those of
