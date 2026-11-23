@@ -483,6 +483,7 @@ workflow builds the wheels, tests them and publishes to PyPI.
   marked stale by a change, the one on screen too.
 
 ### Changed
+- CI on pull requests leaves out the slow tests (`.github/slow-tests.txt`, `pytest --quick`) except in the test files the change concerns, and Docs executes the notebooks there only if they change; main runs everything. Two tests that polled a run without a pause no longer starve it.
 - The planner app has a new look and layout ("control room").
   - The steps stand in a rail on the left, from the top down, with the experiment's name above them and
     **Physics** and the theme at its foot. There is no header any more. The step on screen has its number on the

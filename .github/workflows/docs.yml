@@ -1,6 +1,7 @@
 name: Docs
 
-# Builds the documentation (Sphinx with the example notebooks executed, plus the Rust API from
+# Builds the documentation (Sphinx with the example notebooks executed, on a pull request only if it
+# changes notebooks, plus the Rust API from
 # cargo doc) on pushes to main and on every pull request that can change it, failing on any warning.
 # Version tags (and manual runs) publish it to GitHub Pages.
 
@@ -33,6 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # a pull request is merged into its base, the first parent
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-python@v5
@@ -49,7 +52,11 @@ jobs:
           source .venv/bin/activate
           maturin develop --release
       - name: Sphinx (warnings are errors)
-        run: .venv/bin/sphinx-build -W --keep-going -b html docs docs/_build/html
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ] && ! git diff --name-only HEAD^1 HEAD | grep -q '^notebooks/'; then
+            export PHYSIM_DOCS_NOTEBOOKS=off
+          fi
+          .venv/bin/sphinx-build -W --keep-going -b html docs docs/_build/html
       - name: Rust API reference
         run: |
           RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
