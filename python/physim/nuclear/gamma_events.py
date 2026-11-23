@@ -437,7 +437,7 @@ def doppler_spread(experiment, seen: dict, step: float, rings: Optional[list] = 
     The correction (:func:`doppler_correct`) takes an emitter that has left the target, made at one depth, seen from the
     middle of a segment and of a crystal. A nucleus whose level lives about as long as it takes to get out of the target
     decays inside, faster than that, and its γ ray ends beside the peak: of ⁶²Ni in its 2⁺ state (mean life 2.1 ps)
-    in 1.04 mg/cm² of carbon 13 % do, up to 20 keV below 1173 keV. How far depends on the depth, which the speed outside
+    in 1.04 mg/cm² of carbon about one in eight does, up to 20 keV below 1173 keV. How far depends on the depth, which the speed outside
     depends on too, so the two do not make two separate spreads, and the whole of it is drawn here:
     :data:`SPREAD_RAYS` γ rays with a seed of their own, from excitations through the target and over the faces of the
     particle detectors (as :func:`reaction_depths` has them), which slow down on their way out and decay after times

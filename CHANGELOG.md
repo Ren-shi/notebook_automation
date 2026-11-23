@@ -149,6 +149,22 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The peak of a level that decays inside the target (Allmond 2014 verification, second fix plan, 15). With a half-life
+  in the level scheme some nuclei decay before they have left a thick target, faster than the Doppler correction takes
+  them, and leave a tail on one side of the peak that the wider bell of the fit does not follow: ⁶²Ni (2⁺, 1.442 ps) in
+  carbon lost 0.40 ± 0.05 % of its area in the inner ring. The peak is now a Gaussian with the spread that the setup
+  gives it (`gamma_events.doppler_spread`: the half-life, the depth, the segments, the crystals' faces and the add-back;
+  `Analysis._spread`, about 2 s per choice of rings), which puts 0.54 % of the peak at −20 to −14 keV where the events
+  have 0.54 %. Nothing but the Gaussian's width is fitted to the shape, and `PeakFit.tails["spread"]` keeps it. Sixty
+  samples (seeds 11001–11060), area against the strict full-energy counts: −0.10 ± 0.04, −0.05 ± 0.02, −0.07 ± 0.02 %
+  (inner ring, outer ring, both; the plan's limit is 0.1 %, which the inner ring just misses with −0.103). The budget has
+  the line "peak tails (simulated)" for it. Runs of few counts take the spread with the simulated shape. Setups without
+  a half-life, thin targets, lifetime measurements, the other nucleus's peak and the events are unchanged.
+  - **Known, not fixed (16):** efficiency × correlation is +0.15 and −0.23 % off per ring with a level scheme through a thick
+    target, with or without a half-life: the events of a level scheme have the orientation of the middle of the target,
+    the correlation table that of each depth (+0.42 ± 0.16, −0.29 ± 0.08, −0.16 ± 0.07 % over the sixty samples; B(E2)
+    +0.36 ± 0.19, −0.29 ± 0.10, −0.18 ± 0.09 %). With the events at each depth (tried, not changed here) both are zero
+    within their errors.
 - The Allmond 2014 reproduction says what it misses (Allmond 2014 verification, second fix plan, 9 and 13). The band
   against GOSIA as run is the 1 % the verification's plan had fixed; the 2 % in the reference file had been written
   after about 1.3 % was found, as had the 0.5 % against GOSIA with nuclear masses and DIP off (0.2 %), and the file says

@@ -197,3 +197,56 @@ def test_the_simulated_tails_are_those_of_the_shape(shape):
     assert fit.sigma / t["simulated_sigma"] == pytest.approx(t["sigma"] / shape["core_sigma"])
     assert fit.shape == "Gaussian with simulated tails on a line with a step"
     assert PeakFit.of(dict(json.loads(json.dumps(asdict(fit))), later="unknown")) == fit
+
+
+# -- decays inside the target ---------------------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def one_sided() -> tuple:
+    """A spread (MeV) with a tail of 15 % on one side, −20 to 0 keV: what is left of the shift when some nuclei decay
+    inside the target."""
+    at = np.linspace(-20, 4, 241)
+    share = 0.85 * np.exp(-0.5 * (at / 1.4) ** 2) / np.exp(-0.5 * (at / 1.4) ** 2).sum()
+    tail = np.where(at < 0, np.exp(at / 6) * (at + 20), 0.0)
+    return 1e-3 * at, share + 0.15 * tail / tail.sum()
+
+
+def spread_peak(n: float, spread: tuple, sigma: float = 0.9) -> np.ndarray:
+    shape = sum(p * gaussian(sigma, 1e3 * d) for d, p in zip(*spread))
+    return n * shape + 2e-3 * 0.2 * n * np.maximum(1 - np.cumsum(shape) + shape / 2, 0.0)
+
+
+def test_the_spread_of_the_setup_gives_the_whole_peak(one_sided):
+    n = 1_000_000
+    counts = spread_peak(n, one_sided)
+    plain = fit_tails(counts, EDGES, gauss_fit(counts))
+    fit = fit_tails(counts, EDGES, gauss_fit(counts), spread=one_sided)
+    t, e = fit.tails, 1e-3 * X + E0
+    assert fit.area == pytest.approx(n, rel=3e-4) and abs(plain.area / n - 1) > 2e-3
+    assert t["share"] == 0 and 1e3 * t["sigma"] == pytest.approx(0.9, abs=0.02) and not t["simulated"]
+    assert t["centre"] == pytest.approx(E0, abs=2e-5)
+    assert sum(t["spread"]["share"]) == pytest.approx(1) and fit.shape.startswith("Gaussian spread")
+    # The curve is the fit's, and it survives being kept.
+    assert float(np.sum(fit.curve(e) - fit.background_curve(e))) == pytest.approx(fit.area, rel=2e-3)
+    assert fit.curve(e)[np.abs(X) < 20] == pytest.approx(counts[np.abs(X) < 20], abs=1e-3 * counts.max())
+    assert PeakFit.of(json.loads(json.dumps(asdict(fit)))) == fit
+    # Without a spread nothing changes, and a Gaussian peak stays one whatever the spread.
+    assert fit_tails(counts, EDGES, gauss_fit(counts), spread=None) == plain
+    few = np.random.default_rng(5).poisson(60 * gaussian(2.9) + 0.02).astype(float)
+    assert fit_tails(few, EDGES, gauss_fit(few), spread=one_sided).tails is None
+
+
+def test_few_counts_take_the_spread_with_the_shape(one_sided):
+    """The shape holds the spread, and the counts stretch it with the core."""
+    entries = np.random.default_rng(6).poisson(spread_peak(15_000, one_sided)).astype(float)
+    shape = tail_shape(fit_tails(entries, EDGES, gauss_fit(entries), spread=one_sided))
+    rng = np.random.default_rng(7)
+    toys = [fit_tails(c, EDGES, gauss_fit(c), shape=shape)
+            for c in (rng.poisson(spread_peak(140, one_sided)).astype(float) for _ in range(60))]
+    assert all(f.failed is None and f.tails["simulated"] for f in toys)
+    area = np.array([f.area for f in toys]) / 140
+    assert abs(area.mean() - 1) < 3 * area.std(ddof=1) / math.sqrt(len(area))
+    t = toys[0].tails
+    wide = np.ptp(t["spread"]["shift"]) / np.ptp(shape["spread"][0])
+    assert wide == pytest.approx(t["sigma"] / shape["core_sigma"], rel=0.03)

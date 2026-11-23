@@ -271,8 +271,10 @@ class PeakFit:
     #: "shift" (MeV) and the "share" of each of its steps, every one of them with the core about it
     #: (:meth:`Analysis._spread`); and whether the tails are "simulated" (the share, the offset and the width of the
     #: wider component, relative to the core, or the spread are those of a simulated peak:
-    #: :meth:`Analysis.simulated_peak`). With simulated tails or a spread also the σ of the Gaussian fitted to that peak ("simulated_sigma", MeV), the share of it that the area of that Gaussian loses
-    #: ("simulated_loss") and the area of the Gaussian fitted to these counts ("gaussian_area", or None).
+    #: :meth:`Analysis.simulated_peak`). With simulated tails also the σ of the Gaussian fitted to that peak
+    #: ("simulated_sigma", MeV), the share of it that the area of that Gaussian loses ("simulated_loss") and the area
+    #: of the Gaussian fitted to these counts ("gaussian_area", or None); with a spread the σ that it and the detectors'
+    #: resolution give, 0 and that area.
     tails: Optional[dict] = None
     #: Why the fit is no measurement of a peak (its width or its centre ended at a bound, or it found no counts above
     #: the background), or None.
@@ -559,9 +561,11 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
 
     With a ``shape`` (:func:`tail_shape` of a peak that was fitted with its tails: one from a simulation of the setup)
     the share, the centre and the width of the wider component, relative to the core's, or the spread (as many times
-    wider or narrower as the core is) are those of that peak. The counts fix only the area, the centre and width of the core and the background, within the window of that peak.
+    wider or narrower as the core is) are those of that peak. The counts fix only the area, the centre and width of the
+    core and the background, within the window of that peak.
     The core may be :data:`SHAPE_REACH` times as wide or as narrow as the shape's, and its centre as many of its σ
-    away (with a spread, of the σ of the Gaussian that was fitted to the peak: the core is only a part of it); a fit that ends there is marked :attr:`PeakFit.failed`."""
+    away (with a spread, of the σ of the Gaussian that was fitted to the peak: the core is only a part of it); a fit
+    that ends there is marked :attr:`PeakFit.failed`."""
     centres = (edges[:-1] + edges[1:]) / 2
     width = float(edges[1] - edges[0])
     origin, s0 = (fit.centroid, fit.sigma) if shape is None else (shape["centroid"], shape["sigma"])
@@ -615,12 +619,11 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
         if shape is None:
             gaussian = start.copy()
             gaussian[3] = 0.0
-            spread_steps, steps = steps, None
+            from_setup, steps = steps, None
             _, plain, _ = _likeliest(model, y, scale, gaussian, low, high, alone)
-            steps = spread_steps
-            if steps is not None:
-                free, start, low = alone, gaussian, np.where(np.arange(9) == 2, 0.1, low)
-                start[2] = 0.5
+            steps = from_setup
+            if steps is not None:  # the core alone about the spread, and as narrow as the detectors' resolution is
+                free, start[2:4], low[2] = alone, (0.5, 0.0), 0.1
             p, deviance, cov = _likeliest(model, y, scale, start, low, high, free)
             gain = plain - deviance
             if not gain > worth:
@@ -2058,9 +2061,9 @@ class Analysis:
 
     def _tails_uncertainty(self, fit: PeakFit) -> float:
         """What the simulated share of the peak's tails, or the spread that the setup gives the peak, may be wrong by,
-        relative to the area: the change it makes (the area with it against that of the Gaussian, or, if larger, what the Gaussian loses of the simulated
-        peak), times how far the simulated width is from the measured one (and the uncertainty of that), between
-        :data:`SHAPE_KNOWN` and 1."""
+        relative to the area: the change it makes (the area with it against that of the Gaussian, or, if larger, what
+        the Gaussian loses of the simulated peak), times how far the simulated width is from the measured one (and the
+        uncertainty of that), between :data:`SHAPE_KNOWN` and 1."""
         t = fit.tails
         if t is None or "simulated_sigma" not in t or not fit.area > 0:
             return 0.0
