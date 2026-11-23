@@ -245,8 +245,10 @@ def analysis_explanations(planner, result) -> list:
         f"− {_g(result.fit.randoms)} (randoms) = {_g(result.area)} ± {_g(math.hypot(result.fit.area_unc, math.sqrt(max(result.fit.randoms, 0))))}",
         "The γ rays of the transition that the detectors recorded in full, after the Doppler correction put them "
         "in one peak, over the continuum of other γ rays and the chance coincidences.",
-        "A Gaussian peak on a straight-line background; the random coincidences expected from the singles rates "
-        "and the coincidence window.",
+        ("A Gaussian peak on a straight-line background" if result.fit.tails is None else
+         "A peak of two Gaussians (a core and wider tails) on a background that steps down across it, counted within "
+         "±3σ and divided by its share there") + "; the random coincidences expected from the singles rates and the "
+        "coincidence window.",
         f"{DOCS}nuclear-setup.html#automatic-analysis",
         {"fit_area": result.fit.area, "randoms": result.fit.randoms}, lambda fit_area, randoms: fit_area - randoms))
     yield_ = result.area / (result.efficiency * result.correlation * result.branch * gate_eff)

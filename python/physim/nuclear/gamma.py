@@ -455,6 +455,14 @@ class DepthOrientation:
                 out[key] = out.get(key, 0.0) + w * a
         return out
 
+    def largest(self, initial: int, final: int) -> float:
+        """The largest ``Σ |a_kq|`` of a transition's distribution, which 4π W nowhere exceeds: at the CM angles of the
+        solutions' grid, and at enough energies to see between them."""
+        grid = self._table(initial, final)[0][0]
+        energies = [0.0] if self.thin else np.linspace(self.depth.e_low, self.depth.e_front, 65)
+        return max(float(np.max(sum(np.abs(v) for v in self.coefficients(initial, final, grid, e).values())))
+                   for e in energies)
+
     def _table(self, initial: int, final: int) -> list:
         """[(grid of CM angles, {(k, q): a_kq × population}, population)] of each solution."""
         if (initial, final) not in self._tables:

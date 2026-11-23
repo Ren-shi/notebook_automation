@@ -502,6 +502,50 @@ def test_the_correlation_goes_smoothly_from_thin_to_thick():
     assert np.max(np.abs(b / a - 1)) < 1e-3
 
 
+def test_the_emitter_has_the_kinematics_of_its_own_beam_energy():
+    """The undetected emitter of each event is the two-body partner of its particle at the event's own beam energy:
+    the γ rays carry the speed it leaves the target with, up to 20 % from that at the middle of the target."""
+    from physim.nuclear import gamma_events
+
+    exp = Experiment.example("coulex_ni62_c_allmond")
+    g = gamma_events.simulate_gammas(exp, 60_000, seed=5)
+    c, layers = g.events.columns, stack(exp)
+    e0, emitter = exp.excitation.energy_mev, beam_ion(exp)
+    mass = data.nuclide(emitter).nuclear_mass_mev + e0
+    every = np.random.default_rng(1).choice(len(g), 200, replace=False)
+    rows = g["particle"][every]
+    assert c["recoil"][rows].all()
+    points = [TwoBody(emitter, "12C", float(c["beam_energy"][i]), excitation_mev=e0, excite="ejectile").at_cm(
+        float(c["theta_cm"][i])) for i in rows]
+    th, energy = gamma_events._partner(exp, c, rows, mass)
+    np.testing.assert_allclose(th, [float(p.theta_lab) for p in points], rtol=1e-4)
+    np.testing.assert_allclose(energy, [float(p.energy) for p in points], rtol=1e-4)
+    out = exit_energy(exp, layers, 0, c["depth"][rows], emitter, energy,
+                      gamma_events._directions(th, c["phi"][rows] + 180.0))
+    np.testing.assert_allclose(g["beta"][every], np.sqrt(1 - 1 / (1 + out / mass) ** 2), rtol=1e-3)
+
+
+@pytest.mark.parametrize("name", ["coulex_ni62_pt194", "coulex_ru98_plunger"])
+def test_one_slice_and_lifetime_setups_keep_the_kinematics_of_the_middle(name, monkeypatch):
+    """A target the generator does not cut into slices, and a lifetime measurement, have the events of before."""
+    from physim.nuclear import gamma_events
+
+    def never(*a, **k):
+        raise AssertionError("the emitter's own beam energy was used")
+
+    monkeypatch.setattr(gamma_events, "_partner", never)
+    assert len(gamma_events.simulate_gammas(Experiment.example(name), 20_000, seed=2))
+
+
+def test_the_orientation_of_each_event_is_bounded():
+    """4π W of no event passes the bound the γ rays are drawn against."""
+    orient = depth_orientation(Experiment.example("coulex_ni62_c_allmond"))
+    rng = np.random.default_rng(3)
+    th, e = rng.uniform(5, 175, 4000), rng.uniform(orient.depth.e_low, orient.depth.e_front, 4000)
+    a = orient.coefficients(1, 0, th, e)
+    assert float(np.max(sum(np.abs(v) for v in a.values()))) <= orient.largest(1, 0) * (1 + 1e-6)
+
+
 def test_the_correlation_is_that_of_the_events_through_the_depth():
     """The table is the mean of 4π W over the excited events, each with the two-body kinematics and the orientation
     of its own beam energy and the emitter slowed down on its way out. With the kinematics of the middle of the

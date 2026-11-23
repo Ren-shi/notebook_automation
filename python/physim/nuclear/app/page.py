@@ -2329,8 +2329,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             if not lines:
                 return
             part(2, "Integrate the peaks", "The peak of each nucleus in its own corrected spectrum: a Gaussian on a "
-                 "straight line is fitted, and the area is the counts within ±3σ of its centre over that line, "
-                 "less the random coincidences expected there. The area over the efficiency and the angular "
+                 "straight line is fitted, and the area is the counts within ±3σ of its centre over that line "
+                 "(with its share beyond ±3σ, where the peak has tails), less the random coincidences expected there. The area over the efficiency and the angular "
                  "correlation is the number of γ rays emitted.")
             with ui.element("div").classes("w-full grid gap-3").style(
                     "grid-template-columns: repeat(auto-fit, minmax(360px, 1fr))"):

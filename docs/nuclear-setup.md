@@ -486,7 +486,12 @@ The steps, each adjustable through `Settings`:
    (`analysis.identify`). A nucleus's lines are sharp in its own spectrum and smeared in the other, so each
    nucleus shows its peaks in its own spectrum. `Result.search` holds both spectra and their peaks.
 4. **Peak fit:** a Gaussian on a straight line within `fit_half_width` resolutions, then the counts within ±3σ
-   over the line, with the random coincidences expected in the window subtracted.
+   over the line, with the random coincidences expected in the window subtracted. Through a thick target the
+   emitter's speed, and so the Doppler shift, depends on how deep the reaction was: the corrected peak then has
+   tails that a Gaussian leaves out. When they show (they improve the fit's deviance by more than 25), a core with
+   a wider Gaussian on a background that steps down across the peak is fitted as well, and the counts within ±3σ
+   are divided by the share of that peak there instead of a Gaussian's 0.9973 (`analysis.fit_tails`;
+   `PeakFit.tails`). Not where the nucleus has another line inside the fit window.
 5. **Yield:** the area over the full-energy-peak efficiency (each crystal's at the Doppler-shifted energy it sees
    the line at, read from the measured over the corrected energies), the γ-ray branch and the angular-correlation
    factor.
