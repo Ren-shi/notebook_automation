@@ -500,11 +500,11 @@ The steps, each adjustable through `Settings`:
    counts of a bin are Poisson), then the counts within ±3σ over the line, with the random coincidences expected in
    the window subtracted. Through a thick target the emitter's speed, and so the Doppler shift, depends on how deep
    the reaction was: the corrected peak then has tails that a Gaussian leaves out. When they show (they improve the
-   fit's deviance by more than 25), a core with a wider Gaussian on a background that steps down across the peak is
+   fit's deviance by more than 25), a core with a wider bell that ends (as the tails do) on a background that steps down across the peak is
    fitted, and the area is that of this peak: the counts of the whole window less the background under them
    (`analysis.fit_tails`; `PeakFit.tails`). Not where the nucleus has another line inside the fit window.
    - **Few counts.** A run whose counts cannot fix the tails takes the share, the offset and the width of the wider
-     Gaussian, relative to the core, from a peak of 15 000 counts simulated with the same setup, rings, crystals,
+     bell, relative to the core, from a peak of 15 000 counts simulated with the same setup, rings, crystals,
      gate, Doppler correction and fit window, and with a seed of its own (`Analysis.simulated_peak`). The run's
      counts fix the area, the centre, the width of the core and the background. The simulation is made once per
      choice of rings (it takes seconds) and kept with the analysis. Where the simulated peak is a Gaussian, so is

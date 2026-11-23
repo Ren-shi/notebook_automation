@@ -248,7 +248,7 @@ def analysis_explanations(planner, result) -> list:
         "The γ rays of the transition that the detectors recorded in full, after the Doppler correction put them "
         "in one peak, over the continuum of other γ rays and the chance coincidences.",
         ("A Gaussian peak on a straight-line background" if result.fit.tails is None else
-         "A peak of two Gaussians (a core and wider tails) on a background that steps down across it, counted over "
+         "A Gaussian peak with wider tails that end, on a background that steps down across it, counted over "
          "the whole fit window" + (" (the counts are too few to fix the tails: their share and shape are those of a "
                                    "simulation of the setup, with a line of their own in the uncertainty budget)"
                                    if result.fit.tails.get("simulated") else "")) + "; the random coincidences expected from the singles rates and the "
