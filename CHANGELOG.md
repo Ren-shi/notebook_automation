@@ -149,6 +149,19 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- A stored run's particle angles and the Doppler correction take the right angle of each segment (Allmond 2014
+  verification, second fix plan, 1). `Geometry.segment_centre(weighted=True)` averaged x and y over a sector, which
+  put the point 1.1–1.6 % nearer to the axis (a ring without sectors at 0° or 180°), and weighted recoils by the
+  scattered beam's 1/sin⁴(θ/2). The new `Geometry.segment_angles` averages the polar angle at the segment's middle
+  azimuth, weighted by the particle's own elastic law: 1/cos³θ for recoils (exact for any masses) and Rutherford's
+  law in the laboratory for the scattered beam, with the setup's masses, since 1/sin⁴(θ/2) holds for a heavy target
+  only (it was 0.4° off for ⁹⁸Ru scattered on ²⁴Mg into one ring). The stored angles of `coulex_ni62_c_allmond` were
+  0.39° and 0.37° too small (0.001° now); ring by ring the CD of `coulex_ni58` was 0.08° off. The kinematic lines of
+  the Data tab use the same angles, for each line's particle. The Doppler correction counts on a segment's azimuth
+  only as far as the segment fixes it.
+- The live counters of a run, its beam time and its sample of particles go together: `RunTaker.step` shows a chunk
+  only when all of it is stored. The beam time was shown first, and for 20–30 ms `run_progress()` had progress while
+  `run_sample()` had no particles, or columns of different lengths. The runs themselves are unchanged.
 - The peak fit of the analysis at few and at many counts (Allmond 2014 verification, round 3, fixes 3 and 4).
   `analysis.fit_peak` fits by Poisson likelihood with a line that is nowhere negative (least squares with the
   variances 1/max(counts, 1) before; a weighted sample keeps its own variances), and `fit_tails` gives the area of the
