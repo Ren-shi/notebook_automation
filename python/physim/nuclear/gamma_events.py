@@ -24,9 +24,11 @@ and excited the state emits its γ ray, which is followed to the crystals::
    deposit, and is recorded with the crystal's resolution; a threshold applies.
 
 **The Doppler correction** uses only what the detectors know: the segment the particle hit (the mean angles there of
-the particles of its kind), the centre of the crystal, and two-body kinematics at the nominal beam energy. It is made twice: as if the emitter
-were the scattered beam, and as if it were the target recoil. The width that remains comes from the sizes of the
-segments and crystals.
+the particles of its kind), the centre of the crystal, and two-body kinematics at one beam energy: that at the mean
+depth of the target at which the excitations seen in the detector happen (:func:`reaction_depths`; the middle of a
+thin target). It is made twice: as if the emitter were the scattered beam, and as if it were the target recoil. The
+width that remains comes from the sizes of the segments and crystals, and in a thick target from the depth of each
+event, which the detectors do not know.
 
 **Background** in the γ spectra: the Compton continua of the response; random coincidences, from the singles
 rates and the coincidence window (``[run] coincidence_window``); room-background lines (⁴⁰K and the thorium and
@@ -51,14 +53,14 @@ from typing import Optional
 import numpy as np
 
 from . import angular, data, transport
-from .detectors import Array, target_mass_ratio
+from .detectors import Array, angles, target_mass_ratio
 from .events import Events, simulate
 from .gamma import (cascade_excitation, depth_orientation, excitation_of, excitation_order, other_excitation,
                     start_levels)
-from .kinematics import TwoBody
+from .kinematics import TwoBody, lab_points
 from .quantity import Quantity
-from .rates import (Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels, exit_energy, recoil_stack,
-                    stack, stopping, tilt_deg)
+from .rates import (DEPTH_AVERAGE_POINTS, Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels,
+                    depth_probability, exit_energy, reaction_at, recoil_stack, stack, stopping, tilt_deg)
 from .response import FWHM_PER_SIGMA, Response, compton_edge
 
 #: Lines of the room background and their typical relative strengths (counts, not intensities): ⁴⁰K, the
@@ -352,11 +354,67 @@ class GammaEvents:
         return total * 2 * self.window_s * self.particle_rate.get(detector, 0.0)
 
 
+#: Points each way over a particle detector's face at which :func:`reaction_depths` takes the excitation.
+REACTION_DEPTH_ORDER = 12
+
+
+def reaction_depths(experiment, layers: Optional[list] = None, array: Optional[Array] = None) -> Optional[dict]:
+    """The mean depth (mg/cm², along the normal) at which the ``[reaction]`` nucleus is excited in the collisions that
+    put a particle into each detector, as the setup gives it: {(detector index, whether the particle is the target
+    recoil): depth}. Each depth of the target counts with the Coulomb-excitation cross section (in the laboratory,
+    over the face of the detector) at the beam energy there, as the rates and the event generator have it
+    (:func:`~physim.nuclear.rates.reaction_at`: the excitation probability through the depth and Alder and Winther's
+    inelastic Rutherford factor). The deep half of a thick target hardly excites: ⁶²Ni that enters 1.04 mg/cm² of
+    carbon with 111.6 MeV is excited at 0.28 mg/cm² on average. A pair no particle can reach (by the kinematics'
+    first branch, which the Doppler correction takes) has the mean of all the others.
+
+    None where the correction takes the middle of the target: a lifetime measurement (its γ rays leave from wherever
+    the plunger or the backing has the emitter), a thin target and one the event generator keeps in one slice
+    (:meth:`~physim.nuclear.rates.DepthProbability.slice_count`)."""
+    if experiment.excitation is None or getattr(experiment, "lifetime", None) is not None:
+        return None
+    layers = layers or stack(experiment)
+    array = array or Array.from_experiment(experiment)
+    target = data.nuclide(max(layers[0].nuclides.items(), key=lambda kv: kv[1])[0]).name
+    channel = next((ch for ch in channels(layers, experiment)
+                    if ch.excitation is not None and ch.layer == 0 and ch.nuclide.name == target), None)
+    if channel is None:
+        return None
+    through = depth_probability(experiment, channel, layers)
+    if through.thin or through.slice_count() == 1:
+        return None
+    x, w = np.polynomial.legendre.leggauss(DEPTH_AVERAGE_POINTS)
+    zs = (x + 1) / 2 * through.reached
+    points, reacs = [], []
+    for i, e in enumerate(beam_energy_at(experiment, 0, zs, layers)):
+        try:
+            reacs.append(reaction_at(experiment, channel, float(e), layers))
+        except ValueError:  # below the excitation threshold
+            continue
+        points.append(i)
+    zs, w = zs[points], w[points]
+    weight = {}
+    for d, g in enumerate(array):
+        dirs, d_omega = g.directions(None, REACTION_DEPTH_ORDER)
+        for recoil in (False, True):
+            pt = lab_points([r.kinematics for r in reacs], angles(dirs)[0], "recoil" if recoil else "ejectile")[0]
+            theta_cm = np.nan_to_num(180.0 - pt.theta_cm if recoil else pt.theta_cm)
+            ok = theta_cm > 0
+            sigma = np.array([np.asarray(r.cross_section_cm(np.where(there, th, 90.0)))
+                              for r, there, th in zip(reacs, ok, theta_cm)])
+            weight[(d, recoil)] = w * (np.where(ok, sigma * np.nan_to_num(pt.jacobian, posinf=0.0), 0.0) @ d_omega)
+    total = sum(weight.values())
+    if not np.sum(total) > 0:
+        return None
+    return {key: float(np.average(zs, weights=each if each.sum() > 0 else total)) for key, each in weight.items()}
+
+
 def _reconstruct(experiment, tb_ej, layers, particle_dirs, theta_lab, recoil_detected, emitter: str,
-                 e_mid: float) -> tuple:
+                 depth: Optional[float] = None) -> tuple:
     """What two-body kinematics says about the emitting nucleus from the detected particle's direction:
     (unit direction of the emitter, its speed β after leaving the target), for the assumed ``emitter``
-    ("ejectile" or "recoil")."""
+    ("ejectile" or "recoil") and a reaction at ``depth`` (mg/cm² along the normal; by default the middle of the
+    target)."""
     n = len(theta_lab)
     # The CM angle of the scattered beam on this event's orbit, from whichever particle was detected.
     th_cm = np.full(n, np.nan)
@@ -377,8 +435,8 @@ def _reconstruct(experiment, tb_ej, layers, particle_dirs, theta_lab, recoil_det
     dirs = _directions(np.asarray(point.theta_lab), phi)
     energy = np.nan_to_num(np.asarray(point.energy, dtype=float))
     ion = tb_ej.beam if emitter == "ejectile" else tb_ej.target
-    depth = np.full(n, layers[0].thickness / 2)
-    e_out = exit_energy(experiment, layers, 0, depth, ion.name, energy, dirs)
+    at = np.full(n, layers[0].thickness / 2 if depth is None else depth)
+    e_out = exit_energy(experiment, layers, 0, at, ion.name, energy, dirs)
     mass = data.nuclide(ion.name).nuclear_mass_mev + (tb_ej.excitation_mev if (emitter == "recoil")
                                                       == (tb_ej.excite == "recoil") else 0.0)
     gam = 1 + np.maximum(e_out, 0.0) / mass
@@ -1800,22 +1858,28 @@ def _cascade_steps(cex, theta_cm: np.ndarray, rng, steps: bool = False) -> tuple
 def doppler_correct(experiment, columns: dict, rows: np.ndarray, crystal: np.ndarray, measured: np.ndarray) -> dict:
     """The Doppler correction an experimentalist makes with the geometry of ``experiment``: from the segment each
     particle row hit (``columns`` of the particle events, ``rows`` their indices), the centre of the crystal
-    (``crystal`` indices) and two-body kinematics at the nominal beam energy. Returns {"ejectile": corrected
-    energies, "recoil": ...}.
+    (``crystal`` indices) and two-body kinematics. Returns {"ejectile": corrected energies, "recoil": ...}.
 
     A segment gives the mean angles of the particles of the row's kind (scattered beam or recoil) that hit it
     (:meth:`~physim.nuclear.detectors.Geometry.segment_angles`), and the cosine between the emitter and the γ ray is
     the mean over the azimuths the segment spans: one that goes all round the beam knows θ but no φ, and only the
     motion along the beam is corrected for.
 
+    The kinematics and the emitter's way out of the target are those of one depth of the reaction. For the nucleus
+    the ``[reaction]`` excites it is the mean depth of the excitations that go with a particle of the row's kind in its
+    detector, with the beam energy there (:func:`reaction_depths`); the middle of the target in a thin one and in a
+    lifetime measurement. The other nucleus of the collision is corrected for at the middle of the target, where its
+    excitation probability is taken at every depth (:func:`other_rows`).
+
     Given an experiment whose target sits elsewhere than the one that made the events, this is the correction with
     a misplaced target: the peaks shift and broaden, ring by ring."""
     layers = stack(experiment)
     exc = experiment.excitation
     ex = excitation_of(experiment)
-    tb = TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=exc.energy_mev,
-                 excite="recoil" if exc.excite == "target" else "ejectile")
+    emitter = "recoil" if exc.excite == "target" else "ejectile"
+    tb = TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=exc.energy_mev, excite=emitter)
     array = Array.from_experiment(experiment)
+    depths = reaction_depths(experiment, layers, array)
     centres = []
     for gd in experiment.gamma_detectors:
         centres += [np.array(c, dtype=float) for _, c, _ in gd.elements()]
@@ -1823,10 +1887,21 @@ def doppler_correct(experiment, columns: dict, rows: np.ndarray, crystal: np.nda
     theta_lab_p, phi_p, phi_known = array.segment_angles(columns, target_mass_ratio(experiment), rows)
     p_dir = _directions(theta_lab_p, phi_p)
     crystal_dir = normals[crystal]
+    recoil = np.asarray(columns["recoil"])[rows]
     out = {}
     for assumed in ("ejectile", "recoil"):
-        d_em, b_em = _reconstruct(experiment, tb, layers, p_dir, theta_lab_p, columns["recoil"][rows], assumed,
-                                  ex.beam_energy)
+        if assumed == emitter and depths is not None:
+            detector = np.asarray(columns["detector"])[rows]
+            d_em, b_em = np.zeros((len(recoil), 3)), np.zeros(len(recoil))
+            for (d, kind), depth in depths.items():
+                m = (detector == d) & (recoil == kind)
+                if m.any():
+                    energy = float(beam_energy_at(experiment, 0, [depth], layers)[0])
+                    tb_at = TwoBody(ex.beam, ex.target, energy, excitation_mev=exc.energy_mev, excite=emitter)
+                    d_em[m], b_em[m] = _reconstruct(experiment, tb_at, layers, p_dir[m], theta_lab_p[m], recoil[m],
+                                                    assumed, depth)
+        else:
+            d_em, b_em = _reconstruct(experiment, tb, layers, p_dir, theta_lab_p, recoil, assumed)
         cos_a = phi_known * np.einsum("ij,ij->i", crystal_dir[:, :2], d_em[:, :2]) + crystal_dir[:, 2] * d_em[:, 2]
         out[assumed] = measured * (1 - b_em * cos_a) / np.sqrt(1 - b_em**2)
     return out
@@ -1931,5 +2006,4 @@ def _deposit(r: Response, energy: np.ndarray, rng) -> tuple:
 
 
 __all__ = ["Crystal", "GAMMA_COLUMNS", "GammaEvents", "ROOM_LINES", "backgrounds", "crystals_of", "doppler_correct",
-           "other_lines", "other_rows", "spectrum_top",
-           "recorrect", "simulate_gammas"]
+           "other_lines", "other_rows", "reaction_depths", "recorrect", "simulate_gammas", "spectrum_top"]

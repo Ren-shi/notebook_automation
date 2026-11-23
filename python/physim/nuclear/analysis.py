@@ -259,11 +259,12 @@ class PeakFit:
     slope: float = 0.0
     origin: float = 0.0
     #: The peak with tails that the area comes from (:func:`fit_tails`), or None for the Gaussian alone: the
-    #: "centre" and "sigma" (MeV) of its core, the "share" of its area in the wider Gaussian, the "wide_centre" and
-    #: "wide_sigma" of that one, the total "area" (counts) and the bin "width" (MeV); the "level" and "slope" (about
+    #: "centre" and "sigma" (MeV) of its core, the "share" of its area in the wider component, the "wide_centre" and
+    #: "wide_sigma" (standard deviation) of that one and its "wide_shape" ("biweight", :func:`_biweight`; a fit kept
+    #: without it has a Gaussian there), the total "area" (counts) and the bin "width" (MeV); the "level" and "slope" (about
     #: "origin") of the line above it and the "step" the background takes below it (counts per bin); "inside", the
     #: share of the peak within ±3σ of the Gaussian; "gain", what the tails took off the fit's deviance; and whether
-    #: they are "simulated" (the share, the offset and the width of the wider Gaussian, relative to the core, are
+    #: they are "simulated" (the share, the offset and the width of the wider component, relative to the core, are
     #: those of a simulated peak: :meth:`Analysis.simulated_peak`). With simulated tails also the σ of the Gaussian
     #: fitted to that peak ("simulated_sigma", MeV), the share of it that the area of that Gaussian loses
     #: ("simulated_loss") and the area of the Gaussian fitted to these counts ("gaussian_area", or None).
@@ -278,9 +279,10 @@ class PeakFit:
         return cls(**{k: v for k, v in d.items() if k in {f.name for f in fields(cls)}})
 
     def _components(self) -> tuple:
-        """(share of the area, centre, σ) of the two Gaussians of a peak with tails."""
+        """(share of the area, centre, σ, whether it ends) of the two components of a peak with tails."""
         t = self.tails
-        return (1 - t["share"], t["centre"], t["sigma"]), (t["share"], t["wide_centre"], t["wide_sigma"])
+        return ((1 - t["share"], t["centre"], t["sigma"], False),
+                (t["share"], t["wide_centre"], t["wide_sigma"], t.get("wide_shape") == "biweight"))
 
     def background_curve(self, energy) -> np.ndarray:
         """The fitted background under the peak at ``energy`` (MeV), counts per bin."""
@@ -288,8 +290,9 @@ class PeakFit:
         t = self.tails
         if t is None:
             return self.level + self.slope * (e - self.origin)
-        above = sum(share * 0.5 * np.vectorize(math.erfc, otypes=[float])((e - centre) / sigma / math.sqrt(2))
-                    for share, centre, sigma in self._components())
+        above = sum(share * (_biweight((e - centre) / sigma)[1] if ends else
+                             0.5 * np.vectorize(math.erfc, otypes=[float])((e - centre) / sigma / math.sqrt(2)))
+                    for share, centre, sigma, ends in self._components())
         return t["level"] + t["slope"] * (e - t["origin"]) + t["step"] * above
 
     def curve(self, energy) -> np.ndarray:
@@ -298,8 +301,9 @@ class PeakFit:
         t = self.tails
         if t is None:
             return self.height * np.exp(-0.5 * ((e - self.centroid) / self.sigma) ** 2) + self.background_curve(e)
-        peak = sum(share * np.exp(-0.5 * ((e - centre) / sigma) ** 2) / (sigma * math.sqrt(2 * math.pi))
-                   for share, centre, sigma in self._components())
+        peak = sum(share * (_biweight((e - centre) / sigma)[0] if ends else
+                            np.exp(-0.5 * ((e - centre) / sigma) ** 2) / math.sqrt(2 * math.pi)) / sigma
+                   for share, centre, sigma, ends in self._components())
         return t["area"] * t["width"] * peak + self.background_curve(e)
 
     @property
@@ -312,6 +316,13 @@ class PeakFit:
         if self.tails is None:
             return "Gaussian on a line"
         return f"Gaussian with {'simulated ' if self.tails.get('simulated') else ''}tails on a line with a step"
+
+
+def _biweight(z) -> tuple:
+    """(density, share above) of a bell that ends, of standard deviation 1, at ``z``: (15/16√7) (1 − z²/7)² out to
+    ±√7 and nothing beyond."""
+    t = np.clip(np.asarray(z, dtype=float) / math.sqrt(7), -1.0, 1.0)
+    return 15 / 16 / math.sqrt(7) * (1 - t**2) ** 2, 0.5 - 15 / 16 * (t - 2 * t**3 / 3 + t**5 / 5)
 
 
 def fit_peak(counts: np.ndarray, edges: np.ndarray, energy: float, sigma0: float, half_width: float = 4.0,
@@ -505,20 +516,22 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
 
     A Doppler-corrected peak is the sum of what every crystal, particle and depth of the target leave of the shift:
     a core with wider tails. From a thick target 2 % of it lies beyond ±3σ of the Gaussian that fits its core, and
-    a straight line fitted beside it takes those tails for background. Here the peak is two Gaussians (the wider one
-    1.25 to 3.5 times as wide, its centre within a σ of the other's) on a straight line, nowhere negative, with a
-    step: the peak's own γ rays that scatter on their way are below it, so the background steps down as the peak is
+    a straight line fitted beside it takes those tails for background. Here the peak is a Gaussian core and a wider
+    bell that ends (:func:`_biweight`; its standard deviation 1.25 to 3.5 times the core's, its centre within a σ of
+    the core's) on a straight line, nowhere negative, with a step: the peak's own γ rays that scatter on their way are below it, so the background steps down as the peak is
     crossed. The area is that of the fitted peak. At the maximum of the likelihood the model holds as many counts as
     the window does, so it is the counts of the whole window less the background under them. (Counting within ±3σ
     and dividing by the share of the model there takes that share from the model: a peak with a flat top, and tails
-    that end, is no sum of two Gaussians, and its share there was 0.2 % too large on one.)
+    that end, is no sum of two Gaussians, and its share there was 0.2 % too large on one.) The tails end because
+    the speeds of the emitter do; a wider Gaussian reaches on into the background and takes 0.2 % of the area from
+    there.
 
     The fit is by maximum likelihood (:func:`_likeliest`), and the tails are kept when they fit better than a Gaussian
     on the same background by more than ``worth`` (:data:`TAILS_WORTH`); without them the result is ``fit``.
     ``variance`` is each bin's, if not its counts (its sum over theirs is the counts that one entry stands for).
 
     With a ``shape`` (:func:`tail_shape` of a peak that was fitted with its tails: one from a simulation of the setup)
-    the share, the centre and the width of the wider Gaussian, relative to the core's, are those of that peak. The
+    the share, the centre and the width of the wider component, relative to the core's, are those of that peak. The
     counts fix only the area, the centre and width of the core and the background, within the window of that peak.
     The core may be :data:`SHAPE_REACH` times as wide or as narrow as the shape's, and its centre as many of its σ
     away; a fit that ends there is marked :attr:`PeakFit.failed`."""
@@ -537,8 +550,8 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
 
     def peak(p):  # the share of the peak in each bin
         core = np.exp(-0.5 * ((x - p[1]) / p[2]) ** 2) / p[2]
-        wide = np.exp(-0.5 * ((x - p[1] - p[4] * p[2]) / (p[2] * p[5])) ** 2) / (p[2] * p[5])
-        return ((1 - p[3]) * core + p[3] * wide) * b / math.sqrt(2 * math.pi)
+        wide = _biweight((x - p[1] - p[4] * p[2]) / (p[2] * p[5]))[0] / (p[2] * p[5])
+        return ((1 - p[3]) * core / math.sqrt(2 * math.pi) + p[3] * wide) * b
 
     def background(p, share):
         return p[6] * (1 - u) + p[7] * u + p[8] * (1 - np.cumsum(share) + share / 2)
@@ -548,7 +561,7 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
         return p[0] * share + background(p, share)
 
     # Area; centre and σ of the core; share, centre (from the core's, in its σ) and width (over the core's) of the
-    # wider Gaussian; the line at the window's two ends; the step.
+    # wider component; the line at the window's two ends; the step.
     side = max(len(y) // 8, 2)
     below, above = float(y[:side].mean()), float(y[-side:].mean())
     start = np.array([fit.area, 0.0, 0.95, 0.1, 0.0, 2.0, above, above, max(below - above, 0.0)])
@@ -589,7 +602,7 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
     slope = float(p[7] - p[6]) / float(x[-1] - x[0])
     tails = {"area": float(p[0]), "width": width, "centre": origin + s0 * float(p[1]), "sigma": s0 * float(p[2]),
              "share": float(p[3]), "wide_centre": origin + s0 * float(p[1] + p[4] * p[2]),
-             "wide_sigma": s0 * float(p[2] * p[5]), "level": float(p[6]) - slope * float(x[0]),
+             "wide_sigma": s0 * float(p[2] * p[5]), "wide_shape": "biweight", "level": float(p[6]) - slope * float(x[0]),
              "slope": slope / s0, "origin": origin, "step": float(p[8]), "gain": float(gain),
              "simulated": shape is not None}
     if shape is not None:  # the Gaussian of a peak of that shape: the window, and the width that is quoted
@@ -605,7 +618,7 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
 
 
 def tail_shape(fit: PeakFit) -> Optional[dict]:
-    """What :func:`fit_tails` needs to give another peak the tails of ``fit``: the share of the wider Gaussian, its
+    """What :func:`fit_tails` needs to give another peak the tails of ``fit``: the share of the wider component, its
     centre from the core's ("offset", in the core's σ) and its σ over the core's ("ratio"), the core's "centre" and
     "core_sigma", and the "centroid" and "sigma" of the Gaussian that was fitted to it. None for a peak without
     tails."""

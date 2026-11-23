@@ -135,9 +135,9 @@ def full_energy_counts(a, keep) -> tuple:
 @pytest.mark.parametrize("det", ["Ring2", "Ring3", None])
 def test_the_fitted_area_is_the_full_energy_counts(allmond, det):
     """Round 3, fix 4. The peak has a flat top and tails that end: the share that two Gaussians have within ±3σ lost
-    of it; the counts over the background of the whole window depend on it less. Over 36 samples of the rebuilt setup
-    the area is +0.10, +0.09 and +0.09 % off with them summed (±0.06, 0.04, 0.04 % one by one), before −0.11, −0.13
-    and −0.14 %. (What is left: the wider Gaussian reaches further than the tails do.)"""
+    of it; the counts over the background of the whole window depend on it less. A wider Gaussian still took +0.26,
+    +0.18 and +0.22 % from the background below the peak once the Doppler correction had the right speed; with a
+    wider bell that ends it is +0.07 ± 0.10, +0.04 ± 0.05 and +0.04 ± 0.04 % (16 samples, seeds 301–316)."""
     s = replace(every_particle(det), subtract_randoms=False)
     dev = []
     for a in allmond[1]:

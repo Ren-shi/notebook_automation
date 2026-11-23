@@ -12,7 +12,7 @@ from dataclasses import asdict
 import numpy as np
 import pytest
 
-from physim.nuclear.analysis import SHAPE_REACH, PeakFit, fit_peak, fit_tails, tail_shape
+from physim.nuclear.analysis import SHAPE_REACH, PeakFit, _biweight, fit_peak, fit_tails, tail_shape
 
 E0, EDGES = 1.1729, np.arange(1.10, 1.25, 0.0002)
 X = 1e3 * (EDGES[:-1] + EDGES[1:]) / 2 - 1e3 * E0  # keV from the transition
@@ -129,6 +129,31 @@ def test_the_area_of_many_counts_is_that_of_the_whole_peak():
     # The curve is the fit's, and it survives being kept.
     assert float(np.sum(fit.curve(e) - fit.background_curve(e))) == pytest.approx(fit.area, rel=2e-3)
     assert PeakFit.of(json.loads(json.dumps(asdict(fit)))) == fit
+
+
+def test_the_wider_component_ends():
+    """The tails of a Doppler-corrected peak end; a bell of standard deviation 1 that ends at ±√7."""
+    z = np.linspace(-4, 4, 80_001)
+    density, above = _biweight(z)
+    step = z[1] - z[0]
+    assert density.sum() * step == pytest.approx(1, abs=1e-6)
+    assert (density * z**2).sum() * step == pytest.approx(1, abs=1e-5)
+    assert np.all(density[np.abs(z) > np.sqrt(7)] == 0) and np.all(density >= 0)
+    assert above[0] == pytest.approx(1) and above[-1] == pytest.approx(0, abs=1e-12)
+    assert 1 - np.cumsum(density) * step == pytest.approx(above, abs=1e-4)
+    assert peak_fit(thick_target_peak(1_000_000)).tails["wide_shape"] == "biweight"
+
+
+def test_a_fit_kept_before_the_wider_component_ended_has_a_gaussian_there():
+    fit = peak_fit(thick_target_peak(100_000))
+    kept = asdict(fit)
+    del kept["tails"]["wide_shape"]
+    old = PeakFit.of(json.loads(json.dumps(kept)))
+    t, e = old.tails, 1e-3 * X + E0
+    gauss = lambda c, s: np.exp(-0.5 * ((e - c) / s) ** 2) / (s * np.sqrt(2 * np.pi))  # noqa: E731
+    peak = (1 - t["share"]) * gauss(t["centre"], t["sigma"]) + t["share"] * gauss(t["wide_centre"], t["wide_sigma"])
+    assert old.curve(e) - old.background_curve(e) == pytest.approx(t["area"] * t["width"] * peak)
+    assert not np.allclose(old.curve(e), fit.curve(e), rtol=1e-6)
 
 
 # -- bounds and failures --------------------------------------------------------------------------------------------
