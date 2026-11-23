@@ -39,7 +39,9 @@ reference file; :func:`run`)::
    and without E1 polarisation, within 0.5 %.
 3. *Closure*: the example with the 0⁺, 2⁺ scheme, simulated and analysed (gate "all") with the seeds of the
    reference file, chosen before they were run: the mean B(E2) per ring and for both rings within a quarter of the
-   paper's statistical error + 3 Monte Carlo errors of the mean. The scatter of the seeds is reported beside it.
+   paper's statistical error + 3 Monte Carlo errors of the mean. The scatter of the seeds is reported beside it. The
+   scheme has the 2⁺ state's half-life, so some of the nuclei decay before they have left the target, with a tail
+   below the peak that the setup without a scheme does not have.
 4. *The paper*: per ring, the paper's matrix element → GOSIA's ratio → physim's B(E2), within the paper's total
    uncertainty of 4.1 % of its per-ring B(E2); the pulls against the per-ring statistical errors are reported.
 5. *Sensitivities*: Q_s(2⁺) = ±0.1 e b and the feeding from ENSDF's higher states (0⁺₂, 2⁺₂, 4⁺₁) move the ratio
@@ -158,13 +160,10 @@ def ratios(exp) -> dict:
 
 
 def ratio_fit(points: dict) -> tuple:
-    """(a, b) of R = a M² + b M⁴ through {M: R} by least squares (M in e b), the outside tools' form; b = 0 where the
-    ratio goes as M² (first order)."""
+    """(a, b) of R = a M² + b M⁴ through {M: R} by least squares (M in e b), the outside tools' form."""
     m = np.array(sorted(points), dtype=float)
     r = np.array([points[k] for k in sorted(points)], dtype=float)
     a, b = np.linalg.lstsq(np.c_[m**2, m**4], r, rcond=None)[0]
-    if abs(b) * m[-1] ** 2 < 1e-6 * abs(a):
-        a, b = np.linalg.lstsq(np.c_[m**2], r, rcond=None)[0][0], 0.0
     return float(a), float(b)
 
 
