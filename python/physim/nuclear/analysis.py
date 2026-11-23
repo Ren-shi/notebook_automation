@@ -23,10 +23,13 @@ The steps are those of a Coulomb-excitation analysis, each shown and adjustable:
    its whole range (:func:`find_peaks`), each peak found is fitted, and those that sit on a transition of the
    nucleus that correction is right for are named (:func:`identify`). The other nucleus's lines are smeared by
    the wrong correction: each nucleus shows its peaks in its own spectrum.
-4. **Peak fit:** a Gaussian on a straight line, by weighted least squares within ``fit_half_width`` resolutions
+4. **Peak fit:** a Gaussian on a straight line, by maximum likelihood within ``fit_half_width`` resolutions
    of the transition energy, with the random coincidences expected in the window subtracted. Where the peak has
    tails that a Gaussian leaves out (a thick target: the emitter's speed, and so the Doppler shift, depends on how
-   deep the reaction was), the area is that of a peak with them (:func:`fit_tails`).
+   deep the reaction was), the area is that of a peak with them (:func:`fit_tails`). A run of too few counts to fix
+   the tails takes their share, width and offset from a simulation of the same setup
+   (:meth:`Analysis.simulated_peak`), and the budget says what that is worth. A fit that ends at a bound is reported
+   as failed (:attr:`PeakFit.failed`), with no area.
 5. **Yield:** the area over the full-energy-peak efficiency (each crystal's at the Doppler-shifted energy it sees
    the line at), the γ-ray branch (internal conversion) and the angular-correlation factor.
 6. **Normalisation**, chosen by the user: ``"rutherford"``, to the particles counted in the same rings,
@@ -83,10 +86,28 @@ FORWARD_DEPTH_POINTS = 24
 #: than ``GATE_OVERLAP_WARN`` of the excitations in the chosen rings.
 GATE_GROUP_COVER = 0.5
 GATE_OVERLAP_WARN = 0.5
-#: A peak is taken to have tails (:func:`fit_tails`) when they improve the fit's deviance by more than this: the
-#: three parameters they add do that by chance about once in 60 000 fits, and in a peak of too few counts to reach
-#: it the statistical uncertainty is larger than what it loses in its tails.
+#: A peak is taken to show its tails (:func:`fit_tails`) when they improve the fit's deviance by more than this: the
+#: three parameters they add do that by chance about once in 60 000 fits. A run whose peak has too few counts to
+#: reach it takes the tails of a simulated one (:meth:`Analysis.simulated_peak`).
 TAILS_WORTH = 25.0
+#: With a simulated tail shape, how many times wider or narrower than the simulated peak's core the fitted core may
+#: be, and how many of its σ its centre may lie away from the simulated one.
+SHAPE_REACH = 2.0
+#: The simulated peak: its seed (one more if the run has that seed), the reactions generated, the γ rays each of its
+#: particles emits, the full-energy counts it is made for and the most γ rays emitted for them.
+SHAPE_SEED = 1_618_033
+SHAPE_EVENTS = 600_000
+SHAPE_COPIES = 10
+SHAPE_COUNTS = 15_000
+SHAPE_EMISSIONS = 1_000_000
+#: A simulated tail share is never taken to be known better than this part of what it changes the area by (nor
+#: worse than all of it): how well the simulated width matches the measured one says where in between.
+SHAPE_KNOWN = 0.1
+
+
+def _with_beam_energy(experiment, energy_mev: float):
+    """The setup with another beam energy (nothing else of it changes)."""
+    return replace(experiment, beam=replace(experiment.beam, energy=Quantity(energy_mev, "MeV")))
 
 
 class _Zero:
@@ -161,9 +182,15 @@ class PeakFit:
     #: "centre" and "sigma" (MeV) of its core, the "share" of its area in the wider Gaussian, the "wide_centre" and
     #: "wide_sigma" of that one, the total "area" (counts) and the bin "width" (MeV); the "level" and "slope" (about
     #: "origin") of the line above it and the "step" the background takes below it (counts per bin); "inside", the
-    #: share of the peak within ±3σ of the Gaussian, where its counts are taken; and "gain", what the tails took
-    #: off the fit's deviance.
+    #: share of the peak within ±3σ of the Gaussian; "gain", what the tails took off the fit's deviance; and whether
+    #: they are "simulated" (the share, the offset and the width of the wider Gaussian, relative to the core, are
+    #: those of a simulated peak: :meth:`Analysis.simulated_peak`). With simulated tails also the σ of the Gaussian
+    #: fitted to that peak ("simulated_sigma", MeV), the share of it that the area of that Gaussian loses
+    #: ("simulated_loss") and the area of the Gaussian fitted to these counts ("gaussian_area", or None).
     tails: Optional[dict] = None
+    #: Why the fit is no measurement of a peak (its width or its centre ended at a bound, or it found no counts above
+    #: the background), or None.
+    failed: Optional[str] = None
 
     @classmethod
     def of(cls, d: dict) -> PeakFit:
@@ -202,19 +229,24 @@ class PeakFit:
     @property
     def shape(self) -> str:
         """What was fitted, in words."""
-        return "Gaussian on a line" if self.tails is None else "Gaussian with tails on a line with a step"
+        if self.tails is None:
+            return "Gaussian on a line"
+        return f"Gaussian with {'simulated ' if self.tails.get('simulated') else ''}tails on a line with a step"
 
 
 def fit_peak(counts: np.ndarray, edges: np.ndarray, energy: float, sigma0: float, half_width: float = 4.0,
              iterations: int = 40, max_sigma: Optional[float] = None, variance=None) -> PeakFit:
-    """Fit a Gaussian on a straight line to ``counts`` within ``half_width`` × FWHM of ``energy``, by weighted
-    least squares (Gauss–Newton; the weights are the counts, at least one per bin), then count the peak within
-    ±3σ of its centre over the line. Returns the area in counts.
+    """Fit a Gaussian on a straight line to ``counts`` within ``half_width`` × FWHM of ``energy``, by maximum
+    likelihood (the counts of each bin are Poisson; the line is nowhere negative), then count the peak within ±3σ of
+    its centre over the line. Returns the area in counts. A fit whose width or centre ends at the bound it may not
+    pass (``max_sigma`` and 0.3 of ``sigma0``, ±2 ``sigma0``), or which finds no counts above the line, is marked
+    :attr:`PeakFit.failed`: it describes no peak, and its area means nothing.
 
     ``variance`` is the variance of each bin when it is not its counts: a spectrum of weighted events scaled to
     a beam time holds far more counts than it has entries, and a fit that took the counts for their own variance
-    would trust every bin too much and follow the scatter of the few entries. Only the fit's weights use it; the
-    uncertainty of the area stays that of the counts, which is what the beam time gives."""
+    would trust every bin too much and follow the scatter of the few entries. The fit is then least squares with
+    these variances (Gauss–Newton). Only the fit's weights use it; the uncertainty of the area stays that of the
+    counts, which is what the beam time gives."""
     centres = (edges[:-1] + edges[1:]) / 2
     width = float(edges[1] - edges[0])
     half = half_width * FWHM_PER_SIGMA * sigma0
@@ -222,13 +254,68 @@ def fit_peak(counts: np.ndarray, edges: np.ndarray, energy: float, sigma0: float
     x, y = centres[m] - energy, counts[m].astype(float)
     if m.sum() < 6:
         raise ValueError("the fit window holds too few bins; widen it or use finer bins")
+    widest = max_sigma if max_sigma else 4.0 * sigma0
     if variance is None:
-        w = 1 / np.maximum(y, 1.0)
+        p, chi2 = _gaussian(x, y, sigma0, width, widest)
     else:
         var = np.asarray(variance, dtype=float)[m]
-        # A bin without entries is as uncertain as one entry (as a bin without counts is taken as one count).
+        # A bin without entries is as uncertain as one entry.
         filled = var[var > 0]
         w = 1 / np.maximum(var, float(np.median(filled)) if filled.size else 1.0)
+        p, chi2 = _gaussian_weighted(x, y, w, sigma0, widest, iterations)
+    failed = None
+    gauss_area = p[0] * p[2] * math.sqrt(2 * math.pi) / width
+    if not (p[0] > 0 if variance is not None else gauss_area > 1):
+        failed = "there are no counts above the background where the peak is looked for"
+    else:
+        fwhm = 1e3 * FWHM_PER_SIGMA * p[2]
+        if p[2] >= widest * (1 - 1e-9):
+            failed = f"the peak's width ran to the largest the fit allows (FWHM {fwhm:.1f} keV)"
+        elif p[2] <= 0.3 * sigma0 * (1 + 1e-9):
+            failed = f"the peak's width ran to the smallest the fit allows (FWHM {fwhm:.1f} keV)"
+        elif abs(p[1]) >= 2 * sigma0 * (1 - 1e-9):
+            failed = f"the peak's centre ran to the edge of where it is looked for ({1e3 * (energy + p[1]):.1f} keV)"
+    # The area is the counts within ±3σ of the fitted centre less the fitted line under them: a peak that is
+    # not quite Gaussian (the Doppler correction leaves a flat-topped one) is counted all the same. The 0.9973
+    # restores the Gaussian tails outside ±3σ.
+    inside = np.abs(x - p[1]) < 3 * p[2]
+    under = max(float(np.sum(p[3] + p[4] * x[inside])), 0.0)
+    area = (float(y[inside].sum()) - under) / 0.9973
+    # Counting statistics of the window, plus the background's own from the bands the line was fitted to.
+    outside = ~inside
+    bg_var = under * under / max(float(y[outside].sum()), 1.0) if outside.any() else under
+    area_unc = math.sqrt(max(float(y[inside].sum()), 0.0) + bg_var)
+    return PeakFit(float(area), float(area_unc), float(energy + p[1]), float(p[2]), under, chi2, int(m.sum()),
+                   gauss_area=float(gauss_area), height=float(p[0]), level=float(p[3]), slope=float(p[4]),
+                   origin=float(energy), failed=failed)
+
+
+def _gaussian(x: np.ndarray, y: np.ndarray, sigma0: float, width: float, widest: float) -> tuple:
+    """(height, centre, σ, level and slope of the line; deviance) of the likeliest Gaussian on a line that is nowhere
+    negative to the Poisson counts ``y`` of bins at ``x`` (MeV, from where the peak is expected)."""
+    z, b = x / sigma0, width / sigma0
+    u = (z - z[0]) / (z[-1] - z[0])
+
+    def model(p):
+        return p[0] * b / (math.sqrt(2 * math.pi) * p[2]) * np.exp(-0.5 * ((z - p[1]) / p[2]) ** 2) \
+            + p[3] * (1 - u) + p[4] * u
+
+    # Area (counts), centre, σ (in σ₀), and the line at the window's two ends.
+    y = np.maximum(y, 0.0)
+    side = max(len(y) // 8, 2)
+    ends = [float(y[:side].mean()), float(y[-side:].mean())]
+    start = np.array([max(float(y.sum()) - 0.5 * len(y) * sum(ends), 1.0), 0.0, 1.0, *ends])
+    low = np.array([0.0, -2.0, 0.3, 0.0, 0.0])
+    high = np.array([np.inf, 2.0, widest / sigma0, np.inf, np.inf])
+    p, deviance, _ = _likeliest(model, y, 1.0, start, low, high, np.ones(5, dtype=bool))
+    slope = (p[4] - p[3]) / (x[-1] - x[0])
+    return np.array([p[0] * b / (math.sqrt(2 * math.pi) * p[2]), p[1] * sigma0, p[2] * sigma0,
+                     p[3] - slope * x[0], slope]), deviance
+
+
+def _gaussian_weighted(x: np.ndarray, y: np.ndarray, w: np.ndarray, sigma0: float, widest: float,
+                       iterations: int) -> tuple:
+    """The same parameters by least squares with the weights ``w`` (Gauss–Newton), and χ²."""
     # Parameters: height, mean (relative to energy), sigma, background level and slope.
     p = np.array([max(float(y.max() - np.median(y)), 1.0), 0.0, sigma0, float(np.median(y)), 0.0])
 
@@ -253,153 +340,201 @@ def fit_peak(counts: np.ndarray, edges: np.ndarray, energy: float, sigma0: float
         p = p + step
         # Keep the peak a peak: its width between a half and three times the resolution, its centre in the
         # window, its height positive.
-        p[2] = min(max(abs(p[2]), 0.3 * sigma0), max_sigma if max_sigma else 4.0 * sigma0)
+        p[2] = min(max(abs(p[2]), 0.3 * sigma0), widest)
         p[1] = min(max(p[1], -2 * sigma0), 2 * sigma0)
         p[0] = max(p[0], 0.0)
         if np.max(np.abs(step[:3]) / (np.abs(p[:3]) + 1e-12)) < 1e-7:
             break
     r = y - model(p)
-    chi2 = float(np.sum(w * r * r))
-    gauss_area = p[0] * p[2] * math.sqrt(2 * math.pi) / width
-    # The area is the counts within ±3σ of the fitted centre less the fitted line under them: a peak that is
-    # not quite Gaussian (the Doppler correction leaves a flat-topped one) is counted all the same. The 0.9973
-    # restores the Gaussian tails outside ±3σ.
-    inside = np.abs(x - p[1]) < 3 * p[2]
-    under = max(float(np.sum(p[3] + p[4] * x[inside])), 0.0)
-    area = (float(y[inside].sum()) - under) / 0.9973
-    # Counting statistics of the window, plus the background's own from the bands the line was fitted to.
-    outside = ~inside
-    bg_var = under * under / max(float(y[outside].sum()), 1.0) if outside.any() else under
-    area_unc = math.sqrt(max(float(y[inside].sum()), 0.0) + bg_var)
-    return PeakFit(float(area), float(area_unc), float(energy + p[1]), float(p[2]), under, chi2, int(m.sum()),
-                   gauss_area=float(gauss_area), height=float(p[0]), level=float(p[3]), slope=float(p[4]),
-                   origin=float(energy))
+    return p, float(np.sum(w * r * r))
 
 
 def _likeliest(model, y: np.ndarray, scale: float, start: np.ndarray, low: np.ndarray, high: np.ndarray,
                free: np.ndarray) -> tuple:
-    """(parameters, deviance) of the bounded fit of ``model(parameters)`` to the counts ``y`` of bins whose variance
-    is ``scale`` × their expected counts: least squares with the model's own variances, improved until they no
-    longer change, which is the maximum of the Poisson likelihood. (Least squares with the variances of the counts
-    would count bins of few entries low.) Only the ``free`` parameters move; Levenberg–Marquardt."""
+    """(parameters, deviance, covariance) of the bounded fit of ``model(parameters)`` to the counts ``y`` of bins whose
+    variance is ``scale`` × their expected counts, by maximum Poisson likelihood. (Least squares with the variances of
+    the counts would count bins of few entries low.) Only the ``free`` parameters move; Fisher scoring with
+    Levenberg–Marquardt damping. The covariance is that of as many counts (not of as many entries), zero for a
+    parameter that does not move or ends at its bound."""
     p = np.clip(np.asarray(start, dtype=float), low, high)
     idx = np.flatnonzero(free)
-    floor = 1e-2 * scale  # no bin expects less than a hundredth of an entry
+    floor = 1e-4 * scale  # no bin expects less than that share of an entry
+    some = y > 0
+    const = float(np.sum(y[some] * np.log(y[some]) - y[some])) if some.any() else 0.0
 
     def expect(q):
         return np.maximum(model(q), floor)
 
-    for _ in range(20):  # the variances
-        begin = p.copy()
-        root = np.sqrt(scale * expect(p))
-        r = (y - model(p)) / root
-        cost, lam = float(r @ r), 1e-3
-        for _ in range(40):  # the parameters, with these variances
-            jac = np.empty((len(y), len(idx)))
-            for j, k in enumerate(idx):
-                h = 1e-5 * max(abs(p[k]), 1e-2)
-                h = -h if p[k] + h > high[k] else h
-                q = p.copy()
-                q[k] += h
-                jac[:, j] = ((y - model(q)) / root - r) / h
-            a, b = jac.T @ jac, jac.T @ r
-            # A parameter at its bound that would leave it stays there.
-            go = ~(((p[idx] <= low[idx]) & (b > 0)) | ((p[idx] >= high[idx]) & (b < 0)))
-            if not go.any():
-                break
-            better = False
-            for _ in range(10):
-                m = a[np.ix_(go, go)] + lam * np.diag(np.diag(a)[go] + 1e-30)
-                q = p.copy()
-                q[idx[go]] -= np.linalg.lstsq(m, b[go], rcond=None)[0]
-                q = np.clip(q, low, high)
-                rq = (y - model(q)) / root
-                if float(rq @ rq) <= cost:
-                    better = True
-                    break
-                lam *= 5
-            if not better:
-                break
-            gained = cost - float(rq @ rq)
-            p, r, cost, lam = q, rq, float(rq @ rq), max(lam / 5, 1e-9)
-            if gained < 1e-8 * cost:
-                break
-        if np.all(np.abs(p - begin) <= 1e-4 * np.abs(begin) + 1e-6):
-            break
+    def deviance(e):
+        return 2 * (float(e.sum() - np.sum(y[some] * np.log(e[some]))) + const) / scale
+
+    def jacobian(p):
+        jac = np.empty((len(y), len(idx)))
+        base = model(p)
+        for j, k in enumerate(idx):
+            h = 1e-5 * max(abs(p[k]), 1e-2)
+            h = -h if p[k] + h > high[k] else h
+            q = p.copy()
+            q[k] += h
+            jac[:, j] = (model(q) - base) / h
+        return jac
+
     e = expect(p)
-    deviance = 2 * float(np.sum(np.where(y > 0, y * np.log(np.where(y > 0, y, 1.0) / e), 0.0) - (y - e))) / scale
-    return p, deviance
+    cost, lam = deviance(e), 1e-3
+    for _ in range(200):
+        jac = jacobian(p)
+        a, b = jac.T @ (jac / e[:, None]), jac.T @ ((y - e) / e)
+        # A parameter at its bound that would leave it stays there.
+        go = ~(((p[idx] <= low[idx]) & (b < 0)) | ((p[idx] >= high[idx]) & (b > 0)))
+        if not go.any():
+            break
+        better = False
+        for _ in range(12):
+            m = a[np.ix_(go, go)] + lam * np.diag(np.diag(a)[go] + 1e-30)
+            q = p.copy()
+            q[idx[go]] += np.linalg.lstsq(m, b[go], rcond=None)[0]
+            q = np.clip(q, low, high)
+            eq = expect(q)
+            dq = deviance(eq)
+            if dq <= cost:
+                better = True
+                break
+            lam *= 5
+        if not better:
+            break
+        gained, moved = cost - dq, float(np.max(np.abs(q - p) / (np.abs(p) + 1e-3)))
+        p, e, cost, lam = q, eq, dq, max(lam / 5, 1e-9)
+        if gained < 1e-7 and moved < 1e-4:
+            break
+    jac = jacobian(p)
+    a = jac.T @ (jac / e[:, None])
+    off = (p[idx] > low[idx]) & (p[idx] < high[idx]) & (np.diag(a) > 1e-20)
+    cov = np.zeros((len(p), len(p)))
+    if off.any():
+        a = a[np.ix_(off, off)]
+        d = np.sqrt(np.diag(a))
+        k = idx[off]
+        cov[np.ix_(k, k)] = np.linalg.pinv(a / np.outer(d, d)) / np.outer(d, d)
+    return p, cost, cov
 
 
-def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: float = 4.0, variance=None) -> PeakFit:
+def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: float = 4.0, variance=None,
+              shape: Optional[dict] = None, worth: float = TAILS_WORTH) -> PeakFit:
     """The peak of ``fit`` (:func:`fit_peak`) with the tails it has beyond a Gaussian, or ``fit`` itself if it has none
     worth fitting.
 
     A Doppler-corrected peak is the sum of what every crystal, particle and depth of the target leave of the shift:
     a core with wider tails. From a thick target 2 % of it lies beyond ±3σ of the Gaussian that fits its core, and
     a straight line fitted beside it takes those tails for background. Here the peak is two Gaussians (the wider one
-    1.25 to 3.5 times as wide, its centre within a σ of the other's) on a straight line with a step: the peak's own
-    γ rays that scatter on their way are below it, so the background steps down as the peak is crossed. The area
-    is then, as before, the counts within ±3σ of the Gaussian's centre less the background under them, over the
-    share of the peak that the model has there (0.9973 for a Gaussian).
+    1.25 to 3.5 times as wide, its centre within a σ of the other's) on a straight line, nowhere negative, with a
+    step: the peak's own γ rays that scatter on their way are below it, so the background steps down as the peak is
+    crossed. The area is that of the fitted peak. At the maximum of the likelihood the model holds as many counts as
+    the window does, so it is the counts of the whole window less the background under them. (Counting within ±3σ
+    and dividing by the share of the model there takes that share from the model: a peak with a flat top, and tails
+    that end, is no sum of two Gaussians, and 0.2–0.3 % was lost on one.)
 
-    The tails are fitted by maximum likelihood (:func:`_likeliest`), and kept when they fit better than a Gaussian
-    on the same background by more than :data:`TAILS_WORTH`; without them the area is ``fit``'s. ``variance`` is each
-    bin's, if not its counts (its sum over theirs is the counts that one entry stands for)."""
+    The fit is by maximum likelihood (:func:`_likeliest`), and the tails are kept when they fit better than a Gaussian
+    on the same background by more than ``worth`` (:data:`TAILS_WORTH`); without them the result is ``fit``.
+    ``variance`` is each bin's, if not its counts (its sum over theirs is the counts that one entry stands for).
+
+    With a ``shape`` (:func:`tail_shape` of a peak that was fitted with its tails: one from a simulation of the setup)
+    the share, the centre and the width of the wider Gaussian, relative to the core's, are those of that peak. The
+    counts fix only the area, the centre and width of the core and the background, within the window of that peak.
+    The core may be :data:`SHAPE_REACH` times as wide or as narrow as the shape's, and its centre as many of its σ
+    away; a fit that ends there is marked :attr:`PeakFit.failed`."""
     centres = (edges[:-1] + edges[1:]) / 2
-    width, s0 = float(edges[1] - edges[0]), fit.sigma
-    m = np.abs(centres - fit.centroid) <= half_width * FWHM_PER_SIGMA * s0
+    width = float(edges[1] - edges[0])
+    origin, s0 = (fit.centroid, fit.sigma) if shape is None else (shape["centroid"], shape["sigma"])
+    m = np.abs(centres - origin) <= half_width * FWHM_PER_SIGMA * s0
     y = np.maximum(np.asarray(counts, dtype=float)[m], 0.0)
-    if len(y) < 20 or not y.sum() > 0 or not fit.area > 0:
+    if len(y) < 20 or not y.sum() > 0 or (shape is None and not fit.area > 0):
         return fit
     scale = 1.0 if variance is None else float(np.asarray(variance, dtype=float)[m].sum()) / float(y.sum())
     if not scale > 0:
         return fit
-    x, b = (centres[m] - fit.centroid) / s0, width / s0  # in σ of the Gaussian
+    x, b = (centres[m] - origin) / s0, width / s0  # in σ of the Gaussian
+    u = (x - x[0]) / (x[-1] - x[0])
 
     def peak(p):  # the share of the peak in each bin
         core = np.exp(-0.5 * ((x - p[1]) / p[2]) ** 2) / p[2]
-        wide = np.exp(-0.5 * ((x - p[1] - p[4]) / (p[2] * p[5])) ** 2) / (p[2] * p[5])
+        wide = np.exp(-0.5 * ((x - p[1] - p[4] * p[2]) / (p[2] * p[5])) ** 2) / (p[2] * p[5])
         return ((1 - p[3]) * core + p[3] * wide) * b / math.sqrt(2 * math.pi)
 
     def background(p, share):
-        return p[6] + p[7] * x + p[8] * (1 - np.cumsum(share) + share / 2)
+        return p[6] * (1 - u) + p[7] * u + p[8] * (1 - np.cumsum(share) + share / 2)
 
     def model(p):
         share = peak(p)
         return p[0] * share + background(p, share)
 
-    # Area; centre and σ of the core; share, centre (from the core's) and width (over the core's) of the wider
-    # Gaussian; level, slope and step of the background.
+    # Area; centre and σ of the core; share, centre (from the core's, in its σ) and width (over the core's) of the
+    # wider Gaussian; the line at the window's two ends; the step.
     side = max(len(y) // 8, 2)
     below, above = float(y[:side].mean()), float(y[-side:].mean())
-    start = np.array([fit.area, 0.0, 0.95, 0.1, 0.0, 2.0, above, 0.0, max(below - above, 0.0)])
-    low = np.array([0.0, -1.0, 0.3, 0.0, -1.0, 1.25, -np.inf, -np.inf, 0.0])
+    start = np.array([fit.area, 0.0, 0.95, 0.1, 0.0, 2.0, above, above, max(below - above, 0.0)])
+    low = np.array([0.0, -1.0, 0.3, 0.0, -1.0, 1.25, 0.0, 0.0, 0.0])
     high = np.array([np.inf, 1.0, 1.5, 0.4, 1.0, 3.5, np.inf, np.inf, np.inf])
-    gaussian = start.copy()
-    gaussian[3] = 0.0
     free = np.ones(9, dtype=bool)
     alone = free.copy()
     alone[3:6] = False
+    failed, gain = None, 0.0
     try:
-        _, plain = _likeliest(model, y, scale, gaussian, low, high, alone)
-        p, deviance = _likeliest(model, y, scale, start, low, high, free)
+        if shape is None:
+            gaussian = start.copy()
+            gaussian[3] = 0.0
+            _, plain, _ = _likeliest(model, y, scale, gaussian, low, high, alone)
+            p, deviance, cov = _likeliest(model, y, scale, start, low, high, free)
+            gain = plain - deviance
+            if not gain > worth:
+                return fit
+        else:
+            core = shape["core_sigma"] / s0
+            start[:6] = [max(float(y.sum()) - 0.5 * len(y) * (below + above), 1.0), (shape["centre"] - origin) / s0,
+                         core, shape["share"], shape["offset"], shape["ratio"]]
+            low[:6], high[:6] = -np.inf, np.inf
+            low[0] = 0.0
+            low[1], high[1] = start[1] - SHAPE_REACH * core, start[1] + SHAPE_REACH * core
+            low[2], high[2] = core / SHAPE_REACH, core * SHAPE_REACH
+            p, deviance, cov = _likeliest(model, y, scale, start, low, high, alone)
+            if not p[0] > 1:
+                failed = "there are no counts above the background where the setup puts the peak"
+            elif not low[2] < p[2] < high[2]:
+                failed = (f"the peak's width ran to {SHAPE_REACH:g} times "
+                          f"{'more' if p[2] > core else 'less'} than the setup's resolution and Doppler spread give")
+            elif not low[1] < p[1] < high[1]:
+                failed = "the peak's centre ran to the edge of where the setup puts it"
     except np.linalg.LinAlgError:
         return fit
-    if not plain - deviance > TAILS_WORTH:
-        return fit
     share = peak(p)
-    inside = np.abs(x) < 3
-    under = max(float(background(p, share)[inside].sum()), 0.0)
-    kept = float(share[inside].sum())
-    seen, beside = float(y[inside].sum()), float(y[~inside].sum())
-    unc = math.sqrt(seen + under * under / max(beside, 1.0)) / kept
-    tails = {"area": float(p[0]), "width": width, "centre": fit.centroid + s0 * float(p[1]), "sigma": s0 * float(p[2]),
-             "share": float(p[3]), "wide_centre": fit.centroid + s0 * float(p[1] + p[4]),
-             "wide_sigma": s0 * float(p[2] * p[5]), "level": float(p[6]), "slope": float(p[7]) / s0,
-             "origin": fit.centroid, "step": float(p[8]), "inside": kept, "gain": float(plain - deviance)}
-    return replace(fit, area=(seen - under) / kept, area_unc=unc, background=under, chi2=deviance, bins=int(m.sum()),
-                   tails=tails)
+    slope = float(p[7] - p[6]) / float(x[-1] - x[0])
+    tails = {"area": float(p[0]), "width": width, "centre": origin + s0 * float(p[1]), "sigma": s0 * float(p[2]),
+             "share": float(p[3]), "wide_centre": origin + s0 * float(p[1] + p[4] * p[2]),
+             "wide_sigma": s0 * float(p[2] * p[5]), "level": float(p[6]) - slope * float(x[0]),
+             "slope": slope / s0, "origin": origin, "step": float(p[8]), "gain": float(gain),
+             "simulated": shape is not None}
+    if shape is not None:  # the Gaussian of a peak of that shape: the window, and the width that is quoted
+        stretch = float(p[2]) * s0 / shape["core_sigma"]
+        fit = replace(fit, sigma=stretch * shape["sigma"], failed=failed,
+                      centroid=tails["centre"] + stretch * (shape["centroid"] - shape["centre"]))
+        tails["simulated_sigma"] = shape["sigma"]
+    inside = np.abs(centres[m] - fit.centroid) < 3 * fit.sigma
+    tails["inside"] = float(share[inside].sum())
+    unc = math.sqrt(max(float(cov[0, 0]), float(p[0])))
+    return replace(fit, area=float(p[0]), area_unc=unc, background=float(background(p, share)[inside].sum()),
+                   chi2=deviance, bins=int(m.sum()), tails=tails)
+
+
+def tail_shape(fit: PeakFit) -> Optional[dict]:
+    """What :func:`fit_tails` needs to give another peak the tails of ``fit``: the share of the wider Gaussian, its
+    centre from the core's ("offset", in the core's σ) and its σ over the core's ("ratio"), the core's "centre" and
+    "core_sigma", and the "centroid" and "sigma" of the Gaussian that was fitted to it. None for a peak without
+    tails."""
+    t = fit.tails
+    if t is None:
+        return None
+    return {"share": t["share"], "offset": (t["wide_centre"] - t["centre"]) / t["sigma"],
+            "ratio": t["wide_sigma"] / t["sigma"], "centre": t["centre"], "core_sigma": t["sigma"],
+            "centroid": fit.centroid, "sigma": fit.sigma}
 
 
 def find_peaks(counts, edges, fwhm, threshold: float = 5.0, contrast: float = 0.1, variance=None,
@@ -891,7 +1026,8 @@ class Analysis:
         of a thick target, and whatever Rutherford factor the forward cross section carries all enter as they do
         in the simulation.
 
-        ``energy_scale`` multiplies the beam energy at every depth (the beam-energy systematic); ``exact`` takes P
+        ``energy_scale`` multiplies the energy the beam enters the target with (the beam-energy systematic), which
+        then slows down from there: deep in a thick target that is a larger part of what is left. ``exact`` takes P
         from the first-order Coulomb excitation at each energy rather than from the forward model's interpolation
         through the depth (the two agree to a few parts in 10⁴; the budget compares like with like). ``mode`` =
         "forward" gives instead the forward model's own excitations per particle (every level a level scheme
@@ -950,18 +1086,19 @@ class Analysis:
         grid = np.arange(lo, hi + step / 2, step) if hi > lo else np.array([lo, lo + step])
         num, den = np.zeros(len(grid)), np.zeros(len(grid))
         beam = beam_ion(exp)
+        entering = exp if energy_scale == 1.0 else _with_beam_energy(exp, exp.beam.energy_mev * energy_scale)
         x, wq = np.polynomial.legendre.leggauss(FORWARD_DEPTH_POINTS)
         cos_t = math.cos(math.radians(tilt_deg(exp)))
         for ch in channels(layers, exp):
             lay = layers[ch.layer]
-            entry = float(beam_energy_at(exp, ch.layer, [0.0], layers)[0])
+            entry = float(beam_energy_at(entering, ch.layer, [0.0], layers)[0])
             if not entry > 0:
                 continue
             # The part of the layer the beam crosses, and the share of the layer's nuclei at each depth point.
             reach = min(float(stopping(beam, lay.material).range(entry)) * cos_t, lay.thickness)
             zs = (x + 1) / 2 * reach
             share = wq / 2 * reach / lay.thickness
-            es = np.asarray(beam_energy_at(exp, ch.layer, zs, layers), dtype=float) * energy_scale
+            es = np.asarray(beam_energy_at(entering, ch.layer, zs, layers), dtype=float)
             excited = ch.excitation is not None
             reacs, ws, firsts = [], [], []
             for e, wz in zip(es, share):
@@ -1019,22 +1156,14 @@ class Analysis:
         steps.append({"step": "Doppler correction", "text": f"for the {which}"})
         search = self._search(s, keep)
         steps.append({"step": "peak search", "text": self._search_text(search)})
-        # Two passes: the peak after the Doppler correction is wider than the resolution by what the segments
-        # leave, so the window is set from a first fit's width.
-        top = 0.03 * self.e0  # no Doppler residue is wider than a few percent
-        var = self._variance
-        first = fit_peak(counts, edges, self.e0, sigma, 3 * s.fit_half_width, max_sigma=top, variance=var)
-        fit = fit_peak(counts, edges, self.e0, first.sigma, s.fit_half_width, max_sigma=top, variance=var)
-        fit = self._with_tails(s, 0, 1e3 * self.e0, counts, edges, fit, var)
-        window = np.abs((edges[:-1] + edges[1:]) / 2 - fit.centroid) < 3 * fit.sigma
-        fit.randoms = float(rnd[window].sum()) if s.subtract_randoms else 0.0
-        area = fit.area - fit.randoms
-        area_unc = math.hypot(fit.area_unc, math.sqrt(max(fit.randoms, 0.0)))
-        steps.append({"step": "peak fit", "text": f"{fit.shape} within ±{s.fit_half_width:g} FWHM: area "
+        fit = self._peak(s, 0, self.e0, counts, edges, sigma, self._variance)
+        area, area_unc = self._area(s, fit, edges, rnd)
+        steps.append({"step": "peak fit", "text": f"failed: {fit.failed}" if fit.failed else
+                      f"{fit.shape} within ±{s.fit_half_width:g} FWHM: area "
                       f"{fit.area:.1f} ± {fit.area_unc:.1f} at {1e3 * fit.centroid:.1f} keV, FWHM {fit.fwhm_kev:.1f} "
                       f"keV, χ² {fit.chi2:.0f} for {fit.bins} bins"
                       + ("" if fit.tails is None else f"; {100 * (1 - fit.tails['inside']):.1f} % of the peak lies "
-                         "beyond ±3σ, in its tails")})
+                         "beyond ±3σ, in its tails" + self._simulated_text(fit))})
         steps.append({"step": "random coincidences", "text": f"{fit.randoms:.1f} expected in the peak, subtracted"
                       if s.subtract_randoms else "not subtracted"})
         # The efficiency, branch and correlation of the gated γ rays: weighted over the pairs that contributed.
@@ -1108,8 +1237,15 @@ class Analysis:
         mc = self._monte_carlo_uncertainty(s, keep, fit) if area > 0 else float("inf")
         if not area > 0:
             b = float("nan")
-            notes.append("No peak: the gate or the rings leave too few γ rays to fit.")
-        budget = self._budget(s, keep, b, p_per_b, eff, corr, ref_unc)
+            notes.append(f"The peak fit failed: {fit.failed}. There is no area, and no B(E2)." if fit.failed else
+                         "No peak: the gate or the rings leave too few γ rays to fit.")
+        if fit.tails is not None and fit.tails.get("simulated"):
+            notes.append("The counts are too few to fix the tails of the peak: their share and shape come from a "
+                         "simulation of this setup, and the line \"peak tails (simulated)\" of the budget is what "
+                         "that may be wrong by.")
+        fits = [fit] + ([PeakFit.of(other["fit"])] if s.normalisation == "target" and other is not None
+                        and not s.reference else [])
+        budget = self._budget(s, keep, b, p_per_b, eff, corr, ref_unc, fits)
         if full is not None and full["gain"] > 1.0:
             # To all orders B(E2) moves more than the yield does (see _all_orders): so do its uncertainties.
             statistical *= full["gain"]
@@ -1163,7 +1299,10 @@ class Analysis:
                          "those counts are in the area.")
         if other is not None:
             lines.append(other)
-            notes.append(f"The {other['label']} peak ({other['energy_kev']:.1f} keV, corrected for the "
+            failed = other["fit"].get("failed")
+            notes.append(f"The fit of the {other['label']} peak ({other['energy_kev']:.1f} keV, corrected for the "
+                         f"{other['correction']}) failed: {failed}." if failed else
+                         f"The {other['label']} peak ({other['energy_kev']:.1f} keV, corrected for the "
                          f"{other['correction']}): {other['per_particle']:.4g} γ rays per particle "
                          f"measured, {other['expected_per_particle']:.4g} expected from its level scheme to all "
                          f"orders; measured over expected {other['ratio']:.3f}.")
@@ -1230,7 +1369,7 @@ class Analysis:
                                    max_sigma=0.03 * pk["energy"], variance=var)
                 except ValueError:
                     continue
-                if not fit.area > 0:
+                if fit.failed or not fit.area > 0:
                     continue
                 # Two candidates the fit brings to one peak are that peak once (the more significant came first).
                 if any(abs(fit.centroid - q["energy"]) < max(fit.sigma, q["sigma"]) for q in peaks):
@@ -1270,15 +1409,171 @@ class Analysis:
         near = [pk for pk in search[correction]["peaks"] if abs(pk["energy_kev"] - energy_kev) <= half_kev]
         return min(near, key=lambda pk: abs(pk["energy_kev"] - energy_kev)) if near else None
 
-    def _with_tails(self, s: Settings, nucleus: int, energy_kev: float, counts, edges, fit: PeakFit,
-                    variance) -> PeakFit:
-        """``fit`` with the tails its peak has (:func:`fit_tails`); as it is when the nucleus has another line where
-        the tails would be, which they would take for their own."""
+    def _blended(self, s: Settings, nucleus: int, energy_kev: float, fit: PeakFit) -> bool:
+        """Whether the nucleus has another line in the fit window, which tails would take for their own."""
         half = 1e3 * s.fit_half_width * FWHM_PER_SIGMA * fit.sigma
-        if any(ln["nucleus"] == nucleus and abs(ln["energy_kev"] - energy_kev) > 0.05
-               and abs(ln["energy_kev"] - 1e3 * fit.centroid) <= half for ln in self._lines):
+        return any(ln["nucleus"] == nucleus and abs(ln["energy_kev"] - energy_kev) > 0.05
+                   and abs(ln["energy_kev"] - 1e3 * fit.centroid) <= half for ln in self._lines)
+
+    def _peak(self, s: Settings, nucleus: int, energy: float, counts, edges, sigma: float, variance,
+              like: Optional[PeakFit] = None) -> PeakFit:
+        """The fit of the peak at ``energy`` (MeV) of one nucleus's corrected spectrum, ``sigma`` a first idea of its
+        width. A Gaussian first; with its tails where the counts show them (:func:`fit_tails`); in a run whose counts
+        cannot, with those of the simulated peak of the same setup (:meth:`simulated_peak`), and as the Gaussian where
+        that one shows none either. As the Gaussian, too, when the nucleus has another line where the tails would be.
+        A fit that ends at a bound is :attr:`PeakFit.failed`, with no area. ``like``: a fit of the same peak whose
+        kind of tails (its own, the simulated ones, none) this one is to have too."""
+        top = 0.03 * energy  # no Doppler residue is wider than a few percent
+        # Two passes: the peak after the Doppler correction is wider than the resolution by what the segments
+        # leave, so the window is set from a first fit's width.
+        first = fit_peak(counts, edges, energy, sigma, 3 * s.fit_half_width, max_sigma=top, variance=variance)
+        fit = fit_peak(counts, edges, energy, sigma if first.failed else first.sigma, s.fit_half_width, max_sigma=top,
+                       variance=variance)
+        if like is not None and like.tails is None:
             return fit
-        return fit_tails(counts, edges, fit, s.fit_half_width, variance=variance)
+        if self._blended(s, nucleus, 1e3 * energy, fit):
+            return self._checked(fit)
+        simulated = like is not None and like.tails["simulated"]
+        if not fit.failed and not simulated:
+            own = fit_tails(counts, edges, fit, s.fit_half_width, variance=variance,
+                            worth=TAILS_WORTH if like is None else -math.inf)
+            if own.tails is not None:
+                return own
+        if self.taken is None or not float(np.sum(counts)) > 0:
+            return self._checked(fit)
+        sim = self.simulated_peak(s, nucleus)
+        if sim is None:
+            return self._checked(fit)
+        shape = tail_shape(sim)
+        if shape is not None:
+            got = fit_tails(counts, edges, fit, s.fit_half_width, shape=shape)
+            if got.tails is not None:
+                gauss = sim.tails["gaussian_area"]
+                got.tails.update(simulated_loss=max(1 - gauss / sim.area, 0.0),
+                                 gaussian_area=None if fit.failed else fit.area)
+            return self._checked(got)
+        # A Gaussian peak: the free fit, unless it is not of a width, or not at a place, that the setup can give it.
+        if (fit.failed or not 1 / SHAPE_REACH < fit.sigma / sim.sigma < SHAPE_REACH
+                or abs(fit.centroid - sim.centroid) > SHAPE_REACH * sim.sigma):
+            fit = fit_peak(counts, edges, sim.centroid, sim.sigma, s.fit_half_width, max_sigma=SHAPE_REACH * sim.sigma)
+        return self._checked(fit)
+
+    @staticmethod
+    def _checked(fit: PeakFit) -> PeakFit:
+        """``fit``, without its area if it failed."""
+        return replace(fit, area=0.0, area_unc=0.0, gauss_area=0.0) if fit.failed else fit
+
+    def _area(self, s: Settings, fit: PeakFit, edges, rnd) -> tuple:
+        """The fit's area less the random coincidences expected in its ±3σ window, and its uncertainty."""
+        window = np.abs((edges[:-1] + edges[1:]) / 2 - fit.centroid) < 3 * fit.sigma
+        fit.randoms = float(rnd[window].sum()) if s.subtract_randoms and not fit.failed else 0.0
+        return fit.area - fit.randoms, math.hypot(fit.area_unc, math.sqrt(max(fit.randoms, 0.0)))
+
+    @staticmethod
+    def _simulated_text(fit: PeakFit) -> str:
+        t = fit.tails
+        if not t.get("simulated"):
+            return ""
+        kev = 1e3 * FWHM_PER_SIGMA * t["simulated_sigma"]
+        return (", whose share and shape are those of a simulation of this setup (the counts are too few to fix them; "
+                f"the simulated peak has a FWHM of {kev:.1f} keV)")
+
+    def simulated_peak(self, settings: Optional[Settings] = None, nucleus: int = 0) -> Optional[PeakFit]:
+        """The peak that a simulation of the run's own setup gives under the same gate, rings, crystals, Doppler
+        correction and fit window, with far more counts than a run and its own seed, fitted as a weighted sample's
+        is: its tails (:func:`tail_shape`) are what a run of few counts takes for its own. Kept, so that a second fit
+        does not simulate again. None when nothing of it could be fitted."""
+        s = settings or Settings()
+        which = (s.detectors, s.rings, nucleus)
+        key = json.dumps([which, s.particle_gate, s.particle_energy, s.gate_width, s.correction, s.fit_half_width,
+                          s.target_offset_mm], default=_plain)
+        kept = self.__dict__.setdefault("_simulated", {})
+        if key not in kept:
+            kept[key] = None
+            g = self._simulated_gammas(s, nucleus)
+            if g is not None:
+                a = self._of(g)
+                quiet = replace(s, subtract_randoms=False)
+                try:
+                    if nucleus == 0:
+                        counts, edges, _, sigma, _ = a._spectrum(quiet, a._gate(quiet)[0])
+                        fit = a._peak(quiet, 0, self.e0, counts, edges, sigma, a._variance)
+                    else:
+                        o = self._other_setup()
+                        counts, edges, _, sigma, var = a._other_spectrum(quiet, o)
+                        fit = a._peak(quiet, 1, o["energy"], counts, edges, sigma, var)
+                    if not fit.failed and fit.area > 0:
+                        if fit.tails is not None:
+                            fit.tails["gaussian_area"] = self._gaussian_area(quiet, fit, counts, edges)
+                        kept[key] = fit
+                except ValueError:
+                    pass
+        return kept[key]
+
+    @staticmethod
+    def _gaussian_area(s: Settings, fit: PeakFit, counts, edges) -> float:
+        """The area of the Gaussian on a line (:func:`fit_peak`) in the window of ``fit``."""
+        return fit_peak(counts, edges, fit.centroid, fit.sigma, s.fit_half_width).area
+
+    def _of(self, gammas) -> Analysis:
+        """This analysis with other γ rays of the same setup, a weighted sample."""
+        import copy
+
+        a = copy.copy(self)
+        a.gammas, a.events, a.taken, a.history, a._whole = gammas, gammas.events, None, [], True
+        a._own = (gammas["nucleus"] == 0) if "nucleus" in gammas.columns else np.ones(len(gammas), dtype=bool)
+        for name in ("_forward", "_simulated", "_variance", "_gate_overlap", "_gate_efficiency"):
+            a.__dict__.pop(name, None)
+        return a
+
+    def _simulated_gammas(self, s: Settings, nucleus: int):
+        """The γ rays of :meth:`simulated_peak`: the particles that the gate's detectors and rings count, from
+        :data:`SHAPE_EVENTS` reactions, drawn in proportion to their weights so that each γ ray counts about the
+        same, as many as :data:`SHAPE_COUNTS` full-energy counts need. Kept for the last rings asked for."""
+        from .events import simulate
+        from .gamma_events import simulate_gammas
+
+        key = json.dumps([s.detectors, s.rings, nucleus], default=_plain)
+        kept = self.__dict__.setdefault("_shape_gammas", {})
+        if key in kept:
+            return kept[key]
+        kept.clear()
+        g = self.gammas
+        seed = SHAPE_SEED + (1 if int(g.seed) == SHAPE_SEED else 0)
+        ev = simulate(self.experiment, SHAPE_EVENTS, seed)
+        a = self._of(replace(g, events=ev))
+        rows = a._elastic_rows(s)
+        if nucleus == 0:
+            rows &= np.isin(ev.columns["channel"], [i for i, lab in enumerate(ev.channels) if "excited" in lab])
+        rows = np.flatnonzero(rows)
+        w = np.asarray(ev.columns["weight"], dtype=float)[rows]
+        if not w.sum() > 0:
+            kept[key] = None
+            return None
+        energy = self.e0 if nucleus == 0 else self._other_setup()["energy"]
+        eff = sum(float(c.response.peak_efficiency(energy, c.element)) for c in g.crystals)
+        n = int(min(SHAPE_COUNTS / max(eff, 1e-9), SHAPE_EMISSIONS) / SHAPE_COPIES) + 1
+        rng = np.random.default_rng(seed)
+        pick = np.sort(rng.choice(rows, size=n, p=w / w.sum()))
+        cols = {k: np.asarray(v)[pick] for k, v in ev.columns.items()}
+        cols["weight"] = np.full(n, float(w.sum()) / n)
+        cols["event"] = np.arange(n, dtype=np.asarray(ev.columns["event"]).dtype)
+        kept[key] = simulate_gammas(self.experiment, seed=seed, particle_events=replace(ev, columns=cols),
+                                    gammas_per_event=SHAPE_COPIES, rates=self.rates, other=nucleus == 1,
+                                    distance_um=g.distance_um)
+        return kept[key]
+
+    def _tails_uncertainty(self, fit: PeakFit) -> float:
+        """What the simulated share of the peak's tails may be wrong by, relative to the area: the change the share
+        makes (the area with it against that of the Gaussian, or, if larger, what the Gaussian loses of the simulated
+        peak), times how far the simulated width is from the measured one (and the uncertainty of that), between
+        :data:`SHAPE_KNOWN` and 1."""
+        t = fit.tails
+        if t is None or not t.get("simulated") or not fit.area > 0:
+            return 0.0
+        change = max(abs(1 - t["gaussian_area"] / fit.area) if t.get("gaussian_area") else 0.0, t["simulated_loss"])
+        off = math.hypot(fit.sigma / t["simulated_sigma"] - 1, 1 / math.sqrt(2 * fit.area))
+        return change * min(max(off, SHAPE_KNOWN), 1.0)
 
     def _blends(self, nucleus: int, energy_kev: float, fit: PeakFit) -> list:
         """The other transitions of the same nucleus inside the ±3σ window the area is counted in."""
@@ -1335,17 +1630,12 @@ class Analysis:
                                  if name == channel or name.startswith(channel + ",")]}
         return self._other or None
 
-    def _other_line(self, s: Settings, elastic_counts: float, search: dict) -> Optional[dict]:
-        """The first transition of the other nucleus, measured like the ``[reaction]`` one: its peak in the
-        spectrum corrected for that nucleus, in coincidence with every particle counted in the gate's rings,
-        fitted and integrated, its yield per particle, and what its level scheme gives. An entry of
-        :attr:`Result.lines`, or None when the events do not hold that nucleus."""
-        o = self._other_setup()
-        if o is None:
-            return None
+    def _other_spectrum(self, s: Settings, o: dict) -> tuple:
+        """The spectrum of the other nucleus's line (``o`` from :meth:`_other_setup`), as :meth:`_spectrum` is that of
+        the ``[reaction]`` one: (counts, edges, random coincidences expected, a first idea of σ, the variances)."""
         g = self.gammas
-        e_line, which = o["energy"], o["correction"]
-        key = {"projectile": "corrected_projectile", "recoil": "corrected_recoil"}[which]
+        e_line = o["energy"]
+        key = {"projectile": "corrected_projectile", "recoil": "corrected_recoil"}[o["correction"]]
         keep = self._in_rings(s)
         sigma = max(float(self._detector_fwhm(e_line)[0]) / FWHM_PER_SIGMA, 1e-4)
         width = sigma / 4
@@ -1359,18 +1649,24 @@ class Analysis:
         if s.subtract_randoms:
             rnd = self._random_rate(s, edges) * t
             counts = counts + np.random.default_rng(g.seed + 104729 + 17).poisson(rnd)
-        top = 0.03 * e_line
-        var = self._bin_variance(energies, keep, edges, rnd)
+        return counts, edges, rnd, sigma, self._bin_variance(energies, keep, edges, rnd)
+
+    def _other_line(self, s: Settings, elastic_counts: float, search: dict) -> Optional[dict]:
+        """The first transition of the other nucleus, measured like the ``[reaction]`` one: its peak in the
+        spectrum corrected for that nucleus, in coincidence with every particle counted in the gate's rings,
+        fitted and integrated, its yield per particle, and what its level scheme gives. An entry of
+        :attr:`Result.lines`, or None when the events do not hold that nucleus."""
+        o = self._other_setup()
+        if o is None:
+            return None
+        e_line, which = o["energy"], o["correction"]
+        keep = self._in_rings(s)
+        counts, edges, rnd, sigma, var = self._other_spectrum(s, o)
         try:
-            first = fit_peak(counts, edges, e_line, sigma, 3 * s.fit_half_width, max_sigma=top, variance=var)
-            fit = fit_peak(counts, edges, e_line, first.sigma, s.fit_half_width, max_sigma=top, variance=var)
-            fit = self._with_tails(s, 1, o["line"]["energy_kev"], counts, edges, fit, var)
+            fit = self._peak(s, 1, e_line, counts, edges, sigma, var)
         except ValueError:
             return None
-        window = np.abs((edges[:-1] + edges[1:]) / 2 - fit.centroid) < 3 * fit.sigma
-        fit.randoms = float(rnd[window].sum()) if s.subtract_randoms else 0.0
-        area = fit.area - fit.randoms
-        area_unc = math.hypot(fit.area_unc, math.sqrt(max(fit.randoms, 0.0)))
+        area, area_unc = self._area(s, fit, edges, rnd)
         eff, corr = self._efficiency_and_correlation(keep, e_line, o["correlation"], ~self._own, which)
         yield_ = area / (eff * corr) if eff > 0 and corr > 0 else float("nan")
         # What the level scheme gives per particle in the same rings: the transition's yield per
@@ -1487,11 +1783,14 @@ class Analysis:
         slope = math.log(f1 / f0) / math.log(b1 / b0) if b1 != b0 and f1 != f0 else 1.0
         gain = min(max(1.0 / slope, 1.0), 4.0) if slope > 0 else 1.0
         others = [ln for ln in inside if ln is not own]
+        levels = sol.scheme.levels
+        fed = any(lev.energy.value > levels[level].energy.value for lev in levels)
         own_share = expected(b1, ((level, ground),)) / f1
         text = (f"first order would read {b_first:.4g} e²fm⁴ from this yield. The level scheme's coupled equations "
                 f"give the measured {measured:.4g} γ rays per particle in the window for B(E2↑) = {b:.4g} "
-                f"e²fm⁴ ({100 * (b / b_first - 1):+.1f}%): they count the feeding of the state from the levels above"
-                + (", and " + ", ".join(f"{ln['label']} ({ln['energy_kev']:.1f} keV)" for ln in others)
+                f"e²fm⁴ ({100 * (b / b_first - 1):+.1f}%)"
+                + (": they count the feeding of the state from the levels above" if fed else "")
+                + ((", and " if fed else ": they count ") + ", ".join(f"{ln['label']} ({ln['energy_kev']:.1f} keV)" for ln in others)
                    + f", which the window also holds ({100 * (1 - own_share):.1f}% of its γ rays)" if others else "")
                 + ". Every other matrix element is taken from the scheme."
                 + (f" The scheme's yields, solved at the middle of the target, are scaled by {kappa:.4f}: the "
@@ -1584,14 +1883,15 @@ class Analysis:
                 "raw_counts": counts}
 
     def _budget(self, s: Settings, keep: np.ndarray, b: float, p_per_b: float, eff: float, corr: float,
-                ref_unc: float) -> dict:
-        """Relative systematic contributions, each by changing its input by one standard deviation."""
+                ref_unc: float, fits: list) -> dict:
+        """Relative systematic contributions, each by changing its input by one standard deviation. ``fits``: the
+        fit of the peak, and that of the peak it is normalised to."""
         if not b == b or b <= 0:
             return {}
         out = {"efficiency": s.efficiency_unc, "angular correlation": s.correlation_unc}
-        # Beam energy: ⟨P⟩/B changes with the orbit. The beam energy at every depth is raised by its uncertainty;
-        # both sides with the first-order P at each energy (the forward model's P is only tabulated through the
-        # depth the nominal beam crosses).
+        # Beam energy: ⟨P⟩/B changes with the orbit. The energy of the beam that enters the target is raised by its
+        # uncertainty, and it slows down from there; both sides with the first-order P at each energy (the forward
+        # model's P is only tabulated through the energies the nominal beam has).
         base = self._mean_probability(s, keep, exact=True)
         shifted = self._mean_probability(s, keep, energy_scale=1 + s.beam_energy_unc, exact=True)
         out["beam energy"] = abs(shifted / base - 1) if base > 0 else 0.0
@@ -1599,14 +1899,18 @@ class Analysis:
         # the peak, and the γ-ray efficiency goes as 1/d²; the peak area is found again with the moved target.
         d_mm = float(np.mean([gd.distance_mm() for gd in self.experiment.gamma_detectors]))
         out["detector positions"] = math.hypot(2 * s.position_unc_mm / d_mm,
-                                               self._area_change(s, keep, s.position_unc_mm))
+                                               self._area_change(s, keep, s.position_unc_mm, fits[0]))
+        tails = [self._tails_uncertainty(f) for f in fits]
+        if any(tails):
+            out["peak tails (simulated)"] = math.sqrt(sum(x**2 for x in tails))
         if s.normalisation == "target":
             out["reference B(E2)"] = ref_unc  # or, for a measured reference peak, its matrix elements
         out["matrix elements assumed"] = 0.0  # first order: no other matrix element enters
         return out
 
-    def _area_change(self, s: Settings, keep: np.ndarray, delta_mm: float) -> float:
-        """The relative change of the peak area when the target assumed in the correction moves by ±delta."""
+    def _area_change(self, s: Settings, keep: np.ndarray, delta_mm: float, like: PeakFit) -> float:
+        """The relative change of the peak area when the target assumed in the correction moves by ±delta, each area
+        from a fit of the kind ``like`` is (with its own tails, the simulated ones, or none)."""
         exc = self.experiment.excitation
         which = s.correction if s.correction != "emitter" else ("recoil" if exc.excite == "target" else "projectile")
         key = {"projectile": "corrected_projectile", "recoil": "corrected_recoil"}[which]
@@ -1622,11 +1926,8 @@ class Analysis:
             guess = min(max(_half_maximum_sigma(counts, edges, self.e0), sigma), 0.03 * self.e0)
             var = self._bin_variance(x, keep, edges, np.zeros(len(edges) - 1))
             try:
-                first = fit_peak(counts, edges, self.e0, guess, 3 * s.fit_half_width, max_sigma=0.03 * self.e0,
-                                 variance=var)
-                fit = fit_peak(counts, edges, self.e0, first.sigma, s.fit_half_width, max_sigma=0.03 * self.e0,
-                               variance=var)
-                areas.append(self._with_tails(s, 0, 1e3 * self.e0, counts, edges, fit, var).area)
+                fit = self._peak(s, 0, self.e0, counts, edges, guess, var, like=like)
+                areas.append(fit.area if not fit.failed else float("nan"))
             except ValueError:
                 areas.append(float("nan"))
         if not areas[0] or not all(a == a for a in areas):
@@ -1662,4 +1963,4 @@ def ex_nuclide(experiment) -> str:
 
 
 __all__ = ["Analysis", "PeakFit", "RESULT_FILE", "Result", "SHIFT_H", "Settings", "ex_nuclide", "fit_peak", "fit_tails",
-           "load_result", "save_result"]
+           "load_result", "save_result", "tail_shape"]

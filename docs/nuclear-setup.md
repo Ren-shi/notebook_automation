@@ -485,13 +485,27 @@ The steps, each adjustable through `Settings`:
    fitted, and one that sits on a transition of the nucleus that correction is right for is named
    (`analysis.identify`). A nucleus's lines are sharp in its own spectrum and smeared in the other, so each
    nucleus shows its peaks in its own spectrum. `Result.search` holds both spectra and their peaks.
-4. **Peak fit:** a Gaussian on a straight line within `fit_half_width` resolutions, then the counts within ±3σ
-   over the line, with the random coincidences expected in the window subtracted. Through a thick target the
-   emitter's speed, and so the Doppler shift, depends on how deep the reaction was: the corrected peak then has
-   tails that a Gaussian leaves out. When they show (they improve the fit's deviance by more than 25), a core with
-   a wider Gaussian on a background that steps down across the peak is fitted as well, and the counts within ±3σ
-   are divided by the share of that peak there instead of a Gaussian's 0.9973 (`analysis.fit_tails`;
-   `PeakFit.tails`). Not where the nucleus has another line inside the fit window.
+4. **Peak fit:** a Gaussian on a straight line within `fit_half_width` resolutions, by maximum likelihood (the
+   counts of a bin are Poisson), then the counts within ±3σ over the line, with the random coincidences expected in
+   the window subtracted. Through a thick target the emitter's speed, and so the Doppler shift, depends on how deep
+   the reaction was: the corrected peak then has tails that a Gaussian leaves out. When they show (they improve the
+   fit's deviance by more than 25), a core with a wider Gaussian on a background that steps down across the peak is
+   fitted, and the area is that of this peak: the counts of the whole window less the background under them
+   (`analysis.fit_tails`; `PeakFit.tails`). Not where the nucleus has another line inside the fit window.
+   - **Few counts.** A run whose counts cannot fix the tails takes the share, the offset and the width of the wider
+     Gaussian, relative to the core, from a peak of 15 000 counts simulated with the same setup, rings, crystals,
+     gate, Doppler correction and fit window, and with a seed of its own (`Analysis.simulated_peak`). The run's
+     counts fix the area, the centre, the width of the core and the background. The simulation is made once per
+     choice of rings (it takes seconds) and kept with the analysis. Where the simulated peak is a Gaussian, so is
+     the fit. `PeakFit.tails["simulated"]`, the step's text and the record say when the tails are simulated. A
+     spectrum of weighted events is a simulation itself and is fitted with its own.
+   - The budget then has the line **peak tails (simulated)**: the area with the simulated tails against that
+     without them (or what a Gaussian loses of the simulated peak, if larger), times how far the simulated width is
+     from the measured one, at least a tenth. A simulation analysed by the same simulation cannot test this
+     assumption: a closure test does not see it.
+   - **A failed fit.** A fit whose width or centre ends at the bound it may not pass (twice what the simulated peak
+     has, where there is one) is reported as failed (`PeakFit.failed`, the step and a note), without an area and
+     without a B(E2).
 5. **Yield:** the area over the full-energy-peak efficiency (each crystal's at the Doppler-shifted energy it sees
    the line at, read from the measured over the corrected energies), the γ-ray branch and the angular-correlation
    factor.
@@ -514,8 +528,9 @@ The steps, each adjustable through `Settings`:
    the yield, the yield per particle and, for the other nucleus, the expected one and their ratio.
 7. **B(E2↑)** from the first-order proportionality of the excitation probability to B(E2), in e²fm⁴, e²b² and
    Weisskopf units; the statistical uncertainty from the fit and the normalisation; a budget of systematics
-   (efficiency, angular correlation, beam energy, detector positions, the reference's B(E2)), each found by
-   changing its input by one standard deviation and running again; and the Monte Carlo sample's own uncertainty,
+   (efficiency, angular correlation, beam energy, detector positions, the peak's tails if they are simulated, the
+   reference's B(E2)), each found by changing its input by one standard deviation and running again (the beam
+   energy at the entry of the target: it slows down from there); and the Monte Carlo sample's own uncertainty,
    quoted separately.
    - **To all orders.** When the events follow a level scheme to all orders, first order is only the start (the
      "all orders" step). The scheme's coupled equations are solved with B(E2↑) of the transition as the one
