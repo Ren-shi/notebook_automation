@@ -149,6 +149,20 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The analysis of a stored run averages the expected excitation over each segment (Allmond 2014 verification, second
+  fix plan, 2). A run knows only the segment a particle hit, and ⟨P⟩/B was read at the segment's mean angle: 0.6 and
+  1.2 % too large with one ring per detector (⁶²Ni on carbon, 14–28° and 28–44°). Now the cross sections of the
+  excitation and of every particle are each integrated over the segment, for each kind of particle, without the
+  directions in another detector's shadow and the particles below the threshold; a segment across the largest lab
+  angle of a double-valued particle is integrated in the CM system. Within 0.02 % of the cross sections integrated
+  over the ring, with seven rings and with one. Weighted simulations keep their particles' angles, bit for bit.
+- The analysis's uncertainty budget (fix 12): a "target thickness" term, the change of ⟨P⟩/B with the thickness changed
+  by its uncertainty (`Settings.thickness_unc`, a field of the Analysis step; −2.05/+2.10 % for ±1.3 % of the Allmond
+  target), and "matrix elements assumed", which was always 0: the change of the γ rays in the peak when the level
+  scheme's other matrix elements move by their uncertainties, from the coupled equations (Q_s ± 0.1 eb on ⁶²Ni:
+  +2.87/−2.81 % and +2.02/−1.99 %). An input without an uncertainty has no term, and the new `Result.budget_notes`,
+  the normalisation step, the record and the report say so. `coulex_ni62_pt194_clovers` (Q_s = 0.05 ± 0.12 eb from
+  ENSDF and four transitions) goes from 10 to 26 % systematic. Results kept by earlier versions load as they are.
 - A stored run's particle angles and the Doppler correction take the right angle of each segment (Allmond 2014
   verification, second fix plan, 1). `Geometry.segment_centre(weighted=True)` averaged x and y over a sector, which
   put the point 1.1–1.6 % nearer to the axis (a ring without sectors at 0° or 180°), and weighted recoils by the

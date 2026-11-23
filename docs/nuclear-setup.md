@@ -521,6 +521,11 @@ The steps, each adjustable through `Settings`:
    over that of every particle reaching the angle, each integrated over the depth of the target at the beam
    energy there and through its own kinematics (the excited particle's CM angle and Jacobian), then averaged
    over the particles in the rings.
+   - **A run** knows which segment each particle hit, not its angle. There the two cross sections are each integrated
+     over the segment's solid angle before they are divided, for the scattered beam and the recoils on their own.
+     Directions in another detector's shadow and particles below the detector's threshold are left out of both.
+     With one ring per detector, ⟨P⟩/B at the segment's mean angle was 0.6 and 1.2% too large for ⁶²Ni on carbon
+     (14–28° and 28–44°). A weighted simulation keeps the angle of each of its particles.
    - With a level scheme of that nucleus in the setup its γ rays are in the events (see *Both nuclei* under
      {ref}`Particle–γ events <particle-gamma-events>`). Its first transition's peak is then found, fitted and
      integrated in its own corrected spectrum, in coincidence with every particle counted in the same rings.
@@ -534,9 +539,18 @@ The steps, each adjustable through `Settings`:
 7. **B(E2↑)** from the first-order proportionality of the excitation probability to B(E2), in e²fm⁴, e²b² and
    Weisskopf units; the statistical uncertainty from the fit and the normalisation; a budget of systematics
    (efficiency, angular correlation, beam energy, detector positions, the peak's tails if they are simulated, the
-   reference's B(E2)), each found by changing its input by one standard deviation and running again (the beam
-   energy at the entry of the target: it slows down from there); and the Monte Carlo sample's own uncertainty,
-   quoted separately.
+   reference's B(E2), the target's thickness, the matrix elements assumed), each found by changing its input by one
+   standard deviation and running again (the beam energy at the entry of the target: it slows down from there); and
+   the Monte Carlo sample's own uncertainty, quoted separately.
+   - **Target thickness:** the change of ⟨P⟩/B with the thickness changed by `Settings.thickness_unc` (relative). Left
+     at None there is no term, and `Result.budget_notes` says so: 1.3% of 1.04 mg/cm² of carbon is 2.1% on B(E2).
+   - **Matrix elements assumed:** every other matrix element of the excited nucleus's level scheme (its static
+     moments, the other transitions) is moved up and down by its uncertainty in the scheme. The term is the change of
+     the γ rays in the peak, from the coupled equations at one to three beam energies through the target (always to
+     all orders, whatever the `order`). Elements without an uncertainty are named, and not counted; so is a Q_s
+     that the scheme does not have. Without a level scheme, or without any uncertainty, there is no term and the
+     notes say so (it was always 0). The elements' signs are taken from the scheme, and the γ-ray branching stays as
+     given.
    - **To all orders.** When the events follow a level scheme to all orders, first order is only the start (the
      "all orders" step). The scheme's coupled equations are solved with B(E2↑) of the transition as the one
      unknown, until they give the measured γ rays per particle in the peak's window, every transition inside

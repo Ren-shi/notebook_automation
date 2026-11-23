@@ -934,6 +934,8 @@ def analysis_html(result, heading: str = "") -> str:
                      f"</thead><tbody><tr><td>statistical</td><td>{100 * result.statistical:.2f}</td></tr>"
                      + "".join(f"<tr><td>{e(k)}</td><td>{100 * v:.2f}</td></tr>" for k, v in result.budget.items())
                      + f"<tr><td><b>total</b></td><td><b>{100 * result.total_unc:.2f}</b></td></tr></tbody></table>")
+        if getattr(result, "budget_notes", None):
+            parts.append("<ul>" + "".join(f"<li>{e(n[0].upper() + n[1:])}.</li>" for n in result.budget_notes) + "</ul>")
         if result.whole_run_statistical is not None:
             parts.append(f"<p>The whole run, scaled from its real part, would give a statistical uncertainty of "
                          f"{100 * result.whole_run_statistical:.1f}%.</p>")

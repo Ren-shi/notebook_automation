@@ -214,6 +214,211 @@ def test_a_failed_fit_has_no_area(hours, monkeypatch):
     assert any(n.startswith("The peak fit failed") for n in r.notes)
 
 
+# -- a run knows segments, not angles --------------------------------------------------------------------------------
+
+
+def stored(a, setup=None) -> Analysis:
+    """The particles of a weighted sample as a run keeps them: the counted ones, at their segment's mean angles."""
+    from physim.nuclear.runs import _segment_directions
+
+    c = a.events.columns
+    rows = np.flatnonzero(c["counted"])
+    cols = {k: np.asarray(v)[rows] for k, v in c.items()}
+    cols["theta"], cols["phi"] = _segment_directions(a.experiment, cols)
+    g = a.gammas
+    run = SimpleNamespace(summary={"one_particle": True}, scale=1.0, real_s=1.0, duration_s=1.0)
+    return Analysis(setup or a.experiment, replace(g, columns={k: np.asarray(v)[:0] for k, v in g.columns.items()},
+                                                   events=replace(a.events, columns=cols)), run=run)
+
+
+def exact(exp, det: str) -> float:
+    """⟨P⟩/B of the recoils in one ring around the beam: the cross sections of each reaction, at 24 depths, integrated
+    over the ring's polar angles."""
+    from physim.nuclear.rates import beam_energy_at, channels, reaction_at, stack
+
+    mm = lambda q: float(str(q).split()[0])  # noqa: E731
+    d = next(x for x in exp.detectors if x.name == det)
+    lo, hi = (math.degrees(math.atan(mm(r) / mm(d.distance))) for r in (d.inner_radius, d.outer_radius))
+    x, w = np.polynomial.legendre.leggauss(24)
+    xa, wa = np.polynomial.legendre.leggauss(100)
+    th = lo + (xa + 1) / 2 * (hi - lo)
+    omega = wa * np.sin(np.radians(th))
+    layers = stack(exp)
+    excited = every = 0.0
+    for xi, wi in zip(x, w):
+        e = float(beam_energy_at(exp, 0, [(xi + 1) / 2 * layers[0].thickness], layers)[0])
+        for ch in channels(layers, exp):
+            r = reaction_at(exp, ch, e, layers)
+            p = r.kinematics.at_lab(th, "recoil")[0]
+            part = wi * float(np.sum(omega * np.asarray(r.cross_section_cm(180.0 - p.theta_cm)) * p.jacobian))
+            every += part
+            excited += part if ch.excitation is not None else 0.0
+    return excited / every / exp.excitation.b_up_e2fm
+
+
+def with_rings(**changes) -> Experiment:
+    d = allmond_setup().to_dict()
+    for x in d["detectors"]:
+        x.update(changes)
+    return Experiment.from_dict(d)
+
+
+@pytest.fixture(scope="module")
+def one_ring():
+    exp = with_rings(rings=1)
+    return Analysis(exp, simulate_gammas(exp, 40_000, seed=3))
+
+
+@pytest.mark.parametrize("det, at_the_mean", [("Ring2", 0.006), ("Ring3", 0.012)])
+def test_a_run_averages_the_excitation_over_each_segment(allmond, one_ring, det, at_the_mean):
+    """Round 3, fix 2: within 0.1 % of the cross sections integrated over the ring, with seven rings and with one. At the
+    mean angle of one ring ⟨P⟩/B was +0.6 and +1.2 % off."""
+    s = every_particle(det)
+    for a in (allmond[1][0], one_ring):
+        run, truth = stored(a), exact(a.experiment, det)
+        assert run._mean_probability(s) == pytest.approx(truth, rel=1e-3)
+        assert run._mean_probability(s, mode="forward") == pytest.approx(truth * B_UP, rel=1e-3)
+    grid, ratio = run._forward_ratio("recoil")
+    rows = run._elastic_rows(s)
+    old = np.average(np.interp(run.events.columns["theta"][rows], grid, ratio),
+                     weights=run.events.columns["weight"][rows]) / B_UP
+    assert old / truth - 1 == pytest.approx(at_the_mean, abs=1e-3)
+
+
+def test_the_segment_averages_are_kept_and_the_systematics_use_them(one_ring, monkeypatch):
+    run = stored(one_ring)
+    s = every_particle("Ring3")
+    p = run._mean_probability(s)
+    assert one_ring.__dict__.get("_segment_kept") is None      # a weighted sample keeps its own angles
+    monkeypatch.setattr(Analysis, "_lab_sums", lambda *a, **k: pytest.fail("worked out again"))
+    assert run._mean_probability(s) == p
+    assert run._mean_probability(every_particle("Ring2")) > p  # other rings of the same run
+    monkeypatch.undo()
+    up = run._mean_probability(s, energy_scale=1.005, exact=True) / run._mean_probability(s, exact=True) - 1
+    assert up == pytest.approx(0.0514, rel=0.02)
+
+
+def deviation(a, det: str, recoil: bool) -> tuple:
+    """The excited share of the particles of one kind in a detector: the run's expectation over what the events did,
+    less one, and the error of the latter."""
+    run = stored(a)
+    c = run.events.columns
+    rows = (c["detector"] == run.events.detectors.index(det)) & (c["recoil"] == recoil)
+    hit, w = rows & excited_rows(run), c["weight"]
+    err = math.sqrt(float((w[hit] ** 2).sum())) / float(w[hit].sum())
+    return float(np.average(run._excited_share(rows), weights=w[rows]) / (w[hit].sum() / w[rows].sum())) - 1, err, run
+
+
+def test_a_segment_partly_below_the_threshold():
+    """Carbon recoils at 50° and beyond, a threshold of 12 MeV: those from deep in the target, which are hardly ever
+    excited, are not counted. (At the mean angle, all depths counted, the share was 75 % too small.)"""
+    d = allmond_setup().to_dict()
+    d["detectors"][1].update(inner_radius="60 mm", outer_radius="180 mm", threshold="12 MeV", rings=1)
+    exp = Experiment.from_dict(d)
+    dev, err, run = deviation(Analysis(exp, simulate_gammas(exp, 300_000, seed=8)), "Ring3", True)
+    assert err < 0.06 and abs(dev) < 3 * err, (dev, err)
+    nodes = run._segment_nodes()
+    cut = run._cut_by_threshold("recoil", np.flatnonzero(nodes["recoil"]))
+    names = np.array(nodes["detector"])[nodes["recoil"]]
+    assert cut[names == "Ring3"].all() and not cut[names == "Ring2"].any()
+
+
+def test_a_segment_in_which_the_scattered_beam_turns_back():
+    """62Ni scatters off carbon by at most 11.2°, where its cross section per solid angle diverges: a ring across that
+    angle, both kinds of particle in it."""
+    d = allmond_setup().to_dict()
+    d["detectors"] = [dict(d["detectors"][0], inner_radius="6 mm", outer_radius="14 mm", distance="60 mm", rings=1)]
+    exp = Experiment.from_dict(d)
+    a = Analysis(exp, simulate_gammas(exp, 300_000, seed=9))
+    for recoil in (False, True):
+        dev, err, run = deviation(a, "Ring2", recoil)
+        assert err < (0.05 if recoil else 0.01) and abs(dev) < 3 * err, (recoil, dev, err)
+
+
+def test_segments_of_tilted_and_off_axis_detectors():
+    """A tilted target, a strip, a disc and an annulus away from the beam axis, one segment each or a few."""
+    d = Experiment.example("coulex_ni58").to_dict()
+    d["target"]["tilt"] = "30 deg"
+    face = {"thickness": "300 um", "resolution": "50 keV", "threshold": "1 MeV"}
+    d["detectors"] = [dict(face, name="Strip", shape="rectangle", theta="100 deg", phi="20 deg", distance="60 mm",
+                           width="60 mm", height="40 mm", strips_x=1, strips_y=1),
+                      dict(face, name="Side", shape="rectangle", theta="60 deg", phi="200 deg", distance="50 mm",
+                           width="50 mm", height="50 mm", strips_x=4, strips_y=1),
+                      dict(face, name="Disc", shape="circle", theta="140 deg", phi="100 deg", distance="50 mm",
+                           radius="25 mm"),
+                      dict(face, name="Ring", shape="annular", theta="150 deg", phi="270 deg", distance="70 mm",
+                           inner_radius="8 mm", outer_radius="30 mm", rings=1, sectors=1)]
+    exp = Experiment.from_dict(d)
+    a = Analysis(exp, simulate_gammas(exp, 400_000, seed=10))
+    for det, recoil in (("Strip", False), ("Side", False), ("Side", True), ("Disc", False), ("Ring", False)):
+        dev, err, _ = deviation(a, det, recoil)
+        assert err < 0.06 and abs(dev) < 3 * err + 0.01, (det, recoil, dev, err)
+
+
+# -- the assumed inputs in the budget ----------------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def reorientation():
+    """The Allmond setup with a level scheme of the one state and Q_s = 0.0 ± 0.1 eb."""
+    from physim.nuclear.levels import quadrupole_factor
+    from physim.nuclear.orientation import simple_scheme
+
+    def setup(q_eb: float, unc=None) -> Experiment:
+        scheme = simple_scheme("62Ni", "1172.91 keV", "E2", f"{B_UP} e2fm4")
+        f = quadrupole_factor(2.0)
+        scheme.set_matrix_element(1, 1, "E2", 100.0 * q_eb / f, unc=None if unc is None else 100.0 * unc / f)
+        d = allmond_setup().to_dict()
+        d["levels"] = {"beam": scheme.to_dict()}
+        return Experiment.from_dict(d)
+
+    exp = setup(0.0, 0.1)
+    return Analysis(exp, simulate_gammas(exp, 100_000, seed=6)), setup
+
+
+def test_the_target_thickness_term(reorientation):
+    """Round 3, fix 12: ±0.0138 mg/cm² changes ⟨P⟩/B by −2.05 and +2.10 %, as setups of those thicknesses."""
+    a, _ = reorientation
+    s = replace(every_particle(None), thickness_unc=0.0138 / 1.03741)
+    more, less = a._thickness_changes(s)
+    assert more == pytest.approx(-0.0205, rel=0.1) and less == pytest.approx(0.0210, rel=0.1)
+    for change, t in ((more, 1.03741 + 0.0138), (less, 1.03741 - 0.0138)):
+        d = allmond_setup().to_dict()
+        d["target"]["thickness"] = f"{t!r} mg/cm2"
+        own = Analysis(Experiment.from_dict(d), a.gammas)._mean_probability(s)
+        assert own / Analysis(allmond_setup(), a.gammas)._mean_probability(s) - 1 == pytest.approx(change, rel=0.02)
+
+
+@pytest.mark.parametrize("det, up, down", [("Ring2", 0.0287, -0.0282), ("Ring3", 0.0202, -0.0199)])
+def test_the_term_of_the_assumed_matrix_elements(reorientation, det, up, down):
+    """Q_s ± 0.1 eb, as the coupled equations of setups with that moment give it."""
+    a, setup = reorientation
+    s = every_particle(det)
+    r = a.run(s)
+    (name, plus, minus), = a._matrix_element_changes(s, r.fit)["changes"]
+    assert "Q_s of the 2+ state" in name and "0.1 eb" in name
+    assert plus == pytest.approx(up, abs=1e-3) and minus == pytest.approx(down, abs=1e-3)
+    gain = r.budget["efficiency"] / 0.05
+    assert r.budget["matrix elements assumed"] == pytest.approx(max(plus, -minus) * gain)
+    assert any("Q_s of the 2+ state" in n for n in r.budget_notes)
+    assert "Q_s of the 2+ state" in next(x["text"] for x in r.steps if x["step"] == "normalisation")
+    base, higher = (Analysis(setup(q), a.gammas)._mean_probability(s, mode="forward") for q in (0.0, 0.1))
+    assert higher / base - 1 == pytest.approx(plus, abs=3e-4)
+    # For a run it is the same response, averaged over the segments.
+    run = stored(a)
+    (_, p, m), = run._matrix_element_changes(s, r.fit)["changes"]
+    assert (p, m) == (pytest.approx(plus, abs=2e-4), pytest.approx(minus, abs=2e-4))
+
+
+def test_matrix_elements_without_uncertainties_have_no_term(reorientation):
+    a, setup = reorientation
+    b = Analysis(setup(0.0), a.gammas)
+    r = b.run(every_particle("Ring3"))
+    assert "matrix elements assumed" not in r.budget
+    assert any("no uncertainty given for any of the other matrix elements" in n and "Q_s of the 2+ state" in n
+               for n in r.budget_notes)
+
+
 # -- the beam-energy systematic -------------------------------------------------------------------------------------
 
 
