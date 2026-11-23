@@ -162,7 +162,7 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - A fit whose width or centre ends at its bound (twice the simulated peak's, where there is one), or that finds no
     counts above the background, is `PeakFit.failed`: reported with the reason, without an area and a B(E2).
   - ⁶²Ni on carbon, toys of 60, 140, 1400 and 5000 counts in the three ring choices: the area is within 0.4 % (it was
-    1 to 4 % low below 2000 counts, and 6 of 6000 toys of 60 counts ran away); many counts: +0.04, +0.01, +0.01 %
+    1 to 4 % low below 2000 counts, and 7 of 6000 toys of 60 counts ran away); many counts: +0.04, +0.01, +0.01 %
     against the true counts (−0.17, −0.21, −0.22 %). A Gaussian peak of 1400 counts on 20 per bin: 0.0 % (+6 %).
   - The target's misplacement in the budget refits with the same kind of tails, not with whatever the counts of each
     shifted spectrum allow (3.5 % from the scatter of 68 counts, now 0.9 %).
