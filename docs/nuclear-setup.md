@@ -398,8 +398,13 @@ g["corrected_recoil"], g["weight"]            # per γ ray (see gamma_events.GAM
   two-body partner's of the particle that was detected), emits its γ ray in its rest frame with the angular
   correlation for that orbit, and the γ ray is transformed to the laboratory. A crystal it meets records it with
   the response: full energy, Compton deposit or escape peak, then the resolution and the threshold.
-- **Doppler correction** from what the detectors know: the centre of the segment that fired, the centre of the
-  crystal, and two-body kinematics at the nominal beam energy. It is made for the scattered beam and for the
+- **Doppler correction** from what the detectors know: the segment that fired, the centre of the crystal, and
+  two-body kinematics at the nominal beam energy. A segment stands for the mean polar angle of the particles that
+  hit it, weighted by the elastic cross section of the particle's kind in the laboratory: Rutherford's for the
+  scattered beam (1/sin⁴(θ/2) on a heavy target; with the setup's masses for any other, up to the largest angle of a
+  beam heavier than its target) and 1/cos³θ for the target recoil, at the azimuth of the segment's middle. A ring
+  without sectors knows no azimuth: only the motion along the beam is then corrected for. A stored run takes its
+  particles' angles from the same means. It is made for the scattered beam and for the
   target recoil (`corrected_projectile`, `corrected_recoil`): the right one puts the peak at the transition
   energy, the wrong one smears it. The width that remains comes from the sizes of segments and crystals.
 - **Coincidences.** Every γ ray is a true coincidence with its particle, weighted as the particle events are.

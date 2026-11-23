@@ -23,8 +23,8 @@ and excited the state emits its γ ray, which is followed to the crystals::
    :mod:`physim.nuclear.response` gives (after the absorbers), leaves its full energy or a Compton or escape
    deposit, and is recorded with the crystal's resolution; a threshold applies.
 
-**The Doppler correction** uses only what the detectors know: the centre of the segment the particle hit, the
-centre of the crystal, and two-body kinematics at the nominal beam energy. It is made twice: as if the emitter
+**The Doppler correction** uses only what the detectors know: the segment the particle hit (the mean angles there of
+the particles of its kind), the centre of the crystal, and two-body kinematics at the nominal beam energy. It is made twice: as if the emitter
 were the scattered beam, and as if it were the target recoil. The width that remains comes from the sizes of the
 segments and crystals.
 
@@ -51,7 +51,7 @@ from typing import Optional
 import numpy as np
 
 from . import angular, data, transport
-from .detectors import Array
+from .detectors import Array, target_mass_ratio
 from .events import Events, simulate
 from .gamma import (cascade_excitation, depth_orientation, excitation_of, excitation_order, other_excitation,
                     start_levels)
@@ -1798,10 +1798,15 @@ def _cascade_steps(cex, theta_cm: np.ndarray, rng, steps: bool = False) -> tuple
 
 
 def doppler_correct(experiment, columns: dict, rows: np.ndarray, crystal: np.ndarray, measured: np.ndarray) -> dict:
-    """The Doppler correction an experimentalist makes with the geometry of ``experiment``: from the centre of
-    the segment each particle row hit (``columns`` of the particle events, ``rows`` their indices), the centre of
-    the crystal (``crystal`` indices) and two-body kinematics at the nominal beam energy. Returns
-    {"ejectile": corrected energies, "recoil": ...}.
+    """The Doppler correction an experimentalist makes with the geometry of ``experiment``: from the segment each
+    particle row hit (``columns`` of the particle events, ``rows`` their indices), the centre of the crystal
+    (``crystal`` indices) and two-body kinematics at the nominal beam energy. Returns {"ejectile": corrected
+    energies, "recoil": ...}.
+
+    A segment gives the mean angles of the particles of the row's kind (scattered beam or recoil) that hit it
+    (:meth:`~physim.nuclear.detectors.Geometry.segment_angles`), and the cosine between the emitter and the γ ray is
+    the mean over the azimuths the segment spans: one that goes all round the beam knows θ but no φ, and only the
+    motion along the beam is corrected for.
 
     Given an experiment whose target sits elsewhere than the one that made the events, this is the correction with
     a misplaced target: the peaks shift and broaden, ring by ring."""
@@ -1815,23 +1820,14 @@ def doppler_correct(experiment, columns: dict, rows: np.ndarray, crystal: np.nda
     for gd in experiment.gamma_detectors:
         centres += [np.array(c, dtype=float) for _, c, _ in gd.elements()]
     normals = _unit(np.array(centres))
-    seg_centre = np.zeros((len(rows), 3))
-    cache: dict = {}
-    for i, g in enumerate(array.geometries):
-        m = columns["detector"][rows] == i
-        for j in np.flatnonzero(m):
-            key = (i, int(columns["segment_i"][rows[j]]), int(columns["segment_j"][rows[j]]))
-            if key not in cache:  # one segment's centre serves every hit in it
-                cache[key] = g.segment_centre(key[1:], weighted=True)
-            seg_centre[j] = cache[key]
-    p_dir = _unit(seg_centre)
-    theta_lab_p = np.degrees(np.arccos(np.clip(p_dir[:, 2], -1, 1)))
+    theta_lab_p, phi_p, phi_known = array.segment_angles(columns, target_mass_ratio(experiment), rows)
+    p_dir = _directions(theta_lab_p, phi_p)
     crystal_dir = normals[crystal]
     out = {}
     for assumed in ("ejectile", "recoil"):
         d_em, b_em = _reconstruct(experiment, tb, layers, p_dir, theta_lab_p, columns["recoil"][rows], assumed,
                                   ex.beam_energy)
-        cos_a = np.einsum("ij,ij->i", crystal_dir, d_em)
+        cos_a = phi_known * np.einsum("ij,ij->i", crystal_dir[:, :2], d_em[:, :2]) + crystal_dir[:, 2] * d_em[:, 2]
         out[assumed] = measured * (1 - b_em * cos_a) / np.sqrt(1 - b_em**2)
     return out
 
