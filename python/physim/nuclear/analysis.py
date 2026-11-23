@@ -41,9 +41,11 @@ The steps are those of a Coulomb-excitation analysis, each shown and adjustable:
    result).
 7. **B(E2)** from the first-order proportionality of the excitation probability to B(E2), the excitations
    expected per particle taken from the forward model's cross sections through the depth of the target and with
-   the excited particle's kinematics (:meth:`Analysis._mean_probability`), in e²fm⁴, e²b² and
+   the excited particle's kinematics (:meth:`Analysis._mean_probability`; a run, which knows only the segment
+   each particle hit, takes them averaged over the segment), in e²fm⁴, e²b² and
    Weisskopf units, with the statistical uncertainty of the fit and a budget of systematic contributions, each
-   found by changing its input by one standard deviation and running again. When the events follow a level
+   found by changing its input by one standard deviation and running again (an input whose uncertainty is not
+   given has no term, and :attr:`Result.budget_notes` says so). When the events follow a level
    scheme to all orders, first order is only the start: the scheme's coupled equations are solved with the
    matrix element to the state as the unknown, until they give the measured γ rays per particle, every
    transition inside the peak's window counted (the feeding of the state from above, and a line that the peak
@@ -66,7 +68,7 @@ import numpy as np
 from . import data
 from .coulex import Coulex
 from .gamma import correlation_table, emitters, transition_lines
-from .kinematics import TwoBody
+from .kinematics import TwoBody, lab_points
 from .levels import weisskopf_unit
 from .quantity import Quantity
 from .rates import (Rates, SchemeProbability, _q, beam_energy_at, beam_ion, channels, coulex_for, depth_probability,
@@ -80,6 +82,24 @@ SHIFT_H = 8.0
 #: with this many Gauss–Legendre points.
 FORWARD_STEP_DEG = 0.05
 FORWARD_DEPTH_POINTS = 24
+#: A run knows only which segment each particle hit: the expected excitations are then averaged over the segment
+#: (:meth:`Analysis._segment_ratios`), with at least this many Gauss–Legendre points along each of its sides. Where
+#: the particle's kinematics turn back inside the segment (the largest lab angle, where the lab cross section
+#: diverges) more points, and the cross section integrated over cells of this many degrees.
+SEGMENT_POINTS = 16
+TURNING_POINTS = 100
+TURNING_STEP_DEG = 0.01
+#: A segment's average counts the particles above the detector's threshold where more than this share of those that
+#: go there are below it.
+THRESHOLD_SHARE = 1e-5
+#: The change of the excitation with the assumed matrix elements (:meth:`Analysis._matrix_element_changes`): solved
+#: about every so many degrees of the CM angle, not below the smallest one, and at one beam energy where the layer
+#: takes less than this share of it (at three through a thicker one).
+RESPONSE_STEP_DEG = 6.0
+RESPONSE_MIN_DEG = 10.0
+RESPONSE_THIN = 0.1
+#: The smallest change of the γ rays that the budget's note names with its matrix element (all count in the term).
+RESPONSE_NAMED = 1e-3
 #: The elastic and inelastic groups of a particle detector overlap at a lab direction when the energies of the
 #: elastic group, from every depth of the target, cover more than this share of the inelastic group's
 #: (:meth:`Analysis._groups_overlap`); the inelastic particle gate is called unreliable when they overlap for more
@@ -110,11 +130,69 @@ def _with_beam_energy(experiment, energy_mev: float):
     return replace(experiment, beam=replace(experiment.beam, energy=Quantity(energy_mev, "MeV")))
 
 
+def _with_thickness(experiment, scale: float):
+    """The setup with ``scale`` times the target thickness and the ``[reaction]`` state alone, without level schemes
+    (the relative change of the excitation with the thickness is that of first order)."""
+    thick = _q(experiment.target.thickness)
+    return replace(experiment, levels={}, target=replace(experiment.target,
+                                                         thickness=Quantity(thick.value * scale, thick.unit)))
+
+
 class _Zero:
     """P = 0 at every angle: below the excitation threshold."""
 
     def probability(self, theta_cm):
         return 0.0 if np.ndim(theta_cm) == 0 else np.zeros(np.shape(theta_cm))
+
+
+class _Response:
+    """How the γ rays in a peak change with the matrix elements of the level scheme: :attr:`count` changes (the first
+    is none), each a factor on the excitation at a CM angle and a beam energy, tabulated at ``grid`` (degrees) and
+    ``energies`` (MeV; one or three) and interpolated between them."""
+
+    def __init__(self, lines: tuple, grid: np.ndarray, energies: list, factors: list):
+        self.key, self.count = lines, len(factors)
+        self._grid, self._energies, self._factors = grid, np.asarray(energies, dtype=float), factors
+
+    def at(self, k: int, energies, theta_cm: np.ndarray) -> np.ndarray:
+        """The factor of change ``k`` at the CM angles ``theta_cm``, one row per beam energy of ``energies``."""
+        nodes = self._energies
+        e = np.clip(np.asarray(energies, dtype=float), nodes.min(), nodes.max())
+        out = np.zeros(theta_cm.shape)
+        for j, values in enumerate(self._factors[k]):
+            weight = np.prod([(e - nodes[m]) / (nodes[j] - nodes[m]) for m in range(len(nodes)) if m != j], axis=0) \
+                if len(nodes) > 1 else np.ones(len(e))
+            out += weight[:, None] * np.interp(theta_cm, self._grid, values)
+        return out
+
+
+def _normal_cdf(x: np.ndarray) -> np.ndarray:
+    """The share of a normal distribution below ``x`` standard deviations (to 1e-7, Abramowitz and Stegun 26.2.17)."""
+    t = 1 / (1 + 0.2316419 * np.abs(x))
+    tail = np.exp(-0.5 * np.square(x)) / math.sqrt(2 * math.pi) * t * (0.319381530 + t * (-0.356563782 + t * (
+        1.781477937 + t * (-1.821255978 + t * 1.330274429))))
+    return np.where(x >= 0, 1 - tail, tail)
+
+
+def _chunks(index: np.ndarray, size: int = 4000) -> list:
+    """``index`` in pieces of at most ``size``."""
+    return [index[k:k + size] for k in range(0, len(index), size)]
+
+
+def _by_owner(values: np.ndarray, owner: np.ndarray, n: int, which, start: float) -> np.ndarray:
+    """The smallest (``which`` = np.minimum) or largest of ``values`` for each of the ``n`` owners."""
+    out = np.full(n, start)
+    which.at(out, owner, values)
+    return out
+
+
+def _moment(me, levels) -> str:
+    """The uncertainty of a matrix element in words: of Q_s for a static E2 moment, else of the element itself."""
+    from .levels import quadrupole_factor
+
+    if me.a == me.b and me.multipolarity == "E2":
+        return f"{0.01 * me.value.unc * quadrupole_factor(float(levels[me.a].spin)):.3g} eb"
+    return f"{me.value.unc:.3g} e fm^{me.multipolarity[1]}"
 
 
 @dataclass
@@ -148,6 +226,8 @@ class Settings:
     beam_energy_unc: float = 0.005
     position_unc_mm: float = 1.0
     correlation_unc: float = 0.03
+    #: The relative uncertainty of the target's thickness, or None when it is not known: the budget then says so.
+    thickness_unc: Optional[float] = None
     #: The relative statistical uncertainty the beam time is asked for.
     wanted_precision: float = 0.05
     #: How B(E2) follows from the yield: "auto" (to all orders when the events follow a level scheme to all
@@ -737,6 +817,10 @@ class Result:
     gate: Optional[str] = None
     gate_overlap: Optional[float] = None
     gate_warning: Optional[str] = None
+    #: What the budget says in words: how the terms of the assumed inputs (the target thickness, the matrix elements
+    #: that are not measured) were found, and which inputs have no uncertainty and so no term. None for a result
+    #: made before the budget had them.
+    budget_notes: Optional[list] = None
 
     @property
     def total_unc(self) -> float:
@@ -1025,7 +1109,7 @@ class Analysis:
         return recorrect(self.gammas, with_offset(self.experiment, offset))[key]
 
     def _mean_probability(self, s: Settings, keep: Optional[np.ndarray] = None, energy_scale: float = 1.0,
-                          mode: str = "first", exact: bool = False) -> float:
+                          mode: str = "first", exact: bool = False, thickness: Optional[float] = None) -> float:
         """⟨P⟩/B: the excitations of the ``[reaction]`` state expected per particle counted in the gate's rings, per
         unit B(E2↑), in first order. The Rutherford normalisation divides the excitations by those particles, so
         this is what B(E2) is read against.
@@ -1037,71 +1121,135 @@ class Analysis:
         (:meth:`_forward_ratio`), then averaged over the particles in the rings, weighted as the events are. So
         the excited particle's own CM angle and lab-to-CM Jacobian, the excitation probability through the depth
         of a thick target, and whatever Rutherford factor the forward cross section carries all enter as they do
-        in the simulation.
+        in the simulation. A run knows which segment each particle hit, not its angle: there the two cross sections
+        are each integrated over the segment before they are divided (:meth:`_segment_ratios`).
 
         ``energy_scale`` multiplies the energy the beam enters the target with (the beam-energy systematic), which
         then slows down from there: deep in a thick target that is a larger part of what is left. ``exact`` takes P
         from the first-order Coulomb excitation at each energy rather than from the forward model's interpolation
-        through the depth (the two agree to a few parts in 10⁴; the budget compares like with like). ``mode`` =
+        through the depth (the two agree to a few parts in 10⁴; the budget compares like with like). ``thickness``
+        multiplies the target's thickness (the thickness systematic), with the ``[reaction]`` state alone. ``mode`` =
         "forward" gives instead the forward model's own excitations per particle (every level a level scheme
         populates, to all orders if the events are), not per unit B(E2)."""
         rows = self._elastic_rows(s)
         if not rows.any():
             return 0.0
-        c = self.events.columns
-        th, rec, w = c["theta"][rows], c["recoil"][rows], c["weight"][rows]
-        r = np.zeros(len(th))
-        for particle, m in (("ejectile", ~rec), ("recoil", rec)):
-            if m.any():
-                grid, ratio = self._forward_ratio(particle, energy_scale, mode, exact)
-                r[m] = np.interp(th[m], grid, ratio)
+        w = self.events.columns["weight"][rows]
+        r = self._excited_share(rows, energy_scale=energy_scale, mode=mode, exact=exact, thickness=thickness)
         out = float(np.average(r, weights=w)) if w.sum() > 0 else 0.0
         return out / self.experiment.excitation.b_up_e2fm if mode == "first" else out
 
-    def _first_order(self, channel, energy: float, exact: bool):
+    def _excited_share(self, rows: np.ndarray, **model) -> np.ndarray:
+        """The excitations expected per particle for each particle of ``rows`` (a mask): at its lab angle, or for a run
+        over the segment it hit. With a ``response`` in ``model``, one row for each of its changes."""
+        c = self.events.columns
+        if self.taken is None:
+            th, rec = c["theta"][rows], c["recoil"][rows]
+            r = np.zeros(len(th) if model.get("response") is None else (model["response"].count, len(th)))
+            for particle, m in (("ejectile", ~rec), ("recoil", rec)):
+                if m.any():
+                    grid, ratio = self._forward_ratio(particle, **model)
+                    if ratio.ndim == 1:
+                        r[m] = np.interp(th[m], grid, ratio)
+                    else:
+                        r[:, m] = [np.interp(th[m], grid, x) for x in ratio]
+            return r
+        nodes = self._segment_nodes()
+        index = nodes["index"][rows]
+        out = None
+        for particle in ("ejectile", "recoil"):
+            mine = nodes["recoil"][index] == (particle == "recoil")
+            if mine.any():
+                ratio = self._segment_ratios(particle, **model)
+                if out is None:
+                    out = np.zeros(ratio.shape[:-1] + (len(index),))
+                out[..., mine] = ratio[..., index[mine]]
+        return out
+
+    def _first_order(self, channel, energy: float, exact: bool, experiment=None, layers=None):
         """P(θ) of the ``[reaction]`` state alone, in first order, at beam energy ``energy`` for a
         Coulomb-excitation channel: the forward model's own P through the depth when that is first order of the
         one state (``exact`` False, and no level scheme), else the first-order Coulomb excitation at that energy."""
+        experiment, layers = experiment or self.experiment, layers or self._layers
         try:
-            dp = depth_probability(self.experiment, channel, self._layers)
+            dp = depth_probability(experiment, channel, layers)
         except ValueError:
             return _Zero()
         if not exact and not isinstance(dp.nodes[0], SchemeProbability):
             return dp.at(energy)
         try:
-            return coulex_for(self.experiment, channel, self._layers, energy=energy)
+            return coulex_for(experiment, channel, layers, energy=energy)
         except ValueError:  # below the excitation threshold
             return _Zero()
 
+    @staticmethod
+    def _model_key(particle: str, energy_scale: float = 1.0, mode: str = "first", exact: bool = False,
+                   thickness: Optional[float] = None, response=None) -> tuple:
+        return (particle, round(float(energy_scale), 12), mode, bool(exact), thickness,
+                None if response is None else response.key)
+
     def _forward_ratio(self, particle: str, energy_scale: float = 1.0, mode: str = "first",
-                       exact: bool = False) -> tuple:
+                       exact: bool = False, thickness: Optional[float] = None, response=None) -> tuple:
         """(lab angles, excited over all) for ``particle`` ("ejectile" or "recoil"): the forward model's
+        Coulomb-excitation cross section in the lab over that of every particle (:meth:`_lab_sums`), tabulated every
+        :data:`FORWARD_STEP_DEG` over the lab angles of the counted particles, and kept."""
+        key = self._model_key(particle, energy_scale, mode, exact, thickness, response)
+        kept = self.__dict__.setdefault("_forward", {})
+        if key in kept:
+            return kept[key]
+        c = self.events.columns
+        th = c["theta"][c["counted"] & (c["recoil"] == (particle == "recoil"))]
+        grid = self._angle_grid(float(th.min()), float(th.max())) if len(th) else self._angle_grid(0.0, 180.0)
+        num, den = self._lab_sums(particle, grid, energy_scale, mode, exact, thickness, response)
+        ratio = np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0)
+        kept[key] = (grid, ratio)
+        return kept[key]
+
+    @staticmethod
+    def _angle_grid(th_min: float, th_max: float) -> np.ndarray:
+        step = FORWARD_STEP_DEG
+        if th_min <= 0.0 and th_max >= 180.0:
+            return np.arange(0.0, 180.0 + step / 2, step)
+        lo = max(math.floor(th_min / step) - 1, 1) * step
+        hi = min(math.ceil(th_max / step) + 1, round(180.0 / step) - 1) * step
+        return np.arange(lo, hi + step / 2, step) if hi > lo else np.array([lo, lo + step])
+
+    def _lab_sums(self, particle: str, theta: np.ndarray, energy_scale: float = 1.0, mode: str = "first",
+                  exact: bool = False, thickness: Optional[float] = None, response=None, counted=None,
+                  cells: bool = False) -> tuple:
+        """(excited, all) at the lab angles ``theta``: the forward model's
         Coulomb-excitation cross section in the lab, summed over the channels that excite the ``[reaction]``
-        nucleus, over the lab cross section of every channel that sends that particle there (elastic scattering,
+        nucleus, and the lab cross section of every channel that sends ``particle`` there (elastic scattering,
         which the excitation reduces by 1 − P, and the excitation itself; for a run taken before the events had
-        one particle per collision, elastic scattering alone, as the normalisation counts). Each channel is
+        one particle per collision, elastic scattering alone, as the normalisation counts), both times the nuclei
+        per cm². Each channel is
         integrated over the depth of its layer the beam crosses (:data:`FORWARD_DEPTH_POINTS`), at the beam
         energy at each depth, through the kinematics of its own reaction (the excited particle's CM angle and
         Jacobian, both branches) as :class:`~physim.nuclear.rates.Rates` integrates it. With ``mode`` "first"
         the excitation is the first-order one of the ``[reaction]`` state (:meth:`_first_order`) inside the same
-        cross section. Tabulated every :data:`FORWARD_STEP_DEG` over the lab angles of the counted particles,
-        and kept."""
-        key = (particle, round(float(energy_scale), 12), mode, bool(exact))
-        kept = self.__dict__.setdefault("_forward", {})
-        if key in kept:
-            return kept[key]
+        cross section; a ``response`` (:class:`_Response`) multiplies it, one row of the result for each of its
+        changes. ``counted`` (:meth:`_counting`) leaves out the particles the detector does not count. With
+        ``cells``, ``theta`` are the edges of cells and the cross sections are the means over them."""
         exp, layers = self.experiment, self._layers
-        c = self.events.columns
-        th = c["theta"][c["counted"] & (c["recoil"] == (particle == "recoil"))]
-        step = FORWARD_STEP_DEG
-        lo = max(math.floor(float(th.min()) / step) - 1, 1) * step if len(th) else 0.0
-        hi = min(math.ceil(float(th.max()) / step) + 1, round(180.0 / step) - 1) * step if len(th) else 180.0
-        grid = np.arange(lo, hi + step / 2, step) if hi > lo else np.array([lo, lo + step])
-        num, den = np.zeros(len(grid)), np.zeros(len(grid))
+        if thickness is not None:
+            exp = _with_thickness(exp, thickness)
+            layers = stack(exp)
+        n = len(theta) - 1 if cells else len(theta)
+        num, den = np.zeros(n if response is None else (response.count, n)), np.zeros(n)
         beam = beam_ion(exp)
         entering = exp if energy_scale == 1.0 else _with_beam_energy(exp, exp.beam.energy_mev * energy_scale)
         x, wq = np.polynomial.legendre.leggauss(FORWARD_DEPTH_POINTS)
         cos_t = math.cos(math.radians(tilt_deg(exp)))
+        branches = self._cell_branches if cells else self.rates._branches_many
+
+        def summed(reactions, ch, zs) -> tuple:
+            """The lab cross section of each reaction (one per depth), and that of each kinematic branch."""
+            found = branches(reactions, theta, particle)
+            if counted is not None:
+                found = [(sig * counted(exp, layers, ch, zs, energy), energy) if sig.any() else (sig, energy)
+                         for sig, energy in found]
+            return sum(sig for sig, _ in found), [sig for sig, _ in found]
+
         for ch in channels(layers, exp):
             lay = layers[ch.layer]
             entry = float(beam_energy_at(entering, ch.layer, [0.0], layers)[0])
@@ -1113,8 +1261,8 @@ class Analysis:
             share = wq / 2 * reach / lay.thickness
             es = np.asarray(beam_energy_at(entering, ch.layer, zs, layers), dtype=float)
             excited = ch.excitation is not None
-            reacs, ws, firsts = [], [], []
-            for e, wz in zip(es, share):
+            reacs, ws, firsts, deep = [], [], [], []
+            for z, e, wz in zip(zs, es, share):
                 if not e > 0:
                     continue
                 try:
@@ -1123,24 +1271,268 @@ class Analysis:
                     continue
                 reacs.append(reac)
                 ws.append(wz)
+                deep.append(float(z))
                 if excited and mode == "first":
                     # The same forward cross section, with P that of the [reaction] state alone in first order.
-                    firsts.append(type(reac)(beam, ch, float(e), self._first_order(ch, float(e), exact)))
+                    firsts.append(type(reac)(beam, ch, float(e), self._first_order(ch, float(e), exact, exp, layers)))
             if not reacs:
                 continue
             weights = np.asarray(ws)[:, None] * ch.atoms_per_cm2
-            total = (weights * sum(sig for sig, _ in self.rates._branches_many(reacs, grid, particle))).sum(axis=0)
+            deep = np.asarray(deep)
+            total = None
+            if not excited or self._whole or mode != "first":
+                total = (weights * summed(reacs, ch, deep)[0]).sum(axis=0)
             if not excited or self._whole:
                 den += total
-            if excited:
-                if mode == "first":
-                    num += (weights * sum(sig for sig, _ in self.rates._branches_many(firsts, grid, particle))
-                            ).sum(axis=0)
-                else:
-                    num += total
-        ratio = np.where(den > 0, num / np.where(den > 0, den, 1.0), 0.0)
-        kept[key] = (grid, ratio)
+            if not excited:
+                continue
+            if mode != "first":
+                num += total
+                continue
+            sigma, each = summed(firsts, ch, deep)
+            if response is None:
+                num += (weights * sigma).sum(axis=0)
+                continue
+            # Times what each change of a matrix element does to the excitation at this energy and CM angle.
+            energies = [r.kinematics.beam_energy_mev for r in firsts]
+            at = 0.5 * (theta[:-1] + theta[1:]) if cells else theta
+            for sig, pt in zip(each, lab_points([r.kinematics for r in firsts], at, particle)):
+                if sig.any():
+                    cm = np.nan_to_num(pt.theta_cm if particle == "ejectile" else 180.0 - pt.theta_cm, nan=90.0)
+                    for k in range(response.count):
+                        num[k] += (weights * sig * response.at(k, energies, cm)).sum(axis=0)
+        return num, den
+
+    def _cell_branches(self, reacs: list, edges: np.ndarray, particle: str) -> list:
+        """:meth:`~physim.nuclear.rates.Rates._branches_many` averaged over the cells of lab angle between ``edges``:
+        the CM solid angle that goes into each cell, times the CM cross section at its middle. So it stays finite at
+        the largest lab angle of a particle whose kinematics are double-valued, where the cross section per lab solid
+        angle diverges."""
+        c = np.cos(np.radians(edges))
+        width = np.where(c[:-1] > c[1:], c[:-1] - c[1:], 1.0)
+        out = [(np.zeros((len(reacs), len(edges) - 1)), np.full((len(reacs), len(edges) - 1), np.nan))
+               for _ in range(2)]
+        for k, r in enumerate(reacs):
+            tb = r.kinematics
+            reached = np.minimum(edges, tb.max_angle(particle) - 1e-9)
+            for (sigma, energy), th in zip(out, tb.theta_cm(reached, particle)):
+                if np.isnan(th).all():
+                    continue
+                lo, hi = th[:-1], th[1:]
+                mid = (lo + hi) / 2
+                ej = mid if particle == "ejectile" else 180.0 - mid
+                e = np.asarray(tb.at_cm(mid, particle).energy, dtype=float)
+                ok = (~np.isnan(ej)) & (ej >= self.rates.theta_floor) & (np.nan_to_num(e) >= self.rates.min_energy)
+                omega = np.abs(np.cos(np.radians(lo)) - np.cos(np.radians(hi)))
+                sigma[k] = np.where(ok, np.asarray(r.cross_section_cm(np.where(ok, ej, 90.0))) * np.nan_to_num(omega)
+                                    / width, 0.0)
+                energy[k] = np.where(ok, e, np.nan)
+        return out
+
+    # -- a run: the segments ----------------------------------------------------------------------------------------
+
+    def _segment_nodes(self) -> dict:
+        """The segments that the run's particles hit, each with the kind of particle: "index", the segment of every
+        particle row; per segment its "recoil", "detector" (name), "segment" and the mean angle "theta" of its rows;
+        and "order", the quadrature points on its sides. Kept."""
+        kept = self.__dict__.get("_segments")
+        if kept is None:
+            c = self.events.columns
+            det, si, sj, rec = (np.asarray(c[k]).astype(np.int64) for k in ("detector", "segment_i", "segment_j",
+                                                                            "recoil"))
+            # One number per (detector, segment, kind), those that occur marked and then looked up (the detectors'
+            # segment_angles does the same: sorting the rows of a long run takes seconds).
+            ni, nj = int(si.max(initial=0)) + 1, int(sj.max(initial=0)) + 1
+            code = ((det * ni + si) * nj + sj) * 2 + rec
+            hit = np.zeros(int(code.max(initial=0)) + 1, dtype=bool)
+            hit[code] = True
+            found = np.flatnonzero(hit)
+            place = np.zeros(len(hit), dtype=np.int64)
+            place[found] = np.arange(len(found))
+            index = place[code]
+            seg, recoil = found // 2, (found % 2).astype(bool)
+            counts = np.maximum(np.bincount(index, minlength=len(found)), 1)
+            names = [self.events.detectors[int(d)] for d in seg // (ni * nj)]
+            kept = {"index": index, "recoil": recoil, "detector": names,
+                    "segment": [(int(i), int(j)) for i, j in zip((seg // nj) % ni, seg % nj)],
+                    "theta": np.bincount(index, weights=c["theta"], minlength=len(found)) / counts}
+            self._segments = kept
+        return kept
+
+    def _directions(self, which: np.ndarray, order: Optional[int] = None) -> tuple:
+        """Quadrature over the segments ``which`` (indices of :meth:`_segment_nodes`): (unit directions, the solid angle
+        of each, the segment each belongs to, as a place in ``which``). Directions another detector hides, and those
+        below the rates' smallest angle, have no solid angle, as in the rates."""
+        nodes, array = self._segment_nodes(), self.rates.array
+        dirs, omega, owner = [], [], []
+        for name in dict.fromkeys(nodes["detector"][n] for n in which):
+            g = array[name]
+            places = [k for k, n in enumerate(which) if nodes["detector"][n] == name]
+            parts = [g.directions(nodes["segment"][which[k]], order or max(SEGMENT_POINTS, self.rates._order_for(g)))
+                     for k in places]
+            d, w = np.concatenate([p[0] for p in parts]), np.concatenate([p[1] for p in parts])
+            theta = np.degrees(np.arccos(np.clip(d[:, 2], -1.0, 1.0)))
+            dirs.append(d)
+            omega.append(np.where((theta >= self.rates.theta_floor) & array.visible(name, d), w, 0.0))
+            owner.append(np.repeat(places, [len(p[1]) for p in parts]))
+        return np.concatenate(dirs), np.concatenate(omega), np.concatenate(owner)
+
+    def _counting(self, detector: str, particle: str, dirs: np.ndarray):
+        """For particles along ``dirs`` into ``detector``: a function (setup, layers, channel, depths, energies at the
+        reaction, one row per depth) giving the share of them the detector counts: those that leave the target, and
+        whose energy in the active volume, with the resolution, is above the threshold."""
+        g = self.rates.array[detector]
+        inc = np.degrees(np.arccos(np.clip(-(dirs @ g.n), 1e-6, 1.0)))
+
+        def share(exp, layers, ch, zs, energy) -> np.ndarray:
+            ion = beam_ion(exp) if particle == "ejectile" else ch.nuclide.name
+            resp = self.rates.array.response(detector, ion)
+            n, m = energy.shape
+            out = exit_energy(exp, layers, ch.layer, np.repeat(zs, m), ion, np.nan_to_num(energy).ravel(),
+                              np.tile(dirs, (n, 1)))
+            dep = np.where(out > 0, resp.deposited_each(np.maximum(out, 1e-9), np.tile(inc, n)), 0.0)
+            above = dep - max(resp.threshold, 0.0)
+            sigma = resp.fwhm / FWHM_PER_SIGMA
+            p = _normal_cdf(above / sigma) if sigma > 0 else (above >= 0).astype(float)
+            return np.where(dep > 0, p, 0.0).reshape(n, m)
+
+        return share
+
+    def _cut_by_threshold(self, particle: str, which: np.ndarray) -> np.ndarray:
+        """Which of the segments ``which`` get particles of this kind that the detector does not count (by more than
+        :data:`THRESHOLD_SHARE`): a mask. Looked up on a few directions of each."""
+        kept = self.__dict__.setdefault("_cut", {})
+        if particle in kept:
+            return kept[particle]
+        nodes = self._segment_nodes()
+        cut = np.zeros(len(which), dtype=bool)
+        dirs, omega, owner = self._directions(which, 3)
+        names = np.array([nodes["detector"][n] for n in which])[owner]
+        theta = np.degrees(np.arccos(np.clip(dirs[:, 2], -1.0, 1.0)))
+        for name in dict.fromkeys(names):
+            for m in _chunks(np.flatnonzero(names == name)):
+                every = self._lab_sums(particle, theta[m], mode="forward")[1]
+                seen = self._lab_sums(particle, theta[m], mode="forward",
+                                      counted=self._counting(name, particle, dirs[m]))[1]
+                lost = (every > 0) & (seen < (1 - THRESHOLD_SHARE) * every) & (omega[m] > 0)
+                cut[np.unique(owner[m][lost])] = True
+        kept[particle] = cut
+        return cut
+
+    def _turning_angles(self, particle: str) -> np.ndarray:
+        """The largest lab angles of this particle in the reactions of every channel through the depth, where its
+        kinematics are double-valued and its cross section per lab solid angle diverges, and its energy there: rows
+        (degrees, MeV). (An excited recoil's is close to 90°, where it has hardly any energy.)"""
+        out = []
+        for ch in channels(self._layers, self.experiment):
+            zs = np.linspace(0.0, self._layers[ch.layer].thickness, 7)
+            for e in beam_energy_at(self.experiment, ch.layer, zs, self._layers):
+                if not e > 0:
+                    continue
+                try:
+                    tb = TwoBody(beam_ion(self.experiment), ch.nuclide.name, float(e), **ch.kinematics_args)
+                except ValueError:  # below the excitation threshold
+                    continue
+                if tb.double_valued(particle):
+                    top = tb.max_angle(particle)
+                    out.append((top, float(tb.at_cm(tb.theta_cm(top - 1e-9, particle)[0], particle).energy)))
+        return np.array(out).reshape(-1, 2)
+
+    def _segment_ratios(self, particle: str, energy_scale: float = 1.0, mode: str = "first", exact: bool = False,
+                        thickness: Optional[float] = None, response=None) -> np.ndarray:
+        """The excitations per particle in each segment of :meth:`_segment_nodes` (for those of this ``particle``): the
+        cross section of the excitation over that of every particle, each integrated over the segment's solid angle
+        (:meth:`_lab_sums`, as the rates integrate it). What lies in another detector's shadow or below the
+        threshold is left out of both. A segment the model sends no particle to (the beam spot or multiple scattering
+        did) gets the ratio at its mean angle. With a ``response``, one row for each of its changes. Kept."""
+        key = self._model_key(particle, energy_scale, mode, exact, thickness, response)
+        kept = self.__dict__.setdefault("_segment_kept", {})
+        if key in kept:
+            return kept[key]
+        model = {"energy_scale": energy_scale, "mode": mode, "exact": exact, "thickness": thickness,
+                 "response": response}
+        nodes = self._segment_nodes()
+        which = np.flatnonzero(nodes["recoil"] == (particle == "recoil"))
+        dirs, omega, owner = self._directions(which)
+        theta = np.degrees(np.arccos(np.clip(dirs[:, 2], -1.0, 1.0)))
+        at = np.r_[theta[omega > 0], nodes["theta"][which]]
+        grid = self._angle_grid(float(at.min()), float(at.max()))
+        num, den = self._lab_sums(particle, grid, **model)
+        rows = np.atleast_2d(num)
+
+        def integral(y: np.ndarray) -> np.ndarray:
+            return np.bincount(owner, omega * np.interp(theta, grid, y), minlength=len(which))
+
+        above, below = np.array([integral(y) for y in rows]), integral(den)
+        safe = np.where(den > 0, den, 1.0)
+        point = np.array([np.interp(nodes["theta"][which], grid, np.where(den > 0, y / safe, 0.0)) for y in rows])
+        lo = _by_owner(theta, owner, len(which), np.minimum, 180.0)
+        hi = _by_owner(theta, owner, len(which), np.maximum, 0.0)
+        turns = self._turning_angles(particle)
+        # A particle that turns back below the detector's threshold is never counted there.
+        least = {}
+        for g in self.rates.array:
+            resp = self.rates.array.response(g.name, beam_ion(self.experiment))
+            least[g.name] = max(resp.threshold - 5 * resp.fwhm / FWHM_PER_SIGMA, self.rates.min_energy)
+        turning = np.array([bool(np.any((turns[:, 0] > a - 0.5) & (turns[:, 0] < b + 0.5)
+                                        & (turns[:, 1] > least[nodes["detector"][n]])))
+                            for n, a, b in zip(which, lo, hi)], dtype=bool)
+        cut = self._cut_by_threshold(particle, which)
+        self._turning_segments(particle, which, turning, cut, model, above, below)
+        for name in dict.fromkeys(nodes["detector"][n] for n, c, t in zip(which, cut, turning) if c and not t):
+            mine = np.array([c and not t and nodes["detector"][n] == name for n, c, t in zip(which, cut, turning)])
+            above[:, mine], below[mine] = 0.0, 0.0
+            for m in _chunks(np.flatnonzero(mine[owner])):
+                a, b = self._lab_sums(particle, theta[m], counted=self._counting(name, particle, dirs[m]), **model)
+                above += np.array([np.bincount(owner[m], omega[m] * y, minlength=len(which)) for y in np.atleast_2d(a)])
+                below += np.bincount(owner[m], omega[m] * b, minlength=len(which))
+        ratio = np.where(below > 0, above / np.where(below > 0, below, 1.0), point)
+        out = np.zeros((len(rows), len(nodes["recoil"])))
+        out[:, which] = ratio
+        kept[key] = out[0] if response is None else out
         return kept[key]
+
+    def _turning_segments(self, particle: str, which: np.ndarray, turning: np.ndarray, cut: np.ndarray, model: dict,
+                          above: np.ndarray, below: np.ndarray) -> None:
+        """Puts into ``above`` and ``below`` the cross sections (excited, all) integrated over the segments of ``which``
+        that are ``turning``, where the particle's kinematics turn back inside them: averaged over narrow cells of lab
+        angle (:meth:`_cell_branches`), and over the step in angle between the quadrature points of the segment. In the
+        segments ``cut`` by the threshold, it is applied at the segment's azimuth (and the cells are worked out for each
+        segment)."""
+        nodes = self._segment_nodes()
+        shared = None
+        points = {}
+        for k in np.flatnonzero(turning):
+            dirs, omega, _ = self._directions(which[[k]], TURNING_POINTS)
+            theta = np.arccos(np.clip(dirs[:, 2], -1.0, 1.0))
+            span = max(float(np.ptp(theta)), 1e-6)
+            z = (theta - theta.min()) / span
+            half = span * math.pi / (2 * TURNING_POINTS) * np.sqrt(np.maximum(z * (1 - z), 1 / TURNING_POINTS**2))
+            points[k] = (dirs, omega, np.maximum(theta - half, 1e-6), np.minimum(theta + half, math.pi - 1e-6))
+
+        def table(lo: float, hi: float, counted_for=None) -> tuple:
+            cells = max(int(math.degrees(hi - lo) / TURNING_STEP_DEG), 16)
+            edges = np.linspace(lo, hi, cells + 1)
+            counted = counted_for(0.5 * (edges[:-1] + edges[1:])) if counted_for is not None else None
+            num, den = self._lab_sums(particle, np.degrees(edges), cells=True, counted=counted, **model)
+            width = np.cos(edges[:-1]) - np.cos(edges[1:])
+            return edges, [np.r_[0.0, np.cumsum(y * width)] for y in [*np.atleast_2d(num), den]]
+
+        for k, (dirs, omega, lo, hi) in points.items():
+            if cut[k]:
+                x, y = float(np.sum(omega * dirs[:, 0])), float(np.sum(omega * dirs[:, 1]))
+                phi, name = math.atan2(y, x), nodes["detector"][which[k]]
+                edges, sums = table(float(lo.min()), float(hi.max()), lambda mid: self._counting(
+                    name, particle, np.c_[np.sin(mid) * math.cos(phi), np.sin(mid) * math.sin(phi), np.cos(mid)]))
+            else:
+                if shared is None:
+                    free = [v for j, v in points.items() if not cut[j]]
+                    shared = table(min(float(v[2].min()) for v in free), max(float(v[3].max()) for v in free))
+                edges, sums = shared
+            width = np.cos(lo) - np.cos(hi)
+            *excited, every = [float(np.sum(omega * (np.interp(hi, edges, t) - np.interp(lo, edges, t)) / width))
+                               for t in sums]
+            above[:, k], below[k] = excited, every
 
     def _elastic_rows(self, s: Settings) -> np.ndarray:
         c = self.events.columns
@@ -1258,7 +1650,10 @@ class Analysis:
                          "that may be wrong by.")
         fits = [fit] + ([PeakFit.of(other["fit"])] if s.normalisation == "target" and other is not None
                         and not s.reference else [])
-        budget = self._budget(s, keep, b, p_per_b, eff, corr, ref_unc, fits)
+        budget, budget_notes = self._budget(s, keep, b, p_per_b, eff, corr, ref_unc, fits)
+        if "target thickness" in budget or "matrix elements assumed" in budget:
+            norm = next(x for x in steps if x["step"] == "normalisation")
+            norm["text"] += ". Assumed in ⟨P⟩/B(E2), with a term in the budget: " + "; ".join(budget_notes)
         if full is not None and full["gain"] > 1.0:
             # To all orders B(E2) moves more than the yield does (see _all_orders): so do its uncertainties.
             statistical *= full["gain"]
@@ -1322,7 +1717,7 @@ class Analysis:
         result = Result(s.as_dict(), steps, fit, area, eff, corr, branch, s.normalisation, norm_counts, b,
                         statistical, systematic, mc, b * 1e-4, b / wu, budget, truth, pull, shape, per_shift, hours,
                         notes, source, whole, spectrum, search, lines, b_first, s.particle_gate, gate_overlap,
-                        gate_warning)
+                        gate_warning, budget_notes)
         if self.history:
             changed = {k: v for k, v in s.as_dict().items() if v != self.history[-1].settings.get(k)}
             if changed:
@@ -1535,7 +1930,8 @@ class Analysis:
         a = copy.copy(self)
         a.gammas, a.events, a.taken, a.history, a._whole = gammas, gammas.events, None, [], True
         a._own = (gammas["nucleus"] == 0) if "nucleus" in gammas.columns else np.ones(len(gammas), dtype=bool)
-        for name in ("_forward", "_simulated", "_variance", "_gate_overlap", "_gate_efficiency"):
+        for name in ("_forward", "_segments", "_segment_kept", "_cut", "_simulated", "_variance", "_gate_overlap",
+                     "_gate_efficiency"):
             a.__dict__.pop(name, None)
         return a
 
@@ -1897,11 +2293,12 @@ class Analysis:
                 "raw_counts": counts}
 
     def _budget(self, s: Settings, keep: np.ndarray, b: float, p_per_b: float, eff: float, corr: float,
-                ref_unc: float, fits: list) -> dict:
-        """Relative systematic contributions, each by changing its input by one standard deviation. ``fits``: the
-        fit of the peak, and that of the peak it is normalised to."""
+                ref_unc: float, fits: list) -> tuple:
+        """Relative systematic contributions, each by changing its input by one standard deviation, and what to say of
+        the assumed inputs (:attr:`Result.budget_notes`). ``fits``: the fit of the peak, and that of the peak it is
+        normalised to."""
         if not b == b or b <= 0:
-            return {}
+            return {}, []
         out = {"efficiency": s.efficiency_unc, "angular correlation": s.correlation_unc}
         # Beam energy: ⟨P⟩/B changes with the orbit. The energy of the beam that enters the target is raised by its
         # uncertainty, and it slows down from there; both sides with the first-order P at each energy (the forward
@@ -1919,8 +2316,164 @@ class Analysis:
             out["peak tails (simulated)"] = math.sqrt(sum(x**2 for x in tails))
         if s.normalisation == "target":
             out["reference B(E2)"] = ref_unc  # or, for a measured reference peak, its matrix elements
-        out["matrix elements assumed"] = 0.0  # first order: no other matrix element enters
+        notes = []
+        # What the analysis assumes of the target and of the nucleus, as far as their uncertainties are given: an
+        # input without one has no term, and the notes say so.
+        if s.thickness_unc is None:
+            notes.append("target thickness: no uncertainty given, so the budget has no term for it")
+        else:
+            more, less = self._thickness_changes(s)
+            out["target thickness"] = max(abs(more), abs(less))
+            notes.append(f"target thickness: ±{100 * s.thickness_unc:.3g}% of it changes ⟨P⟩/B by "
+                         f"{100 * more:+.2f}% (thicker) and {100 * less:+.2f}% (thinner)")
+        me = self._matrix_element_changes(s, fits[0])
+        if me["changes"]:
+            out["matrix elements assumed"] = math.sqrt(sum(max(abs(up), abs(down)) ** 2
+                                                           for _, up, down in me["changes"]))
+        notes.append("matrix elements assumed: " + me["text"])
+        return out, notes
+
+    def _thickness_changes(self, s: Settings) -> tuple:
+        """The relative change of ⟨P⟩/B when the target is thicker, and thinner, by its uncertainty."""
+        base, more, less = (self._mean_probability(s, thickness=x) for x in (1.0, 1 + s.thickness_unc,
+                                                                             max(1 - s.thickness_unc, 1e-3)))
+        return (more / base - 1, less / base - 1) if base > 0 else (0.0, 0.0)
+
+    def _matrix_element_changes(self, s: Settings, fit: PeakFit) -> dict:
+        """What the matrix elements of the excited nucleus's level scheme that are not being measured do to the γ rays
+        in the peak, B(E2) of the ``[reaction]`` state kept as it is: "changes", the relative change of the γ rays per
+        particle in the gate's rings when each moves up and down by its uncertainty (name, up, down), from the coupled
+        equations through the depth of the target; and the "text" for the budget, with the elements that have no
+        uncertainty. No changes when there is no level scheme, or no uncertainty in it. Signs are as the scheme has
+        them, and the branching of the γ rays too."""
+        found = self._scheme_responses()
+        if "reason" in found:
+            return {"changes": [], "text": found["reason"]}
+        names = found["names"]
+        changes = []
+        if names:
+            response = self._response(found, fit)
+            rows = self._elastic_rows(s)
+            w = self.events.columns["weight"][rows]
+            if rows.any() and w.sum() > 0:
+                mean = np.average(self._excited_share(rows, response=response), axis=1, weights=w)
+                if mean[0] > 0:
+                    rel = mean / mean[0] - 1
+                    changes = [(name, float(rel[2 * k + 1]), float(rel[2 * k + 2])) for k, name in enumerate(names)]
+        changes.sort(key=lambda x: -max(abs(x[1]), abs(x[2])))
+        large = [x for x in changes if max(abs(x[1]), abs(x[2])) >= RESPONSE_NAMED]
+        if changes:
+            text = "the γ rays per particle change, up and down, with " + "; ".join(
+                f"{name}: {100 * up:+.2f}/{100 * down:+.2f}%" for name, up, down in large or changes[:1])
+            rest = len(changes) - len(large or changes[:1])
+            text += f"; and with {rest} more by less than {100 * RESPONSE_NAMED:g}% each" if rest else ""
+        else:
+            text = "no uncertainty given for any of the other matrix elements, so the budget has no term for them"
+        if found["without"]:
+            text += "; without an uncertainty, and so not counted: " + ", ".join(found["without"])
+        return {"changes": changes, "text": text}
+
+    def _scheme_responses(self) -> dict:
+        """The γ-ray yields per collision of every transition of the excited nucleus's level scheme, from its coupled
+        equations, with each matrix element that has an uncertainty (except the one being measured) moved up and down
+        by it: "names" of those, "without" (the names of those that have no uncertainty), "grid" (CM angles),
+        "energies" (MeV), "yields" (one dict {(initial, final): array of energies × angles} for the scheme as it is,
+        then two for each name) and the scheme, its ground and measured levels; or the "reason" why there is nothing.
+        Kept: it does not depend on the settings."""
+        kept = self.__dict__.get("_responses")
+        if kept is not None:
+            return kept
+        self._responses = self._solve_responses()
+        return self._responses
+
+    def _solve_responses(self) -> dict:
+        import copy
+
+        from .coupled import CoupledChannels
+        from .gamma import EVENT_TOLERANCE
+
+        exp, exc = self.experiment, self.experiment.excitation
+        nuclide = ex_nuclide(exp)
+        given = exp.levels.get("target" if exc.excite == "target" else "beam")
+        if given is None:
+            return {"reason": f"the setup has no level scheme of {nuclide}, so the budget has no term for its static "
+                              "moment and its other states"}
+        scheme = copy.deepcopy(given)
+        levels, ground = scheme.levels, 0
+        excited = [n for n in range(len(levels)) if n != ground]
+        if not excited or levels[ground].spin is None:
+            return {"reason": f"the level scheme of {nuclide} has no excited state, so the budget has no term for them"}
+        level = min(excited, key=lambda n: abs(levels[n].energy.value - levels[ground].energy.value
+                                               - 1e3 * exc.energy_mev))
+        if scheme.matrix_element(ground, level, exc.multipolarity) is None:
+            scheme.set_matrix_element(ground, level, exc.multipolarity,
+                                      math.sqrt(exc.b_up_e2fm * (2 * float(levels[ground].spin) + 1)))
+
+        def name(me) -> str:
+            if me.a == me.b and me.multipolarity == "E2":
+                return f"Q_s of the {levels[me.a].label} state at {levels[me.a].energy.value:.0f} keV"
+            return (f"⟨{levels[me.b].label}‖{me.multipolarity}‖{levels[me.a].label}⟩ "
+                    f"({levels[me.b].energy.value:.0f} and {levels[me.a].energy.value:.0f} keV)")
+
+        others = [me for me in scheme.matrix_elements
+                  if (me.a, me.b, me.multipolarity) != (min(ground, level), max(ground, level), exc.multipolarity)
+                  and levels[me.a].spin is not None and levels[me.b].spin is not None]
+        moved = [me for me in others if me.value.unc]
+        without = [name(me) for me in others if not me.value.unc]
+        if (levels[level].spin or 0) >= 1 and not any(me.a == me.b == level and me.multipolarity == "E2"
+                                                      for me in others):
+            without.append(f"Q_s of the {levels[level].label} state at {levels[level].energy.value:.0f} keV "
+                           "(not in the scheme, taken as 0)")
+        out = {"names": [f"{name(me)} ± {_moment(me, levels)}" for me in moved], "without": without, "scheme": scheme,
+               "ground": ground, "level": level}
+        if not moved:
+            return out
+        layers = self._layers
+        target = data.nuclide(max(layers[0].nuclides.items(), key=lambda kv: kv[1])[0]).name
+        channel = next((ch for ch in channels(layers, exp) if ch.excitation is not None and ch.layer == 0
+                        and ch.nuclide.name == target), None)
+        if channel is None:
+            return {"reason": "nothing is excited in the target, so the budget has no term for them"}
+        try:
+            dp = depth_probability(exp, channel, layers)
+        except ValueError:
+            return {"reason": "the beam stops before the target, so the budget has no term for them"}
+        mid, reach = (dp.e_front + dp.e_low) / 2, (dp.e_front - dp.e_low) / 2
+        energies = [mid] if 2 * reach < RESPONSE_THIN * dp.e_front else [
+            mid + reach * math.cos(math.pi * (k + 0.5) / 3) for k in range(3)]
+        c = self.events.columns
+        th = np.asarray(c["theta_cm"], dtype=float)[np.asarray(c["counted"], dtype=bool)]
+        lo = min(max(float(th.min()) - RESPONSE_STEP_DEG if len(th) else 0.0, RESPONSE_MIN_DEG), 170.0)
+        hi = min(float(th.max()) + RESPONSE_STEP_DEG if len(th) else 180.0, 180.0)
+        grid = np.linspace(lo, max(hi, lo + 4.0), max(int(math.ceil((hi - lo) / RESPONSE_STEP_DEG)), 2) + 1)
+        yields = []
+        try:
+            for me, sign in [(None, 0)] + [(me, sign) for me in moved for sign in (1, -1)]:
+                changed = copy.deepcopy(scheme)
+                if me is not None:
+                    changed.set_matrix_element(me.a, me.b, me.multipolarity, me.value.value + sign * me.value.unc)
+                tables = []
+                for e in energies:
+                    cc = CoupledChannels(beam_ion(exp), channel.nuclide.name, float(e), changed, excite=exc.excite,
+                                         ground=ground, tolerance=EVENT_TOLERANCE)
+                    tables.append([cc._populated(float(t), cc._densities(a))
+                                   for t, a in zip(grid, cc.solve_many(grid))])
+                yields.append({(i, f): np.array([[st.gamma_yield(i, f) for st in states] for states in tables])
+                               for i, f in cc.transitions()})
+        except ValueError as err:
+            return {"reason": f"the coupled equations could not be solved ({err}), so the budget has no term for them"}
+        out.update(grid=grid, energies=energies, yields=yields)
         return out
+
+    def _response(self, found: dict, fit: PeakFit) -> _Response:
+        """The :class:`_Response` of the γ rays inside the peak's ±3σ window, from :meth:`_scheme_responses`."""
+        levels, ground, level = found["scheme"].levels, found["ground"], found["level"]
+        lines = tuple(sorted(k for k in found["yields"][0] if k == (level, ground) or abs(
+            levels[k[0]].energy.value - levels[k[1]].energy.value - 1e3 * fit.centroid) <= 3e3 * fit.sigma))
+        none = np.zeros((len(found["energies"]), len(found["grid"])))
+        sums = [sum((y[k] for k in lines), none) for y in found["yields"]]
+        base = np.where(sums[0] > 0, sums[0], 1.0)
+        return _Response(lines, found["grid"], found["energies"], [np.where(sums[0] > 0, y / base, 1.0) for y in sums])
 
     def _area_change(self, s: Settings, keep: np.ndarray, delta_mm: float, like: PeakFit) -> float:
         """The relative change of the peak area when the target assumed in the correction moves by ±delta, each area

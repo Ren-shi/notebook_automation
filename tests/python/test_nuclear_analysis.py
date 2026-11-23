@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from physim.nuclear import Experiment
-from physim.nuclear.analysis import Analysis, PeakFit, Settings, fit_peak, fit_tails
+from physim.nuclear.analysis import Analysis, PeakFit, Result, Settings, fit_peak, fit_tails
 from physim.nuclear.gamma_events import simulate_gammas
 from physim.nuclear.levels import weisskopf_unit
 from physim.nuclear.planner import Planner
@@ -169,8 +169,7 @@ def test_the_scatter_over_seeds_matches_the_quoted_statistical_uncertainty():
 def test_each_systematic_is_found_by_changing_its_input(ni):
     exp, a = ni
     r = a.run(Settings(particle_gate="all"))
-    assert set(r.budget) == {"efficiency", "angular correlation", "beam energy", "detector positions",
-                             "matrix elements assumed"}
+    assert set(r.budget) == {"efficiency", "angular correlation", "beam energy", "detector positions"}
     assert r.budget["efficiency"] == 0.05 and r.budget["angular correlation"] == 0.03
     assert r.systematic == pytest.approx(math.sqrt(sum(v**2 for v in r.budget.values())))
     # Beam energy: ⟨P⟩/B with the energy the beam enters with raised by δ, against nominal, as the budget computes it.
@@ -182,6 +181,29 @@ def test_each_systematic_is_found_by_changing_its_input(ni):
     r2 = a.run(Settings(particle_gate="all", efficiency_unc=0.10))
     assert r2.budget["efficiency"] == 0.10 and r2.systematic > r.systematic
     assert r2.total_unc == pytest.approx(math.hypot(r2.statistical, r2.systematic))
+
+
+def test_an_input_without_an_uncertainty_has_no_term_and_the_budget_says_so(ni):
+    """Round 3, fix 12: the target's thickness and the matrix elements that are not measured."""
+    exp, a = ni
+    r = a.run(Settings(particle_gate="all"))
+    assert r.settings["thickness_unc"] is None and "target thickness" not in r.budget
+    assert "matrix elements assumed" not in r.budget       # it was there as 0, with nothing known about it
+    assert r.budget_notes[0].startswith("target thickness: no uncertainty given")
+    assert r.budget_notes[1].startswith("matrix elements assumed: the setup has no level scheme of 58Ni")
+    thick = a.run(Settings(particle_gate="all", thickness_unc=0.1))
+    assert 0 < thick.budget["target thickness"] < 0.1 and thick.systematic > r.systematic
+    assert thick.systematic == pytest.approx(math.sqrt(sum(v**2 for v in thick.budget.values())))
+    assert thick.steps[-1]["step"] == "normalisation" and "thicker" in thick.steps[-1]["text"]
+    assert "thicker" not in r.steps[-1]["text"] and any("thicker" in n for n in thick.budget_notes)
+    # A result kept by an earlier version has neither the setting nor the notes, and still loads.
+    d = json.loads(json.dumps(r.to_dict()))
+    del d["budget_notes"], d["settings"]["thickness_unc"]
+    d["budget"]["matrix elements assumed"] = 0.0
+    old = Result.from_dict(d)
+    assert old.budget_notes is None and old.total_unc == r.total_unc
+    assert Settings(**old.settings).thickness_unc is None
+    assert Result.from_dict(json.loads(json.dumps(thick.to_dict()))).budget_notes == thick.budget_notes
 
 
 def test_a_changed_gate_or_window_changes_the_result_and_is_recorded(ni):
