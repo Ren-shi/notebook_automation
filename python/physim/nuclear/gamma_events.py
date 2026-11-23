@@ -56,12 +56,12 @@ from . import angular, data, transport
 from .detectors import Array, angles, target_mass_ratio
 from .events import Events, simulate
 from .gamma import (cascade_excitation, depth_orientation, excitation_of, excitation_order, other_excitation,
-                    start_levels)
+                    start_levels, state_transition)
 from .kinematics import TwoBody, lab_points
 from .quantity import Quantity
 from .rates import (DEPTH_AVERAGE_POINTS, Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels,
                     depth_probability, exit_energy, reaction_at, recoil_stack, stack, stopping, tilt_deg)
-from .response import FWHM_PER_SIGMA, Response, compton_edge
+from .response import FWHM_PER_SIGMA, Response, compton_continuum, compton_edge
 
 #: Lines of the room background and their typical relative strengths (counts, not intensities): ⁴⁰K, the
 #: thorium series (²²⁸Ac, ²¹²Pb, ²⁰⁸Tl), the uranium series (²¹⁴Pb, ²¹⁴Bi) and annihilation. The shares are
@@ -356,6 +356,11 @@ class GammaEvents:
 
 #: Points each way over a particle detector's face at which :func:`reaction_depths` takes the excitation.
 REACTION_DEPTH_ORDER = 12
+#: The γ rays drawn for the spread that the Doppler correction leaves (:func:`doppler_spread`), their seed, and the
+#: points each way over a particle detector's face that they are drawn from.
+SPREAD_RAYS = 300_000
+SPREAD_SEED = 2_718_281
+SPREAD_FACE_ORDER = 48
 
 
 def reaction_depths(experiment, layers: Optional[list] = None, array: Optional[Array] = None) -> Optional[dict]:
@@ -371,6 +376,23 @@ def reaction_depths(experiment, layers: Optional[list] = None, array: Optional[A
     None where the correction takes the middle of the target: a lifetime measurement (its γ rays leave from wherever
     the plunger or the backing has the emitter), a thin target and one the event generator keeps in one slice
     (:meth:`~physim.nuclear.rates.DepthProbability.slice_count`)."""
+    through = _through_target(experiment, layers, array)
+    if through is None:
+        return None
+    zs, w, _, faces = through
+    weight = {key: w * (sigma @ d_omega) for key, (_, d_omega, _, sigma) in faces.items()}
+    total = sum(weight.values())
+    if not np.sum(total) > 0:
+        return None
+    return {key: float(np.average(zs, weights=each if each.sum() > 0 else total)) for key, each in weight.items()}
+
+
+def _through_target(experiment, layers: Optional[list] = None, array: Optional[Array] = None,
+                    order: int = REACTION_DEPTH_ORDER) -> Optional[tuple]:
+    """The excitations of the ``[reaction]`` nucleus through the target, for :func:`reaction_depths` (which says when
+    this is None) and :func:`doppler_spread`: (depths, the quadrature weight of each, the reaction at each, {(detector
+    index, whether the particle is the target recoil): (``order``² directions into the detector, the solid angle of
+    each, the CM angle of the scattered beam and the lab cross section, both depths × directions)})."""
     if experiment.excitation is None or getattr(experiment, "lifetime", None) is not None:
         return None
     layers = layers or stack(experiment)
@@ -393,20 +415,128 @@ def reaction_depths(experiment, layers: Optional[list] = None, array: Optional[A
             continue
         points.append(i)
     zs, w = zs[points], w[points]
-    weight = {}
+    faces = {}
     for d, g in enumerate(array):
-        dirs, d_omega = g.directions(None, REACTION_DEPTH_ORDER)
+        dirs, d_omega = g.directions(None, order)
         for recoil in (False, True):
             pt = lab_points([r.kinematics for r in reacs], angles(dirs)[0], "recoil" if recoil else "ejectile")[0]
             theta_cm = np.nan_to_num(180.0 - pt.theta_cm if recoil else pt.theta_cm)
             ok = theta_cm > 0
             sigma = np.array([np.asarray(r.cross_section_cm(np.where(there, th, 90.0)))
                               for r, there, th in zip(reacs, ok, theta_cm)])
-            weight[(d, recoil)] = w * (np.where(ok, sigma * np.nan_to_num(pt.jacobian, posinf=0.0), 0.0) @ d_omega)
-    total = sum(weight.values())
-    if not np.sum(total) > 0:
+            faces[(d, recoil)] = (dirs, d_omega, theta_cm,
+                                  np.where(ok, sigma * np.nan_to_num(pt.jacobian, posinf=0.0), 0.0))
+    return zs, w, reacs, faces
+
+
+def doppler_spread(experiment, seen: dict, step: float, rings: Optional[list] = None) -> Optional[tuple]:
+    """The peak that the ``[reaction]`` state's γ ray makes in the Doppler-corrected spectrum of crystals of perfect
+    resolution, when its level has a half-life: (shifts, share of the full-energy counts with each), the shifts
+    relative to the γ ray's energy, in steps of ``step``. It follows from the setup alone.
+
+    The correction (:func:`doppler_correct`) takes an emitter that has left the target, made at one depth, seen from the
+    middle of a segment and of a crystal. A nucleus whose level lives about as long as it takes to get out of the target
+    decays inside, faster than that, and its γ ray ends beside the peak: of ⁶²Ni in its 2⁺ state (mean life 2.1 ps)
+    in 1.04 mg/cm² of carbon 13 % do, up to 20 keV below 1173 keV. How far depends on the depth, which the speed outside
+    depends on too, so the two do not make two separate spreads, and the whole of it is drawn here:
+    :data:`SPREAD_RAYS` γ rays with a seed of their own, from excitations through the target and over the faces of the
+    particle detectors (as :func:`reaction_depths` has them), which slow down on their way out and decay after times
+    from the level's mean life (as the events have it, without the time that levels above it take), to points on the
+    faces of the crystals; where the add-back puts the γ ray down to the crystal beside, as often as the response says;
+    and corrected as the events are. Within a crystal, and around the beam in it, the γ rays are spread evenly.
+
+    ``seen``: the weight of each crystal for each particle detector ({name: array}); detectors that are not in it are
+    left out, and ``rings`` takes some rings or strips of them. None without a half-life, and where
+    :func:`reaction_depths` is None (a lifetime measurement, a thin target)."""
+    exc = experiment.excitation
+    if exc is None:
         return None
-    return {key: float(np.average(zs, weights=each if each.sum() > 0 else total)) for key, each in weight.items()}
+    lives = _mean_lives(experiment, cascade_excitation(experiment), np.array([state_transition(experiment)[0]]))
+    if lives is None or not lives[0] > 0:
+        return None
+    layers, array = stack(experiment), Array.from_experiment(experiment)
+    through = _through_target(experiment, layers, array, SPREAD_FACE_ORDER)
+    if through is None:
+        return None
+    zs, wq, reacs, faces = through
+    ex, recoil_emits = excitation_of(experiment), exc.excite == "target"
+    emitter = ex.scheme.nuclide
+    mass = data.nuclide(emitter).nuclear_mass_mev + exc.energy_mev
+    names = [g.name for g in array]
+    rng = np.random.default_rng(SPREAD_SEED)
+    n = SPREAD_RAYS
+
+    # The excitations: one row per depth and direction, drawn in proportion to their weights.
+    weight, rows = [], []
+    for (d, recoil), (dirs, d_omega, theta_cm, sigma) in faces.items():
+        if names[d] not in seen:
+            continue
+        _, _, _, _, _, i, j = array.geometries[d]._intersect(dirs, (0.0, 0.0, 0.0), False)
+        w = wq[:, None] * sigma * d_omega * float(np.sum(seen[names[d]]))
+        w = w if rings is None else np.where(np.isin(i, list(rings)), w, 0.0)
+        points = [r.kinematics.recoil_for(th) if recoil_emits else r.kinematics.at_cm(th)
+                  for r, th in zip(reacs, theta_cm)]
+        phi = angles(dirs)[1] + (180.0 if recoil != recoil_emits else 0.0)
+        many = np.ones_like(w)
+        weight.append(w.ravel())
+        rows.append([np.ravel(x) for x in (
+            d * many, recoil * many, i * many, j * many, zs[:, None] * many, phi * many,
+            np.array([np.asarray(p.theta_lab) for p in points]),
+            np.nan_to_num(np.array([np.asarray(p.energy) for p in points])))])
+    if not weight or not sum(float(w.sum()) for w in weight) > 0:
+        return None
+    upto = np.cumsum(np.concatenate(weight))
+    pick = np.searchsorted(upto, (np.arange(n) + rng.uniform(size=n)) / n * upto[-1])
+    d, recoil, i, j, z, phi, theta, energy = (np.concatenate(x)[np.minimum(pick, len(upto) - 1)] for x in zip(*rows))
+    d = d.astype(np.int64)
+    u = _directions(theta, phi)
+    energy = _slowed(experiment, layers, z, u, emitter, energy, rng.exponential(float(lives[0]), n), mass).energy
+    beta = np.sqrt(np.maximum(1 - 1 / (1 + np.maximum(energy, 0.0) / mass) ** 2, 0.0))
+
+    # The γ rays: a crystal, a point on its face, and the crystal that the add-back puts it down to.
+    crystals, _ = crystals_of(experiment)
+    centres, radii = np.array([c.centre for c in crystals]), np.array([c.radius for c in crystals])
+    normals = _unit(centres)
+    which = np.zeros(n, dtype=np.int64)
+    for k in np.unique(d):
+        m, up = d == k, np.cumsum(seen[names[k]])
+        which[m] = np.searchsorted(up, rng.uniform(0.0, up[-1], m.sum()))
+    e1 = _unit(np.cross(normals, np.where(np.abs(normals[:, 1:2]) < 0.9, [0.0, 1.0, 0.0], [1.0, 0.0, 0.0])))
+    e2 = np.cross(normals, e1)
+    rho, psi = radii[which] * np.sqrt(rng.uniform(size=n)), rng.uniform(0.0, 2 * math.pi, n)
+    lab = _unit(centres[which] + rho[:, None] * (np.cos(psi)[:, None] * e1[which] + np.sin(psi)[:, None] * e2[which]))
+    first, reached = _first_crystal(np.zeros((n, 3)), lab, centres, normals, radii)
+    cos_a = np.einsum("ij,ij->i", u, lab)
+    e_lab = exc.energy_mev * np.sqrt(1 - beta**2) / (1 - beta * cos_a)
+    throw = np.where(reached & (first == which), (1 - beta**2) / (1 - beta * cos_a) ** 2, 0.0)
+    moved = np.zeros(len(crystals))
+    beside = np.tile(np.arange(len(crystals)), (2, 1))
+    for k, c in enumerate(crystals):
+        members = [m for m, other in enumerate(crystals) if other.detector == c.detector]
+        if c.response.addback and len(members) == 4:
+            # The scattered photon's crystal has the larger deposit when the first one has less than half.
+            moved[k] = (1 - 1 / float(c.response.addback_factor(exc.energy_mev))) * float(compton_continuum(
+                exc.energy_mev, np.array([0.0, exc.energy_mev / 2]), c.response.crystal.multiple)[0])
+            beside[:, k] = members[(c.element + 1) % 4], members[(c.element - 1) % 4]
+    to = beside[(rng.uniform(size=n) < 0.5).astype(np.int64), which]
+    which = np.where(rng.uniform(size=n) < moved[which], to, which)
+    columns = {"detector": d, "segment_i": i.astype(np.int64), "segment_j": j.astype(np.int64),
+               "recoil": recoil.astype(bool)}
+    fixed = doppler_correct(experiment, columns, np.arange(n), which, e_lab)["recoil" if recoil_emits else "ejectile"]
+    ok = throw > 0
+    return to_steps(fixed[ok] / exc.energy_mev - 1, throw[ok], step)
+
+
+def to_steps(shifts, weights, step: float) -> tuple:
+    """The distribution of ``shifts`` with ``weights`` on multiples of ``step``, each shared by the two beside it (so that
+    the mean stays): (the multiples from the first to the last, the share of each)."""
+    at = np.asarray(shifts, dtype=float) / step
+    low = np.floor(at).astype(np.int64)
+    above, first = at - low, int(low.min())
+    size = int(low.max()) - first + 2
+    out = (np.bincount(low - first, weights=weights * (1 - above), minlength=size)
+           + np.bincount(low - first + 1, weights=weights * above, minlength=size))
+    return step * (first + np.arange(size)), out / out.sum()
 
 
 def _reconstruct(experiment, tb_ej, layers, particle_dirs, theta_lab, recoil_detected, emitter: str,
@@ -2006,4 +2136,4 @@ def _deposit(r: Response, energy: np.ndarray, rng) -> tuple:
 
 
 __all__ = ["Crystal", "GAMMA_COLUMNS", "GammaEvents", "ROOM_LINES", "backgrounds", "crystals_of", "doppler_correct",
-           "other_lines", "other_rows", "reaction_depths", "recorrect", "simulate_gammas", "spectrum_top"]
+           "doppler_spread", "other_lines", "other_rows", "reaction_depths", "recorrect", "simulate_gammas", "spectrum_top"]
