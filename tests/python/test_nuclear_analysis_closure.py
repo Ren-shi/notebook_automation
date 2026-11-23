@@ -85,8 +85,8 @@ def test_the_expected_excitations_per_particle_are_those_of_the_events(allmond, 
 @pytest.mark.parametrize("det", ["Ring2", "Ring3", None])
 def test_the_efficiency_and_correlation_are_those_of_the_events(allmond, det):
     """The efficiency × angular-correlation factor is the full-energy γ rays the simulation detects per excitation.
-    Over twelve samples it is −0.3 ± 0.4 %, −0.2 ± 0.2 % and −0.1 ± 0.2 % off; with the correlation table at the
-    middle of the target it was −0.9, −1.1 and −1.0 % off."""
+    Over twelve samples it is 0.0 ± 0.4 %, 0.0 ± 0.2 % and +0.1 ± 0.2 % off (with the correlation table and the
+    events' emitters at the middle of the target it was −0.9, −1.1 and −1.0 % off)."""
     s = every_particle(det)
     dev, err = [], []
     for a in allmond[1]:
@@ -103,13 +103,15 @@ def test_the_efficiency_and_correlation_are_those_of_the_events(allmond, det):
 
 @pytest.mark.parametrize("det", ["Ring2", "Ring3", None])
 def test_b_e2_comes_back_per_ring_and_for_both(allmond, det):
-    """Within the Monte Carlo error alone. Over twelve samples +0.9 ± 0.4 %, −0.1 ± 0.2 % and +0.1 ± 0.2 %; with
-    the correlation table at the middle of the target +1.5, +0.8 and +0.9 %."""
+    """Within the Monte Carlo error alone. Over twelve samples −0.1 ± 0.4 %, +0.1 ± 0.2 % and −0.1 ± 0.2 %. The peak
+    has the tails that the depth of the target gives it: with the area of a Gaussian alone it was −1.6, −3.2 and
+    −2.7 %."""
     results = [a.run(every_particle(det)) for a in allmond[1]]
     dev, mc = mean_and_error([r.b_e2fm4 / B_UP - 1 for r in results], [r.monte_carlo for r in results])
     assert mc < 0.007, (det, mc)
     assert abs(dev) < 2.5 * mc, (det, 100 * dev, 100 * mc)
     assert all(r.gate == "all" and r.gate_warning is None and r.gate_overlap is None for r in results)
+    assert all(r.fit.tails is not None and r.fit.tails["inside"] < 0.99 for r in results)
 
 
 def test_the_inelastic_gate_warns_when_the_groups_overlap(allmond):

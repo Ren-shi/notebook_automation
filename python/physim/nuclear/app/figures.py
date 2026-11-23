@@ -780,8 +780,9 @@ def figure_search(spectrum: dict, correction: str, height: int = 300):
 
 def figure_peak(line: dict, fit_half_width: float = 4.0, height: int = 300):
     """One integrated peak (an entry of an analysis result's ``lines``): the gated, corrected spectrum round the
-    transition, the random coincidences expected, the fitted Gaussian on its line, and the ±3σ window whose
-    counts over the line are the area."""
+    transition, the random coincidences expected, the fitted peak on its background, and the ±3σ window whose
+    counts over the background are the area."""
+    from ..analysis import PeakFit
     from ..response import FWHM_PER_SIGMA
 
     go = _go()
@@ -803,12 +804,11 @@ def figure_peak(line: dict, fit_half_width: float = 4.0, height: int = 300):
     if sigma > 0 and (fit.get("height", 0) > 0 or fit.get("level", 0) > 0):
         half = fit_half_width * FWHM_PER_SIGMA * sigma
         e = np.linspace(centre - half, centre + half, 300)
-        curve = (fit["height"] * np.exp(-0.5 * ((e - centre) / sigma) ** 2) + fit["level"]
-                 + fit["slope"] * (e - fit["origin"]))
-        base = fit["level"] + fit["slope"] * (e - fit["origin"])
-        fig.add_trace(go.Scatter(x=1e3 * e, y=k * base, mode="lines", name="the line under the peak",
+        peak = PeakFit.of(fit)
+        fig.add_trace(go.Scatter(x=1e3 * e, y=k * peak.background_curve(e), mode="lines",
+                                 name="the line under the peak",
                                  line=dict(color=COLORS[1], width=1, dash="dot")))
-        fig.add_trace(go.Scatter(x=1e3 * e, y=k * curve, mode="lines", name="fit: Gaussian on a line",
+        fig.add_trace(go.Scatter(x=1e3 * e, y=k * peak.curve(e), mode="lines", name=f"fit: {peak.shape}",
                                  line=dict(color=COLORS[1], width=1.6)))
         fig.add_vrect(x0=1e3 * (centre - 3 * sigma), x1=1e3 * (centre + 3 * sigma), fillcolor=COLORS[1], opacity=0.10,
                       line_width=0, annotation_text=f"area {line['area']:.0f} ± {line['area_unc']:.0f}",

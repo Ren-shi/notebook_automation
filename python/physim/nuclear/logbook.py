@@ -712,7 +712,7 @@ def analysis_png(result, dpi: int = 130) -> bytes:
     if fit.sigma > 0 and math.isfinite(fit.centroid) and (fit.height > 0 or fit.level > 0):
         half = float(result.settings.get("fit_half_width", 4.0)) * FWHM_PER_SIGMA * fit.sigma
         x = np.linspace(fit.centroid - half, fit.centroid + half, 400)
-        ax.plot(1e3 * x, k * fit.curve(x), color="#D55E00", lw=1.3, label="fit: Gaussian on a line")
+        ax.plot(1e3 * x, k * fit.curve(x), color="#D55E00", lw=1.3, label=f"fit: {fit.shape}")
         ax.axvspan(1e3 * (fit.centroid - 3 * fit.sigma), 1e3 * (fit.centroid + 3 * fit.sigma), color="#D55E00",
                    alpha=0.10, lw=0, label="±3σ: the area")
     if sp.get("energy"):
@@ -771,10 +771,11 @@ def search_png(result, dpi: int = 130) -> bytes:
 
 def line_png(line: dict, fit_half_width: float = 4.0, dpi: int = 130) -> bytes:
     """One integrated peak (an entry of an analysis result's ``lines``), as :func:`analysis_png` draws the first:
-    the gated, corrected counts, the Gaussian on its line, the ±3σ band of the area and the random coincidences
-    expected. Needs matplotlib."""
+    the gated, corrected counts, the fitted peak on its background, the ±3σ band of the area and the random
+    coincidences expected. Needs matplotlib."""
     from matplotlib.figure import Figure
 
+    from .analysis import PeakFit
     from .response import FWHM_PER_SIGMA
 
     sp, fit = line["spectrum"], line["fit"]
@@ -793,9 +794,8 @@ def line_png(line: dict, fit_half_width: float = 4.0, dpi: int = 130) -> bytes:
     if sigma > 0 and math.isfinite(centre) and (fit.get("height", 0) > 0 or fit.get("level", 0) > 0):
         half = fit_half_width * FWHM_PER_SIGMA * sigma
         x = np.linspace(centre - half, centre + half, 400)
-        curve = fit["height"] * np.exp(-0.5 * ((x - centre) / sigma) ** 2) + fit["level"] + fit["slope"] * (
-            x - fit["origin"])
-        ax.plot(1e3 * x, k * curve, color="#D55E00", lw=1.3, label="fit: Gaussian on a line")
+        peak = PeakFit.of(fit)
+        ax.plot(1e3 * x, k * peak.curve(x), color="#D55E00", lw=1.3, label=f"fit: {peak.shape}")
         ax.axvspan(1e3 * (centre - 3 * sigma), 1e3 * (centre + 3 * sigma), color="#D55E00", alpha=0.10, lw=0,
                    label="±3σ: the area")
     ax.axvline(line["energy_kev"], color="#444444", lw=0.7, ls=":", label=f"{line['energy_kev']:.1f} keV")
@@ -869,8 +869,8 @@ def _lines_html(result, e) -> str:
              else f"{ln['expected_per_particle']:.4g} (measured / expected {ln['ratio']:.3f})"),
             ("Also inside the window", lambda ln: ", ".join(ln.get("blends") or []))]
     parts = ["<h4>The peaks integrated</h4><p>The peak of each nucleus in its own corrected spectrum: a Gaussian "
-             "on a straight line is fitted, and the area is the counts within ±3σ of its centre over that line, "
-             "less the random coincidences expected there. The area over the efficiency and the angular "
+             "on a straight line is fitted, and the area is the counts within ±3σ of its centre over that line "
+             "(with its share beyond ±3σ, where the peak has tails), less the random coincidences expected there. The area over the efficiency and the angular "
              "correlation is the number of γ rays emitted.</p>"]
     for ln in lines[1:]:
         try:

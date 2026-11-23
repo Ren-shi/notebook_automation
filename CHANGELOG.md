@@ -149,6 +149,20 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The γ rays of a thick target come from the emitter of their own depth (Allmond 2014 verification):
+  `gamma_events.simulate_gammas` takes the undetected emitter's two-body kinematics, and for a single state its
+  orientation, at each event's own beam energy where the generator cuts the target into slices. It took those of
+  the middle of the target for every event (emitter β 0.026 instead of 0.029 in the inner ring of
+  `coulex_ni62_c_allmond`). Targets of one slice and lifetime measurements are unchanged.
+- The peak area of the analysis keeps the tails of a Doppler-corrected peak. The depth of the target broadens the
+  peak, 2 % of it lies beyond ±3σ of the Gaussian that fits its core, and the straight line beside it takes the
+  tails for background: the area was 2–3 % low. `analysis.fit_tails` fits a core with a wider Gaussian on a
+  background that steps down across the peak (maximum likelihood) and divides the counts within ±3σ by the share
+  of that peak there. It is used where the tails improve the deviance by more than 25 and the nucleus has no other
+  line in the fit window; every other peak keeps its Gaussian. `PeakFit.tails` holds it, and the figures draw it.
+  - ⁶²Ni on carbon (rings 14–28°, 28–44°, both; twelve samples of 400 000 events): efficiency × correlation against
+    the γ rays detected per excitation 0.0 ± 0.4, 0.0 ± 0.2, +0.1 ± 0.2 %; B(E2) simulated then analysed −0.1 ± 0.4,
+    +0.1 ± 0.2, −0.1 ± 0.2 % (−1.6, −3.2, −2.7 % with the area of a Gaussian).
 - The particle–γ correlation table follows the beam through a thick target (Allmond 2014 verification):
   `gamma.correlation_table` averages its kinematics and angular correlation over the depth as
   `rates.depth_probability` averages the excitation, each depth at its own beam energy and weighted by the
