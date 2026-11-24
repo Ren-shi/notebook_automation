@@ -40,12 +40,12 @@ jobs:
       - id: key
         run: |
           if [ "${{ github.event_name }}" = pull_request ]; then own=pr name=pr${{ github.event.number }}; else own=main name=main; fi
-          { echo "own=$own"; echo "records=tests-1-$name-"; } >> "$GITHUB_OUTPUT"
+          { echo "own=$own"; echo "records=tests-2-$name-"; } >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v4
         with:
           path: .ci/main.json
-          key: tests-1-main-none
-          restore-keys: tests-1-main-
+          key: tests-2-main-none
+          restore-keys: tests-2-main-
       - uses: actions/cache/restore@v4
         if: github.event_name == 'pull_request'
         with:
