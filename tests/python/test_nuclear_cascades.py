@@ -105,7 +105,8 @@ def test_two_levels_give_the_gamma_gamma_coincidences_the_branches_predict():
 def test_a_run_keeps_the_cascades_and_the_data_tab_gates_on_a_line(tmp_path):
     p = Planner(setup(two_states()))
     p.create_experiment(root=tmp_path)
-    run = p.start_run("beam", duration="10 min", budget="3 min")
+    # 3 min of it held 2 γ rays of the upper level on average (none in one seed of ten).
+    run = p.start_run("beam", duration="10 min", budget="10 min")
     g = run.gammas()
     assert set(np.unique(g["initial"]).tolist()) >= {1, 2}
     lo, hi = (E2 - E1 - 12) * 1e-3, (E2 - E1 + 12) * 1e-3

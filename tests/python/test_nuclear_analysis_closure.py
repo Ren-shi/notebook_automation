@@ -473,7 +473,7 @@ def test_the_target_thickness_term(reorientation):
         assert own / Analysis(allmond_setup(), a.gammas)._mean_probability(s) - 1 == pytest.approx(change, rel=0.02)
 
 
-@pytest.mark.parametrize("det, up, down", [("Ring2", 0.0287, -0.0282), ("Ring3", 0.0202, -0.0199)])
+@pytest.mark.parametrize("det, up, down", [("Ring2", 0.0271, -0.0266), ("Ring3", 0.0191, -0.0188)])
 def test_the_term_of_the_assumed_matrix_elements(reorientation, det, up, down):
     """Q_s ± 0.1 eb, as the coupled equations of setups with that moment give it."""
     a, setup = reorientation

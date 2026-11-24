@@ -14,6 +14,9 @@
 #   and -0.5(6) %). The band comes from the paper's statistical errors.
 # - paper: the plan's 4.1 %. thickness: the measured errors. sensitivity: 0.5 pp, a choice of the session that wrote
 #   the reproduction, after fix wave 1 had found the Q_s effect of the app.
+# - sensitivity, rel: 2 % of GOSIA's change, added by the plan of fix wave 6 (2026-11-24) after a Q_s effect 6 % too
+#   large had passed the 0.5 pp; fixed before the corrected solver was run on it, but with the Q_s answer (0.1 %) known
+#   from a patch in memory (the feeding's gamma yield was not).
 
 [provenance]
 tool = "GOSIA 20110524.14 (tools/gosia/gosia.exe, gfortran 16.2.0 build); SRIM 2013 SR Module; LISE++ ATIMA 1.4"
@@ -188,4 +191,6 @@ why = "The paper's total uncertainty on B(E2) (0.0037 of 0.0906 e2b2, 4.1 %) app
 
 [bands.sensitivity]
 pp = 0.5
+rel = 0.02
 why = "Q_s = +-0.1 e b moves the ratio by about +-2.7 % (ring 2) and +-1.9 % (ring 3) in GOSIA, the feeding by +1.2 % and +0.8 %; physim must give the same changes within 0.5 percentage points (about a fifth of the Q effect: enough to catch a wrong sign or a missing reorientation term, not the E1 polarisation and mass-number differences, which cancel in a relative change)."
+rel_why = "And within 2 % of GOSIA's change, so that a constant factor on it is seen: the percentage points alone passed effects 6 % (Q_s) and 19 % (feeding) too large, from one orbit for every pair of levels."

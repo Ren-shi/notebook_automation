@@ -101,6 +101,26 @@ amplitudes of every magnetic substate of every level along the orbit, which hold
 excitations, the depletion of the ground state and of the 2⁺ state, and the reorientation through the diagonal
 matrix elements (the quadrupole moments).
 
+**The orbit of each pair of levels.** The coupling of levels n and m takes the orbit symmetrised between the speeds
+the nucleus has in the two (Alder and Winther), a_nm = Z₁Z₂e²/(μ v_n v_m) and v_nm = √(v_n v_m), with
+½μv_n² = E_cm − E_n:
+
+$$
+K_{\lambda,nm} = \frac{4\pi Z e^2}{\hbar\, v_{nm}\,(2\lambda+1)\, a_{nm}^\lambda}
+\;\propto\; \big[(E_{cm}-E_n)(E_{cm}-E_m)\big]^{(2\lambda-1)/4} ,
+$$
+
+and ξ_nm = (Z₁Z₂e²/ħ)(1/v_n − 1/v_m). It is GOSIA's ψ (its LOAD: (pp₁ pp₂)^((2λ−1)/4), pp = E − (1 + A₁/A₂)E_n,
+which is (1 + A₁/A₂)(E_cm − E_n) with A₁ the projectile's mass, whichever nucleus is excited), and the orbit first
+order gives each level. A diagonal element acts at the speed the nucleus has in its own level, v_n. The
+eccentricity 1/sin(θ/2) is the same for every pair.
+
+Until 2026-11-24 every pair had the orbit of the ground state and the reference level (the first 2⁺), which is
+too strong by [E_cm(E_cm − E_ref) / ((E_cm − E_n)(E_cm − E_m))]^((2λ−1)/4) for the others. The excitation of a level
+in one step in a scheme of two levels without a quadrupole moment was right. A reorientation effect was too large by
+(E_cm/(E_cm − E*))^¾ (6% for ⁶²Ni at 111.6 MeV on carbon, 5% for ¹⁶O at 30 MeV on ⁵⁸Ni, 0.5% for ⁶²Ni at 237 MeV on
+¹⁹⁴Pt), and the populations of the levels above by more (12 to 26% for ⁶²Ni at 100 MeV on carbon).
+
 When the setup has a level scheme of the excited nucleus (`[levels]`) whose decays follow more than one
 transition, the simulated events take that solution (`gamma.cascade_excitation`):
 
@@ -146,13 +166,13 @@ For `coulex_ni62_pt194` (⁶²Ni at 237 MeV on ¹⁹⁴Pt, the beam excited), at
 
 | Level of ⁶²Ni | First order | All orders |
 |---|---|---|
-| 2⁺, 1172.9 keV | 0.1932 | 0.1845 |
-| 0⁺, 2048.6 keV | 0 | 0.0081 |
+| 2⁺, 1172.9 keV | 0.1931 | 0.1836 |
+| 0⁺, 2048.6 keV | 0 | 0.0080 |
 | 2⁺, 2301.9 keV | 0.0006 | 0.0017 |
-| 4⁺, 2336.5 keV | 0 | 0.0058 |
-| any level | 0.1938 | 0.2001 |
+| 4⁺, 2336.5 keV | 0 | 0.0057 |
+| any level | 0.1936 | 0.1990 |
 
-The 2⁺ state loses 4.5% to the levels above it and gets it back, with more, when they decay through it: 3% more
+The 2⁺ state loses 4.9% to the levels above it and gets it back, with more, when they decay through it: 2.5% more
 2⁺ → 0⁺ γ rays than first order gives, 4⁺ → 2⁺ γ rays (1163.5 keV) at 3% of them and 0⁺ → 2⁺ γ rays (875.6 keV)
 at 4%.
 
@@ -247,5 +267,7 @@ at 0.7% statistical error from 2 × 10⁶ events.
 | Monte Carlo against analytic rates, every channel and detector of `coulex_ni58` | `Rates` | 4σ | `test_monte_carlo_rates_agree_with_analytic_rates[coulex_ni58]` |
 | Inelastic peak below the elastic one by the kinematic difference | `TwoBody` with and without E* | 10% | `test_coulomb_excitation_in_the_report` |
 | Against GOSIA, first order, ¹⁶O + ⁵⁸Ni at 30 MeV, five angles | GOSIA 20110524.14 with the matrix element ÷10 (weak coupling), `tests/reference/nuclear/coulex_gosia.csv` | 2% (worst 0.6%) | `validation.coulex_vs_gosia` |
+| Each pair of levels on its own orbit | K_λ ∝ [(E_cm − E_n)(E_cm − E_m)]^((2λ−1)/4) for E1, E2, E3, either nucleus excited; first order for every level where the coupling is weak | 1e-12; 1e-4 | `test_each_pair_of_levels_is_coupled_on_its_own_symmetrised_orbit`, `test_every_level_is_first_order_where_the_coupling_is_weak` |
 | Against GOSIA, all orders, the same case | GOSIA 20110524.14, `coulex_gosia_all_orders.csv` | 1% (worst 0.6%) | `test_all_orders_agree_with_gosia` |
+| Against GOSIA, all orders, feeding and reorientation: ⁶²Ni with Q_s = ±0.3 e b, 0⁺₂, 2⁺₂, 4⁺₁ on ¹²C (100 MeV, either nucleus the beam) and ¹⁹⁴Pt (200 MeV), a rotor ¹⁵²Sm on ¹²C (400 MeV) | GOSIA 20110524.14 (nuclear masses, E1 polarisation off), the app's numbers stored before the runs, `coulex/gosia_pairs.csv` | 1% above 10⁻⁴, 3% above 10⁻⁶ (worst 0.5%; 0.01 to 0.2% with GOSIA's non-relativistic E_cm) | `test_feeding_and_reorientation_agree_with_gosia` |
 | Against a published measurement | Requested from the user (`tests/reference/nuclear/pending/coulex_literature.md`) | — | not yet written |

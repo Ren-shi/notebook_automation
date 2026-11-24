@@ -59,7 +59,7 @@
   "test_nuclear_lifetimes.py": 10.4,
   "test_nuclear_lifetimes_physics.py": 0.6,
   "test_nuclear_logbook.py": 235.5,
-  "test_nuclear_multistep.py": 25.7,
+  "test_nuclear_multistep.py": 30.7,
   "test_nuclear_multistep_events.py": 77.6,
   "test_nuclear_neutrons.py": 9.1,
   "test_nuclear_orientation.py": 2.0,

@@ -45,7 +45,8 @@ reference file; :func:`run`)::
 4. *The paper*: per ring, the paper's matrix element → GOSIA's ratio → physim's B(E2), within the paper's total
    uncertainty of 4.1 % of its per-ring B(E2); the pulls against the per-ring statistical errors are reported.
 5. *Sensitivities*: Q_s(2⁺) = ±0.1 e b and the feeding from ENSDF's higher states (0⁺₂, 2⁺₂, 4⁺₁) move the ratio
-   as in GOSIA, within 0.5 percentage points.
+   as in GOSIA, within 0.5 percentage points and within 2 % of GOSIA's change (a constant factor on the effect,
+   which the percentage points alone let through: ±2.9 % for ±2.7 % is 6 % too much and 0.2 points).
 6. *Stored run*: a closure sample as a run stores it (the segment of each particle, not its angle; the stored
    columns), through the app's own loading: the excitations expected per particle against the rates' integral over
    the ring (0.1 %), and B(E2) back.
@@ -394,7 +395,7 @@ def _paper(refd: dict, scan: dict) -> dict:
 
 def check_sensitivities(refd: dict, base: dict, q_plus: dict, q_minus: dict, feeding: dict) -> dict:
     g = refd["gosia"]["sensitivity"]
-    band = refd["bands"]["sensitivity"]["pp"]
+    band, rel = refd["bands"]["sensitivity"]["pp"], refd["bands"]["sensitivity"]["rel"]
     rows, worst, ok = [], 0.0, True
     for what, ours in (("q_plus", {r: q_plus[r] / base[r] - 1 for r in RINGS}),
                        ("q_minus", {r: q_minus[r] / base[r] - 1 for r in RINGS}),
@@ -402,10 +403,12 @@ def check_sensitivities(refd: dict, base: dict, q_plus: dict, q_minus: dict, fee
         for r in RINGS:
             want = g[REF_RING[r]][what]
             dev_pp = 100 * (ours[r] - want)
-            passed = abs(dev_pp) <= band
+            dev_rel = ours[r] / want - 1
+            passed = abs(dev_pp) <= band and abs(dev_rel) <= rel
             rows.append({"what": what, "ring": r, "physim_percent": 100 * ours[r], "gosia_percent": 100 * want,
-                         "difference_pp": dev_pp, "band_pp": band, "passed": passed})
-            worst, ok = max(worst, abs(dev_pp) / band), ok and passed
+                         "difference_pp": dev_pp, "band_pp": band, "difference_rel": dev_rel, "band_rel": rel,
+                         "passed": passed})
+            worst, ok = max(worst, abs(dev_pp) / band, abs(dev_rel) / rel), ok and passed
     return {"rows": rows, "passed": ok, "worst": worst}
 
 
@@ -585,6 +588,8 @@ def table(r: dict) -> str:
         line("5 sensitivity", f"{x['ring']} {labels[x['what']]}", f"{x['physim_percent']:+.2f} %",
              f"{x['gosia_percent']:+.2f} %", f"{x['difference_pp']:+.2f} pp", f"+-{x['band_pp']:.1f} pp",
              x["passed"])
+        line("5 sensitivity", "  relative to GOSIA's change", "", "", f"{100 * x['difference_rel']:+.2f} %",
+             f"+-{100 * x['band_rel']:.0f} %", x["passed"])
     for x in c["stored"]["rows"]:
         number = "{:.4e}" if x["what"] != "B(E2)" else "{:.1f}"
         line("6 stored run", f"{x['what']} {x['rings']} (+- {100 * x['error']:.2f} %)", number.format(x["physim"]),

@@ -900,7 +900,7 @@ def coulex_vs_gosia(ref):
        "⁵⁸Ni, ⁶⁰Ni losses within their 0.8 MeV, ⁶²Ni 42.4(8) MeV; σ_C/σ_R per ring within 1% of GOSIA as run "
        "(missed: a known, explained +1.3/+1.2%) and 0.5% of GOSIA with nuclear masses and DIP off; closure and the "
        "stored run within a quarter of the paper's statistical error + 3 σ; B(E2) per ring within the paper's 4.1%; "
-       "Q_s = ±0.1 e b and ENSDF feeding as in GOSIA within 0.5 percentage points")
+       "Q_s = ±0.1 e b and ENSDF feeding as in GOSIA within 0.5 percentage points and 2% of its change")
 def reproduction_allmond2014(ref):
     """Fails, for a known and explained miss of one band (GOSIA as run); ``worst`` is the largest deviation in units
     of its band, the miss included, and the detail says what it is without it."""

@@ -630,8 +630,8 @@ cc.probabilities(150.0)           # every level, summing to one
 cc.at(150.0).gamma_yield(1, 0)    # with the decay through the scheme
 ```
 
-- **The orbit** is the symmetrised one of the ground state and a reference level (the lowest with a matrix element
-  to the ground state); with weak coupling the solution is first order exactly.
+- **The orbit** of each pair of levels is the one symmetrised between their two speeds, as in first order and in
+  GOSIA ({doc}`theory/coulex`); with weak coupling the solution is first order exactly, for every level.
 - **Matrix elements** enter with their signs, from the level scheme; a diagonal E2 element is the quadrupole
   moment's, through `quadrupole_factor`.
 - **Speed:** a Runge–Kutta integration whose steps follow the fastest phase. 25 levels (265 substates) take
