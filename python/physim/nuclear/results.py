@@ -750,6 +750,22 @@ def select(rows: list, observable: Optional[str] = None, key=None, evidence: Opt
 # Backfill: rows from the analyses that runs already hold
 
 
+def _says_the_same(a: Row, b: Row) -> bool:
+    """Whether two rows of one run say the same thing: the same value, uncertainties, budget and truth (to
+    rounding), in the same unit and direction, by the same analysis settings. When each was made, and by which
+    code, is left aside."""
+    def close(x, y) -> bool:
+        if isinstance(x, float) and isinstance(y, float):
+            return math.isclose(x, y, rel_tol=1e-9, abs_tol=0.0)
+        return x == y
+
+    said = ("unit", "direction", "detail", "value", "stat", "sys", "total", "plus", "minus", "truth")
+    budget_a, budget_b = a.budget or {}, b.budget or {}
+    return (all(close(getattr(a, name), getattr(b, name)) for name in said)
+            and a.origin.get("settings") == b.origin.get("settings") and set(budget_a) == set(budget_b)
+            and all(close(budget_a[k], budget_b[k]) for k in budget_a))
+
+
 def backfill(folder: Union[str, Path]) -> list:
     """Make projected rows from the ``analysis.json`` files an experiment's runs already hold, and append them to
     the experiment's ledger. Returns the rows added; calling it again adds none.
@@ -758,8 +774,9 @@ def backfill(folder: Union[str, Path]) -> list:
     transition the run's ``[reaction]`` names, with the statistical and systematic uncertainties and the budget
     made absolute, and the value the setup held as ``truth``. The row is dated by when the analysis was saved;
     the code that made it was not recorded and is left unknown. A run analysed again since the last backfill
-    gives a row that supersedes the earlier one. Runs of other reactions, runs without an analysis and analyses
-    that cannot be read are passed over.
+    gives a row that supersedes the run's earlier row by the same method (a row of the all-orders fit is left
+    alone); analysed again with the same settings and the same result, it gives none. Runs of other reactions,
+    runs without an analysis and analyses that cannot be read are passed over.
     """
     from .analysis import RESULT_FILE
     from .experiment import Experiment
@@ -787,13 +804,15 @@ def backfill(folder: Union[str, Path]) -> list:
                 origin=from_run(folder.name, run.name, d.get("settings"), analysed=saved, backfilled=True))
         except (OSError, ValueError, TypeError, KeyError):
             continue
-        earlier = [r for r in have if r.origin.get("run") == run.name and r.observable == row.observable
-                   and r.key == row.key]
-        if any(r.origin.get("analysed") == saved for r in earlier):
+        earlier = {r.id: r for r in have if r.origin.get("run") == run.name
+                   and (r.observable, r.key, r.method) == (row.observable, row.key, row.method)}
+        if any(r.origin.get("analysed") == saved for r in earlier.values()):
             continue
-        earlier = current(earlier)
-        if earlier:
-            row = Row.from_dict({**row.to_dict(), "id": "", "supersedes": earlier[-1].id})
+        standing = [r for r in current(have) if r.id in earlier]
+        if standing and _says_the_same(standing[-1], row):
+            continue  # analysed again with the same settings and the same result: nothing new to say
+        if standing:
+            row = Row.from_dict({**row.to_dict(), "id": "", "supersedes": standing[-1].id})
         if append(folder, row):
             have.append(row)
             added.append(row)

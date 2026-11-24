@@ -25,7 +25,7 @@ ALLMOND = {"authors": "Allmond et al.", "year": 2014, "doi": "10.1103/PhysRevC.9
 def tools(tmp_path, monkeypatch):
     """The tools on an experiments folder with one Coulex experiment and its simulated run's row; the nuclei's own
     rows beside it; no local ENSDF copy, and the ⁶²Ni levels to anchor to."""
-    monkeypatch.delenv(results.ENV, raising=False)
+    monkeypatch.setenv(results.ENV, str(tmp_path / "elsewhere"))  # the session's own folder wins over this
     monkeypatch.setenv(ensdf.ENV, str(tmp_path / "no-ensdf"))
     monkeypatch.setattr(results, "ensdf_levels", lambda nuclide: NI62 if nuclide == "62Ni" else ())
     monkeypatch.setattr(nucleus, "decay", lambda nuclide, level_key: (None, None, "no γ ray known"))
@@ -37,7 +37,7 @@ def tools(tmp_path, monkeypatch):
         "62Ni", "B(E2)", KEY, 918.6, "e2fm4", "coulex-yield", "projected", direction="up", stat=12.9, sys=63.4,
         truth=884.1, origin=results.from_run(coulex.path.name, "03-beam-24h")))
     made = ResultTools(Session(root))
-    assert made.home == tmp_path / "nuclei"
+    assert made.home == tmp_path / "nuclei" and ResultTools(Session()).home == tmp_path / "elsewhere"
     results.add_point(results.Row(
         "62Ni", "B(E2)", KEY, 12.13, "W.u.", "evaluation", "evaluated", direction="down", total=0.18,
         origin=results.reference("ENSDF, adopted levels and γ rays", 2025, where="NDS 204, 1 (2025)",
@@ -110,7 +110,11 @@ def test_the_nuclei_and_the_comparison_through_the_tools(tools):
     assert (p["setup_reaches"], p["known_to"], p["best_single_measurement"]) == ("±7 %", "±1.5 %", "±4.1 %")
     assert "against_reference" not in p and "never pulled against" in c["rule"]
     routes = {r["route"]: r for r in c["routes"]}
-    assert routes["Coulex from the yield (first order)"]["status"] == "done"
+    assert routes["Coulex from the yield (first order)"] == {  # a simulated run, nothing measured
+        "route": "Coulex from the yield (first order)", "experiment": "Coulomb excitation", "status": "projected",
+        "independent": 0, "projected": 1, "own": 1, "note": "the γ-ray yield per scattered particle, first order"}
+    fit = routes["Coulex fitted to all orders"]  # a published value: done, and still open to plan oneself
+    assert [fit[k] for k in ("status", "independent", "projected", "own", "open")] == ["done", 1, 0, 0, True]
     assert routes["RDDS (decay curve, DDCM)"] == {
         "route": "RDDS (decay curve, DDCM)", "experiment": "Lifetimes (RDDS, DSAM)", "status": "in physim",
         "open": True, "note": "through τ, the γ-ray energy, the branching and the conversion"}
@@ -119,6 +123,19 @@ def test_the_nuclei_and_the_comparison_through_the_tools(tools):
         "gives": "tau", "missing": "no γ ray known"}
     empty = tools.compare_results("62Ni", "tau", "2+1")
     assert "note" in empty and "independent" not in empty and empty["routes"]
+    assert not (tools.home.parent / "elsewhere").exists()
+
+
+def test_a_reference_of_zero_is_compared_in_the_unit(tools):
+    results.add_point(results.Row("62Ni", "Qs", "62Ni:2+1", 0.0, "efm2", "evaluation", "evaluated", total=1.0,
+                                  origin=results.reference("ENSDF", 2025, evaluation=nucleus.ENSDF)), tools.home)
+    tools.add_data_point("62Ni", "Qs", "2+1", 5.0, "coulex-fit", uncertainty=3.0, reference=ALLMOND)
+    tools.add_data_point("62Ni", "Qs", "2+1", -6.7, "shell-model", evidence="theory", reference=ALLMOND)
+    c = tools.compare_results("62Ni", "Qs", "2+1")  # no difference in percent and no ratio against 0
+    assert {r["evidence"]: r["against_reference"] for r in c["independent"]} == {
+        "evaluated": "the reference", "measured": "+5 efm2, pull +1.58: agree",
+        "theory": "-6.7 efm2 (no uncertainty: not judged)"}
+    json.dumps([tools.list_nuclei(), tools.list_results("62Ni"), tools.list_results("62Ni", "Qs")])
 
 
 def test_the_server_has_the_results_tools(tools):

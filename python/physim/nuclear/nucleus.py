@@ -69,10 +69,14 @@ POINT_METHODS = {
     "theory": ("shell-model", "other"),
 }
 
-#: What a route of the registry can be for a nucleus: a row by that method holds now; physim has that kind of
-#: experiment; the kind comes later; or the route is no experiment of the planner (a calculation, the evaluation,
-#: a method known from the literature only: its value comes in as a data point).
-DONE, IN_PHYSIM, LATER, NO_EXPERIMENT = "done", "in physim", "later", "no experiment"
+#: What a route of the registry can be for a nucleus: an independent row by that method holds now; only
+#: simulated runs by that method hold (no measurement); physim has that kind of experiment; the kind comes later;
+#: or the route is no experiment of the planner (a calculation, the evaluation, a method known from the literature
+#: only: its value comes in as a data point).
+DONE, ONLY_PROJECTED, IN_PHYSIM, LATER, NO_EXPERIMENT = "done", "projected", "in physim", "later", "no experiment"
+
+#: The observables whose value must be above 0, and those that cannot be negative.
+POSITIVE, NOT_NEGATIVE = ("tau",), ("B(E2)", "E_level")
 
 _SUBSCRIPT = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 #: What people write in a spin and parity or a level's name, as the keys write it.
@@ -275,11 +279,16 @@ def evaluation(nuclide: str, max_energy_kev: Optional[float] = None) -> list:
 
     - **E_level**: each level's energy and uncertainty, in keV (not the ground state).
     - **tau**: the mean life in ps of each level with γ rays and a half-life, as
-      :func:`physim.nuclear.lifetimes.level_taus` gives it; the half-life's relative uncertainty is kept.
+      :func:`physim.nuclear.lifetimes.level_taus` gives it; the half-life's relative uncertainty is kept. A
+      half-life that ENSDF gives without an uncertainty is left out: that is how a limit ("3.1 PS GT"), an
+      approximate or a systematic value arrives here (the reader keeps no mark of which), and it is no value to
+      pull a measurement against.
     - **Qs**: the quadrupole moment in e b as ENSDF writes it, for the levels the level scheme takes it for.
     - **B(E2)**: for each γ ray between levels of known spin, ENSDF's B(E2)↓ in Weisskopf units as written; where
       ENSDF gives none, the B(E2)↓ in e² fm⁴ that the level scheme derives from the half-life and the branching
       (:meth:`LevelScheme.derive <physim.nuclear.levels.LevelScheme.derive>`), which depends on the τ row.
+      None is derived from a half-life without an uncertainty, nor for a level with a γ ray the reader could not
+      place (:attr:`ensdf.Level.dropped <physim.nuclear.ensdf.Level.dropped>`): its branching is not complete.
 
     Each row's reference names ENSDF, the publication and the data set's date. Where ENSDF writes an asymmetric
     uncertainty the reader keeps the larger side (:func:`physim.nuclear.ensdf.number`).
@@ -307,11 +316,11 @@ def evaluation(nuclide: str, max_energy_kev: Optional[float] = None) -> list:
         lv, key = scheme.levels[i], keys[i]
         if lv.energy.value > 0:
             add("E_level", key, lv.energy.value, "keV", total=lv.energy.unc)
-        tau = taus.get(names[i])
-        if tau is not None and lv.half_life is not None and tau[1].startswith("half-life"):
-            hl = lv.half_life
+        tau, hl = taus.get(names[i]), lv.half_life
+        # A half-life without an uncertainty is a limit or an approximate value: no evaluated row is made of it.
+        if tau is not None and hl is not None and hl.unc is not None and tau[1].startswith("half-life"):
             tau_rows[i] = add("tau", key, tau[0], "ps", detail=f"from the half-life {hl.value:.4g} s in ENSDF",
-                              total=None if hl.unc is None else tau[0] * hl.unc / hl.value)
+                              total=tau[0] * hl.unc / hl.value)
         q = data.levels[i].moments.get("E2")
         if q is not None and scheme.matrix_element(i, i, "E2") is not None:
             add("Qs", key, q[0], "eb", total=q[1],
@@ -330,9 +339,10 @@ def evaluation(nuclide: str, max_energy_kev: Optional[float] = None) -> list:
         if found is None:
             continue
         b_down, relative, how = found
+        if relative is None or data.levels[t.initial].dropped:
+            continue  # from a limit of the half-life, or with a branching that is not complete
         tau_row = tau_rows.get(t.initial)
-        add("B(E2)", key, b_down, "e2fm4", direction=observables.DOWN,
-            total=None if relative is None else b_down * relative,
+        add("B(E2)", key, b_down, "e2fm4", direction=observables.DOWN, total=b_down * relative,
             detail=how + "; the uncertainty is the half-life's alone",
             depends_on=(tau_row.id,) if tau_row is not None else ())
     return rows
@@ -466,6 +476,18 @@ def _direction(direction, o, problems: list) -> Optional[str]:
 _UNCERTAINTY = ("uncertainty", "stat", "sys", "plus", "minus")
 
 
+def _above_zero(*amounts) -> bool:
+    """Whether one of the uncertainties given is above 0. Something that is not a number counts: it is said as
+    its own problem."""
+    for x in amounts:
+        try:
+            if x is not None and (isinstance(x, bool) or float(x) > 0):
+                return True
+        except (TypeError, ValueError):
+            return True
+    return False
+
+
 def _data_point(name: str, row_id: str, home) -> Row:
     """The data point of a nucleus's ledger that ``row_id`` names (an id or its first characters), if it holds
     now. Refuses rows that are not data points: those are replaced where they were made."""
@@ -505,10 +527,11 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
 
     - ``observable``: a key of the registry ("B(E2)", "tau", "Qs", "E_level").
     - ``key``: the level or transition, as one says it (:func:`level`, :func:`transition`).
-    - ``value`` and ``unit``: a unit the observable allows (its canonical one when left out).
+    - ``value`` and ``unit``: a unit the observable allows (its canonical one when left out). A mean life is
+      above 0; a B value and a level's energy are not negative.
     - ``direction``: "up" or "down" for a B value; a value in Weisskopf units is always "down".
     - the uncertainty, absolute and in the same unit, in one form: one total (``uncertainty``), statistical and
-      systematic (``stat``, ``sys``), or ``plus`` and ``minus``. A measured point needs one.
+      systematic (``stat``, ``sys``), or ``plus`` and ``minus``. A measured point needs one, above 0.
     - ``method``: a key of :data:`physim.nuclear.results.METHODS` that fits the evidence (:data:`POINT_METHODS`).
     - ``evidence``: "measured" (a published value or one's own), "outside program" (GOSIA and the like) or
       "theory".
@@ -536,9 +559,16 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
         except ValueError as e:
             problems.append(f"the {o.belongs_to}: {e}")
     try:
-        value = float(value)
-        if not math.isfinite(value):
+        if isinstance(value, bool):
             raise ValueError
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError
+        if o is not None and o.key in POSITIVE and number <= 0:
+            problems.append(f"{o.label} must be above 0, got {number:g}")
+        if o is not None and o.key in NOT_NEGATIVE and number < 0:
+            problems.append(f"{o.label} cannot be negative, got {number:g}")
+        value = number
     except (TypeError, ValueError):
         problems.append(f"the value must be a number, got {value!r}")
     if o is not None:
@@ -555,7 +585,7 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
         problems.append("an asymmetric uncertainty needs both plus and minus")
     for label_, x in zip(_UNCERTAINTY, (uncertainty, stat, sys, plus, minus)):
         try:
-            if x is not None and not (math.isfinite(float(x)) and float(x) >= 0):
+            if x is not None and (isinstance(x, bool) or not (math.isfinite(float(x)) and float(x) >= 0)):
                 raise ValueError
         except (TypeError, ValueError):
             problems.append(f"the uncertainty '{label_}' must be a number that is not negative, got {x!r}")
@@ -566,6 +596,8 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
                         f"'{evidence}'{why.get(evidence, '')}")
     elif evidence == "measured" and not any(forms):
         problems.append("a measured point needs its uncertainty: one total, or stat and sys, or plus and minus")
+    elif evidence == "measured" and not _above_zero(uncertainty, stat, sys, plus, minus):
+        problems.append("a measured point needs an uncertainty above 0")
     if method not in METHODS:
         problems.append(f"the method is one of {', '.join(METHODS)}; got {method!r}")
     elif evidence in POINT_METHODS and method not in POINT_METHODS[evidence]:
@@ -594,7 +626,9 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
     twin = next((r for r in held if _same(r, row)), None)
     if twin is not None:
         raise PointProblem([f"this point is in the ledger of {name} already (row {twin.id})"])
-    results.add_point(row, home)
+    if not results.add_point(row, home):  # the same words in the same second as a row since replaced or withdrawn
+        raise PointProblem([f"a row that says exactly this was written this very second (row {row.id}, replaced "
+                            f"or withdrawn since); add the point again in a moment"])
     return row
 
 
@@ -717,7 +751,9 @@ def decay(nuclide: str, level_key: LevelKey) -> tuple:
     what a B ↔ τ conversion needs besides the value ({"energy_kev", "branching", "conversion", "mixing"}, as
     :func:`physim.nuclear.compare.convert` takes them).
 
-    Only a level with a single γ ray has an answer: its branching is 1. For a level with several γ rays the
+    Only a level with a single γ ray has an answer: its branching is 1. The γ rays are counted as the ENSDF
+    file lists them: a level with a γ ray the reader could not place (no final level matched, or an energy it
+    could not read) has more than the one it kept, and no answer. For a level with several γ rays the
     branching is the transition's share of all decays; the code works that out in three places but has no
     function for it, so (None, None, the reason) comes back and nothing is converted. The same when ENSDF does
     not have the level, names no multipolarity, or gives a mixed transition without its mixing ratio.
@@ -725,11 +761,15 @@ def decay(nuclide: str, level_key: LevelKey) -> tuple:
     found = adopted_scheme(nuclide)
     if found is None:
         return None, None, f"there is no local ENSDF copy with the γ rays of {results.nuclide_name(nuclide)}"
-    _, scheme, keys = found
+    data, scheme, keys = found
     texts = [k.text for k in keys]
     if level_key.text not in texts:
         return None, None, f"ENSDF has no level {level_key.level}"
     i = texts.index(level_key.text)
+    dropped = data.levels[i].dropped
+    if dropped:
+        return None, None, (f"ENSDF lists {dropped} more γ ray{'s' if dropped != 1 else ''} from the level "
+                            f"{level_label(keys[i])} that could not be placed: its branching is not known")
     branches = scheme.branches(i)
     if len(branches) != 1:
         return None, None, (f"the level {level_label(keys[i])} has {len(branches)} γ rays: the conversion needs "
@@ -814,7 +854,8 @@ def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[di
     ``rows`` are the rows of the observable and key that hold now (converted ones among them, with ``via`` saying
     what each was made from: a B(E2) made from a DSAM lifetime counts for the DSAM route). Each route is a dict:
     "method" and "label", "kind" and "kind_label" (the kind of experiment that plans it, or None), "note", "status"
-    (:data:`DONE`: a row by that method holds now; :data:`IN_PHYSIM`: physim has that kind of experiment;
+    (:data:`DONE`: an independent row by that method holds now; :data:`ONLY_PROJECTED`: only simulated runs
+    by that method hold, so nothing is measured yet; :data:`IN_PHYSIM`: physim has that kind of experiment;
     :data:`LATER`: a kind still to come; :data:`NO_EXPERIMENT`: a calculation, the evaluation or a method known
     from the literature only), "live" (whether physim has the kind of experiment, whatever the status), "means"
     for a route that is no experiment ("calculation", "evaluation", "literature"), "rows", "independent" and
@@ -834,7 +875,9 @@ def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[di
         # "other" stands for a kind still to come (inelastic scattering, transfer): no row is matched to it.
         mine = [] if route.method == "other" else by_method.get(route.method, [])
         live = route.live
-        status = DONE if mine else IN_PHYSIM if live else LATER if live is False else NO_EXPERIMENT
+        independent = sum(r.independent for r in mine)
+        status = (DONE if independent else ONLY_PROJECTED if mine else IN_PHYSIM if live
+                  else LATER if live is False else NO_EXPERIMENT)
         fits, why = applies(nuclide, observable, key, route)
         own = sum((via or {}).get(r.id, r).origin.get("kind") in ("run", "own measurement") for r in mine)
         out.append({
@@ -842,8 +885,8 @@ def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[di
             "kind_label": kinds.get(route.kind), "note": route.note, "status": status, "live": bool(live),
             "means": (None if route.kind is not None else "calculation" if route.method == "shell-model"
                       else "evaluation" if route.method == "evaluation" else "literature"),
-            "rows": len(mine), "independent": sum(r.independent for r in mine),
-            "projected": sum(not r.independent for r in mine), "own": own, "open": bool(live) and own == 0,
+            "rows": len(mine), "independent": independent, "projected": len(mine) - independent, "own": own,
+            "open": bool(live) and own == 0,
             "applies": fits, "reason": why})
     return out
 
@@ -1245,8 +1288,9 @@ def observable_view(nuclide: str, observable: str, key, reference: Optional[str]
             "gives": gives(name, ref) if ref is not None else [], "history": history(every, observable, key)}
 
 
-__all__ = ["DONE", "ENSDF", "IN_PHYSIM", "LATER", "NO_EXPERIMENT", "POINT_EVIDENCE", "POINT_METHODS",
-           "PointProblem", "add_data_point", "adopted_scheme", "applies", "cell", "correct_data_point", "decay",
-           "evaluation", "gives", "history", "holding", "is_data_point", "is_evaluation", "key_of", "label",
-           "level", "level_label", "nuclei", "observable_view", "partner_nuclide", "retract_data_point", "routes",
-           "snapshot_evaluation", "source", "table", "transition", "value_text", "view", "with_converted"]
+__all__ = ["DONE", "ENSDF", "IN_PHYSIM", "LATER", "NO_EXPERIMENT", "ONLY_PROJECTED", "POINT_EVIDENCE",
+           "POINT_METHODS", "PointProblem", "add_data_point", "adopted_scheme", "applies", "cell",
+           "correct_data_point", "decay", "evaluation", "gives", "history", "holding", "is_data_point",
+           "is_evaluation", "key_of", "label", "level", "level_label", "nuclei", "observable_view",
+           "partner_nuclide", "retract_data_point", "routes", "snapshot_evaluation", "source", "table",
+           "transition", "value_text", "view", "with_converted"]

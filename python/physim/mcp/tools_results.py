@@ -6,13 +6,13 @@ nucleus layer works everything out (:mod:`physim.nuclear.nucleus`, on the result
 :mod:`physim.nuclear.results`) and these turn its rows into short text with units ("884 ± 13 e2fm4↑"). They act
 on the nuclei, not on the open experiment, so none of them needs one.
 
-The experiments are those of the session's folder. The nuclei's own rows are in ``$PHYSIM_NUCLEI``, or in the
-folder ``nuclei`` beside the session's experiments folder.
+The experiments are those of the session's folder. A session started on an experiments folder of its own keeps
+the nuclei's own rows in the folder ``nuclei`` beside it, whatever ``$PHYSIM_NUCLEI`` says; a session on the
+default experiments folder uses the nuclei home (``$PHYSIM_NUCLEI``, or ``~/.physim/nuclei``).
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -126,11 +126,15 @@ def comparison_view(v: dict) -> dict:
             if e.is_reference:
                 row["against_reference"] = "the reference"
             elif ref is not None:
+                # A reference of 0 has no difference in percent and no ratio: the difference is in the unit then.
+                apart = (f"{e.difference:+.3g} {c.unit}" if e.difference_percent is None
+                         else f"{e.difference_percent:+.1f} %")
                 if e.pull is not None:
-                    row["against_reference"] = (f"{e.difference_percent:+.1f} %, pull {e.pull:+.2f}: "
+                    row["against_reference"] = (f"{apart}, pull {e.pull:+.2f}: "
                                                 f"{compare.VERDICTS[e.verdict].lower()}")
-                elif e.ratio is not None:
-                    row["against_reference"] = f"× {e.ratio:.3g} (no uncertainty: not judged)"
+                else:
+                    row["against_reference"] = ((apart if e.ratio is None else f"× {e.ratio:.3g}")
+                                                + " (no uncertainty: not judged)")
                 if e.independent_of_reference is False:
                     row["not_independent_of_reference"] = True
             rows.append(row)
@@ -149,7 +153,8 @@ def comparison_view(v: dict) -> dict:
         out["rule"] = (f"Pull = difference over the two uncertainties in quadrature. Below {c.agree_below:g}: "
                        f"agree; up to {c.differ_above:g}: tension; above: differ. " + GROUPS)
     out["routes"] = [{"route": r["label"], "experiment": r["kind_label"], "status": r["status"],
-                      **({"rows": r["rows"], "own": r["own"]} if r["rows"] else {}),
+                      **({"independent": r["independent"], "projected": r["projected"], "own": r["own"]}
+                         if r["rows"] else {}),
                       **({"open": True} if r["open"] else {}), **({"note": r["note"]} if r["note"] else {})}
                      for r in v["routes"]]
     out["reference_gives"] = [{"gives": g["to"], **({"value": g["text"], "how": g["how"]} if g["value"] is not None
@@ -171,8 +176,12 @@ class ResultTools:
 
     @property
     def home(self) -> Path:
-        """Where the nuclei's own rows live: ``$PHYSIM_NUCLEI``, or ``nuclei`` beside the experiments folder."""
-        return Path(os.environ.get(results.ENV) or self.session.root.parent / "nuclei").expanduser()
+        """Where the nuclei's own rows live. A session started on an experiments folder of its own keeps them in
+        ``nuclei`` beside that folder, whatever ``$PHYSIM_NUCLEI`` says, so that a server on a scratch folder never
+        writes to the real nuclei home. A session on the default experiments folder uses
+        :func:`physim.nuclear.results.nuclei_home`."""
+        own = getattr(self.session, "_root", None)
+        return own.parent / "nuclei" if own is not None else results.nuclei_home()
 
     def list_nuclei(self) -> dict:
         """The nuclei physim holds something about, lightest first, each with its experiments (the role is
@@ -272,7 +281,8 @@ class ResultTools:
         uncertainty gets its ratio only), and is flagged when it is not independent of the reference. Projected
         rows (simulated runs analysed back) are apart: each is closed against the value its simulation was given,
         beside the precision the setup reaches and how well the value is already known. Then the routes to the
-        observable (done; in physim: an experiment of that kind can be planned; later; no experiment: a
+        observable (done: an independent result by that method holds; projected: only simulated runs by it,
+        nothing measured; in physim: an experiment of that kind can be planned; later; no experiment: a
         calculation, the evaluation or a literature method) and what the reference value gives (B down,
         Weisskopf units, the matrix element, tau or B(E2) through the level's gamma ray)."""
         return plain(comparison_view(_nucleus.observable_view(nucleus, observable, key, reference,

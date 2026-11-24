@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from physim.nuclear import Experiment, ensdf, lifetimes, nucleus, results
+from physim.nuclear import Experiment, compare, ensdf, lifetimes, nucleus, results
 from physim.nuclear.levels import LevelScheme
 from physim.nuclear.runs import ExperimentFolder
 
@@ -18,6 +18,42 @@ NI62 = ((0.0, 0, 1, 1), (1172.91, 4, 1, 1), (2048.55, 0, 1, 2), (2301.85, 4, 1, 
 ENSDF_ORIGIN = results.reference("ENSDF, adopted levels and γ rays", 2025, where="NDS 204, 1 (2025)",
                                  evaluation=nucleus.ENSDF, dataset_date="202507")
 ALLMOND = {"authors": "Allmond et al.", "year": 2014, "doi": "10.1103/PhysRevC.90.034309", "where": "Table II"}
+
+
+def card(kind, cols=(), cont=" "):
+    """One 80-column ENSDF record of ⁶²Ni: ``cols`` are (first column counting from 1, text)."""
+    line = list(f" 62NI{cont} {kind} ".ljust(80))
+    for start, text in cols:
+        line[start - 1:start - 1 + len(text)] = text
+    return "".join(line)
+
+
+def level_card(e, de, j, t="", dt=""):
+    return card("L", [(10, e), (20, de), (22, j), (40, t), (50, dt)])
+
+
+def gamma_card(e, ri="100"):
+    return card("G", [(10, e), (22, ri), (32, "E2")])
+
+
+#: A small adopted data set in ENSDF's format: a stated B(E2), one to derive, a half-life that is only a limit, and
+#: a level with a γ ray that fits no level.
+TINY_ENSDF = [
+    card(" ", [(10, "ADOPTED LEVELS, GAMMAS"), (75, "202507")]),
+    card("H", [(10, "TYP=FUL$CIT=NDS 204, 1 (2025)$")]),
+    level_card("0.0", "", "0+", "STABLE"),
+    level_card("1172.91", "3", "2+", "1.442 PS", "21"),
+    card("L", [(10, "MOME2=+0.05 12")], cont="2"),
+    gamma_card("1172.89"),
+    card("G", [(10, "BE2W=12.13 18")], cont="2"),
+    level_card("2048.55", "8", "0+", "1.40 PS", "51"),
+    gamma_card("875.6"),
+    level_card("2890.63", "15", "0+", "3.1 PS", "GT"),
+    gamma_card("1717.8"),
+    level_card("3500.0", "5", "2+", "0.50 PS", "10"),
+    gamma_card("2327.1"),
+    gamma_card("999.9", ri="20"),
+]
 
 
 @pytest.fixture
@@ -54,6 +90,48 @@ def evaluated(b_wu=12.13):
 # -- the evaluation as rows ---------------------------------------------------------------------------------------
 
 
+def test_limits_and_unplaced_gamma_rays_are_not_made_into_values(tmp_path, monkeypatch):
+    monkeypatch.setenv(ensdf.ENV, str(tmp_path / "ensdf"))
+    (tmp_path / "ensdf").mkdir()
+    (tmp_path / "ensdf" / "ensdf.062").write_text("\n".join(TINY_ENSDF), encoding="latin-1")
+    assert [lv.dropped for lv in ensdf.adopted("62Ni").levels] == [0, 0, 0, 0, 1]
+    by = {(r.observable, r.key): r for r in nucleus.evaluation("62Ni")}
+    assert sorted(k for o, k in by if o == "E_level") == ["62Ni:0+2", "62Ni:0+3", "62Ni:2+1", "62Ni:2+2"]
+    # "3.1 PS GT" is a limit: no τ of 0+3 and no B(E2) from it. Every τ row has its uncertainty.
+    assert sorted(k for o, k in by if o == "tau") == ["62Ni:0+2", "62Ni:2+1", "62Ni:2+2"]
+    assert all(r.total > 0 for r in by.values() if r.observable in ("tau", "B(E2)"))
+    assert by["tau", "62Ni:2+1"].value == pytest.approx(2.0804, abs=1e-4)
+    assert by["tau", "62Ni:2+1"].total == pytest.approx(0.0303, abs=1e-4)
+    moment = by["Qs", "62Ni:2+1"]
+    assert (moment.value, moment.unit, moment.total) == (0.05, "eb", 0.12)
+    # B(E2): ENSDF's own where it states one, the level scheme's where the half-life and one γ ray give it; none
+    # for the level whose second γ ray fits no level (its branching is not complete).
+    assert sorted(k for o, k in by if o == "B(E2)") == ["62Ni:0+2>2+1:E2", KEY]
+    stated, derived = by["B(E2)", KEY], by["B(E2)", "62Ni:0+2>2+1:E2"]
+    assert (stated.value, stated.total, stated.unit, stated.direction) == (12.13, 0.18, "W.u.", "down")
+    scheme = LevelScheme.from_adopted(ensdf.adopted("62Ni"))
+    scheme.derive()
+    assert derived.value == pytest.approx(scheme.b(2, 1, "E2")) and derived.unit == "e2fm4"
+    assert derived.depends_on == (by["tau", "62Ni:0+2"].id,) and "half-life" in derived.detail
+    assert all(r.origin["dataset_date"] == "202507" and "NDS 204" in nucleus.source(r) for r in by.values())
+
+    # B(E2) ↔ τ goes through a level's one γ ray; a level with a γ ray that could not be placed is refused.
+    key, inputs, why = nucleus.decay("62Ni", nucleus.level("62Ni", "2+1"))
+    assert (key.text, inputs["energy_kev"], inputs["branching"], why) == (KEY, 1172.89, 1.0, "")
+    assert nucleus.decay("62Ni", nucleus.level("62Ni", "2+2"))[1:] == (
+        None, "ENSDF lists 1 more γ ray from the level 2+₂ that could not be placed: its branching is not known")
+    stuck = results.Row("62Ni", "tau", "62Ni:2+2", 0.7, "ps", "dsam", "measured", total=0.1,
+                        origin=results.reference("Someone", 2001))
+    assert "could not be placed" in nucleus.gives("62Ni", stuck)[0]["missing"]
+    assert nucleus.with_converted("62Ni", [stuck]) == ([stuck], {})
+    # A converted row is the same row each time it is made: its source's time and code, so the same id.
+    kenn = results.Row("62Ni", "tau", "62Ni:2+1", 2.01, "ps", "dsam", "measured", total=0.12,
+                       origin=results.reference("Kenn et al.", 2001), created="2001-05-01T00:00:00+00:00")
+    (_, first), (_, again) = (nucleus.with_converted("62Ni", [kenn])[0] for _ in range(2))
+    assert (first.key, first.created, first.code, first.depends_on) == (KEY, kenn.created, kenn.code, (kenn.id,))
+    assert first.id == again.id == compare.convert(kenn, "B(E2)", key, **inputs).id
+
+
 @needs_ensdf
 def test_the_adopted_values_come_as_evaluated_rows(tmp_path):
     rows = nucleus.evaluation("Ni-62", max_energy_kev=2400)
@@ -71,6 +149,7 @@ def test_the_adopted_values_come_as_evaluated_rows(tmp_path):
     given = line.weisskopf["E2"]
     assert (b.value, b.total, b.unit, b.direction) == (given.value, given.unc, "W.u.", "down")
     assert ("E_level", "62Ni:0+1") not in by and max(r.value for r in rows if r.observable == "E_level") <= 2400
+    assert all(r.total is not None for r in rows if r.observable == "tau")  # no limit is made into a value
     home = tmp_path / "nuclei"
     first = nucleus.snapshot_evaluation("62Ni", home, max_energy_kev=2400)
     again = nucleus.snapshot_evaluation("62Ni", home, max_energy_kev=2400)
@@ -181,9 +260,60 @@ def test_a_bad_data_point_is_refused_with_everything_that_is_wrong(lab):
             ({"corrects": "abc"}, "no row 'abc'")):
         with pytest.raises(nucleus.PointProblem, match=message):
             nucleus.add_data_point("62Ni", "B(E2)", KEY, 906.0, **{**good, **change})
+    for value, change, message in (
+            (-5.0, {}, r"B\(E2\) cannot be negative, got -5"), (True, {}, "must be a number, got True"),
+            (906.0, {"uncertainty": 0}, "an uncertainty above 0"),
+            (906.0, {"uncertainty": True}, "'uncertainty' must be"),
+            (906.0, {"uncertainty": None, "stat": 0.0, "sys": 0}, "an uncertainty above 0")):
+        with pytest.raises(nucleus.PointProblem, match=message):
+            nucleus.add_data_point("62Ni", "B(E2)", KEY, value, **{**good, **change})
+    with pytest.raises(nucleus.PointProblem, match="τ must be above 0, got 0"):
+        nucleus.add_data_point("62Ni", "tau", "2+1", 0.0, uncertainty=0.1, method="dsam", reference=ALLMOND)
+    assert not (lab / "nuclei").exists()
     theory = nucleus.add_data_point("62Ni", "Qs", "2+1", -6.7, method="shell-model", evidence="theory",
                                     reference={"authors": "Honma et al.", "year": 2009})
     assert (theory.unit, theory.direction, theory.unc()) == ("efm2", None, None)  # theory may have no uncertainty
+
+
+def test_a_row_that_was_not_written_is_not_returned(lab, monkeypatch):
+    monkeypatch.setattr(results, "_now", lambda: "2026-11-24T12:00:00+00:00")  # everything in one second
+    point = {"direction": "up", "uncertainty": 37.0, "method": "coulex-fit", "reference": ALLMOND}
+    first = nucleus.add_data_point("62Ni", "B(E2)", KEY, 906.0, **point)
+    nucleus.retract_data_point("62Ni", first.id, "entered twice")
+    with pytest.raises(nucleus.PointProblem, match="written this very second"):  # it would have the same id
+        nucleus.add_data_point("62Ni", "B(E2)", KEY, 906.0, **point)
+    assert results.current(results.of_nuclide("62Ni")) == []
+
+
+def test_the_backfill_keeps_to_its_method_and_says_nothing_twice(tmp_path, monkeypatch):
+    monkeypatch.setenv(ensdf.ENV, str(tmp_path / "no-ensdf"))
+    folder = ExperimentFolder.create(Experiment.example("coulex_ni62_pt194"), root=tmp_path)
+    run = folder.path / "runs" / "03-beam-24h"
+    run.mkdir()
+    folder.setup().save(run / "setup.toml")
+    (run / "summary.json").write_text("{}", encoding="utf-8")
+    analysis = {"settings": {"particle_gate": "inelastic"}, "b_e2fm4": 918.6, "statistical": 0.014,
+                "systematic": 0.069, "truth_e2fm4": 884.105, "budget": {"efficiency": 0.05},
+                "saved": "2026-11-09T22:14:36+00:00"}
+
+    def analysed(**changes):
+        analysis.update(changes)
+        (run / "analysis.json").write_text(json.dumps(analysis), encoding="utf-8")
+        return results.backfill(folder.path)
+
+    (first,) = analysed()
+    # The all-orders fit of the same run has a row of its own, by another method.
+    fit = results.Row("62Ni", "B(E2)", first.key, 905.0, "e2fm4", "coulex-fit", "projected", direction="up",
+                      stat=10.0, sys=40.0, truth=884.105, origin=results.from_run(folder.path.name, run.name),
+                      created="2026-11-10T00:00:00+00:00")
+    results.append(folder.path, fit)
+    # Analysed again with the same settings and result: only the stamp is new, and nothing is added.
+    assert analysed(saved="2026-11-11T08:00:00+00:00") == []
+    # Analysed again with another result: the yield's row is superseded, the fit's is left alone.
+    (newer,) = analysed(b_e2fm4=900.0, saved="2026-11-12T09:00:00+00:00")
+    assert newer.supersedes == first.id and newer.method == "coulex-yield"
+    assert results.current(results.of_experiment(folder.path)) == [fit, newer]
+    assert analysed(settings={"particle_gate": "all"}, saved="2026-11-13T09:00:00+00:00")[0].supersedes == newer.id
 
 
 # -- the views ----------------------------------------------------------------------------------------------------
@@ -269,8 +399,11 @@ def test_the_nuclei_and_one_nucleus_as_plain_data(lab):
     routes = {(r["method"], r["kind"]): r for r in v["routes"]}
     assert [(r["status"], r["own"], r["open"]) for r in (
         routes["coulex-yield", "coulex"], routes["coulex-fit", "coulex"], routes["rdds", "lifetimes"],
-        routes["dsam", "lifetimes"])] == [("done", 1, False), ("done", 0, True), ("in physim", 0, True),
+        routes["dsam", "lifetimes"])] == [("projected", 1, False), ("done", 0, True), ("in physim", 0, True),
                                           ("done", 0, True)]
+    # The yield route has a simulated run and no measurement: "projected", not "done". The groups stay apart.
+    assert [(routes[r, "coulex"]["independent"], routes[r, "coulex"]["projected"])
+            for r in ("coulex-yield", "coulex-fit")] == [(0, 1), (1, 0)]
     assert routes["other", "inelastic"]["status"] == "later" and routes["shell-model", None]["status"] == "done"
     assert (routes["nrf", None]["status"], routes["nrf", None]["means"]) == ("no experiment", "literature")
     assert all((r["applies"], r["reason"]) == (None, "") for r in v["routes"])  # the place a later wave fills
