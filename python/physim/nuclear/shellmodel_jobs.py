@@ -395,7 +395,11 @@ def result(job_id: str) -> Optional[ShellModelResult]:
     folder = job_folder(job_id)
     data = _read_json(folder / "results.json")
     if data is not None:
-        return ShellModelResult.from_dict(data)
+        found = ShellModelResult.from_dict(data)
+        from . import result_rows
+
+        result_rows.read_shell_model(found, job_id)  # into the nucleus's ledger, which cleaning the cache spares
+        return found
     st = status(job_id)
     if st.get("state") in ACTIVE:
         return None
