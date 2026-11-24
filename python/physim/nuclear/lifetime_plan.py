@@ -1466,6 +1466,10 @@ def analyse(planner, level=None, series=None, method: Optional[str] = None) -> d
         return out
     out["level"] = subject.names[i]
     final, e0 = line
+    out["transition"] = {"nuclide": subject.nucleus, "gamma_kev": float(e0),
+                         **{k: {"index": n, "energy_kev": float(subject.scheme.levels[n].energy.value),
+                                "spin": subject.scheme.levels[n].spin, "parity": subject.scheme.levels[n].parity}
+                            for k, n in (("initial", i), ("final", final))}}
     try:
         if lt_.method == "rdds":
             if method == "lineshape":
@@ -1477,6 +1481,7 @@ def analyse(planner, level=None, series=None, method: Optional[str] = None) -> d
                 out["reason"] = ("No plunger runs of this setup yet: take one run per distance "
                                  "(start_run(distance_um=...)), then analyse.")
                 return out
+            out["runs"] = [run.label for d in series.distances for run in series.runs[d]]
             result = _analyse_rdds(subject, out, i, final, e0, series, method)
         else:
             if method not in (None, "lineshape"):
@@ -1485,6 +1490,7 @@ def analyse(planner, level=None, series=None, method: Optional[str] = None) -> d
             if not runs:
                 out["reason"] = "No runs of this DSAM setup yet: take a run, then analyse its line shapes."
                 return out
+            out["runs"] = [run.label for run in runs]
             result = _analyse_dsam(subject, out, i, final, e0, runs)
     except ValueError as e:
         out["reason"] = str(e)[:1].upper() + str(e)[1:]
