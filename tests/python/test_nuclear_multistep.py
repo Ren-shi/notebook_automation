@@ -7,14 +7,15 @@ import numpy as np
 import pytest
 
 from physim.external import gosia, programs
-from physim.nuclear import Experiment
+from physim.nuclear import Experiment, angular
 from physim.nuclear.coupled import CoupledChannels
-from physim.nuclear.coulex import Coulex
+from physim.nuclear.coulex import HBARC_MEV_FM, Coulex, ylm_equator
 from physim.nuclear.levels import Level, LevelScheme, Transition, Value, quadrupole_factor
 from physim.nuclear.multistep import GOSIA_4PI_FORT9, Multistep
 from physim.nuclear.orientation import Excitation, simple_scheme
 from physim.nuclear.planner import Planner
 from physim.nuclear.rates import Rates
+from physim.nuclear.rutherford import E2_MEV_FM
 
 NI = ("16O", "58Ni", "30 MeV")
 
@@ -63,6 +64,88 @@ def test_with_weak_coupling_the_result_is_first_order():
     assert 0.97 < ratio < 0.995
 
 
+def ni62_levels(couplings: dict) -> LevelScheme:
+    """⁶²Ni's 0⁺, 2⁺₁, 2⁺₂, 3⁻ (ENSDF energies) with the ``couplings`` {(a, b, "E2"): e fm^λ}."""
+    s = LevelScheme("62Ni")
+    s.levels = [Level(v(0.0), 0.0, 1), Level(v(1172.91), 2.0, 1), Level(v(2301.85), 2.0, 1), Level(v(3757.0), 3.0, -1)]
+    for (a, b, mult), value in couplings.items():
+        s.set_matrix_element(a, b, mult, value)
+    return s
+
+
+#: ⁶²Ni at 100 MeV on carbon (E_cm = 16.2 MeV, so E* of 1 to 4 MeV is a large share of it): the cases in which the
+#: orbit of a pair of levels differs much from that of the 0⁺ and the 2⁺₁.
+SLOW = ("62Ni", "12C", "100 MeV")
+
+
+@pytest.mark.parametrize("beam, target, energy, excite", [(*SLOW, "projectile"), ("12C", "62Ni", "19.4 MeV", "target")])
+def test_each_pair_of_levels_is_coupled_on_its_own_symmetrised_orbit(beam, target, energy, excite):
+    """K_λ of each pair (Alder and Winther), as GOSIA has it (its PSI): [(E_cm − E_n)(E_cm − E_m)]^((2λ−1)/4), whichever
+    of the two nuclei is excited. Against one orbit for all pairs, that of the reference level, it is the factor
+    [(E − E_n)(E − E_m) / (E (E − E_ref))]^((2λ−1)/4): for the 2⁺₁'s diagonal element 0.95, for the 2⁺₁–2⁺₂ one 0.91."""
+    pairs = [(0, 1, "E2"), (0, 2, "E2"), (1, 1, "E2"), (1, 2, "E2"), (2, 2, "E2"), (0, 3, "E3"), (1, 3, "E1"),
+             (1, 3, "E3"), (2, 3, "E1")]
+    for pair in pairs:
+        s = ni62_levels({pair: 10.0, (0, 1, "E2"): 10.0} if pair != (0, 1, "E2") else {pair: 10.0})
+        cc = CoupledChannels(beam, target, energy, s, excite=excite)
+        a, b, lam = pair[0], pair[1], int(pair[2][1])
+        e = [cc.cx.e_cm - x.energy.value * 1e-3 for x in s.levels]
+        one_orbit = 4 * math.pi * cc.z_exciting * E2_MEV_FM / (HBARC_MEV_FM * cc.beta * (2 * lam + 1) * cc.a**lam)
+        want = one_orbit * (e[a] * e[b] / (e[0] * e[1])) ** ((2 * lam - 1) / 4)
+        seen = 0
+        for lam_, mu, mat in cc._couplings:
+            if lam_ != lam:
+                continue
+            for i, (n, m) in enumerate(cc.basis):
+                for j, (k, q) in enumerate(cc.basis):
+                    if (n, k) == (b, a) and mat[i, j]:
+                        jn, jk = s.levels[n].spin, s.levels[k].spin
+                        geometry = (ylm_equator(lam, mu) * (-1) ** int(round(jn - m)) * 10.0
+                                    * angular.wigner_3j(jn, lam, jk, -m, mu, q))
+                        assert mat[i, j] == pytest.approx(want * geometry, rel=1e-12), (pair, mu)
+                        seen += 1
+        assert seen > 0, pair
+        # Hermitian all the same: the operator of the amplitudes at any point of the orbit.
+        f = cc._coupling(np.array([-0.7, 0.4]), 1.3)
+        assert np.max(np.abs(f - np.conj(np.swapaxes(f, 1, 2)))) < 1e-15 * 10 * np.max(np.abs(f)), pair
+
+
+def test_every_level_is_first_order_where_the_coupling_is_weak():
+    """First order gives each level the orbit of its own (orientation.Excitation). The coupled equations agree with it
+    for every level a matrix element joins to the ground state, not only for the reference level: one orbit for all of
+    them made the 2⁺₂ (2.30 MeV) 12 % and the 3⁻ (3.76 MeV) 60 % too likely here."""
+    s = ni62_levels({(0, 1, "E2"): 0.3, (0, 2, "E2"): 0.1, (0, 3, "E3"): 20.0})
+    ex = Excitation(*SLOW, s, excite="projectile")
+    cc = CoupledChannels(*SLOW, s, excite="projectile")
+    p = cc.probabilities(150.0)
+    for n in (1, 2, 3):
+        assert p[n] == pytest.approx(ex.probability(n, 150.0), rel=1e-4), n
+    # The equations don't know the reference level.
+    other = CoupledChannels(*SLOW, s, excite="projectile", reference=2)
+    assert np.array_equal(other._mats, cc._mats) and np.array_equal(other.xi_state, cc.xi_state)
+
+
+#: The amplitudes of a 0⁺ → 2⁺ (Q = 0) and the probability of the 2⁺ at 150°, as they were with one orbit for all pairs
+#: of levels: a scheme of two levels has one pair only.
+TWO_LEVELS_BEFORE = {("16O", "58Ni", "30 MeV", "target", "1.454 MeV", "0.0695 e2b2"): 0.0027342383500874442,
+                     ("62Ni", "12C", "100 MeV", "projectile", "1.173 MeV", "0.0884 e2b2"): 0.0019381930718116469}
+
+
+@pytest.mark.parametrize("case", list(TWO_LEVELS_BEFORE), ids=lambda c: f"{c[0]} on {c[1]}")
+def test_two_levels_without_a_diagonal_element_are_what_they_were(case):
+    beam, target, energy, excite, e_star, b_up = case
+    s = simple_scheme(target if excite == "target" else beam, e_star, "E2", b_up)
+    cc = CoupledChannels(beam, target, energy, s, excite=excite)
+    assert cc.probability(1, 150.0) == pytest.approx(TWO_LEVELS_BEFORE[case], rel=1e-12)
+    # The only coupling is the reference's own: K of Coulex's orbit.
+    cx = cc.paths[1][0][2]
+    k = 4 * math.pi * cx.z_exciting * E2_MEV_FM / (HBARC_MEV_FM * 5 * cx.beta * cx.a**2)
+    lam, mu, mat = next(x for x in cc._couplings if x[1] == 0)
+    i, j = cc._index[(1, 0.0)], cc._index[(0, 0.0)]
+    me = s.matrix_element(0, 1, "E2").value
+    assert mat[i, j] == pytest.approx(k * ylm_equator(2, 0) * me * angular.wigner_3j(2, 2, 0, 0, 0, 0), rel=1e-14)
+
+
 def test_all_orders_agree_with_gosia():
     """GOSIA 20110524.14 on the same case to all orders (tests/reference/nuclear/coulex_gosia_all_orders.csv): within
     1% at five angles, and its step from first order to all orders is physim's within 0.1 percentage point."""
@@ -84,6 +167,54 @@ def test_all_orders_agree_with_gosia():
         step_ours = ours / ex.probability(1, theta) - 1
         step_gosia = gosia / first[theta] - 1
         assert step_ours == pytest.approx(step_gosia, abs=1e-3), theta
+
+
+def blind_scheme(row: dict) -> LevelScheme:
+    """The scheme of a case of coulex/gosia_pairs.csv (its header has the numbers)."""
+    nuclide = row["beam"] if row["excite"] == "projectile" else row["target"]
+    s = LevelScheme(nuclide)
+    if nuclide == "152Sm":
+        spins, energies = (0, 2, 4), (0.0, 121.78, 366.48)
+        elements = {(0, 1): 1.86, (1, 2): 2.9826402, (1, 1): -2.2231278, (2, 2): -2.8438284}
+    else:
+        spins, energies = (0, 2, 0, 2, 4), (0.0, 1172.91, 2048.55, 2301.85, 2336.46)
+        elements = {(0, 1): 0.29734, (0, 3): float(row["sign_03"]) * 0.062153, (1, 2): 0.280565, (1, 3): 0.307817,
+                    (1, 4): 0.524889, (1, 1): float(row["q_s_eb"]) / 0.757938}
+    s.levels = [Level(v(e), float(j), 1) for j, e in zip(spins, energies)]
+    for (a, b), value in elements.items():
+        s.set_matrix_element(a, b, "E2", 100 * value)
+    return s
+
+
+def test_feeding_and_reorientation_agree_with_gosia():
+    """Blind GOSIA runs (tests/reference/nuclear/coulex/gosia_pairs.csv, the app's numbers stored before them): ⁶²Ni with
+    Q_s = ±0.3 e b and its 0⁺₂, 2⁺₂, 4⁺₁, on carbon (either nucleus the beam) and on ¹⁹⁴Pt, and a rotor, ¹⁵²Sm on carbon,
+    with its diagonal elements. The probability of every level within 1 % above 1e-4 and 3 % above 1e-6. One orbit for
+    every pair of levels was up to 22 % off."""
+    from physim.nuclear import validation
+
+    ref = validation.reference_dir()
+    path = ref / "coulex" / "gosia_pairs.csv" if ref else None
+    if path is None or not path.exists():
+        pytest.skip("no GOSIA reference")
+    cases: dict = {}
+    for r in validation.read_reference(path)[1]:
+        key = tuple(r[k] for k in ("beam", "target", "beam_energy_mev", "excite", "q_s_eb", "sign_03"))
+        cases.setdefault(key, []).append(r)
+    assert len(cases) == 8
+    judged = 0
+    for key, rows in cases.items():
+        cc = CoupledChannels(key[0], key[1], float(key[2]), blind_scheme(rows[0]), excite=key[3])
+        thetas = sorted({float(r["theta_cm_deg"]) for r in rows})
+        solved = {t: cc._densities(a) for t, a in zip(thetas, cc.solve_many(thetas))}
+        for r in rows:
+            want = float(r["probability"])
+            if want < 1e-6:
+                continue
+            ours = float(np.trace(solved[float(r["theta_cm_deg"])][int(r["level"])]).real)
+            assert ours == pytest.approx(want, rel=0.01 if want > 1e-4 else 0.03), (key, r["theta_cm_deg"], r["level"])
+            judged += 1
+    assert judged == 54
 
 
 def test_the_probabilities_of_all_levels_sum_to_one():

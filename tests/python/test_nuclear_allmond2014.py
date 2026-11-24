@@ -65,6 +65,7 @@ def test_the_reference_holds_the_papers_numbers_and_the_bands(refd):
     assert (bands["gosia"]["matched_rel"], bands["gosia"]["as_run_rel"]) == (0.005, 0.01)
     assert (bands["closure"]["share_of_paper_stat"], bands["closure"]["mc_sigmas"]) == (0.25, 3)
     assert (bands["stored"]["probability_rel"], bands["sensitivity"]["pp"]) == (0.001, 0.5)
+    assert bands["sensitivity"]["rel"] == 0.02
     assert len(set(bands["closure"]["seeds"])) >= 4 and 11 not in bands["closure"]["seeds"]
     # A quarter of the paper's statistical error of B(E2) per ring, and of the weighted mean of both (0.0012).
     assert [100 * cr._closure_band(refd, r) for r in cr.ROWS] == pytest.approx([0.609, 0.400, 0.335], abs=1e-3)
@@ -125,6 +126,15 @@ def test_the_comparisons_catch_what_they_should(refd):
                                      {r: 1 + s[cr.REF_RING[r]]["q_plus"] for r in cr.RINGS},
                                      {r: s[cr.REF_RING[r]]["feeding"] for r in cr.RINGS})
     assert not flipped["passed"]
+    # A constant factor on every effect, as one orbit for all pairs of levels made (6 % on the Q_s effect): inside the
+    # 0.5 percentage points, not inside the 2 % of GOSIA's change.
+    for factor, passed in ((1.019, True), (1.06, False), (0.94, False)):
+        scaled = cr.check_sensitivities(
+            refd, base, {r: 1 + factor * s[cr.REF_RING[r]]["q_plus"] for r in cr.RINGS},
+            {r: 1 + factor * s[cr.REF_RING[r]]["q_minus"] for r in cr.RINGS},
+            {r: factor * s[cr.REF_RING[r]]["feeding"] for r in cr.RINGS})
+        assert scaled["passed"] is passed and all(abs(x["difference_pp"]) < x["band_pp"] for x in scaled["rows"])
+        assert scaled["worst"] == pytest.approx(abs(factor - 1) / 0.02, rel=1e-6)
 
 
 def checks_with(rows) -> dict:
@@ -206,6 +216,10 @@ def test_the_other_parts_of_the_reproduction(reproduced):
     # A positive Q_s raises the ratio at these backward CM angles, in physim as in GOSIA.
     sens = {(x["what"], x["ring"]): x for x in c["sensitivities"]["rows"]}
     assert all(sens["q_plus", ring]["physim_percent"] > 0 > sens["q_minus", ring]["physim_percent"] for ring in cr.RINGS)
+    # Each change is GOSIA's to 2 %: the reorientation to 0.1 % of it, the feeding (GOSIA's has an M1 element and E1
+    # polarisation) to 2 %.
+    for (what, ring), x in sens.items():
+        assert abs(x["difference_rel"]) < (0.02 if what == "feeding" else 0.01), (what, ring, x)
     closure = c["closure"]
     assert len(closure["seeds"]) == 4 and all(len(x["each"]) == 4 and x["scatter"] > 0 for x in closure["rows"])
     assert all(x["monte_carlo"] < 0.008 for x in closure["rows"])

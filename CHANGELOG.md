@@ -149,6 +149,34 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- Coupled equations: each pair of levels has the orbit symmetrised between its own two speeds (Allmond 2014 verification,
+  second fix plan, wave 6, S9). `CoupledChannels` took the orbit of the ground state and the reference level (the first
+  2⁺) for the coupling of every pair; Alder and Winther, first order and GOSIA take the pair's own, K_λ,nm ∝
+  [(E_cm − E_n)(E_cm − E_m)]^((2λ−1)/4). The factor between the two is [(E_cm − E_n)(E_cm − E_m) / (E_cm(E_cm −
+  E_ref))]^((2λ−1)/4), so the old coupling was too strong for every pair with a level above the reference, and for its
+  diagonal elements: a reorientation effect by (E_cm/(E_cm − E*))^¾ (6 % for ⁶²Ni on carbon at 111.6 MeV, 5 % for ¹⁶O on ⁵⁸Ni at 30 MeV,
+  0.5 % for ⁶²Ni on ¹⁹⁴Pt at 237 MeV), and the levels reached in two steps by more (⁶²Ni on carbon at 100 MeV, against
+  GOSIA: 0⁺₂ +22 %, 2⁺₂ +13 %, 4⁺₁ +26 %). In the limit of weak coupling every level joined to the ground state is now
+  that of first order (a 2⁺ at 2.30 MeV was 12 %, a 3⁻ at 3.76 MeV 60 % too likely). Unchanged: a scheme of two levels
+  without a quadrupole moment (so σ_C/σ_R, B(E2) and the closure of `reproduction_allmond2014`), first order, setups
+  without a scheme, the geometry of the orbit and the Rutherford factor, and the time a solution takes.
+  - Blind check, the app's numbers stored before GOSIA 20110524.14 was run (nuclear masses, E1 polarisation off,
+    `tests/reference/nuclear/coulex/gosia_pairs.csv`): ⁶²Ni with Q_s = ±0.3 e b and its 0⁺₂, 2⁺₂, 4⁺₁ on carbon (100 MeV)
+    and on ¹⁹⁴Pt (200 MeV), and a rotor, ¹⁵²Sm on carbon (400 MeV): all 48 probabilities above 10⁻⁶ within 1 % (above
+    10⁻⁴) or 3 % of GOSIA's, the worst 0.46 %, GOSIA's non-relativistic E_cm (0.01 to 0.2 % with the same E_cm). 23 of
+    the 48 were outside with the old coupling. Also within 0.4 %: target excitation, and E1 and E3 elements.
+  - Against GOSIA on the Allmond setup: Q_s = ±0.1 e b moves σ_C/σ_R by +2.715/−2.663 % and +1.910/−1.883 % (rings 2
+    and 3; they were +2.874/−2.815 and +2.022/−1.992), GOSIA's being +2.712/−2.660 and +1.908/−1.882: within 0.12 % of
+    the change. Feeding from the higher states +1.161/+0.756 % (it was +1.405/+0.912; GOSIA +1.174/+0.769).
+  - `reproduction_allmond2014` judges the sensitivities within 2 % of GOSIA's change as well as 0.5 percentage points,
+    which had let the factors through (`[bands.sensitivity] rel`).
+  - Other numbers that move: `coulex_ni62_pt194` at 150° CM, first 2⁺ 0.1843 → 0.1836, 0⁺ 0.0081 → 0.0080, 4⁺ 0.0058 →
+    0.0057, any level 0.1999 → 0.1990; 2⁺ → 0⁺ rate in the CD 548 → 546 /s, the 0⁺ and 4⁺ lines −1.2 and −1.4 %. ¹⁶O
+    on ⁵⁸Ni: a fit of Q_s read 14.27 e fm² for a true 15 and now 15.00. The analysis' "matrix elements assumed" for
+    Q_s ± 0.1 e b: +2.71/−2.66 and +1.91/−1.88 % (was +2.87/−2.81, +2.02/−1.99). The step of the analysis from first order to all
+    orders is −5.3/−4.8 % in `coulex_ni62_pt194` (CD/all detectors; it was −5.7/−5.5) and −7.7/−7.0 % in
+    `coulex_ni62_pt194_clovers` (it was −8.6/−7.9): B(E2) read from given counts rises by 0.5 to 1.0 %. The 2⁺ state of ⁹⁸Ru in `coulex_ru98_plunger` with ENSDF's
+    scheme +0.2 %, its 4⁺ −3 %.
 - The γ rays of a level scheme have the orientation of each event's depth (Allmond 2014 verification, second fix plan,
   16). In a target that the generator cuts into slices the events that follow a level scheme took the orientation of
   the middle of the target, where those of a single state and the correlation table take that of each event's own beam

@@ -65,7 +65,7 @@ def test_all_orders_reach_the_levels_first_order_cannot_and_first_order_is_a_swi
     assert cascade_excitation(exp) is cex  # solved once, shared by the events, the rates and the γ rays
     assert start_levels(cex) == [1, 2, 3, 4, 5] and unreached_levels(exp) == []
     back = cex.near(150.0)
-    assert back.direct[FOUR] == pytest.approx(5.8e-3, rel=0.05) and back.direct[ZERO] == pytest.approx(8.1e-3, rel=0.05)
+    assert back.direct[FOUR] == pytest.approx(5.7e-3, rel=0.05) and back.direct[ZERO] == pytest.approx(8.0e-3, rel=0.05)
     # The two-step excitation leaves the 4⁺ state oriented: its γ rays are not isotropic.
     assert abs(back.coefficients(FOUR, TWO)[(2, 0)]) > 0.1
 
