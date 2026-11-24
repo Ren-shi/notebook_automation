@@ -131,7 +131,8 @@ def _starting_planner(example: Optional[str], template: Optional[str], experimen
 
 
 def build_page(example: Optional[str] = None, events: int = 100_000, theme: Optional[str] = None,
-               template: Optional[str] = None, experiment: Optional[str] = None, prebuild: bool = False) -> None:
+               template: Optional[str] = None, experiment: Optional[str] = None, prebuild: bool = False,
+               nucleus: Optional[str] = None, observable: Optional[str] = None, key: Optional[str] = None) -> None:
     """Build the planner page for the current client (call inside a NiceGUI page function).
 
     It opens ``experiment`` (a folder), or a new setup from ``template`` (:data:`physim.nuclear.workbench.TEMPLATES`)
@@ -3593,7 +3594,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                                 open_experiment=open_experiment, open_example=open_example,
                                 import_setup=lambda: upload_dialog.open(), refresh_start=refresh_start,
                                 close_start=None if offer_list else (lambda: show_start(False)))
-    if offer_list:
+    if nucleus:  # /?nucleus=62Ni: the page of that nucleus (app/tab_nucleus.py), on a row of its table if named
+        state["start"] = {"kind": None, "view": "nucleus", "nucleus": nucleus, "observable": observable, "key": key}
+    if offer_list or nucleus or not (example or template or experiment):  # the nuclei are the first screen
         show_start(True)
     if not prebuild:
         refresh_results()  # the numbers on the worker, then the panel, the strip and the stages

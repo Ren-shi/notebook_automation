@@ -113,12 +113,15 @@ def main(argv: Optional[list] = None) -> None:
 
     @ui.page("/")
     def index(example: Optional[str] = None, template: Optional[str] = None, experiment: Optional[str] = None,
-              theme: Optional[str] = None, prebuild: Optional[str] = None):
+              theme: Optional[str] = None, prebuild: Optional[str] = None, nucleus: Optional[str] = None,
+              observable: Optional[str] = None, key: Optional[str] = None):
         from .figures import THEMES
         from .page import build_page
 
+        # ?nucleus=62Ni opens the page of that nucleus (with &observable=...&key=... on that row of its table).
         build_page(example=example or args.example, template=template, experiment=experiment,
-                   theme=theme if theme in THEMES else None, prebuild=prebuild == "all")
+                   theme=theme if theme in THEMES else None, prebuild=prebuild == "all", nucleus=nucleus,
+                   observable=observable, key=key)
 
     @app.get("/physim-planner")
     def marker():
