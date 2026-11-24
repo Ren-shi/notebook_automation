@@ -24,7 +24,7 @@ change and in those named after a module they change (``analysis.py``: ``test_nu
 **What a record misses:** whether a file exists that was only looked for, new versions of the packages of the requirements,
 and what a program outside the repository does. main's full runs and those by hand see those.
 
-The files are shared out over runners (about ``SHARD_S`` of tests each) by the time that they took last.
+The files are shared out over runners (about ``SHARD_S`` seconds of tests each) by the time that they took last.
 """
 
 import argparse
