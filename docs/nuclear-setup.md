@@ -371,7 +371,8 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
   says first order), with its feeding from above: the plan and the events then share one angular correlation.
   Through a target that slows the beam the factors are averaged over the depth, each depth at its own beam energy
   and weighted by the excitation cross section there, with the emitting nucleus slowed down on its way out; a thin
-  target keeps the kinematics of its middle.
+  target keeps the kinematics of its middle. The simulated events take the orientation at each event's own beam energy
+  too, with and without a level scheme, in a target that the generator cuts into slices.
 - **Not included:** excitation in two or more steps and reorientation (first order only, so the matrix elements
   enter through their size and not their sign), deorientation in vacuum, and lifetimes: every state decays in
   flight with the orientation it was given. The simulated events of a setup with a level scheme do have the
@@ -672,8 +673,9 @@ GOSIA input file.
 transition, the events and runs take this solution: each excitation starts in a level drawn from the populations
 the collision leaves at its angle, each γ ray has the angular distribution of its level's own orientation, and
 the excitation probability of the rates and of the event generator is the sum of the populations. A 4⁺ state,
-which only two steps reach, is then in the γ-ray spectra. `[reaction] order = "first"` gives first-order events
-instead. The table of angles is solved once per setup, all angles together (about 2 s for the six levels of
+which only two steps reach, is then in the γ-ray spectra. Through a thick target the orientation is that of each event's
+beam energy, while the level is drawn from the populations in the middle of the target. `[reaction] order = "first"`
+gives first-order events instead. The table of angles is solved once per setup, all angles together (about 2 s for the six levels of
 ⁶²Ni). {doc}`theory/coulex` has the numbers for the ⁶²Ni example and what is left out: every excitation keeps
 the kinematics of the `[reaction]` state. The analysis extracts B(E2) from such events to all orders (step 7
 under {ref}`Automatic analysis <automatic-analysis>` below).
