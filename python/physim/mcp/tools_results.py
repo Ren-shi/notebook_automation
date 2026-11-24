@@ -213,9 +213,9 @@ class ResultTools:
         ("B(E2)", "tau", "Qs", "B(M1)", "mu", "E_level") the rows that hold now, each with its id, evidence,
         method, value in the observable's convention (B(E2) up in e2fm4, tau in ps, Qs in efm2, B(M1) up in mu_N2,
         mu in mu_N, E in keV) and source; key narrows to one level or transition, as one says it: "2+1" (ENSDF's
-        first 2+), "2+ at 1173 keV", "2+1 > 0+1". B(E2) and tau values made from each other through the level's one gamma ray are listed too and say what they
-        were made from. history true lists every row ever written, the newest first, with its status (holds,
-        superseded, retracted, retraction): rows are never deleted."""
+        first 2+), "2+ at 1173 keV", "2+1 > 0+1". B(E2) and tau values made from each other through the level's
+        one gamma ray are listed too and say what they were made from. history true lists every row ever written,
+        the newest first, with its status (holds, superseded, retracted, retraction): rows are never deleted."""
         name = results.nuclide_name(nucleus)
         if key is not None and observable is None:
             raise ValueError("Name the observable the key belongs to: " + ", ".join(OBSERVABLES) + ".")
@@ -237,8 +237,8 @@ class ResultTools:
     def snapshot_evaluation(self, nucleus: str) -> dict:
         """Take ENSDF's adopted values of a nucleus into its results as evaluated rows: level energies, mean
         lives, quadrupole and magnetic moments, B(E2) and B(M1) values, each with its uncertainty and a reference
-        that names ENSDF and the data set's date. Taking it again adds nothing; a value a newer ENSDF copy changed gets a new row
-        that supersedes the old one. Needs the local ENSDF copy (scripts/fetch_ensdf.py)."""
+        that names ENSDF and the data set's date. Taking it again adds nothing; a value a newer ENSDF copy changed
+        gets a new row that supersedes the old one. Needs the local ENSDF copy (scripts/fetch_ensdf.py)."""
         s = _nucleus.snapshot_evaluation(nucleus, self.home)
         return {"nucleus": s["nuclide"], "reference": s["reference"], "dataset_date": s["dataset_date"],
                 "added": len(s["added"]), "superseded": len(s["superseded"]), "unchanged": s["unchanged"]}
@@ -256,14 +256,13 @@ class ResultTools:
         "1173 keV", "jpi": "2+"}); value a number in unit (B(E2): e2fm4, e2b2 or W.u.; tau: fs, ps, ns, s; Qs: efm2
         or eb; B(M1): mu_N2 or W.u.; mu: mu_N; E_level: keV or MeV; the first of each when left out, ps for tau). A
         B(E2) or B(M1) needs direction "up" (from the lower level, as Coulomb excitation gives it) or "down" (the
-        decay; W.u. is always down). The uncertainty is absolute, in
-        the same unit, in one form: uncertainty (one total), stat and sys, or plus and minus; a measured point
-        needs one. method is "coulex-yield", "coulex-fit", "rdds", "dsam", "nrf", "inelastic-neutron",
+        decay; W.u. is always down). The uncertainty is absolute, in the same unit, in one form: uncertainty (one
+        total), stat and sys, or plus and minus; a measured point needs one. method is "coulex-yield", "coulex-fit", "rdds", "dsam", "nrf", "inelastic-neutron",
         "electron-scattering", "inelastic-scattering", "transfer", "moment" (a static moment measured: laser
-        spectroscopy, transient field, NMR) or "other" ("shell-model" for theory). evidence is "measured" (default), "outside
-        program" (GOSIA and the like) or "theory". Say where it is from: reference {"authors", "year", "doi",
-        "where" in the paper} or own_measurement {"date": "2027-06-14", "note"}, one of the two. detail is a free
-        line beside the method. corrects is the id of the data point this one replaces (give the whole point
+        spectroscopy, transient field, NMR) or "other" ("shell-model" for theory). evidence is "measured"
+        (default), "outside program" (GOSIA and the like) or "theory". Say where it is from: reference {"authors",
+        "year", "doi", "where" in the paper} or own_measurement {"date": "2027-06-14", "note"}, one of the two.
+        detail is a free line beside the method. corrects is the id of the data point this one replaces (give the whole point
         again): the old row is kept and superseded. Everything wrong is said at once."""
         row = _nucleus.add_data_point(
             nucleus, observable, key, value, unit, direction=direction, uncertainty=uncertainty, stat=stat,

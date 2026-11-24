@@ -29,8 +29,29 @@ Each becomes a route or a check of the registry (`observables.py`) once it is va
 reference, a check in the validation suite, and a line in the physics register.
 
 Also left out of the registry for the same reason (the formula exists but only inside another class or inline, and
-the first wave did not refactor physics code): the rotor reading of a B(E2) (β₂, Q₀ and the rotor's Q_s,
-`Analysis._shape`) and half-life ↔ mean life.
+the first waves did not refactor physics code): half-life ↔ mean life, and the branching of a level with several γ
+rays (so B(E2) ↔ τ is converted for a level with one γ ray only). The rotor reading of a B(E2) (β₂, Q₀ and the rotor's
+Q_s) is the Coulex analysis's `Analysis._shape`, called with a stand-in for the analysis
+(`observables.rotor_reading`); making it a function of its own, with no number changed, would be cleaner.
+
+Left out when the routes were tested for each nucleus and the checks between observables were added (the checks are
+plain ratios of two rows):
+
+- **The uncertainty of a ratio** (E(4⁺)/E(2⁺), B(E2; 4→2)/B(E2; 2→0), a calculation over the reference), with the
+  correlation of two rows that share a source; of a matrix element from a B value (a square root); and of β₂, Q₀ and
+  the rotor's Q_s. Without them a check has no verdict.
+- **Comparing the rotor's Q_s with the measured one as a pull**, which needs that uncertainty.
+- **B(M1) from a lifetime**: a conversion τ → B(M1) in the comparison engine and a B(M1) row of the lifetime analysis
+  (it works the B(M1) of a pure M1 line out but writes τ alone), with the mixing ratio; and the E2/M1 mixing ratio from
+  B(E2) and B(M1).
+- **What a magnetic moment is read against**: the g factor from μ and J, the Schmidt values, Z/A.
+- **Whether a target or a beam can be had.** The code knows the natural abundance and ENSDF's half-life, and no limit
+  on how long-lived a target must be nor which radioactive beams exist: for a nucleus that is neither stable nor in the
+  natural element the route says "not checked".
+- **Whether a valence space suits the nucleus** (⁶²Ni in a space with a ⁵⁶Ni core has no excitations across Z = 28):
+  the estimate tests the size of the calculation only.
+- **Whether Coulomb excitation reaches the state at all** (its yield in a beam time): the planner works it out for a
+  setup, and a route is not a setup.
 
 ## Depends on
 The results ledger, registry and comparison engine (2026-11-24); the shell model (`physim.nuclear.shellmodel`) for

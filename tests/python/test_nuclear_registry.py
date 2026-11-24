@@ -59,6 +59,8 @@ def test_a_target_or_a_beam():
     fits, why = nucleus.applies("62Ni", "B(E2)", SECOND, coulex)
     assert fits is False and "fit to all orders" in why
     assert nucleus.applies("62Ni", "B(E2)", SECOND, Route("coulex-fit", "coulex"))[0] is True
+    assert [nucleus.applies("62Ni", "B(E2)", SECOND, Route(m))[0] for m in ("electron-scattering", "nrf")] == [
+        False, None]
     assert nucleus.applies("62Ni", "B(E2)", FIRST, Route("inelastic-scattering", "inelastic"))[0] is None
     assert nucleus.applies("62Ni", "mu", "62Ni:2+1", Route("moment")) == (
         None, "physim has no test for this route: nothing is checked")
@@ -90,7 +92,7 @@ def test_whether_a_shell_model_calculation_fits(monkeypatch):
     route = Route("shell-model")
     monkeypatch.setattr(spaces, "available_memory_bytes", lambda: 16 * 1024**3)
     fits, why = nucleus.applies("24Mg", "B(E2)", "24Mg:2+1>0+1:E2", route)
-    assert fits is True and "sd space" in why and "half of the 16 GB" in why
+    assert fits is True and "sd space" in why and "half of the 16 GB" in why and "Only the size is tested" in why
     monkeypatch.setattr(spaces, "available_memory_bytes", lambda: 0)
     fits, why = nucleus.applies("24Mg", "B(E2)", "24Mg:2+1>0+1:E2", route)
     assert fits is False and "Too big" in why
@@ -120,7 +122,7 @@ def test_the_checks_are_plain_ratios_of_independent_rows():
     shape = analysis._shape(b, 62)
     assert rotor["value"] == shape["qs_2plus_efm2"] < 0
     assert observables.rotor_reading(b, "62Ni")["beta2"] == shape["beta2"]
-    assert "Evaluated: Q_s(2⁺₁) = 5 ± 12 e fm² (ENSDF adopted" in rotor["text"] and rows[3].id in rotor["rows"]
+    assert "Evaluated: Q_s(2⁺₁) = +5 ± 12 e fm² (ENSDF adopted" in rotor["text"] and rows[3].id in rotor["rows"]
     # The same from the side of Q_s and of the energies; the next transition has its own; the report's rows are used.
     assert [c["label"] for c in nucleus.observable_view("62Ni", "Qs", "2+1", ledger=rows)["checks"]] == [
         e42["label"], rotor["label"]]

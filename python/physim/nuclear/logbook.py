@@ -1732,8 +1732,8 @@ def observable_rows(planner, nuclide: str, observable: str, key: str, own: list 
     try:
         return nucleus.observable_view(nuclide, observable, key, ledger=ledger), group, by_id, ""
     except ValueError as err:
-        return ({"comparison": None, "routes": nucleus.routes(nuclide, observable, key, group, via, rows)}, group, by_id,
-                str(err))
+        routes = nucleus.routes(nuclide, observable, key, group, via, rows)
+        return {"comparison": None, "routes": routes}, group, by_id, str(err)
 
 
 def evidence_missing(rows: list, outside: bool = False, routes: list = ()) -> list:
@@ -1778,7 +1778,8 @@ def _known_words(p, c, by_id: Optional[dict] = None) -> str:
     reach = (f"This setup reaches {percent(p.reach_percent)}" if p.reach_percent is not None
              else "This setup's reach is not stated (the result has no uncertainty)")
     if p.known_percent is not None:
-        known = f"the value is known to {percent(p.known_percent)} ({source_words(c.reference.row, by_id=by_id)}, the reference)"
+        known = (f"the value is known to {percent(p.known_percent)} "
+                 f"({source_words(c.reference.row, by_id=by_id)}, the reference)")
     elif c.reference is not None:
         known = "the reference has no uncertainty, so how well the value is known is not stated"
     else:
@@ -1895,18 +1896,19 @@ def to_run_html(routes: list, rows: list, here: Optional[str] = None, unanalysed
         projected = [x for x in mine if x.evidence == results.PROJECTED]
         how = (r["note"][0].upper() + r["note"][1:] + ". ") if r["note"] else ""
         kind = "" if r["kind_label"] == r["label"] else f" ({r['kind_label']})"
-        nucleus_says = f" For this nucleus: {r['reason'].rstrip('.')}." if r["reason"] else ""
+        says = f" For this nucleus: {r['reason'].rstrip('.')}." if r["reason"] else ""
+        doubt = says if r["applies"] is not True else ""  # beside a value, only what speaks against the route
         if r["status"] == nucleus.DONE:
             parts.append(item("☑", r["label"], f"{how}Done: {have(done)}."
-                              + (f" Also projected: {have(projected)}." if projected else "") + nucleus_says))
+                              + (f" Also projected: {have(projected)}." if projected else "") + doubt))
         elif r["status"] == nucleus.ONLY_PROJECTED:
             parts.append(item("◐", r["label"], f"{how}Projected: a simulated run, no measurement yet: "
-                                               f"{have(projected)}.{nucleus_says}"))
+                                               f"{have(projected)}.{doubt}"))
         elif r["applies"] is False:
             parts.append(item("✗", r["label"], f"{how}Does not apply: {r['reason'].rstrip('.')}."))
         elif r["live"]:
             parts.append(item("☐", r["label"], f"{how}No value by this route yet. physim has this kind of "
-                                               f"experiment{kind}.{nucleus_says}"))
+                                               f"experiment{kind}.{says}"))
         else:
             parts.append(item("☐", r["label"], f"{how}No value by this route yet, and physim does not have "
                                                f"this kind of experiment yet{kind}."))
@@ -2200,8 +2202,8 @@ def _routes_section(sec: dict, planner, nuclide: str, observable: str, key: str,
                              "the experiments beside this one and the nucleus's own data points, in one "
                              f"convention ({e(o.convention)})."
                              + (" A value that says it is converted was made from the level's "
-                                f"{'B(E2)' if observable == 'tau' else 'τ'}, through its γ ray: it is no second "
-                                "result." if made else "") + "</p>"
+                                f"{'B(E2)' if observable == 'tau' else 'τ'}, through its γ ray: it is the same "
+                                "measurement said in another way, not one more." if made else "") + "</p>"
                              + comparison_html(c, here, getattr(lead, "id", None), rule=to_run, by_id=by_id))
     elif why:
         sec["routes"].append(f"<p>The values of {e(what)} could not be set beside each other: {e(why)}.</p>")

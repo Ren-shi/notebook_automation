@@ -133,7 +133,7 @@ def test_the_report_and_the_nucleus_page_show_the_same_rows_and_route_states(tmp
     assert view["routes"] == page["routes"] and view["checks"] == page["checks"]
     made = "Kenn et al. 2001, DSAM (line shape), converted from τ = 2.01 ± 0.12 ps"
     beside, to_run = "".join(sec["routes"]), "".join(sec["to-run"])
-    assert made in beside and "it is no second result" in beside
+    assert made in beside and "not one more" in beside
     assert "☑ <b>DSAM (line shape).</b>" in to_run and made in to_run
     assert "◐ <b>Coulex from the yield (first order).</b>" in to_run and "no measurement yet" in to_run
     assert "☐ <b>RDDS (decay curve, DDCM).</b>" in to_run and "☐ <b>Inelastic scattering.</b>" in to_run

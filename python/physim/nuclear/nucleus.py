@@ -873,11 +873,11 @@ def _time_words(seconds: float) -> str:
 
 
 def _ps_words(tau_ps: float) -> str:
-    """A mean life given in ps in the unit one says it in: "10 fs", "1 ps", "1 ns"."""
-    for factor, unit in ((1e3, "ns"), (1.0, "ps")):
+    """A mean life given in ps in the unit one says it in: "10 fs", "2.08 ps", "1 ns", "1.57 µs"."""
+    for factor, unit in ((1e12, "s"), (1e9, "ms"), (1e6, "µs"), (1e3, "ns"), (1.0, "ps")):
         if tau_ps >= factor:
-            return f"{tau_ps / factor:g} {unit}"
-    return f"{tau_ps * 1e3:g} fs"
+            return f"{tau_ps / factor:.3g} {unit}"
+    return f"{tau_ps * 1e3:.3g} fs"
 
 
 def stability(nuclide: str) -> dict:
@@ -970,7 +970,7 @@ def _lifetime_test(level_key: LevelKey, method: str, rows: Optional[list], via: 
     tau = _compare.canonical(row).value
     what, (low, high) = ranges[method]
     made_from = (via or {}).get(row.id)
-    known = f"τ = {tau:.3g} ps (" + (source(row) if made_from is None else
+    known = f"τ = {_ps_words(tau)} (" + (source(row) if made_from is None else
                                      f"from the {observables.get(made_from.observable).label} of "
                                      f"{source(made_from)}") + ")"
     span = f"{_ps_words(low)} to {_ps_words(high)}"
@@ -982,6 +982,13 @@ def _lifetime_test(level_key: LevelKey, method: str, rows: Optional[list], via: 
                    + (f"; it is in that of {other}" if other else ""))
 
 
+@lru_cache(maxsize=32)
+def _interactions(name: str) -> tuple:
+    from . import shellmodel_spaces as _spaces
+
+    return tuple(_spaces.options(name))
+
+
 @lru_cache(maxsize=64)
 def _shell_model_fit(name: str, states: tuple, free_gb: int) -> tuple:
     """(True, False or None; the reason) for a shell-model calculation of ``states`` ((2J, parity, how many),
@@ -990,7 +997,7 @@ def _shell_model_fit(name: str, states: tuple, free_gb: int) -> tuple:
     from . import shellmodel as _sm
     from . import shellmodel_spaces as _spaces
 
-    options = _spaces.options(name)
+    options = _interactions(name)
     if not options:
         return False, (f"none of the interactions physim has holds {name} in its valence space; a calculation "
                        f"run elsewhere can be imported")
@@ -1011,7 +1018,8 @@ def _shell_model_fit(name: str, states: tuple, free_gb: int) -> tuple:
         others = [n for _, n, _, _ in sorted(fits)[1:]]
         return True, (f"{interaction} ({space} space): {reason}"
                       + (f" Also fitting: {', '.join(others)}." if others else "")
-                      + (f" Too big now: {', '.join(n for _, n, _, _ in sorted(too_big))}." if too_big else ""))
+                      + (f" Too big now: {', '.join(n for _, n, _, _ in sorted(too_big))}." if too_big else "")
+                      + " Only the size is tested, not whether a space suits the nucleus.")
     if too_big:
         _, interaction, space, reason = min(too_big)
         return False, f"{interaction} ({space} space), the smallest: {reason}"
@@ -1051,14 +1059,14 @@ def applies(nuclide: str, observable: str, key, route, rows: Optional[list] = No
       (:func:`stability`). For another nucleus nothing in the code says how long-lived a target must be or which
       beams exist: None, with the half-life;
     - the **Coulex yield** (first order) is of the excitation from the ground state, as the setup's
-      ``[reaction]`` is: False for a transition between excited states; and a τ by Coulomb excitation needs the
-      level's one γ ray (:func:`decay`);
+      ``[reaction]`` is: False for a transition between excited states, and so is electron scattering; photon
+      scattering is None there. A τ by Coulomb excitation needs the level's one γ ray (:func:`decay`);
     - a **lifetime** by a plunger or by DSAM: whether the level's τ is in the range physim plans the method for
       (:func:`physim.nuclear.lifetime_plan.method_for`), with the evaluated τ of ``rows`` or the best measured
       one; None without a τ;
     - the **shell model**: whether a calculation of exactly these states fits this computer now
       (:func:`physim.nuclear.shellmodel_spaces.estimate`, half of the RAM free); False where no interaction
-      physim has holds the nucleus;
+      physim has holds the nucleus. The size alone: whether the space suits the nucleus is not tested;
     - the **evaluation**: whether the local ENSDF copy has adopted levels for the nucleus;
     - Q_s of a level of spin 0 or 1/2 does not exist, by any route.
 
@@ -1101,6 +1109,12 @@ def applies(nuclide: str, observable: str, key, route, rows: Optional[list] = No
             return False, ("the yield analysis is of the excitation from the ground state (the setup's "
                            "[reaction]); a transition between excited states needs the fit to all orders")
         return _target_test(name, beam_too=True)
+    if route.method in ("nrf", "electron-scattering") and transition_ is not None and \
+            _is_ground(transition_.final) is False:
+        if route.method == "nrf":
+            return None, ("photon scattering gives the width of a level excited from the ground state; whether this "
+                          "transition follows from it is not tested")
+        return False, ("electron scattering excites from the ground state; this transition is between excited states")
     if route.method in ("nrf", "inelastic-neutron", "electron-scattering"):
         return _target_test(name, beam_too=False)
     if route.kind is not None and not route.live:
@@ -1268,7 +1282,9 @@ def _said(row: Row, via: Optional[dict] = None) -> str:
     converted value was made from."""
     c = cell(row, via)
     arrow = observables.DIRECTIONS.get(c["direction"], "")
-    return (f"{value_text(c['value'], c['plus'], c['minus'])} {_UNIT_WORDS.get(c['unit'], c['unit'])}"
+    sign = ("−" if c["value"] < 0 else "+" if c["value"] > 0 and row.observable in ("Qs", "mu") and not _no_sign(row)
+            else "")
+    return (f"{sign}{value_text(abs(c['value']), c['plus'], c['minus'])} {_UNIT_WORDS.get(c['unit'], c['unit'])}"
             + (f" {arrow}" if arrow else "") + f" ({c['source']}"
             + (f", converted from {observables.get(c['via']['observable']).label}" if c["via"] is not None else "")
             + ")")
@@ -1285,36 +1301,37 @@ def _check(label_: str, text: str, how: str, rows: list, value: float, reference
 
 
 #: How to read each check, and what it does not show.
-_READ_E42 = ("2.0 is a harmonic vibrator, 2.5 a γ-soft rotor, 3.33 a rigid axial rotor; below 2 the nucleus is near a "
-             "closed shell and few nucleons carry the states. It is a ratio of energies alone: it shows neither the "
+_READ_E42 = ("2.0 is a harmonic vibrator, 2.5 a γ-soft rotor, 3.33 a rigid axial rotor; below 2 the nucleus is near "
+             "a closed shell and few nucleons carry the states. It is a ratio of energies alone: it shows neither the "
              "sign of the deformation nor how collective the transitions are.")
-_READ_B42 = ("10/7 = 1.43 is the rigid axial rotor and 2 the harmonic vibrator; below 1 the 4⁺₁ state does not continue "
-             "the collective motion of the 2⁺₁ state (near a closed shell, or a state of another structure). Read it "
-             "with E(4⁺₁)/E(2⁺₁): alone it does not tell a rotor from a nucleus in between. Each value has its own "
-             "uncertainty; none is worked out for the ratio.")
-_READ_ROTOR = ("For a rigid axial rotor B(E2) fixes the size of Q_s(2⁺₁), and the sign of the measured Q_s says prolate "
-               "(negative) or oblate (positive). A measured Q_s much smaller than the rotor's says that the state is "
-               "not that rotor (a harmonic vibrator has Q_s = 0, a soft or triaxial nucleus lies between): β₂ is then "
-               "the size of the strength, not a shape. Agreement in size alone does not prove a rotor: look at "
-               "E(4⁺₁)/E(2⁺₁) too. The rotor's numbers carry no uncertainty here.")
+_READ_B42 = ("10/7 = 1.43 is the rigid axial rotor and 2 the harmonic vibrator; below 1 the 4⁺₁ state does not "
+             "continue the collective motion of the 2⁺₁ state (near a closed shell, or a state of another structure). "
+             "Read it with E(4⁺₁)/E(2⁺₁): alone it does not tell a rotor from a nucleus in between. Each value has "
+             "its own uncertainty; none is worked out for the ratio.")
+_READ_ROTOR = ("For a rigid axial rotor B(E2) fixes the size of Q_s(2⁺₁), and the sign of the measured Q_s says "
+               "prolate (negative) or oblate (positive). A measured Q_s of another size says that the state is not "
+               "that rotor (much smaller: a harmonic vibrator has Q_s = 0, a soft or triaxial nucleus lies between), "
+               "and β₂ is then the size of the strength, not a shape. Agreement in size alone does not prove a rotor: "
+               "look at E(4⁺₁)/E(2⁺₁) too. The rotor's numbers carry no uncertainty here.")
 _READ_THEORY = {
     "B(E2)": ("1 means that the interaction, its valence space and its effective charges together give the strength; "
-              "below 1 the calculation lacks collectivity (a space or effective charges too small), above 1 it has too "
-              "much. The ratio does not say which of them is off, and a calculation has no uncertainty, so it is not "
-              "judged."),
-    "B(M1)": ("1 means that the interaction, its valence space and its effective g factors together give the strength. "
-              "The ratio does not say which of them is off, and a calculation has no uncertainty, so it is not judged."),
-    "tau": ("Above 1 the calculated transitions are too weak, below 1 too strong. It tests the interaction, its valence "
-            "space and its effective charges together and does not say which is off; a calculation has no "
+              "below 1 the calculation lacks collectivity (a space or effective charges too small), above 1 it has "
+              "too much. The ratio does not say which of them is off, and a calculation has no uncertainty, so it is "
+              "not judged."),
+    "B(M1)": ("1 means that the interaction, its valence space and its effective g factors together give the "
+              "strength. The ratio does not say which of them is off, and a calculation has no uncertainty, so it is "
+              "not judged."),
+    "tau": ("Above 1 the calculated transitions are too weak, below 1 too strong. It tests the interaction, its "
+            "valence space and its effective charges together and does not say which is off; a calculation has no "
             "uncertainty, so it is not judged."),
-    "Qs": ("A negative ratio means that the calculated state has the other shape (the other sign); near 1 the state is "
-           "as the calculation has it, as far as this moment shows. It does not say whether the wave function or the "
+    "Qs": ("A negative ratio means that the calculated state has the other sign of Q_s; near 1 the state is as the "
+           "calculation has it, as far as this moment shows. It does not say whether the wave function or the "
            "effective charges are off, and a calculation has no uncertainty, so it is not judged."),
     "mu": ("A negative ratio means that the calculation has the other sign; near 1 the state holds the orbits the "
            "calculation gives it, as far as this moment shows. It does not say whether the wave function or the "
            "effective g factors are off, and a calculation has no uncertainty, so it is not judged."),
-    "E_level": ("Far from 1, the calculation's wave functions are to be trusted less for this nucleus. Near 1 does not "
-                "show that its B(E2) values and moments are right: an interaction is usually fitted to energies."),
+    "E_level": ("Far from 1, the calculation's wave functions are to be trusted less for this nucleus. Near 1 does "
+                "not show that its B(E2) values and moments are right: an interaction is usually fitted to energies."),
 }
 
 
