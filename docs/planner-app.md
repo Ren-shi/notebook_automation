@@ -159,13 +159,21 @@ with its uncertainty; physim keeps no raw spectra. The form **Add a data point**
 A point is never changed: the ⋮ menu beside it offers **Correct…**, which adds a new row that supersedes it, and
 **Retract…**, which withdraws it with a reason. Both stay in the history.
 
-**Import points from a file** reads many points at once: from a JSON or CSV file, or from the literature file of a
-nucleus. It says what was added, what was already there and what was refused.
+**Import points from a file**, beside **Add a data point**, reads many points at once: from a JSON or CSV file, or
+from the literature file of a nucleus. Its window takes the file and lists what was **Added**, what was **Already
+there** (importing a file twice adds nothing) and what was **Refused**, with the reason for each. A literature file's
+method in words becomes one of the methods of the ledger, and the words, the facility and the file's notes on the
+value are kept beside it. A lifetime stays a lifetime; the page converts it when it compares. An evaluation in the
+file (ENSDF's adopted value, a table of averages) is refused: ENSDF's values come in as the evaluation, and another
+evaluation would count the measurements it averages a second time.
 
 ### The report of a nucleus
 
-**Report for this nucleus** builds a report of the nucleus across its experiments: what is known about it by every
-route, and its experiments. The report of one experiment is on that experiment's Report step.
+**Report for this nucleus** builds a report of the nucleus across its experiments, and saves it with **Save as HTML**
+or **Save as PDF**. It has one section for each observable and level or transition that holds more than the
+evaluation: the values side by side in the two groups, the routes and whether they apply, what is still to run, the
+checks between observables, and what the value gives and is used for. The experiments and the history of the rows
+follow as appendices. The report of one experiment is on that experiment's Report step.
 
 ## Starting an experiment
 
@@ -220,8 +228,9 @@ At the top of the rail on the left:
 
 - the nucleus the experiment studies, a link to its page (nothing for an experiment that studies none);
 - the experiment's name, which is a menu:
-  - **Open an experiment…** and **New experiment…** both open the nuclei screen: open an experiment from its table,
-    or start one with **New experiment for …** or **Start from a kind of experiment**;
+  - **Open an experiment…** opens the nuclei screen: open an experiment from its table, or start one with **New
+    experiment for …**;
+  - **New experiment…** opens the kinds of experiment ("What experiment are you planning?");
   - **Import a setup file…** replaces the current setup with a `.toml` file; **Export the setup…** downloads it
     (see {doc}`nuclear-setup`);
 - the beam, its energy, the target and its thickness, and the kind of experiment (*Coulex · beam*, *Lifetimes ·

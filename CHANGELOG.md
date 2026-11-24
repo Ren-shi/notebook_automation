@@ -68,7 +68,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
     differs: the record's "lifetime" explanation takes B↑/B↓ from the spins instead of dividing by 5 (the same for
     0⁺ → 2⁺; left out where the spins are not known).
   - Seven MCP tools that need no open experiment: `list_nuclei`, `list_results`, `snapshot_evaluation`,
-    `add_data_point`, `retract_data_point`, `compare_results` and `import_data_points`.
+    `add_data_point`, `retract_data_point`, `compare_results` and `import_data_points`. The three that read write
+    nothing; an experiment from before the ledger gets its rows when the server starts.
+  - Smaller things: the level-scheme table marks every B with ↑ or ↓ and gives Weisskopf units for the ↓ value;
+    "New experiment…" opens the kinds of experiment; an address that names an experiment that is not there shows
+    a sentence and the nuclei, not a server error; the DDCM curve of a lifetime analysis is drawn against the
+    shifted share it was fitted to; the two dialogs the start page replaced are removed.
   - What would need a new formula (effective charges, B(E2) from E(2⁺), sum rules, the uncertainty of the checks)
     is backlog 76. The planner page of the docs describes the app as it now is: the nuclei, the page of a nucleus,
     the kinds, the lifetime and shell-model parts.

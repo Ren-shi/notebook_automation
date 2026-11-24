@@ -122,8 +122,8 @@ direction is converted for the comparison and keeps what it was given as ("given
 
 **A value in Weisskopf units is always the ↓ value** (the decay's), and is marked so. B↑ and B↓ differ by the ratio
 of the spin factors (2J + 1) of the two levels: for 0⁺ → 2⁺, B↑ = 5 × B↓. The page of a nucleus can write B(E2)↑ in
-e²b² instead of e²fm⁴; that changes the display only. (One table does not follow this yet: the matrix elements of a
-level scheme, on the Plan step and in Physics, give B↑ with B↑ over the Weisskopf unit beside it, unmarked.)
+e²b² instead of e²fm⁴; that changes the display only. The matrix elements of a level scheme, on the Plan step and
+in Physics, follow the same rule: the column "B (↑ and ↓) or Q" gives B↑, and B↓ with its value in Weisskopf units.
 
 **What a value gives.** From the reference value of an observable the page works out B↓, the value in Weisskopf
 units, the size of the matrix element, and τ from B(E2) (or B(E2) from τ) through the γ-ray energy, the branching and
@@ -275,7 +275,7 @@ They act on a nucleus and need no open experiment.
 | `add_data_point(nucleus, observable, key, value, method, unit?, direction?, uncertainty? or stat and sys or plus and minus, evidence?, reference? or own_measurement?, detail?, corrects?)` | adds a published value or your own measurement; everything wrong is said at once; `corrects` names the point it replaces |
 | `retract_data_point(nucleus, row, reason)` | withdraws a data point; nothing is deleted |
 | `compare_results(nucleus, observable, key, reference?)` | every result for one observable of one level or transition: the independent ones against the reference with difference, pull and verdict; the projected ones apart with their closure and precision; the routes with their state and whether they apply; what the value gives; the checks; what it is used for |
-| `import_data_points(path)` | reads data points from a JSON or CSV file, or from the literature file of a nucleus; says what was added, what was already there and what was refused |
+| `import_data_points(path, nucleus)` | reads data points from a JSON or CSV file, or from the literature file of a nucleus; says what was added, what was already there (a file imported twice adds nothing) and what was refused, with each reason. `nucleus` is optional: the nucleus the points must be of |
 
 Quantities follow the same conventions as on the page: B(E2) in e2fm4 (or e2b2, or W.u., which is always down), τ
 in ps, Q_s in efm2, B(M1) in mu_N2, μ in mu_N, E in keV.
@@ -303,4 +303,6 @@ compare_results("62Ni", "B(E2)", "2+1 > 0+1")
 ```
 
 The projected run is reported with its closure and the precision it reaches, never with a pull against the
-reference. (The experiment's rows are there once its runs have been analysed, or once the app has opened it.)
+reference. (The experiment's rows are written when its runs are analysed. An experiment from before the ledger
+gets them once: when the app opens it or shows the nuclei, or when the MCP server starts. The tools that only read
+write nothing.)
