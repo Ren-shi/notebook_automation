@@ -25,7 +25,9 @@ that of the best single measurement.
 
 The result is plain data (:class:`Comparison`, :meth:`Comparison.to_dict`) that a table, a plot and a report can
 be built from. :func:`convert` makes a row of another observable from a row (a B(E2) from a τ, through the γ-ray
-energy, the branching and the conversion), so that it can join the comparison.
+energy, the branching and the conversion), so that it can join the comparison. :func:`ratio` is one independent
+row over another (E(4⁺₁) over E(2⁺₁), a shell-model value over the reference), for the checks between observables
+of :func:`physim.nuclear.nucleus.checks`.
 """
 
 from __future__ import annotations
@@ -166,6 +168,26 @@ def convert(row: Row, to: str, key: Union[TransitionKey, LevelKey, str, None] = 
                direction=direction, detail=detail, truth=truth, depends_on=(row.id, *row.depends_on),
                origin={"kind": "conversion", "from": row.id, "function": function, **inputs},
                created=row.created, code=row.code, **unc)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# A plain ratio of two rows
+
+
+def ratio(numerator: Row, denominator: Row, scale: float = 1.0) -> float:
+    """``numerator`` over ``denominator``, both in their canonical convention, times ``scale`` (a factor of
+    convention, such as the one that turns two B↑ values into B↓ values).
+
+    A plain ratio of two values and nothing else: no model is in it and no uncertainty is worked out for it (the
+    code has no function for that; each row has its own). Raises ``ValueError`` for a denominator of 0 and for
+    projected rows: a simulated run is compared with the value its simulation was given and with nothing else.
+    """
+    if PROJECTED in (numerator.evidence, denominator.evidence):
+        raise ValueError("a projected row is not set against another row: it is closed against its own truth")
+    a, b = canonical(numerator), canonical(denominator)
+    if b.value == 0:
+        raise ValueError(f"row {denominator.id} is 0: there is no ratio to it")
+    return scale * a.value / b.value
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -344,4 +366,4 @@ def compare(rows: list, reference: Union[Row, str, None] = None) -> Comparison:
 
 
 __all__ = ["AGREE_BELOW", "DIFFER_ABOVE", "VERDICTS", "Canonical", "Comparison", "Entry", "Projection",
-           "canonical", "compare", "convert", "verdict"]
+           "canonical", "compare", "convert", "ratio", "verdict"]

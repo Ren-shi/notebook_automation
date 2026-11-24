@@ -19,7 +19,8 @@ What the planner does                      The rows
                                            depends on the τ row (:func:`lifetime_rows`)
 :meth:`Planner.fit_matrix_elements`        B(E2)↑ of each fitted E2 matrix element and Q_s of each fitted diagonal
                                            one, "coulex-fit" (:func:`fit_rows`)
-a shell-model result read or applied       level energies, B(E2)↑ and Q_s as theory, in the nucleus's own ledger
+a shell-model result read or applied       level energies, B(E2)↑, Q_s, B(M1)↑ and μ as theory, in the nucleus's own
+                                           ledger
                                            (:func:`shell_model_rows`, :func:`copy_shell_model`)
 an old experiment opened                   :func:`results.backfill`, once (:func:`backfill_if_new`)
 =========================================  ======================================================================
@@ -34,8 +35,9 @@ analysis that says exactly what the standing row says adds nothing: pressing "An
 cannot be written, a level that cannot be named), say it in the log and return no rows; the analysis's own result
 is untouched.
 
-What has no observable in the registry yet is left out: a Coulex transition that is not E2, B(λ) from a lifetime
-for a multipole other than E2, fitted matrix elements other than E2, and the shell model's B(M1), B(E1) and μ.
+What has no observable in the registry yet is left out: a Coulex transition that is not E2, fitted matrix elements
+other than E2, and the shell model's B(E1). B(λ) from a lifetime is written for an E2 line only: a B(M1) from a
+lifetime analysis has no row yet.
 """
 
 from __future__ import annotations
@@ -220,7 +222,7 @@ def lifetime_rows(analysis: dict, experiment_name: str, depends_on: Optional[Row
     Called without ``depends_on`` it gives the τ row alone; called again with the τ row that stands in the
     ledger, the B(E2) row alone (:func:`write_lifetimes` does both). No rows for an analysis that is not
     available, without the line it is of (``analysis["transition"]``), or when the level scheme holds no lifetime
-    to be the truth. No B row for a multipole other than E2: the registry has no observable for it yet."""
+    to be the truth. No B row for a multipole other than E2."""
     line, held = analysis.get("transition"), _held(analysis)
     if not analysis.get("available") or not line or analysis.get("method") not in LIFETIME_METHODS:
         return []
@@ -331,10 +333,12 @@ def write_fit(planner, fit: dict, role: str, gate: Optional[str] = None) -> list
 
 def shell_model_rows(result, job: Optional[str] = None) -> list:
     """A shell-model calculation (a :class:`physim.nuclear.shellmodel.ShellModelResult`) as theory rows: each
-    state's excitation energy (the lowest state, at 0 by definition, aside), each state's Q_s and B(E2)↑ of each
-    E2 transition, named through :func:`physim.nuclear.results.key_of_shell_state`. The origin is the calculation
-    (interaction, valence space, effective charges; the ``job`` in the cache if known). A state or transition
-    that cannot be named is passed over. B(M1), B(E1) and μ have no observable in the registry yet."""
+    state's excitation energy (the lowest state, at 0 by definition, aside), each state's Q_s and μ, and B(E2)↑
+    and B(M1)↑ of each E2 and M1 transition, named through
+    :func:`physim.nuclear.results.key_of_shell_state`. The origin is the calculation (interaction, valence space,
+    effective charges; for μ and B(M1) the g factors it was given, as ``g_factors``; the ``job`` in the cache if
+    known). A state or transition that cannot be named is passed over. B(E1) has no observable in the registry
+    yet."""
     nuclide = result.nuclide or (result.request.nuclide if result.request is not None else "")
     if not nuclide:
         return []
@@ -343,6 +347,8 @@ def shell_model_rows(result, job: Optional[str] = None) -> list:
     if job:
         more["job"] = job
     origin = results.shell_model_job(result.interaction, result.space, charges, **more)
+    g = {name: list(x) for name, x in (("g_l", result.gl), ("g_s", result.gs)) if x is not None}
+    magnetic = {**origin, "g_factors": g} if g else origin
     energies = {s.key: 1e3 * s.ex_mev for s in result.states}
     rows = []
 
@@ -351,32 +357,34 @@ def shell_model_rows(result, job: Optional[str] = None) -> list:
 
     def add(observable, where, value, unit, **more):
         try:
-            rows.append(Row(nuclide, observable, where(), value, unit, "shell-model", "theory", origin=origin,
-                            **more))
+            rows.append(Row(nuclide, observable, where(), value, unit, "shell-model", "theory",
+                            origin=magnetic if observable in ("B(M1)", "mu") else origin, **more))
         except (ValueError, TypeError, KeyError) as e:
             log.warning("no ledger row for a shell-model %s of %s: %s", observable, nuclide, e)
 
     lowest = min(result.states, key=lambda s: s.ex_mev, default=None)
-    moments = {t.initial: t.moment for t in result.transitions if t.kind == "E2" and t.diagonal}
+    moments = {(t.kind, t.initial): t.moment for t in result.transitions if t.diagonal}
     for s in result.states:
         if s is not lowest:
             add("E_level", lambda s=s: key(s.key), 1e3 * s.ex_mev, "keV")
-        q = s.q_s if s.q_s is not None else moments.get(s.key)
-        if q is not None:
-            add("Qs", lambda s=s: key(s.key), q, "efm2")
+        for observable, value, unit, kind in (("Qs", s.q_s, "efm2", "E2"), ("mu", s.mu, "mu_N", "M1")):
+            value = value if value is not None else moments.get((kind, s.key))
+            if value is not None:
+                add(observable, lambda s=s: key(s.key), value, unit)
     for t in result.transitions:
-        if t.kind != "E2" or t.diagonal:
+        if t.kind not in ("E2", "M1") or t.diagonal:
             continue
         try:
-            named = results.transition_key(key(t.initial), key(t.final), "E2")
+            named = results.transition_key(key(t.initial), key(t.final), t.kind)
         except (ValueError, TypeError, KeyError) as e:
-            log.warning("no ledger row for a shell-model B(E2) of %s: %s", nuclide, e)
+            log.warning("no ledger row for a shell-model B(%s) of %s: %s", t.kind, nuclide, e)
             continue
         # ↑ is from the key's lower level to its upper one. The calculation's upper state is the key's upper level
         # unless ENSDF has the two levels the other way round, and then its B↓ is the key's B↑.
         b = t.b_up if named.initial.text == key(t.initial).text else t.b_down
         if b is not None:
-            add("B(E2)", lambda named=named: named, b, "e2fm4", direction=observables.UP)
+            add(f"B({t.kind})", lambda named=named: named, b, {"E2": "e2fm4", "M1": "mu_N2"}[t.kind],
+                direction=observables.UP)
     return rows
 
 
@@ -384,12 +392,12 @@ def _calculation(row: Row) -> tuple:
     """What a shell-model row is of and which calculation it is from, the value aside."""
     o = row.origin
     return (row.observable, row.key, row.unit, row.direction, o.get("interaction"), o.get("space"),
-            json.dumps(o.get("effective_charges"), sort_keys=True))
+            json.dumps(o.get("effective_charges"), sort_keys=True), json.dumps(o.get("g_factors"), sort_keys=True))
 
 
 @_quietly("the shell-model results")
 def copy_shell_model(result, job: Optional[str] = None, home: Union[str, Path, None] = None) -> list:
-    """Copy a shell-model calculation's level energies, B(E2) and Q_s into the nucleus's own ledger
+    """Copy a shell-model calculation's level energies, B(E2), Q_s, B(M1) and μ into the nucleus's own ledger
     (:func:`physim.nuclear.results.add_point`), so that cleaning the cache of jobs cannot lose them. Returns the
     rows added: none when they are all there already, however often and by whichever way (a job read, a result
     applied or imported) the same calculation comes by. A value that differs from the row of the same

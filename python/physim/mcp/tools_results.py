@@ -16,10 +16,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from ..nuclear import compare, results
+from ..nuclear import compare, observables, results
 from ..nuclear import nucleus as _nucleus
 from .session import Session
 from .shape import plain
+
+#: The observables of the registry, as the tools name them.
+OBSERVABLES = tuple(observables.OBSERVABLES)
 
 #: The most rows one answer lists; the rest are counted, and a narrower question shows them.
 ROWS_SHOWN = 40
@@ -107,7 +110,8 @@ def nucleus_view(e: dict) -> dict:
 
 def comparison_view(v: dict) -> dict:
     """:func:`physim.nuclear.nucleus.observable_view` as text: each independent row against the reference, each
-    projected row against the value its simulation was given, the routes and what the reference gives."""
+    projected row against the value its simulation was given, the routes with whether each applies to this
+    nucleus, what the reference gives, the checks against other observables and what a value is used for."""
     c, cells = v["comparison"], v["cells"]
     out: dict[str, Any] = {"nucleus": v["nuclide"], "observable": v["label"], "key": v["key"],
                            "convention": v["convention"]}
@@ -155,10 +159,15 @@ def comparison_view(v: dict) -> dict:
     out["routes"] = [{"route": r["label"], "experiment": r["kind_label"], "status": r["status"],
                       **({"independent": r["independent"], "projected": r["projected"], "own": r["own"]}
                          if r["rows"] else {}),
-                      **({"open": True} if r["open"] else {}), **({"note": r["note"]} if r["note"] else {})}
+                      **({"open": True} if r["open"] else {}), **({"note": r["note"]} if r["note"] else {}),
+                      "applies": {True: "yes", False: "no", None: "not tested"}[r["applies"]],
+                      **({"reason": r["reason"]} if r["reason"] else {})}
                      for r in v["routes"]]
     out["reference_gives"] = [{"gives": g["to"], **({"value": g["text"], "how": g["how"]} if g["value"] is not None
                                                     else {"missing": g["missing"]})} for g in v["gives"]]
+    out["checks"] = [{"check": c["label"], "says": c["text"], "how_to_read_it": c["how"], "rows": c["rows"],
+                      **({"reference": c["reference"]} if c["reference"] else {})} for c in v["checks"]]
+    out["used_for"] = v["used_for"]
     return out
 
 
@@ -201,15 +210,15 @@ class ResultTools:
                      key: Optional[Union[str, dict]] = None, history: bool = False) -> dict:
         """The results of a nucleus ("62Ni"). Without an observable: its experiments, one line per observable and
         level or transition with what each kind of evidence says, and what is still open. With an observable
-        ("B(E2)", "tau", "Qs", "E_level") the rows that hold now, each with its id, evidence, method, value in the
-        observable's convention (B(E2) up in e2fm4, tau in ps, Qs in efm2, E in keV) and source; key narrows to
-        one level or transition, as one says it: "2+1" (ENSDF's first 2+), "2+ at 1173 keV", "2+1 > 0+1". B(E2)
-        and tau values made from each other through the level's one gamma ray are listed too and say what they
-        were made from. history true lists every row ever written, the newest first, with its status (holds,
-        superseded, retracted, retraction): rows are never deleted."""
+        ("B(E2)", "tau", "Qs", "B(M1)", "mu", "E_level") the rows that hold now, each with its id, evidence,
+        method, value in the observable's convention (B(E2) up in e2fm4, tau in ps, Qs in efm2, B(M1) up in mu_N2,
+        mu in mu_N, E in keV) and source; key narrows to one level or transition, as one says it: "2+1" (ENSDF's
+        first 2+), "2+ at 1173 keV", "2+1 > 0+1". B(E2) and tau values made from each other through the level's
+        one gamma ray are listed too and say what they were made from. history true lists every row ever written,
+        the newest first, with its status (holds, superseded, retracted, retraction): rows are never deleted."""
         name = results.nuclide_name(nucleus)
         if key is not None and observable is None:
-            raise ValueError("Name the observable the key belongs to: B(E2), tau, Qs or E_level.")
+            raise ValueError("Name the observable the key belongs to: " + ", ".join(OBSERVABLES) + ".")
         if history:
             key = None if key is None else _nucleus.key_of(name, observable, key, check=False).text
             past = _nucleus.history(results.of_nuclide(name, self.session.root, self.home), observable, key)
@@ -227,9 +236,9 @@ class ResultTools:
 
     def snapshot_evaluation(self, nucleus: str) -> dict:
         """Take ENSDF's adopted values of a nucleus into its results as evaluated rows: level energies, mean
-        lives, quadrupole moments and B(E2) values, each with its uncertainty and a reference that names ENSDF
-        and the data set's date. Taking it again adds nothing; a value a newer ENSDF copy changed gets a new row
-        that supersedes the old one. Needs the local ENSDF copy (scripts/fetch_ensdf.py)."""
+        lives, quadrupole and magnetic moments, B(E2) and B(M1) values, each with its uncertainty and a reference
+        that names ENSDF and the data set's date. Taking it again adds nothing; a value a newer ENSDF copy changed
+        gets a new row that supersedes the old one. Needs the local ENSDF copy (scripts/fetch_ensdf.py)."""
         s = _nucleus.snapshot_evaluation(nucleus, self.home)
         return {"nucleus": s["nuclide"], "reference": s["reference"], "dataset_date": s["dataset_date"],
                 "added": len(s["added"]), "superseded": len(s["superseded"]), "unchanged": s["unchanged"]}
@@ -242,17 +251,18 @@ class ResultTools:
                        own_measurement: Optional[dict] = None, detail: str = "",
                        corrects: Optional[str] = None) -> dict:
         """Add a data point to a nucleus's results: a value of an observable with its uncertainty, as published or
-        as one's own measurement (never raw spectra). observable is "B(E2)", "tau", "Qs" or "E_level"; key the
-        level or transition as one says it ("2+1", "2+ at 1173 keV", "2+1 > 0+1", {"energy": "1173 keV", "jpi":
-        "2+"}); value a number in unit (B(E2): e2fm4, e2b2 or W.u.; tau: fs, ps, ns, s; Qs: efm2 or eb; E_level:
-        keV or MeV; the first of each when left out). A B(E2) needs direction "up" (from the lower level, as
-        Coulomb excitation gives it) or "down" (the decay; W.u. is always down). The uncertainty is absolute, in
-        the same unit, in one form: uncertainty (one total), stat and sys, or plus and minus; a measured point
-        needs one. method is "coulex-yield", "coulex-fit", "rdds", "dsam", "nrf", "inelastic-neutron",
-        "electron-scattering" or "other" ("shell-model" for theory). evidence is "measured" (default), "outside
-        program" (GOSIA and the like) or "theory". Say where it is from: reference {"authors", "year", "doi",
-        "where" in the paper} or own_measurement {"date": "2027-06-14", "note"}, one of the two. detail is a free
-        line beside the method. corrects is the id of the data point this one replaces (give the whole point
+        as one's own measurement (never raw spectra). observable is "B(E2)", "tau", "Qs", "B(M1)", "mu" or
+        "E_level"; key the level or transition as one says it ("2+1", "2+ at 1173 keV", "2+1 > 0+1", {"energy":
+        "1173 keV", "jpi": "2+"}); value a number in unit (B(E2): e2fm4, e2b2 or W.u.; tau: fs, ps, ns, s; Qs: efm2
+        or eb; B(M1): mu_N2 or W.u.; mu: mu_N; E_level: keV or MeV; the first of each when left out, ps for tau). A
+        B(E2) or B(M1) needs direction "up" (from the lower level, as Coulomb excitation gives it) or "down" (the
+        decay; W.u. is always down). The uncertainty is absolute, in the same unit, in one form: uncertainty (one
+        total), stat and sys, or plus and minus; a measured point needs one. method is "coulex-yield", "coulex-fit", "rdds", "dsam", "nrf", "inelastic-neutron",
+        "electron-scattering", "inelastic-scattering", "transfer", "moment" (a static moment measured: laser
+        spectroscopy, transient field, NMR) or "other" ("shell-model" for theory). evidence is "measured"
+        (default), "outside program" (GOSIA and the like) or "theory". Say where it is from: reference {"authors",
+        "year", "doi", "where" in the paper} or own_measurement {"date": "2027-06-14", "note"}, one of the two.
+        detail is a free line beside the method. corrects is the id of the data point this one replaces (give the whole point
         again): the old row is kept and superseded. Everything wrong is said at once."""
         row = _nucleus.add_data_point(
             nucleus, observable, key, value, unit, direction=direction, uncertainty=uncertainty, stat=stat,
@@ -283,8 +293,14 @@ class ResultTools:
         beside the precision the setup reaches and how well the value is already known. Then the routes to the
         observable (done: an independent result by that method holds; projected: only simulated runs by it,
         nothing measured; in physim: an experiment of that kind can be planned; later; no experiment: a
-        calculation, the evaluation or a literature method) and what the reference value gives (B down,
-        Weisskopf units, the matrix element, tau or B(E2) through the level's gamma ray)."""
+        calculation, the evaluation or a literature method), each with whether it applies to this nucleus (yes,
+        no, or not tested) and the reason: the nucleus as a target or beam, the level's lifetime against the range
+        of a plunger or DSAM, whether a shell-model calculation fits this computer now; "not tested" says what is
+        not checked and is no "yes". Then what the reference value gives (B down, Weisskopf units, the matrix
+        element, tau or B(E2) through the level's gamma ray); the checks against other observables and the
+        calculations (plain ratios of independent rows, such as E(4+)/E(2+), and the rotor reading of B(E2) beside
+        Q_s), each with how to read it and what it does not show: pass that on with the number; and what a value of
+        the observable is used for, with a reference for each."""
         return plain(comparison_view(_nucleus.observable_view(nucleus, observable, key, reference,
                                                               self.session.root, self.home)))
 

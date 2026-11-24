@@ -36,7 +36,7 @@ from typing import Optional
 
 import numpy as np
 
-from . import compare, observables, results
+from . import compare, nucleus, observables, results
 from .record import DOCS, Explanation, record_css
 
 
@@ -1306,7 +1306,7 @@ _SUBSCRIPT = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 
 #: The units of the ledger's rows, of the B(Eλ) values and of the matrix elements, as the report prints them.
 UNIT_WORDS = {"e2fm2": "e²fm²", "e2fm4": "e²fm⁴", "e2fm6": "e²fm⁶", "e2b": "e²b", "e2b2": "e²b²", "e2b3": "e²b³",
-              "efm": "e fm", "efm2": "e fm²", "efm3": "e fm³", "eb": "e b"}
+              "efm": "e fm", "efm2": "e fm²", "efm3": "e fm³", "eb": "e b", "mu_N": "μ_N", "mu_N2": "μ_N²"}
 
 #: What stands for an uncertainty that cannot be shown as a number: NaN, infinite or negative.
 NOT_AVAILABLE = "n/a"
@@ -1489,9 +1489,11 @@ def _run_words(label) -> str:
     return f"run {int(m.group(1))}" if m else str(label or "a run")
 
 
-def source_words(row, here: Optional[str] = None) -> str:
+def source_words(row, here: Optional[str] = None, by_id: Optional[dict] = None) -> str:
     """Where a row comes from, in a few words: "this experiment, run 3" (``here`` is this experiment's folder
-    name), "62Ni-on-194Pt-3, run 1", "Allmond et al. 2014", "JUN45, f5pg9", "own measurement, 2026-11-20"."""
+    name), "62Ni-on-194Pt-3, run 1", "Allmond et al. 2014", "JUN45, f5pg9", "own measurement, 2026-11-20". A row
+    converted from one of ``by_id`` (the nucleus's rows) is said with that row: "Kenn et al. 2001, DSAM (line
+    shape), converted from τ = 2.01 ± 0.12 ps"."""
     o = row.origin or {}
     kind = o.get("kind")
     if kind == "run":
@@ -1506,6 +1508,10 @@ def source_words(row, here: Optional[str] = None) -> str:
         return ", ".join(str(x) for x in (o.get("interaction"), o.get("space")) if x) or "a shell-model calculation"
     if kind == "own measurement":
         return "own measurement" + (f", {o['date']}" if o.get("date") else "")
+    made_from = (by_id or {}).get(o.get("from")) if kind == "conversion" else None
+    if made_from is not None:
+        return (f"{source_words(made_from, here)}, {results.METHODS[made_from.method]}, converted from "
+                f"{observables.get(made_from.observable).label} = {row_value(made_from, direction=True)}")
     if kind == "conversion":
         return "converted from another value" + (f" ({row.detail})" if row.detail else "")
     return "not stated"
@@ -1712,43 +1718,37 @@ def nucleus_rows(planner, nuclide: str, own: list = ()) -> list:
     return results.current(rows + [r for r in own if r.nuclide == name and r.id not in seen])
 
 
-def routes_to_run(observable: str, rows: list) -> list:
-    """The routes of the registry to an observable that are experiments (:class:`physim.nuclear.observables.Route`
-    with a kind), each with where it stands: [{"method", "label", "note", "kind", "kind_label", "live" (whether
-    physim has this kind of experiment today), "done" (the independent rows by this route that hold now),
-    "projected" (the simulated runs analysed back by it), "state"}]. The state is "done" only with an
-    independent value: a route with nothing but simulated runs is "projected", one with no row "open". ``rows``
-    are the nucleus's rows of this observable and this level or transition."""
-    from .workbench import KINDS
-
-    labels = {k.key: k.label for k in KINDS}
-    now = results.current(list(rows))
-    out = []
-    for route in observables.get(observable).routes:
-        if route.kind is None:
-            continue
-        literature = route.method in results.LITERATURE_ONLY  # "other" names no one method: no row counts
-        mine = [] if literature else [r for r in now if r.method == route.method]
-        done = [r for r in mine if r.independent]
-        projected = [r for r in mine if r.evidence == results.PROJECTED]
-        out.append({"method": route.method, "note": route.note, "kind": route.kind, "kind_label": labels[route.kind],
-                    "label": labels[route.kind] if literature else results.METHODS[route.method],
-                    "live": bool(route.live), "done": done, "projected": projected,
-                    "state": "done" if done else "projected" if projected else "open"})
-    return out
+def observable_rows(planner, nuclide: str, observable: str, key: str, own: list = ()) -> tuple:
+    """(view, rows, by_id, why not): what the nucleus page shows of one observable of one level or transition
+    (:func:`physim.nuclear.nucleus.observable_view`), from the rows the report has (:func:`nucleus_rows`, with this
+    experiment's ``own``), and its rows: those that hold and the B(E2) or τ values that others give through the
+    level's γ ray. ``by_id`` are the nucleus's rows, which say what a converted row was made from. Nothing is
+    written. Where the rows cannot be compared (a B↓ between levels of unknown spin) the view holds the routes
+    alone and the reason comes back in words."""
+    ledger = nucleus_rows(planner, nuclide, own)
+    rows, via = nucleus.with_converted(nuclide, ledger)
+    group = results.select(rows, observable, key)
+    by_id = {r.id: r for r in ledger}
+    try:
+        return nucleus.observable_view(nuclide, observable, key, ledger=ledger), group, by_id, ""
+    except ValueError as err:
+        routes = nucleus.routes(nuclide, observable, key, group, via, rows)
+        return {"comparison": None, "routes": routes}, group, by_id, str(err)
 
 
-def evidence_missing(rows: list, outside: bool = False) -> list:
+def evidence_missing(rows: list, outside: bool = False, routes: list = ()) -> list:
     """The independent evidence for one observable of one level or transition, kind by kind: [{"evidence",
     "label", "have" (the rows that hold now), "missing" (what to say when there are none)}]. With ``outside`` the
-    result of an outside program (GOSIA on the same yields) is asked for too."""
+    result of an outside program (GOSIA on the same yields) is asked for too. ``routes`` are those of the nucleus
+    view (:func:`physim.nuclear.nucleus.routes`): the ones known from the literature only are named."""
     now = [r for r in results.current(list(rows)) if r.independent]
     literature = ", ".join(x if x[:2].isupper() or not x[0].isalpha() else x[0].lower() + x[1:]
-                           for x in (results.METHODS[m] for m in results.LITERATURE_ONLY if m != "other"))
+                           for x in (r["label"] for r in routes if r["means"] == "literature"))
     kinds = [("evaluated", "Evaluated value", "No evaluated value (ENSDF adopted) is entered: without it there is "
               "no reference, and nothing here says how well the value is already known."),
              ("measured", "Measured points", "No measured point is entered: neither a published value (by any "
-              f"route above, or by one known from the literature only: {literature}) nor one of your own."),
+              "route above" + (f", or by one known from the literature only: {literature}" if literature else "")
+              + ") nor one of your own."),
              ("theory", "Shell model", "No shell-model value is entered for this nucleus.")]
     if outside:
         kinds.append(("outside program", "Outside program", "No result of an outside program (GOSIA on the same "
@@ -1773,39 +1773,46 @@ def _closure_words(p) -> str:
             "the value is biased for this setup; the result is not to be read as the setup's reach until it does.")
 
 
-def _known_words(p, c) -> str:
+def _known_words(p, c, by_id: Optional[dict] = None) -> str:
     """ "This setup reaches ±x %; the value is known to ±y %; the best single measurement to ±z %." """
     reach = (f"This setup reaches {percent(p.reach_percent)}" if p.reach_percent is not None
              else "This setup's reach is not stated (the result has no uncertainty)")
     if p.known_percent is not None:
-        known = f"the value is known to {percent(p.known_percent)} ({source_words(c.reference.row)}, the reference)"
+        known = (f"the value is known to {percent(p.known_percent)} "
+                 f"({source_words(c.reference.row, by_id=by_id)}, the reference)")
     elif c.reference is not None:
         known = "the reference has no uncertainty, so how well the value is known is not stated"
     else:
         known = "no evaluated value is entered, so how well the value is already known is not stated here"
     if p.best_measured_percent is not None:
         best = (f"the best single measurement reaches {percent(p.best_measured_percent)} "
-                f"({source_words(c.best_measured.row)})")
+                f"({source_words(c.best_measured.row, by_id=by_id)})")
     else:
         best = "no measured point with an uncertainty is entered"
     return f"{reach}; {known}; {best}."
 
 
-def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None, rule: bool = True) -> str:
+def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None, rule: bool = True,
+                    by_id: Optional[dict] = None) -> str:
     """A comparison (:func:`physim.nuclear.compare.compare`) as the report prints it: the independent evidence
     against the reference with difference, pull and verdict; then, apart, the projected rows with their closure
     against the value their simulation was given and what they reach, set beside how well the value is known;
     and the rule in one line (``rule``; a second comparison on the same page leaves it out). ``here`` is this
     experiment's folder name; ``mine`` the id of the row the report leads with (its sentence comes first). A row
-    that was brought to the comparison's convention says what it was given as."""
+    that was brought to the comparison's convention says what it was given as, and one that was converted from
+    another observable (a B(E2) from a τ) what it was made from, where ``by_id`` (the nucleus's rows) has it."""
     e = _esc
     unit = unit_words(c.unit)
+
+    def source(row) -> str:
+        return source_words(row, here, by_id)
+
     parts = []
     if c.entries:
         ref = c.reference
         parts.append("<h3>Independent evidence</h3><p>"
                      + (f"Measured, evaluated and calculated values, against the reference "
-                        f"({e(source_words(ref.row, here))}, {e(results.EVIDENCE[ref.evidence].lower())})."
+                        f"({e(source(ref.row))}, {e(results.EVIDENCE[ref.evidence].lower())})."
                         if ref is not None else
                         "Measured, evaluated and calculated values. No evaluated value is entered, so there is no "
                         "reference: they are listed without differences.") + "</p>")
@@ -1825,7 +1832,7 @@ def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None, r
                 says = compare.VERDICTS[x.verdict].lower()
             if x.independent_of_reference is False:
                 says += ("; " if says else "") + "not independent of the reference"
-            rows.append(f"<tr><td>{e(results.EVIDENCE[x.evidence])}</td><td>{e(source_words(x.row, here))}</td>"
+            rows.append(f"<tr><td>{e(results.EVIDENCE[x.evidence])}</td><td>{e(source(x.row))}</td>"
                         f"<td>{e(x.label)}" + (f"<br><small>{e(x.detail)}</small>" if x.detail else "")
                         + f"</td><td>{value}{given}</td><td>{e(percent(x.uncertainty_percent))}</td>"
                         f"<td>{e(against)}</td><td>{e(says)}</td></tr>")
@@ -1844,7 +1851,7 @@ def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None, r
             closure = "—" if p.closure is None else (
                 f"{p.closure:+.2f}σ: " + {"agree": "closes", "tension": "tension", "differ": "does not close"}[
                     p.closure_verdict])
-            rows.append(f"<tr><td>{e(source_words(p.row, here))}</td><td>{e(p.label)}"
+            rows.append(f"<tr><td>{e(source(p.row))}</td><td>{e(p.label)}"
                         + (f"<br><small>{e(p.detail)}</small>" if p.detail else "")
                         + f"</td><td>{e(row_value(p.row, canonical=True, unit=False))}"
                         + (f"<br><small>given as {e(row_value(p.row, direction=True))}</small>" if p.converted
@@ -1855,60 +1862,71 @@ def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None, r
                      f"<th>{e(c.label)} ({e(unit)})</th><th>Given to the simulation</th><th>Closure</th>"
                      "<th>Reaches</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
         lead = next((p for p in c.projected if p.id == mine), c.projected[-1])
-        parts.append(f"<p>{e(_known_words(lead, c))}</p>")
+        parts.append(f"<p>{e(_known_words(lead, c, by_id))}</p>")
     if rule:
         parts.append(f"<p><small>{e(RULE)}</small></p>")
     return "".join(parts)
 
 
-def to_run_html(observable: str, rows: list, here: Optional[str] = None, unanalysed: Optional[list] = None,
-                outside: bool = False, analyse_words: str = "") -> str:
-    """The comparisons still to run for one observable of one level or transition, as three lists: the routes
-    of the registry with whether physim has that kind of experiment, the runs of this experiment that are not
-    analysed (``unanalysed``: their numbers), and the independent evidence that is missing. A route is ticked
-    (☑) only when an independent value by it exists; one with nothing but simulated runs is marked projected
-    (◐), and one without a row is open (☐)."""
+def to_run_html(routes: list, rows: list, here: Optional[str] = None, unanalysed: Optional[list] = None,
+                outside: bool = False, analyse_words: str = "", by_id: Optional[dict] = None) -> str:
+    """The comparisons still to run for one observable of one level or transition, as three lists: the experiments
+    among the ``routes`` of the nucleus view (:func:`physim.nuclear.nucleus.routes`, the states the nucleus page
+    shows), the runs of this experiment that are not analysed (``unanalysed``: their numbers), and the independent
+    evidence that is missing. ``rows`` are the rows of the observable, converted ones among them (``by_id`` says
+    what each was made from). A route is ticked (☑) only when an independent value by it exists; one with nothing
+    but simulated runs is marked projected (◐), one without a row is open (☐), and one that does not apply to this
+    nucleus is crossed out (✗); the reason is said with it."""
     e = _esc
+    held = {r.id: r for r in rows}
 
-    def item(done, title: str, text: str) -> str:
-        mark = {True: "☑", False: "☐"}.get(done, "◐")  # ◐: simulated runs only, no measurement
+    def item(mark: str, title: str, text: str) -> str:
         return f"<li>{mark} <b>{e(title)}.</b> {e(text)}</li>"
 
     def have(found: list) -> str:
-        return "; ".join(f"{source_words(r, here)} ({row_value(r, direction=True)}"
+        return "; ".join(f"{source_words(r, here, by_id)} ({row_value(r, direction=True)}"
                          f"{', projected' if r.evidence == results.PROJECTED else ''})" for r in found)
 
     parts = [f'<h3>Other routes to it</h3><ul style="{_PLAIN_LIST}">']
-    for r in routes_to_run(observable, rows):
+    for r in routes:
+        if r["kind"] is None:  # a calculation, the evaluation, a literature method: in the evidence below
+            continue
+        mine = [held[i] for i in r["ids"] if i in held]
+        done = [x for x in mine if x.independent]
+        projected = [x for x in mine if x.evidence == results.PROJECTED]
         how = (r["note"][0].upper() + r["note"][1:] + ". ") if r["note"] else ""
         kind = "" if r["kind_label"] == r["label"] else f" ({r['kind_label']})"
-        if r["state"] == "done":
-            parts.append(item(True, r["label"], f"{how}Done: {have(r['done'])}."
-                              + (f" Also projected: {have(r['projected'])}." if r["projected"] else "")))
-        elif r["state"] == "projected":
-            parts.append(item(None, r["label"], f"{how}Projected: a simulated run, no measurement yet: "
-                                                f"{have(r['projected'])}."))
+        says = f" For this nucleus: {r['reason'].rstrip('.')}." if r["reason"] else ""
+        doubt = says if r["applies"] is not True else ""  # beside a value, only what speaks against the route
+        if r["status"] == nucleus.DONE:
+            parts.append(item("☑", r["label"], f"{how}Done: {have(done)}."
+                              + (f" Also projected: {have(projected)}." if projected else "") + doubt))
+        elif r["status"] == nucleus.ONLY_PROJECTED:
+            parts.append(item("◐", r["label"], f"{how}Projected: a simulated run, no measurement yet: "
+                                               f"{have(projected)}.{doubt}"))
+        elif r["applies"] is False:
+            parts.append(item("✗", r["label"], f"{how}Does not apply: {r['reason'].rstrip('.')}."))
         elif r["live"]:
-            parts.append(item(False, r["label"], f"{how}No value by this route yet. physim has this kind of "
-                                                  f"experiment{kind}."))
+            parts.append(item("☐", r["label"], f"{how}No value by this route yet. physim has this kind of "
+                                               f"experiment{kind}.{says}"))
         else:
-            parts.append(item(False, r["label"], f"{how}No value by this route yet, and physim does not have "
-                                                  f"this kind of experiment yet{kind}."))
+            parts.append(item("☐", r["label"], f"{how}No value by this route yet, and physim does not have "
+                                               f"this kind of experiment yet{kind}."))
     parts.append("</ul>")
     if unanalysed is not None:
         parts.append(f'<h3>Runs of this experiment</h3><ul style="{_PLAIN_LIST}">')
         if unanalysed:
             many = len(unanalysed) != 1
             names = ", ".join(str(n) for n in unanalysed[:-1]) + (" and " if many else "") + str(unanalysed[-1])
-            parts.append(item(False, f"Run{'s' * many} {names}", f"Taken and not analysed{analyse_words}: "
-                                                               "nothing yet shows that the result repeats."))
+            parts.append(item("☐", f"Run{'s' * many} {names}", f"Taken and not analysed{analyse_words}: "
+                                                              "nothing yet shows that the result repeats."))
         else:
-            parts.append(item(True, "Every beam run is analysed", "No run waits for its analysis."))
+            parts.append(item("☑", "Every beam run is analysed", "No run waits for its analysis."))
         parts.append("</ul>")
     parts.append(f'<h3>Independent evidence</h3><ul style="{_PLAIN_LIST}">')
-    for x in evidence_missing(rows, outside):
-        parts.append(item(True, x["label"], f"Entered: {have(x['have'])}.") if x["have"]
-                     else item(False, x["label"], x["missing"]))
+    for x in evidence_missing(rows, outside, routes):
+        parts.append(item("☑", x["label"], f"Entered: {have(x['have'])}.") if x["have"]
+                     else item("☐", x["label"], x["missing"]))
     parts.append("</ul>")
     return "".join(parts)
 
@@ -2012,17 +2030,6 @@ def _pick(rows: list, current_run: Optional[str]):
         return None
     mine = [r for r in rows if current_run is not None and r.origin.get("run") == current_run]
     return max(mine or rows, key=lambda r: r.created)
-
-
-def _compared(rows: list, observable: str, key: str):
-    """(the comparison of the rows of one quantity, or None; why not, in words)."""
-    chosen = results.select(rows, observable, key)
-    if not chosen:
-        return None, ""
-    try:
-        return compare.compare(chosen), ""
-    except ValueError as err:
-        return None, str(err)
 
 
 def _run_describe(summary: Optional[dict]) -> str:
@@ -2181,24 +2188,29 @@ def _other_results_html(own: list, lead: list) -> str:
 
 def _routes_section(sec: dict, planner, nuclide: str, observable: str, key: str, own: list, lead=None,
                     unanalysed: Optional[list] = None, outside: bool = False, to_run: bool = True) -> Optional[object]:
-    """Fill "Beside the other routes" and (with ``to_run``) "Comparisons still to run" for one quantity; returns
-    the comparison."""
+    """Fill "Beside the other routes" and (with ``to_run``) "Comparisons still to run" for one quantity, from the
+    view the nucleus page shows (:func:`observable_rows`); returns the comparison."""
     e = _esc
     here = _here(planner)
     o = observables.get(observable)
-    rows = results.select(nucleus_rows(planner, nuclide, own), observable, key)
-    c, why = _compared(rows, observable, key)
+    view, rows, by_id, why = observable_rows(planner, nuclide, observable, key, own)
+    c = view["comparison"]
     what = quantity_words(observable, key)
+    made = any(r.method == "converted" for r in rows)
     if c is not None:
         sec["routes"].append(f"<p>Every value of {e(what)} of {e(nuclide_words(nuclide))} that is entered: those of "
                              "the experiments beside this one and the nucleus's own data points, in one "
-                             f"convention ({e(o.convention)}).</p>"
-                             + comparison_html(c, here, getattr(lead, "id", None), rule=to_run))
+                             f"convention ({e(o.convention)})."
+                             + (" A value that says it is converted was made from the level's "
+                                f"{'B(E2)' if observable == 'tau' else 'τ'}, through its γ ray: it is the same "
+                                "measurement said in another way, not one more." if made else "") + "</p>"
+                             + comparison_html(c, here, getattr(lead, "id", None), rule=to_run, by_id=by_id))
     elif why:
         sec["routes"].append(f"<p>The values of {e(what)} could not be set beside each other: {e(why)}.</p>")
     if to_run:
         sec["to-run"].append(f"<p>What would test or sharpen {e(what)} of {e(nuclide_words(nuclide))}, and is not "
-                             "done.</p>" + to_run_html(observable, rows, here, unanalysed, outside))
+                             "done.</p>" + to_run_html(view["routes"], rows, here, unanalysed, outside,
+                                                       by_id=by_id))
     return c
 
 
@@ -2887,8 +2899,8 @@ __all__ = ["APPENDICES", "GAMMA_BIN_KEV", "NOT_AVAILABLE", "RESULTS", "RULE", "S
            "decay_of", "decay_words", "doppler_html", "evidence_missing", "experiment_html", "experiment_pdf",
            "experiment_rows", "experiment_zip", "gamma_lines", "html_to_pdf", "level_scheme_png", "level_schemes",
            "level_schemes_html", "level_words", "line_png", "matched", "multistep_html", "note_words",
-           "nucleus_rows", "number", "pdf_browser", "percent", "plain_numbers", "plus_minus", "predicted_html",
-           "quantity_words", "reaction_b_source", "reaction_words", "routes_to_run", "row_value", "run_analyses",
+           "nucleus_rows", "number", "observable_rows", "pdf_browser", "percent", "plain_numbers", "plus_minus", "predicted_html",
+           "quantity_words", "reaction_b_source", "reaction_words", "row_value", "run_analyses",
            "run_explanations", "run_gamma_png", "run_gates_png", "run_key", "run_rings_png", "run_spectra_png",
            "run_views", "search_png", "setup_history", "source_words", "to_run_html", "unit_words",
            "with_lifetime_rows", "wu_marked"]

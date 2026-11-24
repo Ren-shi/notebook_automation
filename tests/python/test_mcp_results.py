@@ -112,15 +112,22 @@ def test_the_nuclei_and_the_comparison_through_the_tools(tools):
     routes = {r["route"]: r for r in c["routes"]}
     assert routes["Coulex from the yield (first order)"] == {  # a simulated run, nothing measured
         "route": "Coulex from the yield (first order)", "experiment": "Coulomb excitation", "status": "projected",
-        "independent": 0, "projected": 1, "own": 1, "note": "the γ-ray yield per scattered particle, first order"}
+        "independent": 0, "projected": 1, "own": 1, "note": "the γ-ray yield per scattered particle, first order",
+        "applies": "yes", "reason": "62Ni (3.63 % of natural Ni) can be the target or the beam"}
     fit = routes["Coulex fitted to all orders"]  # a published value: done, and still open to plan oneself
     assert [fit[k] for k in ("status", "independent", "projected", "own", "open")] == ["done", 1, 0, 0, True]
     assert routes["RDDS (decay curve, DDCM)"] == {
         "route": "RDDS (decay curve, DDCM)", "experiment": "Lifetimes (RDDS, DSAM)", "status": "in physim",
-        "open": True, "note": "through τ, the γ-ray energy, the branching and the conversion"}
+        "open": True, "note": "through τ, the γ-ray energy, the branching and the conversion",
+        "applies": "not tested", "reason": "no τ of the level 2+₁ is entered (take the evaluation or add a data "
+                                           "point): whether it is in the range of a plunger or of DSAM is not tested"}
     gives = {g["gives"]: g for g in c["reference_gives"]}
     assert gives["B(E2)↓ in W.u."]["value"] == "12.13 ± 0.18 W.u.↓" and gives["tau"] == {
         "gives": "tau", "missing": "no γ ray known"}
+    rotor, theory = c["checks"]
+    assert rotor["rows"] and "No Q_s(2⁺₁) is entered" in rotor["says"] and rotor["how_to_read_it"]
+    assert theory["says"].startswith("0.46 = 408 e²fm⁴ ↑") and len(theory["rows"]) == 2
+    assert all(u["text"] and u["reference"] for u in c["used_for"])
     empty = tools.compare_results("62Ni", "tau", "2+1")
     assert "note" in empty and "independent" not in empty and empty["routes"]
     assert not (tools.home.parent / "elsewhere").exists()

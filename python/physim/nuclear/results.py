@@ -53,7 +53,11 @@ from . import ensdf, observables, runs
 from .levels import LevelScheme
 from .names import SYMBOLS, parse_nuclide
 
-#: The methods a value can come from, with their labels. The last four are for values from the literature only.
+#: The methods a value can come from, with their labels. Those of :data:`LITERATURE_ONLY` are for values from the
+#: literature (or one's own data points): physim has no analysis that produces them. "inelastic-scattering" and
+#: "transfer" are kinds of experiment physim does not have yet and "moment" is a measurement of a static moment;
+#: each has a name of its own so that a published value by it counts for its route, which "other" (no one method)
+#: cannot.
 METHODS = {
     "coulex-yield": "Coulex from the yield (first order)",
     "coulex-fit": "Coulex fitted to all orders",
@@ -65,9 +69,13 @@ METHODS = {
     "nrf": "NRF",
     "inelastic-neutron": "(n,n′γ)",
     "electron-scattering": "Electron scattering",
+    "inelastic-scattering": "Inelastic scattering",
+    "transfer": "Transfer reaction",
+    "moment": "Moment measurement",
     "other": "Other",
 }
-LITERATURE_ONLY = ("nrf", "inelastic-neutron", "electron-scattering", "other")
+LITERATURE_ONLY = ("nrf", "inelastic-neutron", "electron-scattering", "inelastic-scattering", "transfer", "moment",
+                   "other")
 
 #: The kinds of evidence, with their labels, in the two groups: independent of physim's simulation, and projected.
 EVIDENCE = {"measured": "Measured", "evaluated": "Evaluated", "theory": "Theory",
