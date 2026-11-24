@@ -259,6 +259,63 @@ def test_two_step_excitation_reaches_a_level_first_order_cannot():
     assert state.population(1) > state.direct[1] * 0.99     # feeding from the 4⁺ adds to the 2⁺
 
 
+@pytest.mark.parametrize("order", ["all", "first"])
+def test_the_cross_sections_hold_every_level_the_collision_populates(order):
+    """⁶²Ni on ¹⁹⁴Pt with the example's scheme: the 0⁺₂, the 4⁺₁ and the 0⁺₃ are reached in two steps."""
+    exp = Experiment.example("coulex_ni62_pt194")
+    kind = CoupledChannels if order == "all" else Excitation
+    cc = kind("62Ni", "194Pt", "237 MeV", exp.levels["beam"], excite="projectile")
+    step = 10.0
+    cs = cc.cross_sections(step)
+    levels = cc.scheme.levels
+    assert [levels[n].label for n in range(1, 6)] == ["2+", "0+", "2+", "4+", "0+"]
+    assert sorted(cs["direct"]) == ([1, 2, 3, 4, 5] if order == "all" else [1, 3])
+    # Each is its population times the elastic Rutherford cross section times v_i/v_f, with its own v_f.
+    grid, states = cc.table(step)
+    cx = cc.paths[1][0][2]
+    ring = 2 * math.pi * np.sin(np.radians(grid)) * math.radians(step) * cx.elastic_rutherford_cm(grid)
+    for n, sigma in cs["direct"].items():
+        own = math.sqrt(cx.e_cm / (cx.e_cm - 1e-3 * levels[n].energy.value))
+        assert sigma == pytest.approx(own * np.sum(ring * [s.direct[n] for s in states]), rel=1e-12), n
+    # Nothing is left out: the collisions that excite the nucleus, with 1 < v_i/v_f < 1.01 …
+    elastic = np.sum(ring * [sum(s.direct.values()) for s in states])
+    assert elastic < sum(cs["direct"].values()) < 1.01 * elastic
+    if order == "all":  # … which the amplitudes of the ground state give as well
+        back = grid >= 60.0
+        lost = [1 - cc.probability(0, float(t)) for t in grid[back]]
+        assert lost == pytest.approx([sum(s.direct.values()) for s, b in zip(states, back) if b], rel=1e-6)
+    # Fed and direct: every excitation ends in the ground state, and each level hands on what it got.
+    assert cs["populated"][0] == pytest.approx(sum(cs["direct"].values()), rel=1e-9)
+    for n in range(1, len(levels)):
+        fed = sum(cc.decay(i, f).branch * cs["populated"].get(i, 0.0) for i, f in cc.transitions() if f == n)
+        assert cs["populated"].get(n, 0.0) == pytest.approx(cs["direct"].get(n, 0.0) + fed, rel=1e-12), n
+    for (i, f), sigma in cs["gamma"].items():
+        assert sigma == pytest.approx(cs["populated"].get(i, 0.0) * cc.decay(i, f).gamma, rel=1e-12)
+        assert sigma > 0 or order == "first" or cc.decay(i, f).gamma == 0
+    # The same as the populations with feeding of the solution itself, between the elastic cross section and 1 % above.
+    for n, sigma in cs["populated"].items():
+        if n:
+            plain = np.sum(ring * [s.population(n) for s in states])
+            assert plain < sigma < 1.01 * plain, n
+
+
+def test_the_levels_of_the_yields_share_the_reference_levels_rutherford_factor(monkeypatch):
+    """Multistep.yields, as documented: one v_i/v_f for all levels (a level's own is in cross_sections)."""
+    exp = Experiment.example("coulex_ni62_pt194")
+    ms = Multistep(exp, exp.levels["beam"], "beam", angle_step=10, energies=1)
+    e = float(ms._energies()[0][0])
+    cc = ms.solver(e)
+    assert cc.reference == 1
+    factor = cc.cx.rutherford_factor
+    assert 1.003 < factor < 1.004
+    y = ms.yields()
+    monkeypatch.setattr(Coulex, "rutherford_cm", Coulex.elastic_rutherford_cm)
+    bare = ms.yields()
+    for d, per_level in y.levels.items():
+        for n in (1, 2, 3, 4):
+            assert per_level[n] / bare.levels[d][n] == pytest.approx(factor, rel=1e-9), (d, n)
+
+
 def test_a_25_level_case_is_fast_enough():
     cc = CoupledChannels("16O", "194Pt", "60 MeV", band(25), tolerance=1e-4)
     assert len(cc.basis) == 265
@@ -272,14 +329,14 @@ def test_a_25_level_case_is_fast_enough():
 
 
 def test_first_order_yields_of_the_experiment_match_the_analytic_rates():
-    """The same first-order excitation, integrated over the detectors the Multistep way, against Rates: equal
-    but for the Rutherford factor (symmetrised orbit here, elastic there, 6% at this energy)."""
+    """The same first-order excitation, integrated over the detectors the Multistep way, against Rates: equal (both
+    take v_i/v_f of the one excited level) but for the coarse grids here, 1.4 % in the strip detectors."""
     exp = Experiment.example("coulex_ni58")
     y = Multistep(exp, two_levels(math.sqrt(695.0)), "target", angle_step=6, energies=2, first_order=True).yields()
     r = Rates(exp)
     for d in y.detectors:
         ratio = y.detectors[d][(1, 0)] / r.rate(d, what="excitations", counted=False)
-        assert 1.0 < ratio < 1.12, (d, ratio)
+        assert ratio == pytest.approx(1.0, abs=0.02), (d, ratio)
     assert set(y.rings["CD"]) == set(range(exp.detectors[0].rings))
     assert sum(y.rings["CD"][k][(1, 0)] for k in y.rings["CD"]) == pytest.approx(y.detectors["CD"][(1, 0)])
 

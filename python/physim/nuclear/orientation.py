@@ -435,20 +435,27 @@ class Excitation:
         direct = {n: (1 - f) * v + f * hi.direct[n] for n, v in lo.direct.items()}
         return Populated(self, float(theta_cm), direct, tensors, self.isotropic)
 
+    def _rutherford(self, theta_cm) -> dict:
+        """{level: Rutherford factor (mb/sr) at CM angles ``theta_cm``, with the level's own v_f} of every level the
+        collision can leave the nucleus in: in first order, those a matrix element joins to the ground state."""
+        return {n: np.asarray(paths[0][2].rutherford_cm(theta_cm)) for n, paths in self.paths.items()}
+
     def cross_sections(self, step: float = 2.0) -> dict:
         """Cross sections integrated over all scattering angles, mb: {"direct": {level: σ}, "populated":
-        {level: σ with feeding}, "gamma": {(initial, final): σ of the γ ray}}.
+        {level: σ with feeding}, "gamma": {(initial, final): σ of the γ ray}}. "direct" holds every excited level
+        that the collision itself populates (:attr:`Populated.direct`): in first order those a matrix element joins
+        to the ground state, to all orders those reached in several steps too.
 
-        Each level's excitation probability is multiplied by the Rutherford factor of its own orbit (Alder and
-        Winther's, :meth:`physim.nuclear.coulex.Coulex.rutherford_cm`: the elastic one times v_i/v_f) and integrated on the grid of :meth:`table`; the decay then shares the cross sections out."""
+        Each level's probability is multiplied by the Rutherford factor with the level's own v_f (Alder and
+        Winther's, :meth:`physim.nuclear.coulex.Coulex.rutherford_cm`: the elastic one times v_i/v_f) and integrated
+        on the grid of :meth:`table`; the decay then shares the cross sections out."""
         grid, states = self.table(step)
         th = np.radians(grid)
         direct = {}
-        for n, paths in self.paths.items():
-            cx = paths[0][2]
+        for n, ruth in self._rutherford(grid).items():
             p = np.array([s.direct.get(n, 0.0) for s in states])
-            direct[n] = float(2 * math.pi * np.sum(p * np.asarray(cx.rutherford_cm(grid)) * np.sin(th))
-                              * math.radians(step))
+            if p.any():
+                direct[n] = float(2 * math.pi * np.sum(p * ruth * np.sin(th)) * math.radians(step))
         levels = self.scheme.levels
         populated = dict(direct)
         for n in sorted(set(populated) | {d.initial for d in self._decays.values()},

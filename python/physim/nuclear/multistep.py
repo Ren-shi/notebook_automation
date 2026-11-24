@@ -14,7 +14,8 @@ measured yields, and a GOSIA input file for the setup.
 
 The excitation probabilities come from :class:`~physim.nuclear.coupled.CoupledChannels` on a grid of CM angles
 (``angle_step``) at a few beam energies through the target (``energies``, Gauss–Legendre), interpolated to each
-quadrature direction of each detector segment, weighted by the Rutherford cross section of the orbit, and the
+quadrature direction of each detector segment, weighted by the Rutherford factor of the reference level (the elastic
+cross section times v_i/v_f, in that level's kinematics, for every level, as GOSIA does with its NCM level), and the
 decay of :mod:`physim.nuclear.orientation` shares the populations out into γ rays.
 
 GOSIA itself is not here: :meth:`Multistep.gosia_input` writes an input (checked against runs of GOSIA 20110524)
@@ -100,7 +101,9 @@ class Multistep:
         return CoupledChannels(self.beam, self.target, energy, scheme, excite=self.excite, tolerance=self.tolerance)
 
     def yields(self, scheme: Optional[LevelScheme] = None) -> Yields:
-        """γ rays per second of every transition in every particle detector and ring."""
+        """γ rays per second of every transition in every particle detector and ring. Every level has the kinematics
+        and the Rutherford factor (v_i/v_f) of the reference level, the first that a matrix element joins to the
+        ground state."""
         scheme = scheme or self.scheme
         exp = self.experiment
         energies, weights = self._energies()

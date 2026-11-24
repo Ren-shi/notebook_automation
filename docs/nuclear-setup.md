@@ -628,6 +628,7 @@ from physim.nuclear.coupled import CoupledChannels
 cc = CoupledChannels("16O", "194Pt", "60 MeV", scheme, excite="target")
 cc.probabilities(150.0)           # every level, summing to one
 cc.at(150.0).gamma_yield(1, 0)    # with the decay through the scheme
+cc.cross_sections()               # mb, over all angles: every populated level, in one step or several; each γ ray
 ```
 
 - **The orbit** of each pair of levels is the one symmetrised between their two speeds, as in first order and in
@@ -650,8 +651,9 @@ ms.gosia_input()                    # a GOSIA input that integrates the same yie
 ```
 
 - The probabilities are solved on a grid of CM angles at a few beam energies through the target and interpolated
-  to every quadrature direction of every segment, weighted by the Rutherford cross section of the symmetrised
-  orbit (the analytic rates use the elastic one, 6% apart at the ⁵⁸Ni example's energy).
+  to every quadrature direction of every segment, weighted by the Rutherford factor of the reference level (the
+  first that a matrix element joins to the ground state) for every level, as GOSIA does with its NCM level; the
+  analytic rates take that of the `[reaction]` state ({doc}`theory/coulex`).
 - **Prolate or oblate:** the same experiment with the 2⁺ state's quadrupole moment at the rigid-rotor value,
   at zero and at its opposite; the yields per ring are compared with the counting uncertainties of the run.
 - **The fit** adjusts up to three matrix elements by Gauss–Newton least squares to measured counts; its
