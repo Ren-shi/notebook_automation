@@ -55,6 +55,7 @@ def test_the_short_comparison_with_a_reference(tmp_path):
     results.add_point(_row(890.0, "coulex-fit", "measured", results.reference("A. Author", 2014), total=30.0))
     short, said = _lines(p)
     assert short["title"] == "B(E2; 0⁺₁ → 2⁺₁)↑ of ⁶²Ni"
+    assert said["Projected"].startswith("919 ± 13 (stat) ± 64 (sys) e²fm⁴ ↑, from a simulated run")
     assert "simulated and analysed back" in said["Projected"] and "not a measurement of ⁶²Ni" in said["Projected"]
     assert said["Reference"].startswith("884 ± 13 e²fm⁴ ↑, evaluated (ENSDF")
     # Closed against what the simulation was given, and set beside how well the value is known: no pull.
@@ -136,7 +137,7 @@ def test_the_kept_lifetime_analysis_is_shown_after_reopening(monkeypatch):
     result_rows.write_lifetimes(p, ANALYSIS)
     p = Planner.open_experiment(folder)
     status = {s["key"]: s for s in wb.steps(p)}["analysis"]
-    assert (status["status"], status["state"]) == ("τ(2+) 7.6 ± 0.31 ps", "done")
+    assert (status["status"], status["state"]) == ("τ(2⁺ (652 keV)) 7.6 ± 0.31 ps", "done")
     # A run taken since, at a distance, is not in it; a run without a distance is not a plunger's.
     runs = [{"label": "01-beam-1h", "kind": "beam", "distance_um": 3.0}, {"label": "02", "kind": "beam"},
             {"label": "03", "kind": "beam", "distance_um": 9.0}]
@@ -160,7 +161,8 @@ def test_the_kept_lifetime_analysis_is_shown_after_reopening(monkeypatch):
             texts = " | ".join(str(e.text) for e in user.find(kind=ui.label).elements)
             links = [(str(e.text), e.props["href"]) for e in user.find(kind=ui.link).elements]
             for part in ("7.6 ± 0.31 ps", "τ(2⁺ (652 keV)) of ⁹⁸Ru", "B(E2; 0⁺ → 2⁺ (652 keV))↑ of ⁹⁸Ru",
-                         "PROJECTED", "the value the simulation was given (8.4 ps)"):
+                         "PROJECTED", "(given as 610 ± 30 e²fm⁴ ↓), from a simulated run",
+                         "the analysis of 2⁺ (652 keV) by", "the value the simulation was given (8.4 ps)"):
                 assert part in texts, part
             # The step's own table keeps only what the comparison above does not say.
             table = [r["s"] for t in user.find(kind=ui.table).elements for r in t.rows if set(r) == {"s", "t", "b"}]

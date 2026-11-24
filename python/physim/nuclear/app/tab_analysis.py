@@ -109,8 +109,8 @@ def short_comparison(view: dict, mine=None, missing: str = "") -> dict:
     stand alone.
 
     Returns {"title" (what the result is a value of, and of which nucleus), "lines": [(label, text)], "link":
-    {"text", "href"} (the nucleus's page at this observable)}. The lines: "Projected" (plainly that the result
-    comes from a simulated run), "Reference" (the value compared against, with its source), "Closure", "Reach"
+    {"text", "href"} (the nucleus's page at this observable)}. The lines: "Projected" (the result in
+    the comparison's convention, and plainly that it comes from a simulated run), "Reference" (the value compared against, with its source), "Closure", "Reach"
     ("this setup reaches ±x %; the value is known to ±y %; the best single measurement to ±z %") and "Other
     routes" (how many hold a value, how many are still open). The words of the closure and the reach are the
     report's (:mod:`physim.nuclear.logbook`).
@@ -124,8 +124,9 @@ def short_comparison(view: dict, mine=None, missing: str = "") -> dict:
     lines = []
     if mine is not None:
         several = len(mine.row.origin.get("runs") or []) > 1
-        lines.append(("Projected", ("From simulated runs: the runs were" if several else
-                                    "From a simulated run: the run was")
+        given = f" (given as {logbook.row_value(mine.row, direction=True)})" if mine.converted else ""
+        lines.append(("Projected", f"{logbook.row_value(mine.row, canonical=True, direction=True)}{given}, from "
+                      + ("simulated runs: the runs were" if several else "a simulated run: the run was")
                       + f" simulated and analysed back, so this is the precision the setup would reach, not a "
                         f"measurement of {nuclide}."))
     elif missing:

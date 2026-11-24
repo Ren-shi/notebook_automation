@@ -715,7 +715,7 @@ def analysis_panel(ctx) -> None:
             ui.icon("history").classes("ps-muted")
             ui.label("Kept from an earlier session"
                      + (f" ({res['kept']})" if res["kept"] != "earlier" else "")
-                     + f": the analysis of {res.get('level') or 'the studied level'}"
+                     + f": the analysis of {wb.analysed_level(res)}"
                      + (f" by {ANALYSES.get(res.get('method'), res.get('method'))}" if res.get("method") else "")
                      + (f", of {n} run{'s' * (n != 1)}" if n else "")
                      + ". It is shown as it was left, and was not run again.").classes("text-sm")
@@ -805,7 +805,7 @@ def render_analysis(ctx, res: dict) -> None:
         if value is not None:
             b_text = f"{_fmt(value)}" + (f" ± {_fmt(unc, 2)}" if unc else "") + f" {res.get('b_unit') or ''}"
     _readouts(ui, [
-        ("τ", _tau(res.get("tau_ps"), res.get("stat_ps")), f"{res.get('level') or ''}, "
+        ("τ", _tau(res.get("tau_ps"), res.get("stat_ps")), f"{wb.analysed_level(res)}, "
          f"{ANALYSES.get(res.get('method'), res.get('method') or '')}; statistical", ""),
         ("Total uncertainty", _tau(total, like=res.get("tau_ps")) if total is not None else "—",
          "all of the budget in quadrature", ""),

@@ -407,6 +407,22 @@ def kept_lifetimes(planner) -> Optional[dict]:
     return out
 
 
+def analysed_level(analysis: dict) -> str:
+    """The level a lifetime analysis is of, as the report writes it ("2⁺₁"); the level scheme's own label for an
+    analysis that does not say which line it read."""
+    from . import results
+    from .logbook import level_words
+
+    line = analysis.get("transition")
+    if line:
+        try:
+            x = line["initial"]
+            return level_words(results.level_key(line["nuclide"], x["energy_kev"], x.get("spin"), x.get("parity")))
+        except (KeyError, TypeError, ValueError):
+            pass
+    return str(analysis.get("level") or "the studied level")
+
+
 def runs_not_read(planner, analysis: dict, runs: Optional[list] = None) -> list:
     """The names of this setup's runs that a kept lifetime analysis did not read, because they were taken after
     it (``runs``: :meth:`Planner.runs`, listed if not given). A plunger analysis reads the runs at a distance, a
@@ -1084,7 +1100,7 @@ def steps(planner) -> list:
     gap = not_analysed(p.experiment)
     if kept is not None:  # a lifetime experiment's result is τ, as a Coulex one's is B(E2)
         later = len(_try(lambda: runs_not_read(p, kept, runs), []))
-        analysis = f"τ({kept.get('level') or '?'}) {_tau_pm(kept['tau_ps'], kept.get('stat_ps'))}" + (
+        analysis = f"τ({analysed_level(kept)}) {_tau_pm(kept['tau_ps'], kept.get('stat_ps'))}" + (
             f" · {later} run{'s' * (later != 1)} since" if later else "")
         analysis_state = "ready" if later else "done"
     elif lifetime is not None and not (result is not None and getattr(result, "b_e2fm4", None) is not None):
