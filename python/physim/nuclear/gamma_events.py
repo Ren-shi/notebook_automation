@@ -610,7 +610,7 @@ class _Emitter:
     #: Seeds of the emission, the lifetimes and the add-back.
     seeds: tuple
     #: The :class:`~physim.nuclear.gamma.DepthOrientation` through a target the generator cuts into slices: each
-    #: event then has the emitter's kinematics (and, for the one state, its orientation) of its own beam energy.
+    #: event then has the emitter's kinematics and the orientation the collision leaves of its own beam energy.
     #: None: those of the middle of the target.
     depth: object = None
 
@@ -957,13 +957,14 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
         origin[:, 2] = -origin[:, 0] * math.tan(tilt)
 
     # -- emission with the correlation, and which crystal ---------------------------------------------------------
-    # Each transition with its own orientation (with the feeding from above), at the event's CM angle.
+    # Each transition with its own orientation (with the feeding from above), at the event's CM angle (and, through
+    # a target in slices, its beam energy).
     pairs = [(1, 0)] if cex is None else sorted(set(zip(initial.tolist(), final.tolist())))
     flip = not excite_recoil
     if cex is not None and not cex.isotropic:
         # The γ rays of one cascade share their directions (the correlation between successive γ rays): each is
         # drawn from the state the γ rays before it left, and only the last of a cascade is aimed.
-        known, deferred = _correlated(cex, exc_theta, taken, first, rng, aimed, g_k)
+        known, deferred = _correlated(cex, exc_theta, taken, first, rng, aimed, g_k, em.depth, e_beam)
         last = np.flatnonzero(np.isnan(known[:, 0]))
         drawn = np.flatnonzero(~np.isnan(known[:, 0]))
         which_d, reached_d, lab_d = _from_rest(known[drawn], theta_cm[drawn], phi_ej[drawn], velocity[drawn],
@@ -1123,8 +1124,10 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
 
     **Through a thick target** (one the event generator cuts into slices, since the excitation probability changes
     through it) the undetected emitter of each event has the two-body kinematics of the event's own beam energy,
-    and the γ rays of a single state its orientation there. A target of one slice has those of its middle, and so do
-    the other nucleus, the orientation in a level scheme and lifetime measurements.
+    and its γ rays the orientation the collision leaves at that energy: that of the single state, or of the level of
+    the scheme that the excitation starts in, which goes down its cascade. Which level of a scheme that is, is drawn
+    from the populations in the middle of the target, with the decays' branches from there on. A target of one slice
+    has the kinematics and the orientation of its middle, and so do the other nucleus and lifetime measurements.
 
     Only the γ rays that reach a crystal are drawn (a thinning that leaves their number and their directions
     as their distribution has them, at a small part of the work); ``aimed=False`` draws every direction over
@@ -1753,16 +1756,21 @@ def angular_allowed(ji: float, jf: float, lam: int) -> bool:
 
 
 def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng, aimed: bool,
-                g_k: Optional[dict] = None) -> tuple:
+                g_k: Optional[dict] = None, depth=None, energy: Optional[np.ndarray] = None) -> tuple:
     """The directions of the γ rays of each cascade, with the correlation between them (backlog item 71): each
-    excitation starts in the density matrix the collision leaves its first level in, at its CM angle; each γ ray
-    is drawn from the current state and leaves the next level oriented by its direction
+    excitation starts in the density matrix the collision leaves its first level in, at its CM angle (with ``depth``, a
+    :class:`~physim.nuclear.gamma.DepthOrientation`, also at its beam ``energy`` in MeV; else that of ``cex``); each
+    γ ray is drawn from the current state and leaves the next level oriented by its direction
     (:class:`~physim.nuclear.correlation.Emission`); a converted transition feeds as an unobserved one.
 
     Returns (directions in the orbit's frame, one row per γ ray in the order of :func:`_cascade_steps`, NaN for
     the last γ ray of each cascade when ``aimed``; and for those, [(their γ-ray indices, emission, density
     matrices)] to aim them with)."""
     from .correlation import unobserved
+
+    def started(lev: int, excitations: np.ndarray) -> "_Lazy":
+        """The states the collision leaves the level ``lev`` of the ``excitations`` in."""
+        return _Lazy(cex, lev, theta_cm[excitations], depth, None if depth is None else energy[excitations])
 
     def deoriented(rho, gammas: np.ndarray):
         """The emitting states of the γ rays ``gammas`` with deorientation (G_k at each one's time in vacuum); the
@@ -1795,14 +1803,14 @@ def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng,
         for (lev, f_lev) in sorted(set(zip(ini[alone].tolist(), fin[alone].tolist()))):
             k = np.flatnonzero(alone & (ini == lev) & (fin == f_lev))
             deferred.append((gamma_of[k], _emission_of(cex, lev, f_lev),
-                             deoriented(_Lazy(cex.density_table(lev), theta_cm[src[k]]), gamma_of[k])))
+                             deoriented(started(lev, src[k]), gamma_of[k])))
     # The state of every other excitation still decaying: {level: (excitations, ascending; density matrices)}.
     state = {}
     need = np.zeros(len(first), dtype=bool)
     need[src[(rank == 0) & ~(alone if aimed else np.zeros(len(src), dtype=bool))]] = True
     for lev in np.unique(first):
         exc = np.flatnonzero((first == lev) & need)
-        state[int(lev)] = (exc, _interp_density(cex.density_table(int(lev)), theta_cm[exc]))
+        state[int(lev)] = (exc, started(int(lev), exc)[:])
 
     def commit(nxt: dict) -> None:
         """Excitations whose cascade has ended leave the state; the rest move to the level they reached."""
@@ -1873,17 +1881,20 @@ def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng,
 
 
 class _Lazy:
-    """Density matrices of a :meth:`~physim.nuclear.orientation.Excitation.density_table` at CM angles, worked
+    """Density matrices that the collision leaves a ``level`` in at CM angles, those of the solution ``cex`` or with
+    ``depth`` (a :class:`~physim.nuclear.gamma.DepthOrientation`) those at each one's beam ``energy`` (MeV), worked
     out only for the rows asked for (``lazy[rows]``)."""
 
-    def __init__(self, table: tuple, theta_cm: np.ndarray):
-        self.table, self.theta_cm = table, theta_cm
+    def __init__(self, cex, level: int, theta_cm: np.ndarray, depth=None, energy: Optional[np.ndarray] = None):
+        self.cex, self.level, self.theta_cm, self.depth, self.energy = cex, level, theta_cm, depth, energy
 
     def __len__(self) -> int:
         return len(self.theta_cm)
 
     def __getitem__(self, rows) -> np.ndarray:
-        return _interp_density(self.table, self.theta_cm[rows])
+        if self.depth is not None:
+            return self.depth.density(self.level, self.theta_cm[rows], self.energy[rows])
+        return _interp_density(self.cex.density_table(self.level), self.theta_cm[rows])
 
 
 def _deferred_weights(deferred: list, last: np.ndarray, n: int) -> tuple:
