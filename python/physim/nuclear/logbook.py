@@ -29,7 +29,6 @@ import base64
 import html
 import io
 import math
-import os
 import re
 import zipfile
 from pathlib import Path
@@ -121,12 +120,23 @@ def run_explanations(planner, run=None, detector: Optional[str] = None) -> list:
             "simulation's knowledge of the reaction.", DOCS + "planner-app.html",
             {"n": passed, "total": total}, lambda n, total: n / total if total else 0.0))
     for r in planner.compare(run)["rows"]:
-        if r["measured"] is None or not r["uncertainty"] or r["predicted"] is None or r["agree"] is None:
-            continue  # not measured, or shown side by side and not compared (a line under a trigger)
+        if r["measured"] is None or not r["uncertainty"] or r["predicted"] is None:
+            continue
+        name = f"compare_{r['quantity']}_{r['what']}".replace(" ", "_")
+        if r["agree"] is None:  # shown side by side and not compared (a line under a trigger): no pull
+            out.append(Explanation(
+                name, f"{r['quantity']}, {r['what']}: measured beside predicted", r["measured"], r["unit"],
+                "the run's number beside the Plan's: the two are not compared",
+                f"measured {plus_minus(r['measured'], r['uncertainty'])}; predicted {number(r['predicted'])}",
+                "What the run counted, beside what the Plan gives for the same line. The two are not the same "
+                "quantity (the table of predicted against measured says what differs), so no difference in "
+                "standard deviations is given.", "The prediction is the Plan's at the moment the run was started.",
+                DOCS + "physics-register/rates-and-events.html", {"m": r["measured"]}, lambda m: m))
+            continue
         pull = (r["measured"] - r["predicted"]) / r["uncertainty"]
         out.append(Explanation(
-            f"compare_{r['quantity']}_{r['what']}".replace(" ", "_"), f"{r['quantity']}, {r['what']}: measured "
-            "against predicted", pull, "σ", "z = (measured − predicted) / σ_measured",
+            name, f"{r['quantity']}, {r['what']}: measured against predicted", pull, "σ",
+            "z = (measured − predicted) / σ_measured",
             f"z = ({number(r['measured'])} − {number(r['predicted'])}) / {number(r['uncertainty'])} = {pull:+.2f}",
             "How far the run is from the Plan's prediction, in standard deviations of the run's counting statistics; "
             "within ±3 they agree. The Plan's own accuracy is not in σ, so with many counts a difference of a percent "
@@ -914,21 +924,25 @@ def _lines_html(result, e) -> str:
     return "".join(parts)
 
 
-def analysis_html(result, heading: str = "", up_over_down: float = 5.0) -> str:
+def analysis_html(result, heading: str = "", key=None) -> str:
     """One analysis in full for the reports: the result, the fitted spectrum, the chain step by step, the
-    uncertainty budget, the shape, and the notes. ``up_over_down`` is B(E2)↑ / B(E2)↓ of the transition (5 for
-    the 0⁺ → 2⁺ the ``[reaction]`` assumes): Weisskopf units are given for the decay, B(E2)↓."""
+    uncertainty budget, the shape, and the notes. ``key`` is the transition's key (:func:`run_key`): Weisskopf
+    units are given for the decay, B(E2)↓, and only where the key holds the spins of both levels
+    (:func:`decay_of`); without them the excitation's value stands in e²fm⁴ alone."""
     def e(text) -> str:
         return html.escape(str(text), quote=False)
 
     parts = [heading]
     if result.b_e2fm4 == result.b_e2fm4:
-        down, wu_down = result.b_e2fm4 / up_over_down, result.b_wu / up_over_down
+        decay = decay_of(result.b_e2fm4, key)
         parts.append(f"<p>B(E2↑) = {number(result.b_e2fm4)} e²fm⁴ ± {100 * result.total_unc:.1f}% "
                      f"(statistical {100 * result.statistical:.1f}%, systematic {100 * result.systematic:.1f}%), "
-                     f"from {e(result.statistics_from)}; that is {number(result.b_e2b2)} e²b² ↑. For the decay, "
-                     f"B(E2↓) = B(E2↑) / {number(up_over_down)} = {number(down)} e²fm⁴ = {number(wu_down, 3)} "
-                     f"Weisskopf units (↓). The value the simulation was given is {number(result.truth_e2fm4)} "
+                     f"from {e(result.statistics_from)}; that is {number(result.b_e2b2)} e²b² ↑. "
+                     + (f"For the decay, B(E2↓) = B(E2↑) / {number(decay[2])} = {number(decay[0])} e²fm⁴ = "
+                        f"{number(decay[1], 3)} Weisskopf units (↓). " if decay is not None else
+                        "Weisskopf units are quoted for the decay, B(E2↓), which needs the spins of the two "
+                        "levels: they are not known for this transition, so only the ↑ value is given. ")
+                     + f"The value the simulation was given is {number(result.truth_e2fm4)} "
                      f"e²fm⁴ ↑: the analysis closes on it at {result.pull:+.2f}σ. This is a simulated run "
                      "analysed back, so the closure checks the analysis, not the nucleus.</p>")
     else:
@@ -965,7 +979,9 @@ def analysis_html(result, heading: str = "", up_over_down: float = 5.0) -> str:
                          f"{100 * result.whole_run_statistical:.1f}%.</p>")
         sh = result.shape or {}
         if sh:
-            rows = [("β₂", f"{sh['beta2']:.3f}"), ("B(E2↓)", f"{number(result.b_wu / up_over_down, 3)} W.u. ↓"),
+            rows = [("β₂", f"{sh['beta2']:.3f}"),
+                    ("B(E2↓)", f"{number(decay[1], 3)} W.u. ↓") if decay is not None else
+                    ("B(E2↑)", f"{number(result.b_e2fm4)} e²fm⁴"),
                     ("Q₀ of a rigid rotor", f"{sh['q0_efm2']:.3g} e fm²"),
                     ("Q_s(2⁺) of that rotor", f"{sh['qs_2plus_efm2']:.3g} e fm²")]
             if "e4_over_e2" in sh:
@@ -1288,13 +1304,24 @@ def _plan_report(planner, events: int, seed: int, journal: str, width: str, vali
 _SUPERSCRIPT = str.maketrans("0123456789+-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻")
 _SUBSCRIPT = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 
-#: The units of the ledger's rows as the report prints them.
-UNIT_WORDS = {"e2fm4": "e²fm⁴", "e2b2": "e²b²", "efm2": "e fm²", "eb": "e b"}
+#: The units of the ledger's rows, of the B(Eλ) values and of the matrix elements, as the report prints them.
+UNIT_WORDS = {"e2fm2": "e²fm²", "e2fm4": "e²fm⁴", "e2fm6": "e²fm⁶", "e2b": "e²b", "e2b2": "e²b²", "e2b3": "e²b³",
+              "efm": "e fm", "efm2": "e fm²", "efm3": "e fm³", "eb": "e b"}
+
+#: What stands for an uncertainty that cannot be shown as a number: NaN, infinite or negative.
+NOT_AVAILABLE = "n/a"
 
 
 def unit_words(unit: str) -> str:
     """A unit of the ledger as the report prints it ("e2fm4" → "e²fm⁴")."""
     return UNIT_WORDS.get(unit, unit)
+
+
+def _rounded(x: float, digits: int) -> tuple:
+    """(mantissa, exponent of ten) of ``x`` rounded to ``digits`` significant figures: 9.99996e12 at four figures
+    is (1.0, 13), not (10.0, 12)."""
+    mantissa, exponent = f"{x:.{max(digits, 1) - 1}e}".split("e")
+    return float(mantissa), int(exponent)
 
 
 def number(x, digits: int = 4) -> str:
@@ -1310,52 +1337,82 @@ def number(x, digits: int = 4) -> str:
         return "—"
     if x == 0:
         return "0"
-    exponent = math.floor(math.log10(abs(x)))
+    mantissa, exponent = _rounded(x, digits)
     if -4 <= exponent < 7:
         places = digits - 1 - exponent
         text = f"{round(x, places):,.{max(places, 0)}f}"
         return text.rstrip("0").rstrip(".") if "." in text else text
-    mantissa = f"{x / 10.0 ** exponent:.{digits - 1}f}".rstrip("0").rstrip(".")
-    return f"{mantissa} × 10{str(exponent).translate(_SUPERSCRIPT)}"
+    text = f"{mantissa:.{max(digits, 1) - 1}f}"
+    text = text.rstrip("0").rstrip(".") if "." in text else text  # never the zero of "10"
+    return f"{text} × 10{str(exponent).translate(_SUPERSCRIPT)}"
 
 
 def matched(value, *uncertainties, digits: int = 2) -> tuple:
-    """A value and its uncertainties as texts with the same number of decimals: those that show the largest
-    uncertainty to ``digits`` significant figures (a much smaller one beside it is rounded to the same place),
-    and never an exponent form for ordinary sizes, so (745, 130) is ("745", "130") and not ("745", "1.3e+02").
-    An uncertainty that is missing or zero comes back as "—" or "0"; without any uncertainty the value has four
-    significant figures."""
-    def shown(u) -> bool:
-        return u is not None and math.isfinite(float(u)) and float(u) > 0
+    """A value and its uncertainties as texts with the same number of decimals, and the power of ten that
+    multiplies all of them: ``(value, *uncertainties, factor)``, where ``factor`` is "" for ordinary sizes and
+    "× 10ⁿ" for a value below 0.0001 or from ten million on. Whoever prints the texts prints the factor
+    (:func:`plus_minus`, :func:`asymmetric`, :func:`row_value` do).
 
-    sizes = [float(u) for u in uncertainties if shown(u)]
+    The decimals show the largest uncertainty to ``digits`` significant figures and keep at least one figure of
+    the smallest: an uncertainty that is not zero is never printed as 0, so (919, 0.3, 64) is ("919.0", "0.3",
+    "64.0", ""). There is no exponent form: (745, 130) is ("745", "130", ""), not "1.3e+02". An uncertainty that
+    is missing (None) comes back as "—", one that is exactly zero as "0", and one that is no number that can be
+    shown (NaN, infinite, negative) as :data:`NOT_AVAILABLE`. Without any uncertainty to show, the value has four
+    significant figures."""
+    def kind(u) -> str:
+        if u is None:
+            return "missing"
+        u = float(u)
+        if not math.isfinite(u) or u < 0:
+            return "bad"
+        return "zero" if u == 0 else "shown"
+
+    kinds = [kind(u) for u in uncertainties]
+    blank = {"missing": "—", "bad": NOT_AVAILABLE, "zero": "0"}
     if value is None or not math.isfinite(float(value)):
-        return ("—",) + tuple("—" for _ in uncertainties)
+        return ("—",) + tuple("—" for _ in uncertainties) + ("",)
+    sizes = [float(u) for u, k in zip(uncertainties, kinds) if k == "shown"]
     if not sizes:
-        return (number(value),) + tuple("—" if u is None else "0" for u in uncertainties)
+        return (number(value),) + tuple(blank[k] for k in kinds) + ("",)
     value = float(value)
-    places = digits - 1 - math.floor(math.log10(max(sizes)))
-    scale = 0
-    if value != 0 and not 1e-4 <= abs(value) < 1e7:  # a size out of the ordinary: one power of ten for all
-        scale = math.floor(math.log10(abs(value)))
-        places += scale
+
+    def exponent(x: float) -> int:
+        return math.floor(math.log10(abs(x)))
+
+    scale = exponent(value) if value != 0 and not 1e-4 <= abs(value) < 1e7 else 0
+    # Two figures of the largest uncertainty, and at least one of the smallest.
+    places = max(digits - 1 - exponent(max(sizes)), -exponent(min(sizes))) + scale
+    if scale and abs(round(value / 10.0 ** scale, max(places, 0))) >= 10:  # 9.99996 rounds up to 10: one power on
+        scale, places = scale + 1, places + 1
 
     def text(x, least: int) -> str:
-        x = float(x) / 10.0 ** scale
-        return f"{round(x, max(places, least)):,.{max(places, 0)}f}"
+        return f"{round(float(x) / 10.0 ** scale, max(places, least)):,.{max(places, 0)}f}"
 
     # An uncertainty of hundreds keeps its two figures ("130"); the value beside it is not rounded past the units.
-    return (text(value, 0),) + tuple(text(u, places) if shown(u) else ("—" if u is None else "0")
-                                     for u in uncertainties) + (
-        (f"× 10{str(scale).translate(_SUPERSCRIPT)}",) if scale else ())
+    return ((text(value, 0),) + tuple(text(u, places) if k == "shown" else blank[k]
+                                      for u, k in zip(uncertainties, kinds))
+            + (f"× 10{str(scale).translate(_SUPERSCRIPT)}" if scale else "",))
+
+
+def _scaled(body: str, factor: str) -> str:
+    """A value with its uncertainties under the power of ten that multiplies them all: "(5.0 ± 1.0) × 10⁻⁵"."""
+    return f"({body}) {factor}" if factor else body
 
 
 def plus_minus(value, *uncertainties, digits: int = 2) -> str:
-    """"919 ± 13 ± 63": a value and its uncertainties to matching decimals (:func:`matched`)."""
-    parts = matched(value, *uncertainties, digits=digits)
-    n = 1 + len(uncertainties)
-    body = " ± ".join(parts[:n]) if any(u is not None for u in uncertainties) else parts[0]
-    return f"({body}) {parts[n]}" if len(parts) > n else body
+    """"919 ± 13 ± 63": a value and its uncertainties to matching decimals (:func:`matched`), under their power
+    of ten where they have one ("(2.50 ± 0.10) × 10⁻¹²")."""
+    *parts, factor = matched(value, *uncertainties, digits=digits)
+    if not any(u is not None for u in uncertainties):
+        return parts[0]
+    return _scaled(" ± ".join(parts), factor)
+
+
+def asymmetric(value, plus, minus, digits: int = 2) -> str:
+    """"2.09 +0.12 −0.10": a value with an upper and a lower uncertainty to matching decimals, under their power
+    of ten where they have one."""
+    v, up, down, factor = matched(value, plus, minus, digits=digits)
+    return _scaled(f"{v} +{up} −{down}", factor)
 
 
 def percent(x: Optional[float]) -> str:
@@ -1417,11 +1474,10 @@ def row_value(row, canonical: bool = False, unit: bool = True, direction: bool =
         elif direction and arrow:
             tail += " " + observables.DIRECTIONS[arrow]
     if row.asymmetric:
-        v, p, m = matched(value, plus, minus)[:3]
-        return f"{v} +{p} −{m}{tail}"
+        return asymmetric(value, plus, minus) + tail
     if stat is not None and sys is not None:
-        v, s, y = matched(value, stat, sys)[:3]
-        return f"{v} ± {s} (stat) ± {y} (sys){tail}"
+        v, s, y, factor = matched(value, stat, sys)
+        return _scaled(f"{v} ± {s} (stat) ± {y} (sys)", factor) + tail
     if plus is None:
         return number(value) + tail
     return plus_minus(value, plus) + (" (stat)" if stat is not None else " (sys)" if sys is not None else "") + tail
@@ -1528,40 +1584,57 @@ def _esc(text) -> str:
     return html.escape(str(text), quote=False)
 
 
-def analysis_row(planner, summary: Optional[dict], result):
-    """The row a kept Coulomb-excitation analysis stands for, made in memory and not written: B(E2)↑ of the
-    transition the run's ``[reaction]`` names, as :func:`physim.nuclear.results.backfill` makes it. ``summary``
-    is the run's summary (None for the analysis of a simulated sample without a run). None for an analysis that
-    found no peak or a reaction the ledger has no observable for."""
+def run_key(planner, summary: Optional[dict]):
+    """The key of the transition the ``[reaction]`` of a run's own setup names (``summary`` is the run's
+    summary; None: the current setup), or None for a setup that is not a Coulomb excitation or cannot be read."""
     from .experiment import Experiment
 
-    b = result.b_e2fm4
-    if not (b == b and result.truth_e2fm4 == result.truth_e2fm4):
-        return None
     try:
         exp = Experiment.load(Path(summary["_folder"]) / "setup.toml") if summary else planner.experiment
-        if exp.excitation is None or exp.excitation.multipolarity != "E2":
-            return None
-        key = results.key_of_reaction(exp)
-        here = planner.experiment_folder.name if planner.folder is not None else planner.name
-        return results.Row(
-            key.nuclide, "B(E2)", key, b, "e2fm4", "coulex-yield", results.PROJECTED, direction=observables.UP,
-            stat=abs(b) * result.statistical, sys=abs(b) * result.systematic,
-            budget={k: abs(b) * v for k, v in (result.budget or {}).items()}, truth=result.truth_e2fm4,
-            origin=results.from_run(here, summary["label"] if summary else "the simulated sample",
-                                    dict(getattr(result, "settings", {}) or {}), written=False))
+        return results.key_of_reaction(exp)
     except (OSError, ValueError, TypeError, KeyError):
         return None
 
 
-def experiment_rows(planner, runs: Optional[list] = None, analyses: Optional[dict] = None, result=None) -> list:
+def analysis_row(planner, summary: Optional[dict], result) -> tuple:
+    """(row, why): the row a kept Coulomb-excitation analysis stands for, made in memory and not written
+    (:func:`physim.nuclear.result_rows.coulex_row`, as the planner writes it after an analysis), or None with the
+    reason no row of the results ledger can be made for it. ``summary`` is the run's summary (None for the
+    analysis of a simulated sample without a run)."""
+    from . import result_rows
+    from .experiment import Experiment
+
+    if result.b_e2fm4 != result.b_e2fm4:
+        return None, "the analysis found no peak, so there is no B(E2) to enter"
+    try:
+        exp = Experiment.load(Path(summary["_folder"]) / "setup.toml") if summary else planner.experiment
+    except (OSError, ValueError, TypeError, KeyError) as err:
+        return None, f"the setup the run was taken with could not be read ({err})"
+    if exp.excitation is None:
+        return None, "the setup the run was taken with is not a Coulomb excitation"
+    if exp.excitation.multipolarity != "E2":
+        return None, (f"the results ledger has no observable for a B({exp.excitation.multipolarity}) yet: it "
+                      "holds B(E2)")
+    if result.truth_e2fm4 != result.truth_e2fm4:
+        return None, ("the analysis kept no value that the simulation was given, and a projected row is closed "
+                      "against that value")
+    here = planner.experiment_folder.name if planner.folder is not None else planner.name
+    try:
+        return result_rows.coulex_row(result, exp, here, summary["label"] if summary else "the simulated sample"), ""
+    except (ValueError, TypeError, KeyError) as err:
+        return None, f"the row could not be made ({err})"
+
+
+def experiment_rows(planner, runs: Optional[list] = None, analyses: Optional[dict] = None, result=None,
+                    problems: Optional[dict] = None) -> list:
     """The rows this experiment has produced that hold now: those of its ledger (``results.jsonl`` in its
     folder), and a row made in memory for every kept analysis the ledger does not hold as it stands.
 
-    An experiment that has kept analyses and no rows yet is backfilled first
-    (:func:`physim.nuclear.results.backfill`: append-only, and a second call adds nothing). ``runs`` and
-    ``analyses`` are :meth:`Planner.runs` and :func:`run_analyses` if already at hand; ``result`` is the
-    analysis of a simulated sample where there is no run."""
+    Nothing is written: the planner writes a row at each analysis and backfills an old experiment when it is
+    opened; the report only reads. ``runs`` and ``analyses`` are :meth:`Planner.runs` and :func:`run_analyses`
+    if already at hand; ``result`` is the analysis of a simulated sample where there is no run. An analysis no
+    row can be made for is said in ``problems`` if a dict is given: {run number (None: the simulated sample):
+    the reason}."""
     runs = planner.runs() if runs is None else runs
     analyses = run_analyses(planner, result) if analyses is None else analyses
     rows = []
@@ -1569,40 +1642,66 @@ def experiment_rows(planner, runs: Optional[list] = None, analyses: Optional[dic
     if folder is not None:
         try:
             rows = results.of_experiment(folder)
-            if not rows and analyses:
-                results.backfill(folder)
-                rows = results.of_experiment(folder)
         except (OSError, ValueError):
-            pass
+            rows = []
     rows = results.current(rows)
     by_number = {s["number"]: s for s in runs}
-    pending = [(by_number.get(n), r) for n, r in analyses.items()]
+    pending = [(n, by_number.get(n), r) for n, r in analyses.items()]
     if not analyses and result is not None:
-        pending.append((None, result))
-    for summary, r in pending:
+        pending.append((None, None, result))
+    for n, summary, r in pending:
         label = summary["label"] if summary else None
         kept = [x for x in rows if x.observable == "B(E2)" and x.method == "coulex-yield"
                 and x.origin.get("run") == label]
         b = r.b_e2fm4
         if any(abs(x.value - b) <= 1e-6 * abs(b) for x in kept):
             continue
-        made = analysis_row(planner, summary, r)
+        made, why = analysis_row(planner, summary, r)
         if made is not None:  # the ledger's row of this run, if any, is of an earlier analysis: this one holds
             rows = [x for x in rows if x not in kept] + [made]
+        elif problems is not None:
+            problems[n] = why
     return rows
+
+
+def with_lifetime_rows(planner, analysis: Optional[dict], own: list) -> list:
+    """``own`` (:func:`experiment_rows`) with the rows of a lifetime analysis where the ledger does not hold them
+    as they stand: τ of the level and the B(E2)↓ that depends on it, made in memory and not written
+    (:func:`physim.nuclear.result_rows.lifetime_rows`, as the planner writes them after an analysis). ``analysis``
+    is the dict of :meth:`~physim.nuclear.planner.Planner.analyse_lifetimes`. ``own`` comes back as it is without
+    an analysis, or where the setup holds no τ for the level to be the value the simulation was given."""
+    from . import result_rows
+
+    if not analysis or not analysis.get("available"):
+        return own
+    here = planner.experiment_folder.name if planner.folder is not None else planner.name
+    try:
+        made = result_rows.lifetime_rows(analysis, here)
+    except (ValueError, TypeError, KeyError):
+        made = []
+    if not made:
+        return own
+    tau = made[0]
+    standing = [r for r in own if r.observable == "tau" and r.key == tau.key and r.method == tau.method]
+    if any(abs(r.value - tau.value) <= 1e-6 * abs(tau.value) for r in standing):
+        return own  # the ledger holds this analysis
+    try:
+        made += result_rows.lifetime_rows(analysis, here, depends_on=tau)
+    except (ValueError, TypeError, KeyError):
+        pass
+    old = {r.id for r in standing}
+    return [r for r in own if r.id not in old and not (old & set(r.depends_on))] + made
 
 
 def nucleus_rows(planner, nuclide: str, own: list = ()) -> list:
     """The rows of a nucleus that hold now, which the report compares: those of the experiments beside this one
-    and of the nucleus's own points (:func:`physim.nuclear.results.of_nuclide`), with this experiment's rows as
-    ``own`` has them (which may hold rows that are not written, and leaves out rows a newer analysis
-    replaced)."""
+    and of the nucleus's own points in the nuclei home (:func:`physim.nuclear.results.of_nuclide`,
+    :func:`~physim.nuclear.results.nuclei_home`), with this experiment's rows as ``own`` has them (which may
+    hold rows that are not written, and leaves out rows a newer analysis replaced)."""
     folder = planner.experiment_folder
-    root = folder.parent if folder is not None else None
-    home = os.environ.get(results.ENV) or (root.parent / "nuclei" if root is not None else None)
     name = results.nuclide_name(nuclide)
     try:
-        rows = results.of_nuclide(name, root, home)
+        rows = results.of_nuclide(name, folder.parent if folder is not None else None)
     except (OSError, ValueError):
         rows = []
     if folder is not None:  # this experiment's rows are taken from ``own``
@@ -1615,9 +1714,11 @@ def nucleus_rows(planner, nuclide: str, own: list = ()) -> list:
 
 def routes_to_run(observable: str, rows: list) -> list:
     """The routes of the registry to an observable that are experiments (:class:`physim.nuclear.observables.Route`
-    with a kind), each with whether a row that holds now came by it: [{"method", "label", "note", "kind",
-    "kind_label", "live" (whether physim has this kind of experiment today), "done" (the rows)}]. ``rows`` are
-    the nucleus's rows of this observable and this level or transition."""
+    with a kind), each with where it stands: [{"method", "label", "note", "kind", "kind_label", "live" (whether
+    physim has this kind of experiment today), "done" (the independent rows by this route that hold now),
+    "projected" (the simulated runs analysed back by it), "state"}]. The state is "done" only with an
+    independent value: a route with nothing but simulated runs is "projected", one with no row "open". ``rows``
+    are the nucleus's rows of this observable and this level or transition."""
     from .workbench import KINDS
 
     labels = {k.key: k.label for k in KINDS}
@@ -1627,10 +1728,13 @@ def routes_to_run(observable: str, rows: list) -> list:
         if route.kind is None:
             continue
         literature = route.method in results.LITERATURE_ONLY  # "other" names no one method: no row counts
+        mine = [] if literature else [r for r in now if r.method == route.method]
+        done = [r for r in mine if r.independent]
+        projected = [r for r in mine if r.evidence == results.PROJECTED]
         out.append({"method": route.method, "note": route.note, "kind": route.kind, "kind_label": labels[route.kind],
                     "label": labels[route.kind] if literature else results.METHODS[route.method],
-                    "live": bool(route.live),
-                    "done": [] if literature else [r for r in now if r.method == route.method]})
+                    "live": bool(route.live), "done": done, "projected": projected,
+                    "state": "done" if done else "projected" if projected else "open"})
     return out
 
 
@@ -1687,12 +1791,13 @@ def _known_words(p, c) -> str:
     return f"{reach}; {known}; {best}."
 
 
-def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None) -> str:
+def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None, rule: bool = True) -> str:
     """A comparison (:func:`physim.nuclear.compare.compare`) as the report prints it: the independent evidence
     against the reference with difference, pull and verdict; then, apart, the projected rows with their closure
     against the value their simulation was given and what they reach, set beside how well the value is known;
-    and the rule in one line. ``here`` is this experiment's folder name; ``mine`` the id of the row the report
-    leads with (its sentence comes first)."""
+    and the rule in one line (``rule``; a second comparison on the same page leaves it out). ``here`` is this
+    experiment's folder name; ``mine`` the id of the row the report leads with (its sentence comes first). A row
+    that was brought to the comparison's convention says what it was given as."""
     e = _esc
     unit = unit_words(c.unit)
     parts = []
@@ -1706,8 +1811,7 @@ def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None) -
                         "reference: they are listed without differences.") + "</p>")
         rows = []
         for x in c.entries:
-            value = e(plus_minus(x.value, x.plus) if x.plus == x.minus else
-                      "{} +{} −{}".format(*matched(x.value, x.plus, x.minus)[:3]))
+            value = e(plus_minus(x.value, x.plus) if x.plus == x.minus else asymmetric(x.value, x.plus, x.minus))
             given = f"<br><small>given as {e(row_value(x.row, direction=True))}</small>" if x.converted else ""
             if x.is_reference:
                 against, says = "the reference", ""
@@ -1742,7 +1846,9 @@ def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None) -
                     p.closure_verdict])
             rows.append(f"<tr><td>{e(source_words(p.row, here))}</td><td>{e(p.label)}"
                         + (f"<br><small>{e(p.detail)}</small>" if p.detail else "")
-                        + f"</td><td>{e(row_value(p.row, canonical=True, unit=False))}</td>"
+                        + f"</td><td>{e(row_value(p.row, canonical=True, unit=False))}"
+                        + (f"<br><small>given as {e(row_value(p.row, direction=True))}</small>" if p.converted
+                           else "") + "</td>"
                         f"<td>{e(number(p.truth))}</td><td>{e(closure)}</td>"
                         f"<td>{e(percent(p.reach_percent))}</td></tr>")
         parts.append("<table><thead><tr><th>Simulated run</th><th>Method</th>"
@@ -1750,7 +1856,8 @@ def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None) -
                      "<th>Reaches</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
         lead = next((p for p in c.projected if p.id == mine), c.projected[-1])
         parts.append(f"<p>{e(_known_words(lead, c))}</p>")
-    parts.append(f"<p><small>{e(RULE)}</small></p>")
+    if rule:
+        parts.append(f"<p><small>{e(RULE)}</small></p>")
     return "".join(parts)
 
 
@@ -1758,12 +1865,14 @@ def to_run_html(observable: str, rows: list, here: Optional[str] = None, unanaly
                 outside: bool = False, analyse_words: str = "") -> str:
     """The comparisons still to run for one observable of one level or transition, as three lists: the routes
     of the registry with whether physim has that kind of experiment, the runs of this experiment that are not
-    analysed (``unanalysed``: their numbers), and the independent evidence that is missing. What is done is
-    ticked, with where it came from."""
+    analysed (``unanalysed``: their numbers), and the independent evidence that is missing. A route is ticked
+    (☑) only when an independent value by it exists; one with nothing but simulated runs is marked projected
+    (◐), and one without a row is open (☐)."""
     e = _esc
 
-    def item(done: bool, title: str, text: str) -> str:
-        return f"<li>{'☑' if done else '☐'} <b>{e(title)}.</b> {e(text)}</li>"
+    def item(done, title: str, text: str) -> str:
+        mark = {True: "☑", False: "☐"}.get(done, "◐")  # ◐: simulated runs only, no measurement
+        return f"<li>{mark} <b>{e(title)}.</b> {e(text)}</li>"
 
     def have(found: list) -> str:
         return "; ".join(f"{source_words(r, here)} ({row_value(r, direction=True)}"
@@ -1773,8 +1882,12 @@ def to_run_html(observable: str, rows: list, here: Optional[str] = None, unanaly
     for r in routes_to_run(observable, rows):
         how = (r["note"][0].upper() + r["note"][1:] + ". ") if r["note"] else ""
         kind = "" if r["kind_label"] == r["label"] else f" ({r['kind_label']})"
-        if r["done"]:
-            parts.append(item(True, r["label"], f"{how}Done: {have(r['done'])}."))
+        if r["state"] == "done":
+            parts.append(item(True, r["label"], f"{how}Done: {have(r['done'])}."
+                              + (f" Also projected: {have(r['projected'])}." if r["projected"] else "")))
+        elif r["state"] == "projected":
+            parts.append(item(None, r["label"], f"{how}Projected: a simulated run, no measurement yet: "
+                                                f"{have(r['projected'])}."))
         elif r["live"]:
             parts.append(item(False, r["label"], f"{how}No value by this route yet. physim has this kind of "
                                                   f"experiment{kind}."))
@@ -1855,20 +1968,41 @@ def _headline_html(row, runs_words: str, method_words: str, of: str = "") -> str
     return "".join(out)
 
 
+def decay_of(b_up: float, key) -> Optional[tuple]:
+    """(B(E2)↓ in e²fm⁴, the same in Weisskopf units, B(E2)↑ over B(E2)↓) of a transition from its B(E2)↑ in
+    e²fm⁴: the ratio from the spins of the two levels (:func:`physim.nuclear.observables.b_up_over_down`), the
+    Weisskopf unit from the mass number (:func:`~physim.nuclear.observables.weisskopf`). None where ``key`` (a
+    :class:`~physim.nuclear.results.TransitionKey` or its text) is missing or does not hold both spins: no ratio
+    is assumed."""
+    if key is None:
+        return None
+    try:
+        t = key if isinstance(key, results.TransitionKey) else results.TransitionKey.parse(str(key))
+        if t.initial.spin is None or t.final.spin is None:
+            return None
+        ratio = observables.b_up_over_down(t.final.spin, t.initial.spin, t.multipolarity)
+        down = b_up / ratio
+        return down, observables.weisskopf(down, t.nuclide, t.multipolarity), ratio
+    except (ValueError, TypeError, ZeroDivisionError):
+        return None
+
+
 def decay_words(row) -> str:
-    """A B(E2)↑ row's decay value in a sentence: B(E2)↓ in e²fm⁴ and in Weisskopf units, which are always ↓
-    (the conversions of :mod:`physim.nuclear.observables`). Empty where the spins are not known."""
+    """A B(E2) row's decay value in a sentence: B(E2)↓ in e²fm⁴ and in Weisskopf units, which are always ↓
+    (:func:`decay_of`). Empty where the spins of the two levels are not known."""
     if row.observable != "B(E2)":
         return ""
     try:
-        t = results.TransitionKey.parse(row.key)
         up = compare.canonical(row).value
-        down = up / observables.b_up_over_down(t.final.spin, t.initial.spin, t.multipolarity)
-        wu = observables.weisskopf(down, row.nuclide, t.multipolarity)
-    except (ValueError, TypeError, ZeroDivisionError):
+    except ValueError:
         return ""
-    return (f"For the decay, {quantity_words('B(E2)', row.key, observables.DOWN)} = {number(down)} e²fm⁴ = "
-            f"{number(wu, 3)} W.u. ↓; in other units the excitation value is {number(up * 1e-4)} e²b² ↑.")
+    decay = decay_of(up, row.key)
+    if decay is None:
+        return ""
+    return (f"For the decay, {quantity_words('B(E2)', row.key, observables.DOWN)} = {number(decay[0])} e²fm⁴ = "
+            f"{number(decay[1], 3)} W.u. ↓"
+            + (f"; in other units the excitation value is {number(up * 1e-4)} e²b² ↑" if row.direction
+               == observables.UP else "") + ".")
 
 
 def _pick(rows: list, current_run: Optional[str]):
@@ -1898,29 +2032,22 @@ def _run_describe(summary: Optional[dict]) -> str:
     return f"run {summary['number']}" + (f" ({text[0].lower() + text[1:]})" if text else "")
 
 
-def _weisskopf_shown(x: Explanation, ratio: float) -> Explanation:
-    """The explanation of B(E2) in Weisskopf units as the report shows it: for the decay, B(E2)↓ = B(E2)↑ /
-    ``ratio`` (the analysis holds the excitation's value over the Weisskopf unit; a value in Weisskopf units is
-    always the decay's)."""
+def _weisskopf_shown(x: Explanation, key) -> Optional[Explanation]:
+    """The explanation of B(E2) in Weisskopf units as the report shows it: for the decay (the analysis holds
+    the excitation's value over the Weisskopf unit; a value in Weisskopf units is always the decay's). None
+    where the transition's ``key`` does not hold the spins of both levels: no ratio is assumed."""
     b_up, b_w = x.inputs["b"], x.inputs["b_w"]
-    down = b_up / ratio
+    decay = decay_of(b_up, key)
+    if decay is None:
+        return None
+    down, wu, ratio = decay
     return Explanation(
-        x.key, "B(E2)↓ in Weisskopf units", down / b_w, "W.u. ↓",
+        x.key, "B(E2)↓ in Weisskopf units", wu, "W.u. ↓",
         "B(E2)↓ = B(E2)↑ × (2J_lower + 1) / (2J_upper + 1);  B_W(E2) = (1/4π) (3/5)² (1.2 A^⅓ fm)⁴ e²;  B↓ / B_W",
         f"B(E2)↓ = {number(b_up)} / {number(ratio)} = {number(down)} e²fm⁴;  B_W = {number(b_w)} e²fm⁴;  "
-        f"{number(down)} / {number(b_w)} = {number(down / b_w, 3)} W.u. ↓",
+        f"{number(down)} / {number(b_w)} = {number(wu, 3)} W.u. ↓",
         x.meaning + " Weisskopf units are quoted for the decay (↓), as ENSDF quotes them.", x.assumptions,
         x.reference, {"b": b_up, "ratio": ratio, "b_w": b_w}, lambda b, ratio, b_w: b / ratio / b_w)
-
-
-def up_over_down(experiment) -> float:
-    """B(E2)↑ / B(E2)↓ of the transition a Coulomb-excitation setup's ``[reaction]`` names: from the spins of
-    its two levels where the level key has them, else 5, the 0⁺ → 2⁺ the ``[reaction]`` assumes."""
-    try:
-        t = results.key_of_reaction(experiment)
-        return observables.b_up_over_down(t.final.spin, t.initial.spin, t.multipolarity)
-    except (ValueError, TypeError):
-        return observables.b_up_over_down(0.0, 2.0)
 
 
 #: The sections that lead the report, in order: (anchor, title). A section with nothing to say is left out
@@ -2012,31 +2139,6 @@ def predicted_html(c: dict) -> str:
     return "".join(out)
 
 
-def lifetime_row(planner, lifetime: Optional[dict]):
-    """The row today's lifetime analysis stands for, made in memory and not written: τ of the analysed level
-    with its statistical uncertainty and the rest of its budget, projected, with the τ the setup holds for the
-    level as the value the simulation was given. ``lifetime`` is the plan's lifetime data
-    (:attr:`physim.nuclear.report.Report.lifetime`). None without an analysis, or where the setup holds no τ for
-    the level."""
-    a = (lifetime or {}).get("analysis")
-    found = _lifetime_level(lifetime, a.get("level") if a else None)
-    if not a or not a.get("available") or found is None or found[2].get("tau_ps") is None:
-        return None
-    nuclide, key, level = found
-    try:
-        others = {k: float(v) for k, v in (a.get("budget") or {}).items() if k != "statistics" and v}
-        runs = [s["label"] for s in planner.runs() if s["kind"] != "source"]
-        here = planner.experiment_folder.name if planner.folder is not None else planner.name
-        return results.Row(
-            nuclide, "tau", key, a["tau_ps"], "ps", "dsam" if planner.experiment.lifetime.method == "dsam" else "rdds",
-            results.PROJECTED, stat=a["stat_ps"], budget=others,
-            sys=math.sqrt(sum(v * v for v in others.values())) if others else None,
-            detail=f"{a['method']} analysis", truth=level["tau_ps"],
-            origin=results.from_run(here, None, {"method": a["method"]}, runs=runs, written=False))
-    except (ValueError, TypeError, KeyError):
-        return None
-
-
 def _lifetime_level(lifetime: Optional[dict], name: Optional[str] = None) -> Optional[tuple]:
     """(nuclide, level key, the plan's row) of the level a lifetime experiment studies: the one called ``name``
     in the plan, else the plan's first. None where the plan names no nucleus or level."""
@@ -2078,8 +2180,9 @@ def _other_results_html(own: list, lead: list) -> str:
 
 
 def _routes_section(sec: dict, planner, nuclide: str, observable: str, key: str, own: list, lead=None,
-                    unanalysed: Optional[list] = None, outside: bool = False) -> Optional[object]:
-    """Fill "Beside the other routes" and "Comparisons still to run" for one quantity; returns the comparison."""
+                    unanalysed: Optional[list] = None, outside: bool = False, to_run: bool = True) -> Optional[object]:
+    """Fill "Beside the other routes" and (with ``to_run``) "Comparisons still to run" for one quantity; returns
+    the comparison."""
     e = _esc
     here = _here(planner)
     o = observables.get(observable)
@@ -2090,11 +2193,12 @@ def _routes_section(sec: dict, planner, nuclide: str, observable: str, key: str,
         sec["routes"].append(f"<p>Every value of {e(what)} of {e(nuclide_words(nuclide))} that is entered: those of "
                              "the experiments beside this one and the nucleus's own data points, in one "
                              f"convention ({e(o.convention)}).</p>"
-                             + comparison_html(c, here, getattr(lead, "id", None)))
+                             + comparison_html(c, here, getattr(lead, "id", None), rule=to_run))
     elif why:
         sec["routes"].append(f"<p>The values of {e(what)} could not be set beside each other: {e(why)}.</p>")
-    sec["to-run"].append(f"<p>What would test or sharpen {e(what)} of {e(nuclide_words(nuclide))}, and is not "
-                         "done.</p>" + to_run_html(observable, rows, here, unanalysed, outside))
+    if to_run:
+        sec["to-run"].append(f"<p>What would test or sharpen {e(what)} of {e(nuclide_words(nuclide))}, and is not "
+                             "done.</p>" + to_run_html(observable, rows, here, unanalysed, outside))
     return c
 
 
@@ -2104,7 +2208,8 @@ def _coulex_results(sec: dict, planner, runs: list, analyses: dict, result, pl) 
 
     e = _esc
     exp = planner.experiment
-    own = experiment_rows(planner, runs, analyses, result)
+    problems: dict = {}
+    own = experiment_rows(planner, runs, analyses, result, problems)
     try:
         key, nuclide = results.key_of_reaction(exp).text, results.reaction_nuclide(exp)
     except ValueError:
@@ -2116,10 +2221,19 @@ def _coulex_results(sec: dict, planner, runs: list, analyses: dict, result, pl) 
     head = _pick(mine, current)
     beam_runs = [s for s in runs if s["kind"] != "source"]
     unanalysed = [s["number"] for s in beam_runs if s["number"] not in analyses] if beam_runs else None
+    # An analysed run (or sample) the ledger can hold no row for: say which, and why.
+    analysed = dict(analyses) if analyses else ({None: result} if result is not None else {})
+    without = []
+    for n, why in problems.items():
+        r, which = analysed[n], "The simulated sample" if n is None else f"Run {n}"
+        without.append(f"{which}: the analysis found no peak, so B(E2) could not be determined."
+                       if r.b_e2fm4 != r.b_e2fm4 else
+                       f"{which} is analysed (B(E2↑) = {number(r.b_e2fm4)} e²fm⁴, in appendix F), but no row of the "
+                       f"results ledger can be made for it: {why}.")
     if head is None:
-        if analyses:
-            sec["result"].append("<p><b>No result yet.</b> " + " ".join(
-                f"Run {n}: the analysis found no peak, so B(E2) could not be determined." for n in analyses) + "</p>")
+        if analysed:
+            sec["result"].append("<p><b>No result to lead with.</b> " + e(" ".join(without) or
+                                 "The analysed runs have no B(E2) row in the results ledger.") + "</p>")
         elif beam_runs:
             sec["result"].append(f"<p><b>No result yet.</b> {len(beam_runs)} beam run{'s' * (len(beam_runs) != 1)} "
                                  "taken and none analysed: analyse one on the Analysis step, and its B(E2) leads "
@@ -2162,6 +2276,8 @@ def _coulex_results(sec: dict, planner, runs: list, analyses: dict, result, pl) 
     if down:
         sec["result"].append(f"<p>{e(down)}</p>")
     sec["result"].append(_other_results_html(own, [head]))
+    if without:
+        sec["result"].append(f"<p>{e(' '.join(without))}</p>")
     # What limits it: the budget, then what the value assumes.
     extra = []
     if r is not None:
@@ -2205,12 +2321,9 @@ def _lifetime_results(sec: dict, planner, runs: list, analyses: dict, plan) -> N
     exp = planner.experiment
     lifetime = getattr(plan, "lifetime", None) if plan is not None else None
     a = (lifetime or {}).get("analysis") or {}
-    own = experiment_rows(planner, runs, analyses)
+    # The ledger's rows, and the analysis of this report as rows where the ledger does not hold it (not written).
+    own = with_lifetime_rows(planner, a, experiment_rows(planner, runs, analyses))
     taus = [r for r in own if r.observable == "tau" and r.evidence == results.PROJECTED]
-    if not taus:  # the lifetime analysis writes no row yet: what today's report reads for it, as a row
-        made = lifetime_row(planner, lifetime)
-        if made is not None:
-            own, taus = own + [made], [made]
     head = _pick(taus, None)
     found = _lifetime_level(lifetime, a.get("level")) or _lifetime_level(lifetime)
     how = "a plunger (recoil distance, RDDS)" if exp.lifetime.method == "rdds" else "line shapes (DSAM)"
@@ -2247,12 +2360,17 @@ def _lifetime_results(sec: dict, planner, runs: list, analyses: dict, plan) -> N
     b_row = _pick(bs, None)
     wu_words = ""
     if b_row is not None:
-        sec["result"].append("<p>The B(E2) that follows from τ: "
-                             f"{e(quantity_words('B(E2)', b_row.key, b_row.direction))} = {e(row_value(b_row))}. "
-                             f"{e(decay_words(b_row))}</p>")
         wu_words = decay_words(b_row)
-        sec["routes"].append(f"<h3>{e(quantity_words('B(E2)', b_row.key))}</h3>")
-        _routes_section(sec, planner, nuclide, "B(E2)", b_row.key, own, b_row, outside=False)
+        decay = decay_of(compare.canonical(b_row).value, b_row.key)
+        sec["result"].append("<p>The B(E2) that follows from τ, with the γ-ray energy, the branching and the "
+                             "conversion of the level scheme: "
+                             f"{e(quantity_words('B(E2)', b_row.key, b_row.direction))} = {e(row_value(b_row))}"
+                             + (f", that is {e(number(decay[1], 3))} W.u. ↓" if decay is not None
+                                and b_row.direction == observables.DOWN else "") + "."
+                             + (f" {e(wu_words)}" if b_row.direction == observables.UP and wu_words else "")
+                             + "</p>")
+        sec["routes"].append(f"<h3>{e(quantity_words('B(E2)', b_row.key))}, which follows from τ</h3>")
+        _routes_section(sec, planner, nuclide, "B(E2)", b_row.key, own, b_row, to_run=False)
     elif a.get("b_down"):
         lam = a.get("b_multipole", "E2")
         level = found[2] if found is not None else {}
@@ -2445,7 +2563,7 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
     sec = {key: [] for key, _ in SECTIONS}
     what = reaction_words(planner)
     beam_runs = [s for s in runs if s["kind"] != "source"]
-    ratio = up_over_down(exp) if exp.excitation is not None else None
+    keys = {s["number"]: run_key(planner, s) for s in runs if s["number"] in analyses}  # each run's own setup
     try:
         pl = planner.plan()
     except Exception:  # noqa: BLE001 - the report stands without the plan
@@ -2608,7 +2726,7 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
         r = analyses.get(s["number"])
         if r is not None:
             sec["analysis"].append(analysis_html(r, f"<h3>Run {s['number']}: from the peak area to B(E2)</h3>",
-                                                 ratio or 5.0))
+                                                 keys.get(s["number"])))
         if s["kind"] != "source":
             try:
                 al = planner.kept_alignment(planner.run if planner.run is not None
@@ -2621,7 +2739,7 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
                                        + alignment_html(al))
     lifetime_done = bool(((getattr(plan, "lifetime", None) or {}).get("analysis") or {}).get("available"))
     if not analyses and result is not None:  # the analysis of a simulated sample, without a run
-        sec["analysis"].append(analysis_html(result, "<h3>The simulated sample</h3>", ratio or 5.0))
+        sec["analysis"].append(analysis_html(result, "<h3>The simulated sample</h3>", run_key(planner, None)))
     elif not analyses and lifetime_done:
         sec["analysis"].append("<p>The lifetime analysis of the runs (the decay curve or the line shapes, its "
                                "budget and its notes) is in appendix B, under “Lifetime measurement”, with the "
@@ -2658,8 +2776,13 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
             ax = []
         if ax:
             sec["numbers"].append("<h3>From the peak area to B(E2) and the shape</h3>")
-            sec["numbers"] += [_explanation_html(_weisskopf_shown(x, ratio or 5.0) if x.key == "weisskopf" else x)
-                               for x in ax]
+            key_now = keys.get(planner.run.number) if planner.run is not None else run_key(planner, None)
+            for x in ax:
+                shown = _weisskopf_shown(x, key_now) if x.key == "weisskopf" else x
+                sec["numbers"].append(
+                    _explanation_html(shown) if shown is not None else
+                    "<p>B(E2) is not given in Weisskopf units here: they are quoted for the decay, B(E2↓), which "
+                    "needs the spins of the two levels, and those are not known for this transition.</p>")
 
     # -- H. the data, the method and what is left out ---------------------------------------------------------
     data_rows = []
@@ -2690,9 +2813,10 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
         sec[key] = [x for x in sec[key] if x]
     shown = [key for key, _ in RESULTS if sec[key]]
     analysed = len(analyses)
-    counts = (f"{len(runs)} run{'s' * (len(runs) != 1)}"
+    counts = (f"{len(runs)} run{'s' * (len(runs) != 1)}: {len(beam_runs)} with beam, {len(runs) - len(beam_runs)} "
+              "with a source"
               + (f", {analysed} analysed" if exp.excitation is not None and exp.lifetime is None and beam_runs
-                 else "") if runs else "no run yet")
+                 else "") if runs else "no run yet: the report holds the setup and the plan")
     body = [f"<h1>{e(planner.name)}</h1>",
             f'<p class="sub">{e(b.nuclide)} at {e(str(b.energy))} on {e(t.material)} ({e(str(t.thickness))}): '
             f"{e(what)} · {counts}" + (f" · {pp['meta']}" if pp else "") + "</p>",
@@ -2758,12 +2882,13 @@ def experiment_zip(planner, result=None, folder: bool = True, pdf: bool = True, 
     return buf.getvalue()
 
 
-__all__ = ["APPENDICES", "GAMMA_BIN_KEV", "RESULTS", "RULE", "SECTIONS", "alignment_html", "analysis_html",
-           "analysis_png", "analysis_row", "budget_html", "comparison_html", "decay_words", "doppler_html",
-           "evidence_missing", "experiment_html", "experiment_pdf", "experiment_rows", "experiment_zip",
-           "gamma_lines", "html_to_pdf", "level_scheme_png", "level_schemes", "level_schemes_html", "level_words",
-           "lifetime_row", "line_png", "matched", "multistep_html", "note_words", "nucleus_rows", "number",
-           "pdf_browser", "percent", "plain_numbers", "plus_minus", "predicted_html", "quantity_words",
-           "reaction_b_source", "reaction_words", "routes_to_run", "row_value", "run_analyses", "run_explanations",
-           "run_gamma_png", "run_gates_png", "run_rings_png", "run_spectra_png", "run_views", "search_png",
-           "setup_history", "source_words", "to_run_html", "unit_words", "up_over_down", "wu_marked"]
+__all__ = ["APPENDICES", "GAMMA_BIN_KEV", "NOT_AVAILABLE", "RESULTS", "RULE", "SECTIONS", "alignment_html",
+           "analysis_html", "analysis_png", "analysis_row", "asymmetric", "budget_html", "comparison_html",
+           "decay_of", "decay_words", "doppler_html", "evidence_missing", "experiment_html", "experiment_pdf",
+           "experiment_rows", "experiment_zip", "gamma_lines", "html_to_pdf", "level_scheme_png", "level_schemes",
+           "level_schemes_html", "level_words", "line_png", "matched", "multistep_html", "note_words",
+           "nucleus_rows", "number", "pdf_browser", "percent", "plain_numbers", "plus_minus", "predicted_html",
+           "quantity_words", "reaction_b_source", "reaction_words", "routes_to_run", "row_value", "run_analyses",
+           "run_explanations", "run_gamma_png", "run_gates_png", "run_key", "run_rings_png", "run_spectra_png",
+           "run_views", "search_png", "setup_history", "source_words", "to_run_html", "unit_words",
+           "with_lifetime_rows", "wu_marked"]

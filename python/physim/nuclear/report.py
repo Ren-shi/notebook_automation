@@ -1309,7 +1309,11 @@ def _lifetime_data(planner, experiment, runs_from=None) -> Optional[dict]:
     analysis = None
     if runs_from is not None and getattr(runs_from, "folder", None) is not None:
         try:
-            analysis = runs_from.analyse_lifetimes()
+            # The analysis itself, not Planner.analyse_lifetimes: that one keeps its result in the experiment's
+            # folder and writes its rows to the results ledger, and a report leaves the folder as it was.
+            from . import lifetime_plan
+
+            analysis = lifetime_plan.analyse(runs_from)
         except Exception as err:  # noqa: BLE001 - as above
             analysis = {"available": False, "reason": str(err)}
         if analysis is not None and not analysis.get("available") and "No " in str(analysis.get("reason", ""))[:3]:
