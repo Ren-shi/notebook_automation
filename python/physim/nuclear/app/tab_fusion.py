@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 
+from .. import workbench as wb
 from .tab_plan import _fmt, _time
 
 #: How the ancillary sections are named on the page.
@@ -197,6 +198,9 @@ def channel_chips(ctx, pl: dict) -> None:
         wanted = pl["counts_wanted"]
         ui.label(f"Counted: {wanted or '—'} counts in the channel's strongest line" if wanted else
                  "Set the counts wanted in Run conditions").classes("text-xs ps-muted")
+    if p.experiment.run.channel is None:  # the largest channel only sets the beam time: it is no choice of nucleus
+        ui.label("No channel is marked as studied: the largest one sets the beam time, and the experiment belongs "
+                 "to no nucleus yet. Choose a channel above to study its residue.").classes("text-xs ps-muted")
 
 
 def headline(ctx, pl: dict) -> None:
@@ -299,6 +303,10 @@ def band(ctx, pl: dict) -> None:
                              + ("setup's level scheme" if b["from_setup"] else "local ENSDF copy")
                              + ": a known value beside the rates, not something this run measures."
                              + (f" {b['reference']}" if b.get("reference") else "")).classes("text-xs ps-muted")
+                nucleus = wb.studied(p.experiment)
+                if nucleus is not None:  # the residue of the channel marked as studied: its page has every route
+                    ui.link(f"What is known about {nucleus['label']}, by every route →", nucleus["href"]).classes(
+                        "ps-nucleus-link")
         with ui.element("div").style("flex: 1 1 300px; min-width: 0"):
             with ctx.panel("Measure the lifetimes", "stage 2: plunger (RDDS) or line shapes (DSAM)"):
                 lifetime_stage(ctx)

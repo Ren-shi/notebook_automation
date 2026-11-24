@@ -48,6 +48,22 @@ KIND_STYLE = """
 .ps-steps-off { opacity: 0.45; pointer-events: none; }
 """
 
+#: The nucleus above the experiment's name in the rail, and a result beside what is known (the short comparison
+#: under a result, with its link to the nucleus's page).
+NUCLEUS_STYLE = """
+.ps-nucleus { display: flex; align-items: baseline; gap: 6px; padding-left: 6px; font-size: 12px;
+  color: var(--ps-muted); }
+.ps-nucleus a, a.ps-nucleus-link { color: var(--ps-data); text-decoration: none; font-weight: 600; }
+.ps-nucleus a { font-size: 15px; }
+.ps-nucleus a:hover, a.ps-nucleus-link:hover { text-decoration: underline; }
+a.ps-nucleus-link { display: inline-block; font-size: 13px; margin-top: 8px; }
+.ps-beside { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 14px; font-size: 13px;
+  line-height: 1.45; }
+.ps-projected { display: inline-block; font-family: var(--ps-mono); font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.04em; color: var(--ps-warn); border: 1px solid var(--ps-warn); border-radius: 4px;
+  padding: 0 6px; }
+"""
+
 STEP_STYLE = """
 .ps-nav-col { min-height: calc(100vh - 32px); padding: 4px 2px; }
 .ps-wordmark { font-family: var(--ps-mono); font-size: 16px; font-weight: 600; padding-left: 6px; }
@@ -142,7 +158,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     from nicegui import Client, background_tasks, run, ui
 
+    from .. import logbook as _logbook
     from .. import paper
+    from .. import results as _results
     from .. import runs as _runs
     from .. import workbench as wb
     from ..experiment import Experiment, SetupError
@@ -1534,9 +1552,22 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             ui.notify("No explanation for this number yet.", type="warning")
             return
         x = found[0]
+        if key == "weisskopf":  # as the report shows it: for the decay (↓), from the spins of the two levels
+            from ..record import Explanation
+
+            try:
+                shown = _logbook._weisskopf_shown(Explanation(**x), _results.key_of_reaction(P()._data_experiment()))
+            except Exception:  # noqa: BLE001
+                shown = None
+            if shown is None:
+                ui.notify("B(E2) is not given in Weisskopf units here: they are quoted for the decay, B(E2↓), "
+                          "which needs the spins of the two levels, and those are not known for this transition.",
+                          type="warning", multi_line=True)
+                return
+            x = shown.as_dict()
         with ui.dialog() as dialog, ui.card().classes("ps-card").style("max-width: min(760px, 95vw)"):
             ui.label(x["title"]).classes("text-base font-medium")
-            ui.label(f"{_fmt(x['value'])} {x['unit']}".strip()).classes("ps-readout-value")
+            ui.label(f"{_logbook.number(x['value'])} {x['unit']}".strip()).classes("ps-readout-value")
             ui.label("Formula").classes("ps-section mt-2")
             ui.label(x["formula"]).classes("text-sm ps-num")
             ui.label("With this run's numbers").classes("ps-section mt-2")
@@ -2271,6 +2302,14 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 show(r, P().analysis(max(state["events"], 400_000), 1).history[-1] if r["available"] else None)
             sync_steps()
 
+        def decay_of_result(b_up: float):
+            """(B(E2↓) in e²fm⁴, the same in Weisskopf units, B↑/B↓) of the analysed transition, as the report
+            gives it (:func:`physim.nuclear.logbook.decay_of`); None where the two spins are not known."""
+            try:
+                return _logbook.decay_of(b_up, _results.key_of_reaction(P()._data_experiment()))
+            except Exception:  # noqa: BLE001 -- the result stands without its Weisskopf units
+                return None
+
         def part(number: int, title: str, text: str) -> None:
             ui.label(f"{number} · {title}").classes("font-semibold mt-2")
             ui.label(text).classes("text-xs ps-muted")
@@ -2385,18 +2424,25 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                         beside()
 
         def show_result(r: dict, last=None) -> None:
-            """The strip at the top: B(E2), its uncertainty, how it compares with what was put in, the beam time."""
+            """The strip at the top: B(E2), its uncertainty, how it closes on the value the simulation was given,
+            the beam time."""
             b = r["b_e2fm4"]
+            # Weisskopf units are the decay's (↓), as the report gives them; not given where the spins of the
+            # two levels are not known.
+            decay = decay_of_result(b)
             with ui.element("div").classes("ps-readouts"):
                 for title, value, sub, key, main in (
-                        ("B(E2↑)", f"{b:.4g} e²fm⁴", f"{r['b_e2b2']:.4g} e²b² · {r['b_wu']:.3g} W.u.", "b_e2", True),
+                        ("B(E2↑)", f"{b:.4g} e²fm⁴", f"{r['b_e2b2']:.4g} e²b² ↑"
+                         + (f" · decay: B(E2↓) = {_logbook.number(decay[1], 3)} W.u. ↓" if decay is not None else ""),
+                         "b_e2", True),
                         ("Uncertainty", f"± {100 * r['total_unc']:.1f} %",
                          f"statistical {100 * r['statistical']:.1f} %, systematic {100 * r['systematic']:.1f} %; "
                          + (f"the Monte Carlo sample itself adds {100 * r['monte_carlo']:.1f} %"
                             if r.get("whole_run_statistical") is None else
                             f"statistics from {r['statistics_from']}; the whole run: "
                             f"{100 * r['whole_run_statistical']:.1f} %"), "uncertainty", False),
-                        ("Put in", f"{r['truth_e2fm4']:.4g} e²fm⁴", f"pull {r['pull']:+.2f} σ", None, False),
+                        ("Given to the simulation", f"{r['truth_e2fm4']:.4g} e²fm⁴",
+                         f"closure {r['pull']:+.2f} σ: the result against it", None, False),
                         ("Beam time", f"{r['hours_for_precision']:.3g} h",
                          f"for {100 * r['settings']['wanted_precision']:.3g} % statistics; "
                          f"{r['counts_per_shift']:.3g} counts in the peak per {SHIFT_H:g} h shift", None, False)):
@@ -2465,7 +2511,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 with ui.row().classes("gap-1 items-center").style("padding: 4px 10px 8px"):
                     ui.label("How each is obtained:").classes("text-xs ps-muted")
                     for key, label in (("area", "area"), ("yield", "yield"), ("mean_probability", "⟨P⟩"),
-                                       ("b_e2", "B(E2)"), ("weisskopf", "W.u."), ("beta2", "β₂"), ("q0", "Q₀"),
+                                       ("b_e2", "B(E2)"), ("weisskopf", "W.u. ↓"), ("beta2", "β₂"), ("q0", "Q₀"),
                                        ("lifetime", "lifetime")):
                         ui.button(label, color=None, on_click=lambda k=key: open_explanation(k, result=last)).props(
                             "dense flat no-caps size=sm").classes("ps-accent")
@@ -2486,7 +2532,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     ui.label(note[0].upper() + note[1:] + ".").classes("text-xs ps-muted")
             sh = r["shape"]
             if sh:
-                rows = [("β₂", f"{sh['beta2']:.3f}"), ("B(E2↑) in W.u.", f"{r['b_wu']:.3g}"),
+                decay = decay_of_result(r["b_e2fm4"])
+                rows = [("β₂", f"{sh['beta2']:.3f}"),
+                        ("B(E2↓)", f"{_logbook.number(decay[1], 3)} W.u. ↓") if decay is not None else
+                        ("B(E2↑)", f"{_logbook.number(r['b_e2fm4'])} e²fm⁴"),
                         ("Q₀ of a rigid rotor", f"{sh['q0_efm2']:.3g} e fm²"),
                         ("Q_s(2⁺) of that rotor", f"{sh['qs_2plus_efm2']:.3g} e fm²")]
                 if "e4_over_e2" in sh:
@@ -2510,6 +2559,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 ui.label("No result: " + "; ".join(r["notes"])).classes("text-sm ps-warn")
                 return
             show_result(r, last)
+            tab_analysis.coulex_comparison(ctx, last)  # the result beside what is known, in short
             with ui.row().classes("w-full items-start gap-3").style("flex-wrap: wrap"):
                 with ui.column().classes("gap-2").style("flex: 3 1 560px; min-width: 0"):
                     show_search(r)
@@ -2940,6 +2990,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         if builds[key] == n and not superseded():
             dirty.discard(key)
             built.add(key)
+            if key == "analysis":
+                sync_steps()
 
     def waiting(key: str) -> None:
         """A stage's container while its numbers are computed."""
@@ -2966,6 +3018,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         if gone() or state.get("generation", 0) != token or key not in dirty:
             return
         render_stage(key)
+        if key == "analysis":  # a lifetime analysis made on the way is kept: the rail's status line shows its τ
+            sync_steps()
 
     async def show_stage(key: str) -> None:
         """A tab was chosen: it is shown as it is if it was built for the current setup, and built now if not."""
@@ -3480,6 +3534,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         analysis_view=analysis_view, report_view=report_view, show_physics=show_physics, levels_block=levels_block,
         geometry_tables=geometry_tables, explain=explain, reading_box=reading_box, gamma_panel=gamma_panel,
         go_to=go_to, direct=direct, value_in=value_in, field_inputs=field_inputs, field_shown=field_shown,
+        sync_steps=sync_steps,
         later=later, start_series=start_series, card_hooks=card_hooks,
         edit_lifetime=edit_lifetime, deorientation_form=deorientation_form, add_lifetime=add_lifetime,
         remove_lifetime=lambda: None if locked() else staged(D().remove_lifetime(), rebuild=True),
@@ -3488,11 +3543,19 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     @ui.refreshable
     def experiment_button() -> None:
-        """At the top of the rail: the experiment's name, with what is done to an experiment as its menu, and
-        under it the beam and the target."""
+        """At the top of the rail: the nucleus the experiment studies (a link to its page; nothing for an
+        experiment that studies none), the experiment's name, with what is done to an experiment as its menu,
+        and under it the beam and the target."""
         p = P()
         d = p.draft
         with ui.column().classes("w-full gap-1"):
+            nucleus = wb.studied(p.experiment)
+            if nucleus is not None:
+                with ui.element("div").classes("ps-nucleus"):
+                    ui.link(nucleus["label"], nucleus["href"]).tooltip(
+                        f"The nucleus this experiment studies: every result for {nucleus['label']}, by every "
+                        "route and across its experiments")
+                    ui.label("▸ this experiment")
             with ui.button(p.name, color=None).props("flat no-caps icon-right=expand_more").classes(
                     "w-full ps-experiment"):
                 with ui.menu():
@@ -3514,6 +3577,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     ui.add_css(PENDING_STYLE)
     ui.add_css(STEP_STYLE)
     ui.add_css(KIND_STYLE)
+    ui.add_css(NUCLEUS_STYLE)
     ui.add_css(record_css(".ps-record"))
     dark = ui.dark_mode(state["theme"] == "dark")
     # The rail on the left: the experiment, the steps (built by main_area), and at its foot the Physics reference

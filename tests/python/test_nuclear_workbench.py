@@ -168,7 +168,8 @@ def test_the_steps_follow_the_experiment(tmp_path):
     assert steps["report"]["status"] == "the plan and 1 run"
     assert wb.next_step(p, "run") == {"hint": "Run 1 is the current run.", "label": "Next: look at run 1's data",
                                       "to": "data"}
-    assert wb.next_step(p, "data")["label"] == "Next: analyse run 1"
+    # Elastic scattering has no analysis of a run: the data lead on to the report, not to "analyse".
+    assert (wb.next_step(p, "data")["label"], wb.next_step(p, "data")["to"]) == ("Next: the report", "report")
     # The setup changes after the run: the step bar says whose data these are.
     p.set("beam", "energy", "6 MeV")
     run = {s["key"]: s for s in wb.steps(p)}["run"]
