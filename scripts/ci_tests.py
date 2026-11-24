@@ -13,7 +13,7 @@ test failed and was fixed, what runs is that file and whatever else used the cod
 without its comments and layout, and without docstrings (except those of ``physim.mcp``, which a model reads), function
 by function; the rest of a module (its imports, constants, classes and their methods' signatures) is compared as one. A new
 function in a module changes nothing for a test that doesn't reach it, but one that is gone may (it is imported somewhere).
-Test files are compared whole. A test that starts another process holds everything under ``python/physim`` as used. The Rust sources, the
+Test files are compared whole. A test that starts a program (but the ``HARMLESS``) holds everything under ``python/physim`` as used. The Rust sources, the
 requirements and this machinery are used by all.
 
 **Pull requests** are quick besides: they leave out the tests of ``.github/slow-tests.txt``, except in the test files they
@@ -49,6 +49,8 @@ SLOW_TESTS = ROOT / ".github" / "slow-tests.txt"
 UNKNOWN_S, START_S = 10.0, 2.0  # a file without a time; what a process takes beside its tests
 SHARD_S, MAX_SHARDS = 75.0, 10
 KEPT = 8  # records of a file and mode
+#: Programs that libraries ask about the system (the fonts, the libraries, the processor): they use nothing of this repository.
+HARMLESS = {"fc-list", "ldconfig", "gcc", "cc", "ld", "objdump", "lscpu", "uname", "lsb_release", "file"}
 
 RUST = re.compile(r"(src/|benches/|examples/|tests/[^/]+\.rs$|Cargo\.|\.cargo/|[^/]*\.toml$|rust-toolchain)")
 MACHINERY = ("requirements-dev.txt", "scripts/ci_tests.py", "scripts/ci_record.py", "tests/python/conftest.py")
@@ -231,7 +233,7 @@ def used_by(seen: dict, file: str, mode: str, tree: Tree) -> dict:
     keys.update(f"file:{p}" for p in seen["files"] if p in known and p != own)
     directories = {str(parent) for p in tree.files for parent in PurePosixPath(p).parents}
     keys.update(f"list:{p}" for p in seen["lists"] if p in directories)
-    if seen["spawned"]:
+    if set(seen["spawned"]) - HARMLESS:
         keys.add("package:")
     if file.startswith("test_ci_"):  # what reads the list of slow tests for pytest is tested there
         keys.update(("file:.github/slow-tests.txt", "list:tests/python"))
@@ -381,6 +383,14 @@ def run(args) -> int:
                 failed.append(file)
                 continue
             seen = json.loads(out.read_text(encoding="utf-8"))
+        copies = [p for p, _, _ in seen["code"] if "site-packages/physim/" in p]
+        if copies:  # an installed copy, perhaps an old one out of the cache, instead of the code at hand
+            print(f"{file} ran {copies[0]}")
+            failed.append(file)
+            continue
+        others = sorted(set(seen["spawned"]) - HARMLESS)
+        if others:
+            print(f"started: {' '.join(others)}")
         records.append({"file": file, "mode": mode, "seconds": round(seconds, 1), "used": used_by(seen, file, mode, tree)})
     save(args.records, records)
     print(f"{len(records)} of {len(args.tests)} test files passed" + (f"; failed: {' '.join(failed)}" if failed else ""))

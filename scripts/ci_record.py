@@ -2,8 +2,8 @@
 
 ``PHYSIM_CI_RECORD`` names the JSON file it writes when the session ends: the code that ran ("code": [path, line, name] of
 every function, class body and module of the repository that was started, in any thread), the files that were opened
-("files"), the directories that were listed ("lists") and whether another process was started ("spawned"; what that one
-used cannot be seen). It takes ``sys.monitoring`` (Python 3.12), which costs next to nothing: each piece of code reports
+("files"), the directories that were listed ("lists") and the programs that were started ("spawned"; what those used cannot
+be seen). It takes ``sys.monitoring`` (Python 3.12), which costs next to nothing: each piece of code reports
 once. One test file a process: code that ran for an earlier one, and filled a cache, would be missed for the next.
 """
 
@@ -16,7 +16,7 @@ ROOT = str(Path(__file__).resolve().parent.parent) + os.sep
 OUT = os.environ.get("PHYSIM_CI_RECORD")
 TOOL = 4
 
-_code, _files, _lists, _spawned = set(), set(), set(), []
+_code, _files, _lists, _spawned = set(), set(), set(), set()
 #: Between the reader and whoever wanted the file or the listing.
 _THROUGH = {"pathlib", "os", "glob", "fnmatch", "codecs", "io", "tokenize", "contextlib", "_local", "_abc", "shutil",
             "_collections_abc", "__init__"}
@@ -49,7 +49,10 @@ def _audit(event, args):
     if _SPAWN is None:  # the interpreter is closing
         return
     if event in _SPAWN:
-        _spawned.append(event)
+        program = args[0] if event in ("subprocess.Popen", "os.posix_spawn", "os.exec") and args else event
+        if event == "subprocess.Popen" and not isinstance(args[1], (str, bytes)) and len(args[1]):
+            program = program or args[1][0]
+        _spawned.add(os.path.basename(os.fsdecode(program)) if isinstance(program, (str, bytes, os.PathLike)) else event)
         return
     if event not in ("open", "os.listdir", "os.scandir", "sqlite3.connect"):
         return
@@ -77,7 +80,7 @@ def pytest_unconfigure(config):
         Path(OUT).write_text(json.dumps({
             "code": sorted([_relative(f), line, name] for f, line, name in list(_code)),
             "files": sorted(map(_relative, list(_files))), "lists": sorted(map(_relative, list(_lists))),
-            "spawned": bool(_spawned)}), encoding="utf-8")
+            "spawned": sorted(_spawned)}), encoding="utf-8")
 
 
 if OUT:
