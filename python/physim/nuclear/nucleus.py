@@ -30,7 +30,8 @@ supersedes it (:func:`correct_data_point`), and so is a retraction (:func:`retra
 independent (measured, evaluated, theory, outside program) and projected (a simulated run analysed back, compared
 only with the value the simulation was given). For one observable of one level or transition the view holds the
 comparison of :mod:`physim.nuclear.compare`, the routes of the registry (:mod:`physim.nuclear.observables`) each
-marked done, in physim or later, the registry's conversions applied to the reference value, and the history.
+marked done, projected (simulated runs only), in physim or later, the registry's conversions applied to the
+reference value, and the history.
 
 **No formula of its own.** Every number here comes from a function that existed before: the level scheme's own
 derivation (:class:`~physim.nuclear.levels.LevelScheme`), :func:`physim.nuclear.lifetimes.level_taus`, and the
