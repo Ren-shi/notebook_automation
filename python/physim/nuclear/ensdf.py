@@ -146,6 +146,9 @@ class Level:
     #: Moments written without a sign, so only their size is known.
     unsigned: set = field(default_factory=set)
     gammas: list = field(default_factory=list)
+    #: How many γ rays the file lists for this level that are not among ``gammas``: no final level matched, or
+    #: the energy could not be read. The level's branching is not complete when this is not 0.
+    dropped: int = 0
 
 
 @dataclass
@@ -240,6 +243,8 @@ def parse(lines: Iterator[str], z: int, a: int, mass_mev: Optional[float] = None
             gamma = None
             e = number(line[9:19], line[19:21])
             if level is None or e is None:
+                if level is not None:  # a γ ray whose energy cannot be read: counted, not kept
+                    level.dropped += 1
                 continue
             gamma = Gamma(e, number(line[21:29], line[29:31]), line[31:41].strip(),
                           number(line[41:49], line[49:55]), number(line[55:62], line[62:64]))
@@ -273,6 +278,7 @@ def _place(data: Adopted, mass_kev: float) -> None:
                     kept.append(g)
                     continue
             data.unplaced += 1
+            lv.dropped += 1
         lv.gammas = kept
 
 

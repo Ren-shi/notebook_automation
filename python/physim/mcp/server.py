@@ -2,7 +2,7 @@
 
 ``build_server`` makes a server that a client talks to; ``physim mcp`` runs it over stdin/stdout. The tools
 themselves are plain methods (:mod:`physim.mcp.tools_setup`, :mod:`physim.mcp.tools_shellmodel`,
-:mod:`physim.mcp.tools_lifetimes`); this module only
+:mod:`physim.mcp.tools_lifetimes`, :mod:`physim.mcp.tools_results`); this module only
 registers them, marks which ones write files, and turns the planner's exceptions into messages the model can act on.
 """
 
@@ -21,6 +21,7 @@ from ..nuclear.experiment import SetupError
 from ..nuclear.runs import RunInProgress
 from .session import Session, ToolProblem
 from .tools_lifetimes import LifetimeTools
+from .tools_results import ResultTools
 from .tools_setup import SetupTools
 from .tools_shellmodel import ShellModelTools
 
@@ -53,6 +54,17 @@ plunger distances, whether the shifted and unshifted peaks separate at each dete
 per distance; set_plunger sets the distances, the stopper or degrader foils and the deorientation (or DSAM);
 lifetime_spectra predicts the spectra per distance; analyse_lifetimes gets tau and B(E2) back from the runs taken at
 the distances and compares them with ENSDF, the setup's Coulex B(E2) and the shell model.
+
+Results across experiments (these tools act on a nucleus and need no open experiment): every result is a row with
+its nucleus, level or transition, method and evidence. list_nuclei gives the nuclei with their experiments and what
+is still open; list_results the rows of one nucleus; snapshot_evaluation takes ENSDF's adopted values in as
+evaluated rows; add_data_point adds a published value or an own measurement (a value with its uncertainty, never
+raw spectra; a correction is a new point that names the one it corrects, and retract_data_point withdraws one:
+nothing is deleted); compare_results sets every result for one observable of one level or transition beside a
+reference, with the routes to it and what the value gives. Evidence is in two groups that are never mixed:
+independent (measured, evaluated, theory, outside program) and projected (a simulated run analysed back: it shows
+the precision a setup would reach and is compared only with the value its simulation was given, never with a
+measurement as if it tested it).
 """
 
 READS = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
@@ -97,7 +109,7 @@ def build_server(root: Union[str, Path, None] = None, session: Optional[Session]
     session = session or Session(root)
     server = MCPServer("physim-planner", title="physim experiment planner", instructions=INSTRUCTIONS,
                        version=__version__)
-    for tools in (SetupTools(session), ShellModelTools(session), LifetimeTools(session)):
+    for tools in (SetupTools(session), ShellModelTools(session), LifetimeTools(session), ResultTools(session)):
         for name, writes in tools.TOOLS:
             annotations = (REPLACES if name in _REPLACING else DESTRUCTIVE if name in _DESTRUCTIVE
                            else WRITES if writes else READS)

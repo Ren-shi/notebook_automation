@@ -122,7 +122,8 @@ def convert(row: Row, to: str, key: Union[TransitionKey, LevelKey, str, None] = 
     upper one.
 
     The new row is in the canonical convention, has the method "converted", the evidence of ``row`` and says
-    what it was made from; it depends on ``row`` and on everything ``row`` depends on. B and τ are inversely
+    what it was made from; it depends on ``row`` and on everything ``row`` depends on. It carries ``row``'s
+    time and code, so converting the same row again gives the same row, with the same id. B and τ are inversely
     proportional, so the relative uncertainties carry over (to first order) and an asymmetric one swaps sides.
     """
     c = canonical(row)
@@ -163,7 +164,8 @@ def convert(row: Row, to: str, key: Union[TransitionKey, LevelKey, str, None] = 
               f"branching {branching:g}, α = {conversion:g}" + (f", δ = {mixing:g}" if mixing is not None else ""))
     return Row(row.nuclide, to, new_key, value, observables.get(to).unit, "converted", row.evidence,
                direction=direction, detail=detail, truth=truth, depends_on=(row.id, *row.depends_on),
-               origin={"kind": "conversion", "from": row.id, "function": function, **inputs}, **unc)
+               origin={"kind": "conversion", "from": row.id, "function": function, **inputs},
+               created=row.created, code=row.code, **unc)
 
 
 # ---------------------------------------------------------------------------------------------------------------
