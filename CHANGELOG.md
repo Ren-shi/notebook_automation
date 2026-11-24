@@ -11,6 +11,22 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- The data layer of the results pages (wave 0; nothing is visible in the app yet and no number it computes changes).
+  `physim.nuclear.results` is a ledger with one row per result: one value of one observable of one nucleus by one
+  method, with its uncertainty (stat and sys, one total, or asymmetric), the method, the evidence (measured,
+  evaluated, theory, outside program, or projected: a simulated run analysed back, which carries the value the
+  simulation was given), where it came from, what it depends on and which row it supersedes. Rows are appended to
+  JSON-lines files and never rewritten: `results.jsonl` in an experiment's folder, and
+  `<nuclei home>/<nuclide>/points.jsonl` (`$PHYSIM_NUCLEI`, or `nuclei` beside the experiments) for rows that belong
+  to no experiment. A level has one name (nuclide, Jπ and ordinal, anchored to the ENSDF level within 2 keV;
+  "62Ni:2+1") and so has a transition ("62Ni:2+1>0+1:E2"), with helpers from a scheme index, a level name, a
+  shell-model state and the `[reaction]` energy. `results.backfill` makes projected rows from the `analysis.json`
+  files runs already hold (not called by the app). `physim.nuclear.observables` is the registry of B(E2), τ, Q_s and
+  level energies: the canonical convention (B(E2)↑ in e²fm⁴; Weisskopf units always ↓), the routes that reach each
+  and the conversions, which call existing functions only. `physim.nuclear.compare` puts the rows of one observable
+  of one transition beside a reference: difference, ratio, pull and a verdict by a fixed rule (|pull| < 2 agree, 2–3
+  tension, above 3 differ), rows that are not independent flagged, and projected rows apart (closure against the
+  given value; the precision reached beside what is known). What needs new formulas is backlog 76.
 - A reproduced Coulomb-excitation experiment in the validation (Allmond 2014 verification, fix wave 3, S6): Allmond et al., PRC 90, 034309 (2014), ⁶²Ni at 111.6 MeV on carbon, as the example `coulex_ni62_c_allmond` and the check `reproduction_allmond2014` (`physim.nuclear.coulex_reproduction`, `scripts/reproduce_allmond2014.py`; the paper's numbers, the GOSIA references and the bands in `tests/reference/nuclear/coulex/allmond2014.toml`). The thickness gives the measured ⁵⁸Ni/⁶⁰Ni losses; σ_C/σ_R per ring within 0.2% of GOSIA with nuclear masses and DIP off and 1.3% of GOSIA as run (outside its 1%: a known, explained miss, see below); closure; the paper's per-ring B(E2), rebuilt through GOSIA's ratio(M) (the paper gives no yields), recovered 1.2–1.3% low, inside its 4.1%; the Q_s and feeding sensitivities within 0.25 percentage points of GOSIA's.
 - Outside programs run out of sight (`physim.external`): GOSIA, SRIM's SR Module and TRIM, PACE4 and GEMINI++
   start on a hidden Windows desktop with no console window, so nothing shows or takes the focus, and in a job
