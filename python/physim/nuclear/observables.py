@@ -134,7 +134,7 @@ _PS = ensdf.TIME_UNITS["PS"]
 
 # The references of the text. The first six are cited elsewhere in physim (docs/theory/evaporation.md twice,
 # residues.py, docs/theory/coulex.md, shellmodel_spaces.py and docs/shell-model.md); the others are the standard
-# textbook, reviews and tables of their subject. No page numbers: none could be checked against the repository.
+# textbook, reviews and tables of their subject. No page numbers for those: none is in the repository to check.
 BLATT_WEISSKOPF = "J. M. Blatt and V. F. Weisskopf, Theoretical Nuclear Physics (1952)"
 BOHR_MOTTELSON_1 = "A. Bohr and B. R. Mottelson, Nuclear Structure, Vol. I (1969)"
 BOHR_MOTTELSON_2 = "A. Bohr and B. R. Mottelson, Nuclear Structure, Vol. II (1975)"
@@ -148,6 +148,8 @@ RAMAN_2001 = "S. Raman, C. W. Nestor Jr. and P. Tikkanen, At. Data Nucl. Data Ta
 STONE_2005 = "N. J. Stone, At. Data Nucl. Data Tables 90 (2005)"
 
 _VIA_TAU = "through τ, the γ-ray energy, the branching and the conversion"
+#: The lifetime analysis writes τ (and B(E2)) into the results; a B(M1) row comes in as a data point.
+_VIA_TAU_M1 = _VIA_TAU + " and, of a mixed line, the mixing ratio; physim's analysis writes τ, not the B(M1)"
 
 OBSERVABLES = {o.key: o for o in (
     Observable(
@@ -175,7 +177,7 @@ OBSERVABLES = {o.key: o for o in (
         used_for=(
             Use("Collectivity. In Weisskopf units (always the ↓ value) it counts single-particle strengths: about "
                 "1 W.u. is one nucleon changing its orbit, ten or more mean many nucleons moving together, and a "
-                "well-deformed rotor reaches 100 W.u. and more.", BLATT_WEISSKOPF),
+                "well-deformed rotor reaches 100 W.u. and more.", f"{BLATT_WEISSKOPF}; {BOHR_MOTTELSON_2}"),
             Use("The lifetime. With the γ-ray energy, the branching and the conversion coefficient it fixes the "
                 "level's mean life (for a pure E2 decay τ falls as 1/(E_γ⁵ B(E2))), and so whether the γ ray is "
                 "emitted in flight and which lifetime method reaches the level.", BLATT_WEISSKOPF),
@@ -184,8 +186,10 @@ OBSERVABLES = {o.key: o for o in (
                 "where the level scheme is rotational (E(4⁺₁)/E(2⁺₁) near 3.33).", BOHR_MOTTELSON_2),
             Use("A test of a shell-model interaction and its effective charges. A calculated B(E2) rests on the "
                 "wave functions and on the effective charges that stand for the excitations left out of the "
-                "valence space; a measured value tests the two together, most sharply over several transitions "
-                "or a chain of isotopes.", RICHTER_2008),
+                "valence space; a measured value tests the two together, and several transitions or a chain of "
+                "isotopes are needed to tell them apart.", RICHTER_2008),
+            Use("The next step up the band. B(E2; 4⁺₁ → 2⁺₁)/B(E2; 2⁺₁ → 0⁺₁) is 10/7 for a rigid axial rotor and "
+                "2 for a harmonic vibrator; it is read together with E(4⁺₁)/E(2⁺₁).", CASTEN),
             Use("An input to other experiments. A known B(E2) of the collision partner normalises a "
                 "Coulomb-excitation yield, and the B(E2) of this nucleus sets the yield and the beam time of "
                 "every Coulomb-excitation experiment on it.", ALDER_WINTHER),
@@ -243,8 +247,7 @@ OBSERVABLES = {o.key: o for o in (
         "B(M1)", "B(M1)", "transition", "mu_N2", {"mu_N2": 1.0, WEISSKOPF: None}, UP,
         "B(M1)↑ in μ_N², from the lower level to the upper one; in Weisskopf units always the ↓ value",
         routes=(
-            Route("rdds", "lifetimes", _VIA_TAU + ", and the E2/M1 mixing ratio"),
-            Route("dsam", "lifetimes", _VIA_TAU + ", and the E2/M1 mixing ratio"),
+            Route("rdds", "lifetimes", _VIA_TAU_M1), Route("dsam", "lifetimes", _VIA_TAU_M1),
             Route("shell-model"), Route("evaluation"),
             Route("nrf", note="photon scattering from the ground state: the level's width to the ground state"),
             Route("inelastic-neutron", note="through τ (DSAM after (n,n′γ))"),
@@ -255,9 +258,9 @@ OBSERVABLES = {o.key: o for o in (
             Conversion("B(M1)↓ in W.u.", "weisskopf", "shellmodel_import.WEISSKOPF_M1", ()),
         ),
         used_for=(
-            Use("The magnetic strength of a transition. It follows the spin and orbital g factors of the few "
-                "nucleons that change their orbit, where B(E2) follows the collective motion of the charge. "
-                "1 W.u. is 1.79 μ_N²; a strong M1 transition is of that order.", BLATT_WEISSKOPF),
+            Use("The magnetic strength of a transition. It comes from the spins and the orbital motion of the few "
+                "nucleons whose coupling changes, where B(E2) follows the collective motion of the charge. "
+                "1 W.u. is 1.79 μ_N², and most M1 transitions are well below it.", BLATT_WEISSKOPF),
             Use("With the B(E2) of the same γ ray it fixes the size of the E2/M1 mixing ratio; in the shell model "
                 "it tests the effective g factors as B(E2) tests the effective charges.", RICHTER_2008),
         )),
@@ -272,8 +275,8 @@ OBSERVABLES = {o.key: o for o in (
         ),
         used_for=(
             Use("Which orbits the state is made of. μ = g J μ_N: one nucleon in one orbit has the Schmidt value "
-                "of that orbit and a collective state has a g factor near Z/A, so the measured g factor says how "
-                "much of each the state holds.", f"{BOHR_MOTTELSON_1}; {BOHR_MOTTELSON_2}"),
+                "of that orbit and a collective state has a g factor near Z/A, so the measured g factor says which "
+                "of the two the state is closer to.", f"{BOHR_MOTTELSON_1}; {BOHR_MOTTELSON_2}"),
             Use("A test of a shell-model wave function and of its effective g factors, which a small admixture "
                 "of another orbit changes more than it changes the energy.", RICHTER_2008),
             Use("Where the measured values are: the table of nuclear magnetic dipole and electric quadrupole "
@@ -294,9 +297,9 @@ OBSERVABLES = {o.key: o for o in (
             Use("E(2⁺₁) itself. It is high at a closed shell and low in a deformed nucleus, and it falls as "
                 "B(E2; 0⁺ → 2⁺₁) rises: the two together are the first sign of a shell closure or of its loss.",
                 RAMAN_2001),
-            Use("A test of a shell-model interaction. Level energies are what an interaction is fitted to, so "
-                "calculated minus measured energies say how far it is to be trusted for this nucleus before its "
-                "B(E2) values and moments are read.", BROWN_RICHTER_2006),
+            Use("A test of a shell-model interaction. Level energies are what an interaction is usually fitted "
+                "to, so calculated beside measured energies say how far it is to be trusted for this nucleus before "
+                "its B(E2) values and moments are read.", BROWN_RICHTER_2006),
         )),
 )}
 

@@ -174,37 +174,20 @@ def convert(row: Row, to: str, key: Union[TransitionKey, LevelKey, str, None] = 
 # A plain ratio of two rows
 
 
-@dataclass(frozen=True)
-class Ratio:
-    """One row over another, each in its canonical convention."""
-
-    value: float
-    #: The uncertainty of the ratio, or None when neither row has one.
-    unc: Optional[float]
-    #: False when the two rows share a source (``depends_on``): their uncertainties are then not independent and
-    #: the quadrature overstates or understates the ratio's.
-    independent: bool
-
-
-def ratio(numerator: Row, denominator: Row, scale: float = 1.0) -> Ratio:
+def ratio(numerator: Row, denominator: Row, scale: float = 1.0) -> float:
     """``numerator`` over ``denominator``, both in their canonical convention, times ``scale`` (a factor of
     convention, such as the one that turns two B↑ values into B↓ values).
 
-    A plain ratio and nothing else: no model is in it. Its uncertainty is the two relative uncertainties in
-    quadrature (first order, the two rows taken as independent; an asymmetric uncertainty counts with the mean of
-    its sides), as the pull of :func:`compare` adds two uncertainties; a row without an uncertainty adds none.
-    Raises ``ValueError`` for a denominator of 0 and for projected rows: a simulated run is compared with the
-    value its simulation was given and with nothing else.
+    A plain ratio of two values and nothing else: no model is in it and no uncertainty is worked out for it (the
+    code has no function for that; each row has its own). Raises ``ValueError`` for a denominator of 0 and for
+    projected rows: a simulated run is compared with the value its simulation was given and with nothing else.
     """
     if PROJECTED in (numerator.evidence, denominator.evidence):
         raise ValueError("a projected row is not set against another row: it is closed against its own truth")
     a, b = canonical(numerator), canonical(denominator)
     if b.value == 0:
         raise ValueError(f"row {denominator.id} is 0: there is no ratio to it")
-    value = scale * a.value / b.value
-    parts = [c.unc() / abs(c.value) for c in (a, b) if c.unc() is not None and c.value != 0]
-    shared = {numerator.id, *numerator.depends_on} & {denominator.id, *denominator.depends_on}
-    return Ratio(value, abs(value) * math.hypot(*parts) if parts else None, not shared)
+    return scale * a.value / b.value
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -382,5 +365,5 @@ def compare(rows: list, reference: Union[Row, str, None] = None) -> Comparison:
         best)
 
 
-__all__ = ["AGREE_BELOW", "DIFFER_ABOVE", "VERDICTS", "Canonical", "Comparison", "Entry", "Projection", "Ratio",
+__all__ = ["AGREE_BELOW", "DIFFER_ABOVE", "VERDICTS", "Canonical", "Comparison", "Entry", "Projection",
            "canonical", "compare", "convert", "ratio", "verdict"]

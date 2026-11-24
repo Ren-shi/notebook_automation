@@ -230,13 +230,13 @@ def test_levels_are_anchored_to_the_local_ensdf_copy():
 
 
 def test_the_registry_names_conventions_routes_and_conversions():
-    assert set(observables.OBSERVABLES) == {"B(E2)", "tau", "Qs", "E_level"}
+    assert set(observables.OBSERVABLES) == {"B(E2)", "tau", "Qs", "B(M1)", "mu", "E_level"}
     b = observables.get("B(E2)")
     assert (b.belongs_to, b.unit, b.direction, b.symbol) == ("transition", "e2fm4", "up", "B(E2)↑")
     assert [observables.get(k).belongs_to for k in ("tau", "Qs", "E_level")] == ["level"] * 3
     kinds = {k.key: k.live for k in KINDS}
     for o in observables.OBSERVABLES.values():
-        assert o.routes and isinstance(o.used_for, str)
+        assert o.routes and o.used_for and all(u.text and u.reference for u in o.used_for)
         for route in o.routes:
             assert route.method in results.METHODS
             assert route.live is (None if route.kind is None else kinds[route.kind])

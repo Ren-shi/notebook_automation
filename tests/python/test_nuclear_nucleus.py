@@ -145,7 +145,7 @@ def test_the_adopted_values_come_as_evaluated_rows(tmp_path):
     assert all(nucleus.is_evaluation(r) and r.origin["dataset_date"] for r in rows)
     assert all("ENSDF" in nucleus.source(r) for r in rows)
     by = {(r.observable, r.key): r for r in rows}
-    assert len(by) == len(rows) and {r.observable for r in rows} == {"E_level", "tau", "Qs", "B(E2)"}
+    assert len(by) == len(rows) and {r.observable for r in rows} == {"E_level", "tau", "Qs", "B(E2)", "B(M1)", "mu"}
     energy, tau, b = by["E_level", "62Ni:2+1"], by["tau", "62Ni:2+1"], by["B(E2)", KEY]
     assert energy.value == pytest.approx(1172.9, abs=0.5) and 0 < energy.total < 1
     # τ is what the lifetime code makes of ENSDF's half-life, and B(E2) is ENSDF's own number in Weisskopf units.
@@ -410,9 +410,10 @@ def test_the_nuclei_and_one_nucleus_as_plain_data(lab):
     # The yield route has a simulated run and no measurement: "projected", not "done". The groups stay apart.
     assert [(routes[r, "coulex"]["independent"], routes[r, "coulex"]["projected"])
             for r in ("coulex-yield", "coulex-fit")] == [(0, 1), (1, 0)]
-    assert routes["other", "inelastic"]["status"] == "later" and routes["shell-model", None]["status"] == "done"
+    assert routes["inelastic-scattering", "inelastic"]["status"] == "later"
+    assert routes["shell-model", None]["status"] == "done"
     assert (routes["nrf", None]["status"], routes["nrf", None]["means"]) == ("no experiment", "literature")
-    assert all((r["applies"], r["reason"]) == (None, "") for r in v["routes"])  # the place a later wave fills
+    assert all(r["reason"] for r in v["routes"])  # each is tested, or says what is not checked
     gives = {g["to"]: g for g in v["gives"]}
     assert gives["B(E2)↓ in W.u."]["text"] == "12.13 ± 0.18 W.u.↓"
     assert gives["B(E2)↓"]["text"] == "176.8 ± 2.6 e2fm4↓"

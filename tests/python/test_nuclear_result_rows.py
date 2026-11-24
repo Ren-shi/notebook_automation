@@ -69,8 +69,9 @@ def shell_result(b_up=100.0) -> ShellModelResult:
               ShellState(8, 1, 1, -200.7, ex_mev=2.4)]  # (2J, parity, index), KSHELL's energy, MeV
     transitions = [ShellTransition("E2", (4, 1, 1), (0, 1, 1), 10.0, b_down=b_up / 5, b_up=b_up),
                    ShellTransition("E2", (4, 1, 1), (4, 1, 1), -15.8, moment=-12.0),
-                   ShellTransition("M1", (4, 1, 1), (4, 1, 1), 0.9, moment=0.4)]
-    return ShellModelResult(None, "f5pg9", "jun45", "R2", (1.5, 0.5), None, None, states, transitions,
+                   ShellTransition("M1", (4, 1, 1), (4, 1, 1), 0.9, moment=0.4),
+                   ShellTransition("M1", (4, 1, 2), (4, 1, 1), 0.5, b_down=0.05, b_up=0.05)]
+    return ShellModelResult(None, "f5pg9", "jun45", "R2", (1.5, 0.5), (1.0, 0.0), (3.9, -2.7), states, transitions,
                             nuclide="62Ni")
 
 
@@ -185,17 +186,19 @@ def test_a_fit_gives_b_and_qs_and_leaves_out_what_the_registry_lacks():
 def test_a_shell_model_calculation_is_copied_once(tmp_path):
     added = result_rows.copy_shell_model(shell_result())
     assert sorted((r.observable, r.key, r.value) for r in added) == [
-        ("B(E2)", "62Ni:2+(1)>0+(1):E2", 100.0), ("E_level", "62Ni:2+(1)", 1200.0),
-        ("E_level", "62Ni:4+(1)", 2400.0), ("Qs", "62Ni:2+(1)", -12.0)]
+        ("B(E2)", "62Ni:2+(1)>0+(1):E2", 100.0), ("B(M1)", "62Ni:2+(2)>2+(1):M1", 0.05),
+        ("E_level", "62Ni:2+(1)", 1200.0), ("E_level", "62Ni:4+(1)", 2400.0), ("Qs", "62Ni:2+(1)", -12.0),
+        ("mu", "62Ni:2+(1)", 0.4)]
     assert {(r.method, r.evidence, r.truth, r.unc()) for r in added} == {("shell-model", "theory", None, None)}
-    assert added[0].origin == results.shell_model_job("jun45", "f5pg9", {"proton": 1.5, "neutron": 0.5},
-                                                      program="KSHELL R2")
+    job = results.shell_model_job("jun45", "f5pg9", {"proton": 1.5, "neutron": 0.5}, program="KSHELL R2")
+    magnetic = {**job, "g_factors": {"g_l": [1.0, 0.0], "g_s": [3.9, -2.7]}}  # what B(M1) and μ rest on
+    assert all(r.origin == (magnetic if r.observable in ("B(M1)", "mu") else job) for r in added)
     assert results.of_nuclide("62Ni", root=tmp_path / "none") == sorted(added, key=lambda r: r.created)
 
     assert result_rows.copy_shell_model(shell_result()) == []  # the same calculation, whichever way it comes
     assert result_rows.copy_shell_model(shell_result(), job="0123456789abcdef") == []
     assert result_rows.read_shell_model(shell_result(), "0123456789abcdef") == []
-    assert len(results.read(tmp_path / "nuclei" / "62Ni" / results.POINTS_FILE)) == 4
+    assert len(results.read(tmp_path / "nuclei" / "62Ni" / results.POINTS_FILE)) == 6
 
     (again,) = result_rows.copy_shell_model(shell_result(b_up=104.0))  # run again, and one value moved
     old = next(r for r in added if r.observable == "B(E2)")

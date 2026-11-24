@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from physim.nuclear import compare, logbook, results
+from physim.nuclear import compare, ensdf, logbook, nucleus, results
 from physim.nuclear.planner import Planner
 
 KEY = "62Ni:2+1>0+1:E2"
@@ -82,11 +82,16 @@ def test_a_projected_row_is_closed_against_its_truth_and_not_pulled():
 
 def test_the_comparisons_still_to_run_for_a_nucleus_with_one_route_done():
     evaluated, measured, theory, projected = _rows()
-    # A simulated run is not a measurement: its route is "projected", not done. A measured value makes it done.
-    state = {r["method"]: r["state"] for r in logbook.routes_to_run("B(E2)", [projected, measured])}
-    assert state == {"coulex-yield": "projected", "coulex-fit": "done", "rdds": "open", "dsam": "open",
-                     "other": "open"}
-    page = logbook.to_run_html("B(E2)", [projected, measured], here="62Ni-on-194Pt", unanalysed=[1, 2], outside=True)
+    # The states are the nucleus page's: a simulated run is not a measurement, so its route is "projected", not
+    # done. A measured value makes it done. A route that does not apply is crossed out with the reason.
+    routes = nucleus.routes("62Ni", "B(E2)", KEY, [projected, measured], tests=False)
+    assert {r["method"]: r["status"] for r in routes if r["kind"]} == {
+        "coulex-yield": "projected", "coulex-fit": "done", "rdds": "in physim", "dsam": "in physim",
+        "inelastic-scattering": "later"}
+    off = next(r for r in routes if r["method"] == "dsam")
+    off.update(applies=False, reason="τ = 5 ps is above the range")
+    page = logbook.to_run_html(routes, [projected, measured], here="62Ni-on-194Pt", unanalysed=[1, 2], outside=True)
+    assert "✗ <b>DSAM (line shape).</b>" in page and "Does not apply: τ = 5 ps is above the range." in page
     assert "◐ <b>Coulex from the yield (first order).</b>" in page
     assert "Projected: a simulated run, no measurement yet: this experiment, run 3" in page
     assert "☑ <b>Coulex fitted to all orders.</b>" in page and "Done: Allmond et al. 2014" in page
@@ -98,6 +103,40 @@ def test_the_comparisons_still_to_run_for_a_nucleus_with_one_route_done():
         assert missing in page, missing
     # With the evaluation, a measurement and the shell model entered, nothing independent is missing.
     assert all(x["have"] for x in logbook.evidence_missing(_rows()))
+
+
+def test_the_report_and_the_nucleus_page_show_the_same_rows_and_route_states(tmp_path, monkeypatch):
+    """A τ entered for the level gave a B(E2) on the nucleus page and not in the report."""
+    monkeypatch.setenv(results.ENV, str(tmp_path / "nuclei"))
+    monkeypatch.setenv(ensdf.ENV, str(tmp_path / "no-ensdf"))
+    monkeypatch.setattr(nucleus, "decay", lambda nuclide, level: (
+        results.TransitionKey.parse(KEY), {"energy_kev": 1172.9, "branching": 1.0, "conversion": 0.0, "mixing": None},
+        ""))
+    evaluated, measured, theory, projected = _rows()
+    results.add_points([evaluated, results.Row(
+        "62Ni", "tau", "62Ni:2+1", 2.01, "ps", "dsam", "measured", total=0.12,
+        origin=results.reference("Kenn et al.", 2001))])
+    p = Planner.example("coulex_ni62_pt194")
+    p.create_experiment(root=tmp_path / "experiments")
+    here = p.experiment_folder.name
+    own = results.Row("62Ni", "B(E2)", KEY, 918.6, "e2fm4", "coulex-yield", "projected", direction="up", stat=13.0,
+                      sys=63.7, truth=884.1, origin=results.from_run(here, "03-beam-24h"))
+    results.append(p.experiment_folder, own)
+    before = {f: f.read_bytes() for f in tmp_path.rglob("*") if f.is_file()}
+    sec = {name: [] for name, _ in logbook.RESULTS}
+    c = logbook._routes_section(sec, p, "62Ni", "B(E2)", KEY, [own], own)
+    page = nucleus.observable_view("62Ni", "B(E2)", KEY, root=tmp_path / "experiments")
+    assert {f: f.read_bytes() for f in tmp_path.rglob("*") if f.is_file()} == before  # nothing is written
+    ids = lambda x: ({e.id for e in x.entries}, {q.id for q in x.projected}, x.reference.id)  # noqa: E731
+    assert ids(c) == ids(page["comparison"]) and len(c.entries) == 2 and len(c.projected) == 1
+    view = logbook.observable_rows(p, "62Ni", "B(E2)", KEY, [own])[0]
+    assert view["routes"] == page["routes"] and view["checks"] == page["checks"]
+    made = "Kenn et al. 2001, DSAM (line shape), converted from τ = 2.01 ± 0.12 ps"
+    beside, to_run = "".join(sec["routes"]), "".join(sec["to-run"])
+    assert made in beside and "it is no second result" in beside
+    assert "☑ <b>DSAM (line shape).</b>" in to_run and made in to_run
+    assert "◐ <b>Coulex from the yield (first order).</b>" in to_run and "no measurement yet" in to_run
+    assert "☐ <b>RDDS (decay curve, DDCM).</b>" in to_run and "☐ <b>Inelastic scattering.</b>" in to_run
 
 
 def test_the_report_leads_with_the_results_and_keeps_the_rest_as_appendices(tmp_path, monkeypatch):

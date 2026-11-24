@@ -30,18 +30,22 @@ supersedes it (:func:`correct_data_point`), and so is a retraction (:func:`retra
 independent (measured, evaluated, theory, outside program) and projected (a simulated run analysed back, compared
 only with the value the simulation was given). For one observable of one level or transition the view holds the
 comparison of :mod:`physim.nuclear.compare`, the routes of the registry (:mod:`physim.nuclear.observables`) each
-marked done, projected (simulated runs only), in physim or later, the registry's conversions applied to the
-reference value, and the history.
+marked done, projected (simulated runs only), in physim or later and tested for this nucleus (:func:`applies`),
+the registry's conversions applied to the reference value, the checks against other observables and the
+calculations (:func:`checks`: plain ratios of independent rows, and the rotor reading), what a value is used for,
+and the history.
 
 **No formula of its own.** Every number here comes from a function that existed before: the level scheme's own
 derivation (:class:`~physim.nuclear.levels.LevelScheme`), :func:`physim.nuclear.lifetimes.level_taus`, and the
-conversions of the registry and the comparison engine. Two things are left out because the code has no function
-for them: the branching of a level with several γ rays (so B(E2) ↔ τ is converted for levels with one γ ray only,
-:func:`decay`) and the uncertainty of a matrix element taken from a B value (:func:`gives`).
+conversions of the registry and the comparison engine. Three things are left out because the code has no
+function for them: the branching of a level with several γ rays (so B(E2) ↔ τ is converted for levels with one γ ray
+only, :func:`decay`), the uncertainty of a matrix element taken from a B value (:func:`gives`), and that of a ratio
+of two rows (:func:`checks` shows each value with its own).
 """
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from datetime import date as _date
@@ -56,6 +60,8 @@ from .levels import ME_UNITS, LevelScheme, components
 from .names import parse_nuclide
 from .quantity import Quantity
 from .results import METHODS, PROJECTED, LevelKey, Row, TransitionKey
+
+_log = logging.getLogger(__name__)
 
 #: The name the evaluation's rows carry in their origin (``origin["evaluation"]``).
 ENSDF = "ENSDF"
@@ -896,14 +902,11 @@ def stability(nuclide: str) -> dict:
         ground = found[0].levels[0]
         stable = bool(ground.stable)
         half_life = ground.half_life[0] if ground.half_life is not None else None
-    words = ("stable" if stable else f"T½ = {_time_words(half_life)} in ENSDF" if half_life is not None
-             else "in the natural element" if abundance is not None else "no half-life at hand")
-    if abundance is not None and words != "in the natural element":
-        words += f", {100 * abundance:.3g} % of natural {symbol}"
-    elif abundance is None:
-        words += ", not in the natural element" if stable is not None or half_life is not None else \
-            " (not in the natural element, and no local ENSDF copy has its ground state)"
-    return {"abundance": abundance, "stable": stable, "half_life_s": half_life, "words": words}
+    known = "stable" if stable else f"T½ = {_time_words(half_life)} in ENSDF" if half_life is not None else ""
+    share = f"{100 * abundance:.3g} % of natural {symbol}" if abundance is not None else "not in the natural element"
+    return {"abundance": abundance, "stable": stable, "half_life_s": half_life,
+            "words": f"{known}, {share}" if known else share if abundance is not None else
+            f"{share}, and no half-life of its ground state is at hand"}
 
 
 def _target_test(name: str, beam_too: bool) -> tuple:
@@ -912,8 +915,8 @@ def _target_test(name: str, beam_too: bool) -> tuple:
     a target must be, nor which beams exist: None, with the half-life."""
     s = stability(name)
     if s["abundance"] is not None or s["stable"]:
-        return True, (f"{name} is {s['words']}: it can be the target or the beam" if beam_too
-                      else f"{name} is {s['words']}: a target of it can be made")
+        return True, (f"{name} ({s['words']}) can be the target or the beam" if beam_too
+                      else f"a target of {name} ({s['words']}) can be made")
     return None, (f"{name}: {s['words']}. " + ("It would be the beam, or a target made for the purpose; whether "
                                                "either can be had is not checked" if beam_too else
                                                "The method needs a target of it; whether one can be made is not "
@@ -956,7 +959,7 @@ def _standing(rows: list, observable: str, key: str, evidence: tuple = ("evaluat
 def _lifetime_test(level_key: LevelKey, method: str, rows: Optional[list], via: Optional[dict]) -> tuple:
     """Whether the level's mean life is in the range physim plans a plunger or DSAM for
     (:func:`physim.nuclear.lifetime_plan.method_for`), with the evaluated τ of the ledger or, without one, the
-    best measured one (a τ made from a B(E2) row counts)."""
+    best measured one (a τ made from a B(E2) row counts). Never a calculated or a projected τ."""
     from . import lifetime_plan
 
     ranges = {"rdds": ("a plunger", lifetime_plan.RDDS_RANGE_PS), "dsam": ("DSAM", lifetime_plan.DSAM_RANGE_PS)}
@@ -966,7 +969,10 @@ def _lifetime_test(level_key: LevelKey, method: str, rows: Optional[list], via: 
                       f"point): whether it is in the range of a plunger or of DSAM is not tested")
     tau = _compare.canonical(row).value
     what, (low, high) = ranges[method]
-    known = f"τ = {tau:.3g} ps ({source((via or {}).get(row.id, row))})"
+    made_from = (via or {}).get(row.id)
+    known = f"τ = {tau:.3g} ps (" + (source(row) if made_from is None else
+                                     f"from the {observables.get(made_from.observable).label} of "
+                                     f"{source(made_from)}") + ")"
     span = f"{_ps_words(low)} to {_ps_words(high)}"
     suited = lifetime_plan.method_for(tau)
     if suited == method:
@@ -1112,18 +1118,20 @@ def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[di
     ``rows`` are the rows of the observable and key that hold now (converted ones among them, with ``via`` saying
     what each was made from: a B(E2) made from a DSAM lifetime counts for the DSAM route). ``every`` are all the
     nucleus's rows that hold now, for the tests of :func:`applies` (the level's τ is among them; ``rows`` when
-    left out); with ``tests`` False no test is made and every route has "applies" None (a table of many rows
-    needs the status only). Each route is a dict:
+    left out); with ``tests`` False no test is made and every route has "applies" None and no reason (a table of
+    many rows needs the status only). Each route is a dict:
     "method" and "label", "kind" and "kind_label" (the kind of experiment that plans it, or None), "note", "status"
     (:data:`DONE`: an independent row by that method holds now; :data:`ONLY_PROJECTED`: only simulated runs
     by that method hold, so nothing is measured yet; :data:`IN_PHYSIM`: physim has that kind of experiment;
     :data:`LATER`: a kind still to come; :data:`NO_EXPERIMENT`: a calculation, the evaluation or a method known
     from the literature only), "live" (whether physim has the kind of experiment, whatever the status), "means"
     for a route that is no experiment ("calculation", "evaluation", "literature"), "rows", "independent" and
-    "projected" (how many rows by that method hold now, in the two groups), "own" (how many of them are one's
-    own: from a run of an experiment or an own measurement, not from the literature), "open" (physim has the
-    kind and none of the rows is one's own: the route is still worth planning, even where a published value by
-    that method exists) and "applies" and "reason" (:func:`applies`).
+    "projected" (how many rows by that method hold now, in the two groups), "ids" (the ids of those rows), "own"
+    (how many of them are one's own: from a run of an experiment or an own measurement, not from the literature),
+    "open" (physim has the kind and none of the rows is one's own: the route is still worth planning, even where a
+    published value by that method exists) and "applies" and "reason" (:func:`applies`; a route by which an
+    independent value is here is never said not to apply: where physim's test says so, "applies" is None and the
+    reason says both).
     """
     from .workbench import KINDS
 
@@ -1133,22 +1141,24 @@ def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[di
         by_method.setdefault((via or {}).get(r.id, r).method, []).append(r)
     out = []
     for route in observables.get(observable).routes:
-        # "other" stands for a kind still to come (inelastic scattering, transfer): no row is matched to it.
-        mine = [] if route.method == "other" else by_method.get(route.method, [])
+        mine = by_method.get(route.method, [])
         live = route.live
         independent = sum(r.independent for r in mine)
         status = (DONE if independent else ONLY_PROJECTED if mine else IN_PHYSIM if live
                   else LATER if live is False else NO_EXPERIMENT)
-        fits, why = applies(nuclide, observable, key, route)
+        fits, why = (applies(nuclide, observable, key, route, rows if every is None else every, via) if tests
+                     else (None, ""))
+        if fits is False and independent:  # a value by this method is here: the test is of what physim plans
+            fits, why = None, f"a value by this method is here, so the method reaches it; but {why}"
         own = sum((via or {}).get(r.id, r).origin.get("kind") in ("run", "own measurement") for r in mine)
         out.append({
             "method": route.method, "label": METHODS[route.method], "kind": route.kind,
             "kind_label": kinds.get(route.kind), "note": route.note, "status": status, "live": bool(live),
             "means": (None if route.kind is not None else "calculation" if route.method == "shell-model"
                       else "evaluation" if route.method == "evaluation" else "literature"),
-            "rows": len(mine), "independent": independent, "projected": len(mine) - independent, "own": own,
-            "open": bool(live) and own == 0,
-            "applies": fits, "reason": why})
+            "rows": len(mine), "independent": independent, "projected": len(mine) - independent,
+            "ids": [r.id for r in mine], "own": own, "open": bool(live) and own == 0, "applies": fits,
+            "reason": why})
     return out
 
 
@@ -1244,6 +1254,182 @@ def gives(nuclide: str, row: Row) -> list:
             entry["missing"] = str(e)
         out.append(entry)
     return out
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Checks between observables
+
+
+_UNIT_WORDS = {"e2fm4": "e²fm⁴", "efm2": "e fm²", "mu_N2": "μ_N²", "mu_N": "μ_N"}
+
+
+def _said(row: Row, via: Optional[dict] = None) -> str:
+    """A row's value and where it is from: "884 ± 13 e²fm⁴ ↑ (ENSDF adopted, NDS 204, 1 (2025))", with what a
+    converted value was made from."""
+    c = cell(row, via)
+    arrow = observables.DIRECTIONS.get(c["direction"], "")
+    return (f"{value_text(c['value'], c['plus'], c['minus'])} {_UNIT_WORDS.get(c['unit'], c['unit'])}"
+            + (f" {arrow}" if arrow else "") + f" ({c['source']}"
+            + (f", converted from {observables.get(c['via']['observable']).label}" if c["via"] is not None else "")
+            + ")")
+
+
+def _no_sign(row: Row) -> bool:
+    """Whether the row is a moment that ENSDF gives without its sign (:func:`evaluation` says so in the detail)."""
+    return row.evidence == "evaluated" and "no sign" in row.detail
+
+
+def _check(label_: str, text: str, how: str, rows: list, value: float, reference: str = "") -> dict:
+    return {"label": label_, "text": text, "how": how, "reference": reference,
+            "rows": list(dict.fromkeys(r.id for r in rows)), "value": value}
+
+
+#: How to read each check, and what it does not show.
+_READ_E42 = ("2.0 is a harmonic vibrator, 2.5 a γ-soft rotor, 3.33 a rigid axial rotor; below 2 the nucleus is near a "
+             "closed shell and few nucleons carry the states. It is a ratio of energies alone: it shows neither the "
+             "sign of the deformation nor how collective the transitions are.")
+_READ_B42 = ("10/7 = 1.43 is the rigid axial rotor and 2 the harmonic vibrator; below 1 the 4⁺₁ state does not continue "
+             "the collective motion of the 2⁺₁ state (near a closed shell, or a state of another structure). Read it "
+             "with E(4⁺₁)/E(2⁺₁): alone it does not tell a rotor from a nucleus in between. Each value has its own "
+             "uncertainty; none is worked out for the ratio.")
+_READ_ROTOR = ("For a rigid axial rotor B(E2) fixes the size of Q_s(2⁺₁), and the sign of the measured Q_s says prolate "
+               "(negative) or oblate (positive). A measured Q_s much smaller than the rotor's says that the state is "
+               "not that rotor (a harmonic vibrator has Q_s = 0, a soft or triaxial nucleus lies between): β₂ is then "
+               "the size of the strength, not a shape. Agreement in size alone does not prove a rotor: look at "
+               "E(4⁺₁)/E(2⁺₁) too. The rotor's numbers carry no uncertainty here.")
+_READ_THEORY = {
+    "B(E2)": ("1 means that the interaction, its valence space and its effective charges together give the strength; "
+              "below 1 the calculation lacks collectivity (a space or effective charges too small), above 1 it has too "
+              "much. The ratio does not say which of them is off, and a calculation has no uncertainty, so it is not "
+              "judged."),
+    "B(M1)": ("1 means that the interaction, its valence space and its effective g factors together give the strength. "
+              "The ratio does not say which of them is off, and a calculation has no uncertainty, so it is not judged."),
+    "tau": ("Above 1 the calculated transitions are too weak, below 1 too strong. It tests the interaction, its valence "
+            "space and its effective charges together and does not say which is off; a calculation has no "
+            "uncertainty, so it is not judged."),
+    "Qs": ("A negative ratio means that the calculated state has the other shape (the other sign); near 1 the state is "
+           "as the calculation has it, as far as this moment shows. It does not say whether the wave function or the "
+           "effective charges are off, and a calculation has no uncertainty, so it is not judged."),
+    "mu": ("A negative ratio means that the calculation has the other sign; near 1 the state holds the orbits the "
+           "calculation gives it, as far as this moment shows. It does not say whether the wave function or the "
+           "effective g factors are off, and a calculation has no uncertainty, so it is not judged."),
+    "E_level": ("Far from 1, the calculation's wave functions are to be trusted less for this nucleus. Near 1 does not "
+                "show that its B(E2) values and moments are right: an interaction is usually fitted to energies."),
+}
+
+
+def checks(nuclide: str, observable: str, key: str, rows: list, via: Optional[dict] = None,
+           reference: Optional[Row] = None) -> list:
+    """What the values that hold say against each other: the checks between the observable and others of the
+    nucleus, and the calculations over the reference. Independent rows only: a projected one never takes part.
+
+    ``rows`` are all the nucleus's rows that hold now (converted ones among them, ``via`` saying what each was made
+    from) and ``reference`` the row of the comparison. Where a check needs one value of an observable it takes the
+    evaluated one, else the measured one with the smallest uncertainty. Each check is a dict: "label", "text"
+    (the numbers, each with its source), "how" (how to read it and what it does not show), "reference" (the book or
+    paper the reading is from, "" for none), "rows" (the ids of the rows it used) and "value" (the ratio; for the
+    rotor reading the prolate rotor's Q_s(2⁺₁) in e fm²).
+
+    - **E(4⁺₁)/E(2⁺₁)** of an even-even nucleus: with its B(E2) and Q_s of the first states and these energies;
+    - **B(E2; 4⁺₁ → 2⁺₁)/B(E2; 2⁺₁ → 0⁺₁)**, both ↓: with either B(E2);
+    - **the rotor reading** of B(E2; 0⁺₁ → 2⁺₁) beside Q_s(2⁺₁), with either: the numbers are the Coulex analysis's
+      (:func:`physim.nuclear.observables.rotor_reading`);
+    - **each calculation over the reference** (a shell-model value over the evaluated one).
+
+    The ratios are plain ones of two rows (:func:`physim.nuclear.compare.ratio`) and carry no uncertainty: the code
+    has no function for it. A check that cannot be made is left out.
+    """
+    name = results.nuclide_name(nuclide)
+    key = str(key)
+    two, four = f"{name}:2+1", f"{name}:4+1"
+    first, second = f"{two}>0+1:E2", f"{four}>2+1:E2"
+    out: list = []
+
+    def have(observable_: str, key_: str) -> Optional[Row]:
+        return _standing(rows, observable_, key_)
+
+    def energies() -> Optional[tuple]:
+        a, b = have("E_level", four), have("E_level", two)
+        return None if a is None or b is None else (_compare.ratio(a, b), a, b)
+
+    def e42() -> Optional[dict]:
+        found = energies()
+        if found is None:
+            return None
+        value, a, b = found
+        return _check("E(4⁺₁)/E(2⁺₁)", f"{value:.2f} = {_said(a, via)} over {_said(b, via)}", _READ_E42, [a, b], value,
+                      observables.CASTEN)
+
+    def b42() -> Optional[dict]:
+        a, b = have("B(E2)", second), have("B(E2)", first)
+        if a is None or b is None:
+            return None
+        # The rows compare as B↑ and the ratio is of the decays: B↓ = B↑ / b_up_over_down.
+        value = _compare.ratio(a, b, observables.b_up_over_down(0, 2) / observables.b_up_over_down(2, 4))
+        return _check("B(E2; 4⁺₁ → 2⁺₁)/B(E2; 2⁺₁ → 0⁺₁), both ↓",
+                      f"{value:.2f}, from B(E2; 2⁺₁ → 4⁺₁) = {_said(a, via)} and B(E2; 0⁺₁ → 2⁺₁) = {_said(b, via)}",
+                      _READ_B42, [a, b], value, observables.CASTEN)
+
+    def rotor() -> Optional[dict]:
+        b = have("B(E2)", first)
+        r = observables.rotor_reading(_compare.canonical(b).value, name) if b is not None else {}
+        if not r:
+            return None
+        used, q, found = [b], have("Qs", two), energies()
+        prolate = r["qs_2plus_efm2"]
+        text = (f"B(E2; 0⁺₁ → 2⁺₁) = {_said(b, via)} read as a rigid axial rotor: β₂ = {r['beta2']:.3f}, Q₀ = "
+                f"{r['q0_efm2']:.0f} e fm² and Q_s(2⁺₁) = {_signed(prolate)} e fm² if prolate, {_signed(-prolate)} if "
+                f"oblate. ")
+        if q is None:
+            text += "No Q_s(2⁺₁) is entered to set beside it."
+        else:
+            used.append(q)
+            text += (f"{results.EVIDENCE[q.evidence]}: Q_s(2⁺₁) = {_said(q, via)}"
+                     + (". ENSDF gives no sign for it: only its size can be set beside the rotor's."
+                        if _no_sign(q) else "."))
+        if found is not None:
+            text += f" E(4⁺₁)/E(2⁺₁) = {found[0]:.2f}."
+            used += found[1:]
+        return _check("The rotor's Q_s(2⁺₁) from B(E2)", text, _READ_ROTOR, used, prolate,
+                      observables.BOHR_MOTTELSON_2)
+
+    def over(row: Row) -> dict:
+        value = _compare.ratio(row, reference)
+        how = _READ_THEORY[observable]
+        if observable in ("Qs", "mu") and _no_sign(reference):
+            how = "ENSDF gives no sign for the reference, so the sign of the ratio says nothing. " + how
+        made_by = (via or {}).get(row.id, row)  # a calculated τ may come from a calculated B(E2)
+        who = source(made_by)
+        return _check(f"{who[:1].upper()}{who[1:]}, over the reference",
+                      f"{value:.2f} = {_said(row, via)} over {_said(reference, via)}", how, [row, reference], value,
+                      observables.RICHTER_2008 if made_by.method == "shell-model" else "")
+
+    wanted = []
+    z, a_ = parse_nuclide(name)
+    if z % 2 == 0 and a_ % 2 == 0:
+        if (observable, key) in (("B(E2)", first), ("B(E2)", second), ("Qs", two), ("E_level", two),
+                                 ("E_level", four)):
+            wanted.append(e42)
+        if (observable, key) in (("B(E2)", first), ("B(E2)", second)):
+            wanted.append(b42)
+        if (observable, key) in (("B(E2)", first), ("Qs", two)):
+            wanted.append(rotor)
+    if reference is not None and reference.independent and reference.evidence != "theory":
+        wanted += [lambda row=row: over(row) for row in results.select(rows, observable, key, "theory")
+                   if row.id != reference.id]
+    for make in wanted:
+        try:
+            found = make()
+        except (ValueError, TypeError, AttributeError) as e:  # a value of 0, a B↓ between unknown spins, ...
+            _log.debug("a check of %s of %s was left out: %s", observable, key, e)
+            continue
+        if found is not None:
+            out.append(found)
+    return out
+
+
+def _signed(x: float) -> str:
+    return f"{x:+.1f}".replace("-", "−")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1373,7 +1559,8 @@ def table(nuclide: str, rows: list, extra: tuple = ()) -> list:
             "measured": _summary(kinds["measured"]),
             "outside_program": _summary(kinds["outside program"]), "theory": _summary(kinds["theory"]),
             "projected": _summary(kinds[PROJECTED]),
-            "open": [r["method"] for r in routes(name, observable, key, group, via) if r["open"]],
+            "open": [r["method"] for r in routes(name, observable, key, group, via, tests=False)
+                     if r["open"]],
             "headline": not group or any(c["evidence"] != "evaluated" for c in cells)})
     return sorted(out, key=lambda t: (not t["headline"], order.index(t["observable"]),
                                       energy(t["observable"], t["key"]), t["key"]))
@@ -1509,11 +1696,15 @@ def history(rows: list, observable: Optional[str] = None, key=None) -> list:
 
 
 def observable_view(nuclide: str, observable: str, key, reference: Optional[str] = None,
-                    root: Union[str, Path, None] = None, home: Union[str, Path, None] = None) -> dict:
+                    root: Union[str, Path, None] = None, home: Union[str, Path, None] = None,
+                    ledger: Optional[list] = None) -> dict:
     """One observable of one level or transition of a nucleus, by every route.
 
     ``key`` names the level or transition as one says it; ``reference`` is the id (or its first characters) of
-    the row to compare against, the evaluated row when left out. Returns a dict:
+    the row to compare against, the evaluated row when left out. ``ledger`` are the nucleus's rows (superseded
+    ones among them) where the caller has them already; they are then not read from ``root`` and ``home`` (the
+    report passes its own, which may hold a row that an analysis gives and the ledger does not hold yet). Nothing
+    is written. Returns a dict:
 
     - "nuclide", "observable", "key", "label", "unit", "convention";
     - "comparison": the :class:`physim.nuclear.compare.Comparison` (the object: ``.to_dict()`` makes it plain
@@ -1521,14 +1712,16 @@ def observable_view(nuclide: str, observable: str, key, reference: Optional[str]
       its ``projected`` the simulated runs, each against the value its simulation was given;
     - "cells": every row compared, as a :func:`cell`, by id (the source and what a converted row was made from);
     - "reference": the reference's cell, or None;
-    - "routes": :func:`routes`;
+    - "routes": :func:`routes`, each with "applies" and "reason" for this nucleus (:func:`applies`);
     - "gives": :func:`gives` of the reference ([] without one);
+    - "checks": :func:`checks` against other observables and the calculations ([] when there is none to make);
+    - "used_for": what the registry says a value of the observable is used for, [{"text", "reference"}];
     - "history": :func:`history` of the rows of the ledgers (converted values are not in it: their sources are).
     """
     name = results.nuclide_name(nuclide)
     o = observables.get(observable)
     key = key_of(name, observable, key, check=False).text
-    every = results.of_nuclide(name, root, home)
+    every = results.of_nuclide(name, root, home) if ledger is None else list(ledger)
     rows, via = with_converted(name, results.current(every))
     group = results.select(rows, observable, key)
     comparison = None
@@ -1545,13 +1738,15 @@ def observable_view(nuclide: str, observable: str, key, reference: Optional[str]
     return {"nuclide": name, "observable": observable, "key": key, "label": label(observable, key), "unit": o.unit,
             "convention": o.convention, "comparison": comparison, "cells": {r.id: cell(r, via) for r in group},
             "reference": None if ref is None else cell(ref, via),
-            "routes": routes(name, observable, key, group, via),
-            "gives": gives(name, ref) if ref is not None else [], "history": history(every, observable, key)}
+            "routes": routes(name, observable, key, group, via, rows),
+            "gives": gives(name, ref) if ref is not None else [],
+            "checks": checks(name, observable, key, rows, via, ref), "used_for": [u.to_dict() for u in o.used_for],
+            "history": history(every, observable, key)}
 
 
 __all__ = ["DONE", "ENSDF", "IN_PHYSIM", "LATER", "NO_EXPERIMENT", "ONLY_PROJECTED", "POINT_EVIDENCE",
-           "POINT_METHODS", "PointProblem", "add_data_point", "adopted_scheme", "applies", "cell",
+           "POINT_METHODS", "PointProblem", "add_data_point", "adopted_scheme", "applies", "cell", "checks",
            "correct_data_point", "decay", "evaluation", "gives", "history", "holding", "is_data_point",
            "is_evaluation", "key_of", "label", "level", "level_label", "nuclei", "observable_view",
-           "partner_nuclide", "retract_data_point", "routes", "snapshot_evaluation", "source", "table",
-           "transition", "value_text", "view", "with_converted"]
+           "partner_nuclide", "retract_data_point", "routes", "snapshot_evaluation", "source", "stability",
+           "table", "transition", "value_text", "view", "with_converted"]
