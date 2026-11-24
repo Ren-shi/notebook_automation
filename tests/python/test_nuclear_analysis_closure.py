@@ -580,7 +580,8 @@ def blended():
 @pytest.mark.parametrize("det, scatter", [("CD", 0.0010), (None, 0.0024)])
 def test_a_peak_with_another_line_in_its_window_keeps_its_area(blended, det, scatter):
     """The area is the full-energy counts of the 2⁺ → 0⁺ and the 4⁺ → 2⁺ lines, not 4 % less (a Gaussian on a line,
-    as the peak was fitted whenever the window held another line, lost the tails the geometry and the crystals leave it);
+    as the peak was fitted whenever the window held another line, lost the tails that the add-back gives it: a γ ray put down
+    to the crystal beside is corrected with that one's angle);
     ``scatter`` is of one sample. Lines more than 3σ away are in the fit, not in the area. Over sixteen samples (seeds
     1–16): +0.07 ± 0.02 % (CD) and +0.09 ± 0.06 % (all); before, −3.58 ± 0.05 and −4.00 ± 0.07 %."""
     exp, samples = blended
