@@ -1,6 +1,6 @@
 # Tests that pull requests leave out (tests/python/conftest.py --quick): those of 10 s or more on GitHub's runner.
 # main, tags and runs started by hand (gh workflow run ci.yml --ref BRANCH) run all of them, and a pull request
-# runs those of the files it changes, and of the files named after a module it changes (scripts/ci_shard.py).
+# runs those of the files it changes, and of the files named after a module it changes (scripts/ci_tests.py).
 # One per line: file::test (all its parameters, or file::test[parameters]), or file::fixture:NAME for every test
 # that takes a slow fixture. Refresh it from the durations in the log of a run on main.
 

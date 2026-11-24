@@ -143,6 +143,8 @@ def test_compound_nucleus(opb):
     assert cn.sigma_mb == pytest.approx(opb.cross_section(90.0), rel=1e-12)
     assert cn.spin_distribution().sum() == pytest.approx(1.0)
     assert 0 < cn.mean_l < cn.max_l <= opb.critical_l
+    l = np.arange(cn.sigma_l_mb.size)
+    assert cn.mean_l == pytest.approx((l * cn.sigma_l_mb).sum() / cn.sigma_l_mb.sum(), rel=1e-12)
 
 
 def test_energies_in_any_form(opb):

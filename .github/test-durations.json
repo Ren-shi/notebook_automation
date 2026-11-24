@@ -4,7 +4,7 @@
   "test_bindings.py": 0.0,
   "test_build_kshell.py": 0.0,
   "test_chaos.py": 0.3,
-  "test_ci_shard.py": 0.0,
+  "test_ci_tests.py": 20.0,
   "test_collisions.py": 0.1,
   "test_constraints.py": 0.1,
   "test_em.py": 0.0,

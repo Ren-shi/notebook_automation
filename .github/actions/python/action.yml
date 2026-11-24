@@ -1,0 +1,53 @@
+name: Python environment
+description: >
+  Python 3.12 and, unless it says not to, the .venv with the requirements and the built extension. Both are kept in the
+  cache until the requirements or the Rust sources change; then they are built here.
+inputs:
+  requirements:
+    description: the requirements files, separated by spaces
+    default: requirements-dev.txt
+  environment:
+    description: "true, or false for Python alone; only-if-missing builds it for the jobs after this one"
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - id: python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - id: key
+      if: inputs.environment != 'false'
+      shell: bash
+      run: |
+        sources=$(git ls-files -s src Cargo.toml Cargo.lock .cargo build.rs rust-toolchain.toml pyproject.toml \
+                  ${{ inputs.requirements }} | sha256sum | cut -c1-20)
+        echo "key=venv-${{ runner.os }}-${{ steps.python.outputs.python-version }}-$sources" >> "$GITHUB_OUTPUT"
+    - id: cached
+      if: inputs.environment != 'false'
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          .venv
+          python/physim/_core*.so
+        key: ${{ steps.key.outputs.key }}
+        lookup-only: ${{ inputs.environment == 'only-if-missing' }}
+    - if: inputs.environment != 'false' && steps.cached.outputs.cache-hit != 'true'
+      uses: dtolnay/rust-toolchain@stable
+    - if: inputs.environment != 'false' && steps.cached.outputs.cache-hit != 'true'
+      uses: Swatinem/rust-cache@v2
+    - if: inputs.environment != 'false' && steps.cached.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        python -m venv .venv
+        .venv/bin/pip install $(printf -- '-r %s ' ${{ inputs.requirements }})
+        source .venv/bin/activate
+        maturin develop --release
+    - if: inputs.environment != 'false' && steps.cached.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      continue-on-error: true  # another job may have been first
+      with:
+        path: |
+          .venv
+          python/physim/_core*.so
+        key: ${{ steps.key.outputs.key }}
