@@ -90,6 +90,10 @@ def _press(user, text: str) -> None:
 
 
 def test_the_nuclei_screen_and_the_page_of_one_nucleus(lab):
+    # The evaluation of the partner is here (its page was opened once): it stays in the line under the cards.
+    results.add_points([results.Row("194Pt", "E_level", "194Pt:2+1", 328.5, "keV", "evaluation", "evaluated",
+                                    total=0.1, origin=results.reference("ENSDF", 2025, evaluation=nucleus.ENSDF))])
+
     async def scenario(user, st):
         from nicegui import ui
         from nicegui.testing import UserInteraction

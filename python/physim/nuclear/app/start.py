@@ -91,9 +91,9 @@ def render(ctx) -> None:
 
 def is_card(n: dict) -> bool:
     """Whether a nucleus of :func:`physim.nuclear.nucleus.nuclei` gets a card of its own: it is studied by an
-    experiment or has rows. One that only appears as the partner of an experiment goes in the line under the
-    cards."""
-    return bool(n["rows"]) or any(x["role"] != "partner" for x in n["experiments"])
+    experiment or has rows besides the evaluation. One that only appears as the partner of an experiment, or whose
+    page was only looked at (which takes its evaluation), goes in the line under the cards."""
+    return n["rows"] > n["evaluation"]["rows"] or any(x["role"] != "partner" for x in n["experiments"])
 
 
 def nuclei_page(ctx) -> None:
@@ -178,7 +178,8 @@ def _nuclei(ctx, found: dict) -> None:
                 with ui.element("div"):
                     ui.label("WHAT IS KNOWN AND PROJECTED").classes("ps-nuc-h")
                     if not n["table"]:
-                        ui.label("Nothing yet.").classes("text-sm ps-muted")
+                        ui.label("The evaluation, on its page." if evaluation["taken"] else "Nothing yet.").classes(
+                            "text-sm ps-muted")
                     with ui.element("div").classes("ps-kv"):
                         for t in n["table"][:tn.HEADLINES]:
                             row = ui.label(tn.label_text(t["label"])).style("cursor: pointer")
@@ -199,10 +200,13 @@ def _nuclei(ctx, found: dict) -> None:
                         ui.label("No experiment yet: data points only.").classes("text-sm ps-muted")
     if partners:
         with ui.row().classes("w-full items-center gap-1 ps-note").style("padding: 6px 12px"):
-            ui.label("Only as the partner of an experiment:").classes("text-sm ps-muted")
+            ui.label("Only as the partner of an experiment, or looked up:" if any(
+                not n["experiments"] for n in partners) else "Only as the partner of an experiment:").classes(
+                "text-sm ps-muted")
             for n in partners:
                 count = len(n["experiments"])
-                ui.button(f"{tn.nuclide_text(n['nuclide'])} · in {count} experiment{'s' * (count != 1)}",
+                ui.button(f"{tn.nuclide_text(n['nuclide'])} · " + (
+                    f"in {count} experiment{'s' * (count != 1)}" if count else "the evaluation only"),
                           on_click=lambda name=n["nuclide"]: tn.open_nucleus(ctx, name)).props(
                     "flat no-caps dense").classes("text-sm")
     if found["unassigned"]:
