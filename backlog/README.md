@@ -81,6 +81,7 @@ Size: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week or more.
 | 73 | [Lifetimes: decay in flight](73-lifetimes.md) | Experiment workbench (physics) | P3 | M | 50, 55, 63 |
 | 74 | [Contaminant reactions, beam spot and halo](74-contaminants-and-beam-spot.md) | Experiment workbench (physics) | P3 | M | 63, 67 |
 | 75 | [Fusion-evaporation: the compound nucleus, its decay and the residues' γ rays](75-fusion-evaporation.md) (built; validation open) | Nuclear planner (third slice) | P3 | L | 34–39, 50, 54, 55, 63, 71 |
+| 76 | [Physics the results pages could add](76-physics-the-results-pages-could-add.md) | Nuclear planner (results) | P3 | M | — |
 
 Known limits of the current engine (worth keeping in mind until the items above land):
 - `NewtonianGravity` is direct O(N²); `TreeGravity` (item 10) is O(N log N) but its per-interaction cost is not yet
