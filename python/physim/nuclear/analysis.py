@@ -68,6 +68,7 @@ import numpy as np
 from . import data
 from .coulex import Coulex
 from .gamma import correlation_table, emitters, transition_lines
+from .gamma_events import doppler_spread, to_steps
 from .kinematics import TwoBody, lab_points
 from .levels import weisskopf_unit
 from .quantity import Quantity
@@ -113,6 +114,8 @@ TAILS_WORTH = 25.0
 #: With a simulated tail shape, how many times wider or narrower than the simulated peak's core the fitted core may
 #: be, and how many of its σ its centre may lie away from the simulated one.
 SHAPE_REACH = 2.0
+#: The steps (MeV) of the spread that the Doppler correction leaves (:meth:`Analysis._spread`).
+SPREAD_STEP_MEV = 1e-4
 #: The simulated peak: its seed (one more if the run has that seed), the reactions generated, the γ rays each of its
 #: particles emits, the full-energy counts it is made for and the most γ rays emitted for them.
 SHAPE_SEED = 1_618_033
@@ -263,11 +266,15 @@ class PeakFit:
     #: "wide_sigma" (standard deviation) of that one and its "wide_shape" ("biweight", :func:`_biweight`; a fit kept
     #: without it has a Gaussian there), the total "area" (counts) and the bin "width" (MeV); the "level" and "slope" (about
     #: "origin") of the line above it and the "step" the background takes below it (counts per bin); "inside", the
-    #: share of the peak within ±3σ of the Gaussian; "gain", what the tails took off the fit's deviance; and whether
-    #: they are "simulated" (the share, the offset and the width of the wider component, relative to the core, are
-    #: those of a simulated peak: :meth:`Analysis.simulated_peak`). With simulated tails also the σ of the Gaussian
-    #: fitted to that peak ("simulated_sigma", MeV), the share of it that the area of that Gaussian loses
-    #: ("simulated_loss") and the area of the Gaussian fitted to these counts ("gaussian_area", or None).
+    #: share of the peak within ±3σ of the Gaussian; "gain", what the tails took off the fit's deviance; where nuclei
+    #: decay inside the target, the "spread" that the peak has instead of the wider component (its "share" is 0): the
+    #: "shift" (MeV) and the "share" of each of its steps, every one of them with the core about it
+    #: (:meth:`Analysis._spread`); and whether the tails are "simulated" (the share, the offset and the width of the
+    #: wider component, relative to the core, or the spread are those of a simulated peak:
+    #: :meth:`Analysis.simulated_peak`). With simulated tails also the σ of the Gaussian fitted to that peak
+    #: ("simulated_sigma", MeV), the share of it that the area of that Gaussian loses ("simulated_loss") and the area
+    #: of the Gaussian fitted to these counts ("gaussian_area", or None); with a spread the σ that it and the detectors'
+    #: resolution give, 0 and that area.
     tails: Optional[dict] = None
     #: Why the fit is no measurement of a peak (its width or its centre ended at a bound, or it found no counts above
     #: the background), or None.
@@ -284,16 +291,26 @@ class PeakFit:
         return ((1 - t["share"], t["centre"], t["sigma"], False),
                 (t["share"], t["wide_centre"], t["wide_sigma"], t.get("wide_shape") == "biweight"))
 
+    def _over_spread(self, curve, energy: np.ndarray) -> np.ndarray:
+        """``curve`` (of the energy) averaged over the spread of a peak that has one."""
+        spread = self.tails.get("spread")
+        if spread is None:
+            return curve(energy)
+        return sum(share * curve(energy - shift) for shift, share in zip(spread["shift"], spread["share"]))
+
     def background_curve(self, energy) -> np.ndarray:
         """The fitted background under the peak at ``energy`` (MeV), counts per bin."""
         e = np.asarray(energy, dtype=float)
         t = self.tails
         if t is None:
             return self.level + self.slope * (e - self.origin)
-        above = sum(share * (_biweight((e - centre) / sigma)[1] if ends else
-                             0.5 * np.vectorize(math.erfc, otypes=[float])((e - centre) / sigma / math.sqrt(2)))
-                    for share, centre, sigma, ends in self._components())
-        return t["level"] + t["slope"] * (e - t["origin"]) + t["step"] * above
+
+        def above(e):
+            return sum(share * (_biweight((e - centre) / sigma)[1] if ends else
+                                0.5 * np.vectorize(math.erfc, otypes=[float])((e - centre) / sigma / math.sqrt(2)))
+                       for share, centre, sigma, ends in self._components())
+
+        return t["level"] + t["slope"] * (e - t["origin"]) + t["step"] * self._over_spread(above, e)
 
     def curve(self, energy) -> np.ndarray:
         """The fitted peak on its background at ``energy`` (MeV), counts per bin."""
@@ -301,10 +318,13 @@ class PeakFit:
         t = self.tails
         if t is None:
             return self.height * np.exp(-0.5 * ((e - self.centroid) / self.sigma) ** 2) + self.background_curve(e)
-        peak = sum(share * (_biweight((e - centre) / sigma)[0] if ends else
-                            np.exp(-0.5 * ((e - centre) / sigma) ** 2) / math.sqrt(2 * math.pi)) / sigma
-                   for share, centre, sigma, ends in self._components())
-        return t["area"] * t["width"] * peak + self.background_curve(e)
+
+        def peak(e):
+            return sum(share * (_biweight((e - centre) / sigma)[0] if ends else
+                                np.exp(-0.5 * ((e - centre) / sigma) ** 2) / math.sqrt(2 * math.pi)) / sigma
+                       for share, centre, sigma, ends in self._components())
+
+        return t["area"] * t["width"] * self._over_spread(peak, e) + self.background_curve(e)
 
     @property
     def fwhm_kev(self) -> float:
@@ -315,6 +335,8 @@ class PeakFit:
         """What was fitted, in words."""
         if self.tails is None:
             return "Gaussian on a line"
+        if "spread" in self.tails:
+            return "Gaussian spread as the setup's Doppler shifts are, on a line with a step"
         return f"Gaussian with {'simulated ' if self.tails.get('simulated') else ''}tails on a line with a step"
 
 
@@ -510,7 +532,7 @@ def _likeliest(model, y: np.ndarray, scale: float, start: np.ndarray, low: np.nd
 
 
 def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: float = 4.0, variance=None,
-              shape: Optional[dict] = None, worth: float = TAILS_WORTH) -> PeakFit:
+              shape: Optional[dict] = None, worth: float = TAILS_WORTH, spread: Optional[tuple] = None) -> PeakFit:
     """The peak of ``fit`` (:func:`fit_peak`) with the tails it has beyond a Gaussian, or ``fit`` itself if it has none
     worth fitting.
 
@@ -530,11 +552,20 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
     on the same background by more than ``worth`` (:data:`TAILS_WORTH`); without them the result is ``fit``.
     ``variance`` is each bin's, if not its counts (its sum over theirs is the counts that one entry stands for).
 
+    With a ``spread`` (:meth:`Analysis._spread`: shifts in MeV, and the share of the peak with each) the peak is that
+    spread with the Gaussian core about every step of it, and there is no wider component. The setup gives it when nuclei
+    decay inside the target: they put a tail on one side of the peak, up to 20 keV long, that a wider bell about the
+    core does not follow (0.4 % of the area was lost). The core's width is then what the counts ask for besides the
+    spread: the detectors' resolution, or more. Nothing else of the shape is fitted, and it is worth fitting when it is
+    better than the Gaussian without the spread by more than ``worth``.
+
     With a ``shape`` (:func:`tail_shape` of a peak that was fitted with its tails: one from a simulation of the setup)
-    the share, the centre and the width of the wider component, relative to the core's, are those of that peak. The
-    counts fix only the area, the centre and width of the core and the background, within the window of that peak.
+    the share, the centre and the width of the wider component, relative to the core's, or the spread (as many times
+    wider or narrower as the core is) are those of that peak. The counts fix only the area, the centre and width of the
+    core and the background, within the window of that peak.
     The core may be :data:`SHAPE_REACH` times as wide or as narrow as the shape's, and its centre as many of its σ
-    away; a fit that ends there is marked :attr:`PeakFit.failed`."""
+    away (with a spread, of the σ of the Gaussian that was fitted to the peak: the core is only a part of it); a fit
+    that ends there is marked :attr:`PeakFit.failed`."""
     centres = (edges[:-1] + edges[1:]) / 2
     width = float(edges[1] - edges[0])
     origin, s0 = (fit.centroid, fit.sigma) if shape is None else (shape["centroid"], shape["sigma"])
@@ -548,7 +579,20 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
     x, b = (centres[m] - origin) / s0, width / s0  # in σ of the Gaussian
     u = (x - x[0]) / (x[-1] - x[0])
 
+    spread = spread if shape is None else shape.get("spread")
+
+    def in_bins(stretch=1.0):  # the spread in steps of the bins, and the number of the first step
+        shift, part = to_steps(np.asarray(spread[0], dtype=float) * stretch, np.asarray(spread[1], dtype=float), width)
+        return part, round(float(shift[0]) / width)
+
+    steps = None if spread is None else in_bins()
+
     def peak(p):  # the share of the peak in each bin
+        if steps is not None:
+            part, first = steps if shape is None else in_bins(p[2] * s0 / shape["core_sigma"])
+            at = x[0] + b * np.arange(1 - len(part) - first, len(x) - first)
+            core = np.exp(-0.5 * ((at - p[1]) / p[2]) ** 2) / p[2]
+            return np.convolve(core, part, "valid") / math.sqrt(2 * math.pi) * b
         core = np.exp(-0.5 * ((x - p[1]) / p[2]) ** 2) / p[2]
         wide = _biweight((x - p[1] - p[4] * p[2]) / (p[2] * p[5]))[0] / (p[2] * p[5])
         return ((1 - p[3]) * core / math.sqrt(2 * math.pi) + p[3] * wide) * b
@@ -575,7 +619,11 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
         if shape is None:
             gaussian = start.copy()
             gaussian[3] = 0.0
+            from_setup, steps = steps, None
             _, plain, _ = _likeliest(model, y, scale, gaussian, low, high, alone)
+            steps = from_setup
+            if steps is not None:  # the core alone about the spread, and as narrow as the detectors' resolution is
+                free, start[2:4], low[2] = alone, (0.5, 0.0), 0.1
             p, deviance, cov = _likeliest(model, y, scale, start, low, high, free)
             gain = plain - deviance
             if not gain > worth:
@@ -586,7 +634,8 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
                          core, shape["share"], shape["offset"], shape["ratio"]]
             low[:6], high[:6] = -np.inf, np.inf
             low[0] = 0.0
-            low[1], high[1] = start[1] - SHAPE_REACH * core, start[1] + SHAPE_REACH * core
+            reach = SHAPE_REACH * (core if spread is None else shape["sigma"] / s0)
+            low[1], high[1] = start[1] - reach, start[1] + reach
             low[2], high[2] = core / SHAPE_REACH, core * SHAPE_REACH
             p, deviance, cov = _likeliest(model, y, scale, start, low, high, alone)
             if not p[0] > 1:
@@ -605,6 +654,9 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
              "wide_sigma": s0 * float(p[2] * p[5]), "wide_shape": "biweight", "level": float(p[6]) - slope * float(x[0]),
              "slope": slope / s0, "origin": origin, "step": float(p[8]), "gain": float(gain),
              "simulated": shape is not None}
+    if steps is not None:
+        part, first = steps if shape is None else in_bins(float(p[2]) * s0 / shape["core_sigma"])
+        tails["spread"] = {"shift": (width * (first + np.arange(len(part)))).tolist(), "share": part.tolist()}
     if shape is not None:  # the Gaussian of a peak of that shape: the window, and the width that is quoted
         stretch = float(p[2]) * s0 / shape["core_sigma"]
         fit = replace(fit, sigma=stretch * shape["sigma"], failed=failed,
@@ -620,14 +672,15 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
 def tail_shape(fit: PeakFit) -> Optional[dict]:
     """What :func:`fit_tails` needs to give another peak the tails of ``fit``: the share of the wider component, its
     centre from the core's ("offset", in the core's σ) and its σ over the core's ("ratio"), the core's "centre" and
-    "core_sigma", and the "centroid" and "sigma" of the Gaussian that was fitted to it. None for a peak without
-    tails."""
+    "core_sigma", the "centroid" and "sigma" of the Gaussian that was fitted to it, and its "spread" (shifts and
+    shares, or None). None for a peak without tails."""
     t = fit.tails
     if t is None:
         return None
     return {"share": t["share"], "offset": (t["wide_centre"] - t["centre"]) / t["sigma"],
             "ratio": t["wide_sigma"] / t["sigma"], "centre": t["centre"], "core_sigma": t["sigma"],
-            "centroid": fit.centroid, "sigma": fit.sigma}
+            "centroid": fit.centroid, "sigma": fit.sigma,
+            "spread": None if t.get("spread") is None else (t["spread"]["shift"], t["spread"]["share"])}
 
 
 def find_peaks(counts, edges, fwhm, threshold: float = 5.0, contrast: float = 0.1, variance=None,
@@ -1648,6 +1701,10 @@ class Analysis:
             notes.append("The counts are too few to fix the tails of the peak: their share and shape come from a "
                          "simulation of this setup, and the line \"peak tails (simulated)\" of the budget is what "
                          "that may be wrong by.")
+        if fit.tails is not None and "spread" in fit.tails and not fit.tails["simulated"]:
+            notes.append("Some nuclei decay inside the target, faster than the Doppler correction takes them: the spread "
+                         "of the peak comes from the half-life and the geometry of this setup, and the line "
+                         "\"peak tails (simulated)\" of the budget is what that may be wrong by.")
         fits = [fit] + ([PeakFit.of(other["fit"])] if s.normalisation == "target" and other is not None
                         and not s.reference else [])
         budget, budget_notes = self._budget(s, keep, b, p_per_b, eff, corr, ref_unc, fits)
@@ -1844,8 +1901,14 @@ class Analysis:
         simulated = like is not None and like.tails["simulated"]
         if not fit.failed and not simulated:
             own = fit_tails(counts, edges, fit, s.fit_half_width, variance=variance,
-                            worth=TAILS_WORTH if like is None else -math.inf)
+                            worth=TAILS_WORTH if like is None else -math.inf,
+                            spread=self._spread(s) if nucleus == 0 else None)
             if own.tails is not None:
+                if "spread" in own.tails and not fit.failed:
+                    # What the spread may be wrong by (:meth:`_tails_uncertainty`): the width that it and the
+                    # resolution of the detectors give the peak, for the measured one.
+                    own.tails.update(gaussian_area=fit.area, simulated_loss=0.0, simulated_sigma=math.sqrt(max(
+                        fit.sigma**2 - own.tails["sigma"] ** 2, 0.0) + self._resolution() ** 2))
                 return own
         if self.taken is None or not float(np.sum(counts)) > 0:
             return self._checked(fit)
@@ -1865,6 +1928,30 @@ class Analysis:
                 or abs(fit.centroid - sim.centroid) > SHAPE_REACH * sim.sigma):
             fit = fit_peak(counts, edges, sim.centroid, sim.sigma, s.fit_half_width, max_sigma=SHAPE_REACH * sim.sigma)
         return self._checked(fit)
+
+    def _resolution(self) -> float:
+        """The σ (MeV) of the γ-ray detectors at the ``[reaction]`` transition, averaged over the crystals."""
+        return max(float(np.mean([c.response.fwhm(self.e0) for c in self.gammas.crystals])) / FWHM_PER_SIGMA, 1e-4)
+
+    def _spread(self, s: Settings) -> Optional[tuple]:
+        """The spread of the corrected peak of the ``[reaction]`` nucleus in the gate's detectors and rings that the
+        setup gives, when its level has a half-life (:func:`~physim.nuclear.gamma_events.doppler_spread`, with the
+        efficiency and the correlation factor of each crystal): (shifts in MeV, the share of the peak with each), or
+        None. Kept."""
+        mine = "recoil" if self.experiment.excitation.excite == "target" else "projectile"
+        if s.correction not in ("emitter", mine):
+            return None
+        kept = self.__dict__.setdefault("_spreads", {})
+        key = json.dumps([s.detectors, s.rings], default=_plain)
+        if key not in kept:
+            crystals = self.gammas.crystals
+            of = [c.name.rsplit(" ", 1)[0] if c.element is not None else c.name for c in crystals]
+            eff = [float(c.response.peak_efficiency(self.e0, c.element)) for c in crystals]
+            seen = {d: np.array([e * self._correlation.get((d, name), 1.0) for e, name in zip(eff, of)])
+                    for d in (self.events.detectors if s.detectors is None else s.detectors)}
+            found = doppler_spread(self.experiment, seen, SPREAD_STEP_MEV / self.e0, s.rings)
+            kept[key] = None if found is None else (self.e0 * found[0], found[1])
+        return kept[key]
 
     @staticmethod
     def _checked(fit: PeakFit) -> PeakFit:
@@ -1973,12 +2060,12 @@ class Analysis:
         return kept[key]
 
     def _tails_uncertainty(self, fit: PeakFit) -> float:
-        """What the simulated share of the peak's tails may be wrong by, relative to the area: the change the share
-        makes (the area with it against that of the Gaussian, or, if larger, what the Gaussian loses of the simulated
-        peak), times how far the simulated width is from the measured one (and the uncertainty of that), between
-        :data:`SHAPE_KNOWN` and 1."""
+        """What the simulated share of the peak's tails, or the spread that the setup gives the peak, may be wrong by,
+        relative to the area: the change it makes (the area with it against that of the Gaussian, or, if larger, what
+        the Gaussian loses of the simulated peak), times how far the simulated width is from the measured one (and the
+        uncertainty of that), between :data:`SHAPE_KNOWN` and 1."""
         t = fit.tails
-        if t is None or not t.get("simulated") or not fit.area > 0:
+        if t is None or "simulated_sigma" not in t or not fit.area > 0:
             return 0.0
         change = max(abs(1 - t["gaussian_area"] / fit.area) if t.get("gaussian_area") else 0.0, t["simulated_loss"])
         off = math.hypot(fit.sigma / t["simulated_sigma"] - 1, 1 / math.sqrt(2 * fit.area))

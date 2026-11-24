@@ -503,6 +503,14 @@ The steps, each adjustable through `Settings`:
    fit's deviance by more than 25), a core with a wider bell that ends (as the tails do) on a background that steps down across the peak is
    fitted, and the area is that of this peak: the counts of the whole window less the background under them
    (`analysis.fit_tails`; `PeakFit.tails`). Not where the nucleus has another line inside the fit window.
+   - **Decays inside the target.** When the level has a half-life (the level scheme's), some nuclei decay before they
+     have left the target, faster than the Doppler correction takes them, and leave a tail on one side of the peak
+     (⁶²Ni in 1.04 mg/cm² of carbon: 5 to 8 % of the peak moves to 3 to 20 keV below it). A bell about the core does not
+     follow it. The peak is then a Gaussian spread by what the correction leaves of the shift
+     (`gamma_events.doppler_spread`): the depth, the decay time, the place in the segment and on the crystal's face,
+     and the add-back's crystal, from the setup alone, with no more to fit than the Gaussian's width. Runs of few
+     counts take this spread with the simulated shape. The budget has the line "peak tails (simulated)" for it too.
+     Thin targets, lifetime measurements, the other nucleus's peak and setups without a half-life are fitted as above.
    - **Few counts.** A run whose counts cannot fix the tails takes the share, the offset and the width of the wider
      bell, relative to the core, from a peak of 15 000 counts simulated with the same setup, rings, crystals,
      gate, Doppler correction and fit window, and with a seed of its own (`Analysis.simulated_peak`). The run's

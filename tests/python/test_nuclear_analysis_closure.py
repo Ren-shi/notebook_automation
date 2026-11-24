@@ -18,7 +18,8 @@ import pytest
 from physim.nuclear import Experiment
 from physim.nuclear import analysis as analysis_module
 from physim.nuclear.analysis import GATE_OVERLAP_WARN, Analysis, PeakFit, Settings
-from physim.nuclear.gamma_events import simulate_gammas
+from physim.nuclear.coulex_reproduction import setup as reproduction_setup
+from physim.nuclear.gamma_events import doppler_spread, simulate_gammas
 
 B_UP = 884.105  # e²fm⁴, ENSDF
 #: Events and seeds of the weighted samples. They are averaged: five samples of 400 000 know what one of 2 000 000
@@ -145,6 +146,88 @@ def test_the_fitted_area_is_the_full_energy_counts(allmond, det):
         dev.append(a.run(s).area / true - 1)
     mean, err = float(np.mean(dev)), float(np.std(dev, ddof=1)) / math.sqrt(len(dev))
     assert abs(mean) < 0.001 + 2.5 * err and err < 0.003, (det, mean, err)
+
+
+# -- decays inside the target -----------------------------------------------------------------------------------------
+
+
+def with_half_life(text) -> Experiment:
+    """The reproduction's setup (the two-level scheme, all orders) with that half-life of the 2⁺ state, or without."""
+    d = reproduction_setup(levels="two").to_dict()
+    level = d["levels"]["beam"]["level"][1]
+    level.pop("half_life")
+    if text is not None:
+        level["half_life"] = text
+    return Experiment.from_dict(d)
+
+
+def spread_of(text) -> tuple:
+    """(shifts in keV, share of each) of the peak in the inner ring, all crystals alike."""
+    found = doppler_spread(with_half_life(text), {"Ring2": np.ones(36)}, 1e-4)
+    return None if found is None else (1172.91 * found[0], found[1])
+
+
+def test_the_spread_of_the_peak_follows_the_half_life():
+    """Nuclei that decay inside the target are faster than the Doppler correction takes them, and the crystals are at
+    90° and behind: a tail below the peak. None without a half-life; the peak of a level that lives long enough to
+    leave is symmetric about the transition; one that decays at once is far below it."""
+    assert spread_of(None) is None
+    x, p = spread_of("1 us")
+    tail = float(p[(x > -20) & (x < -7)].sum())
+    assert p.sum() == pytest.approx(1) and abs(float((x * p).sum())) < 0.2 and tail < 0.02
+    assert tail == pytest.approx(float(p[(x > 7) & (x < 20)].sum()), abs=0.005)
+    y, q = spread_of("1.442 ps")
+    assert float(q[(y > -20) & (y < -7)].sum()) > tail + 0.03
+    assert -0.6 < float((y * q).sum()) < -0.3
+    z, r = spread_of("1 fs")
+    assert float((z * r).sum()) < -4
+    # A lifetime measurement and a thin target have none.
+    thin = with_half_life("1.442 ps").to_dict()
+    thin["target"]["thickness"] = "0.01 mg/cm2"
+    assert doppler_spread(Experiment.from_dict(thin), {"Ring2": np.ones(36)}, 1e-4) is None
+
+
+@pytest.fixture(scope="module")
+def decaying():
+    """Samples with the 2⁺ half-life (1.442 ps) in the level scheme."""
+    exp = with_half_life("1.442 ps")
+    return exp, [Analysis(exp, simulate_gammas(exp, EVENTS, seed=seed)) for seed in (11301, 11302, 11303, 11304)]
+
+
+@pytest.mark.parametrize("det, scatter", [("Ring2", 0.0031), ("Ring3", 0.0017), (None, 0.0013)])
+def test_the_area_and_b_e2_come_back_with_the_half_life(decaying, det, scatter):
+    """The tail of the decays inside the target is in the area, and B(E2) comes back. ``scatter``: of the area of one
+    sample.
+
+    Over sixty (seeds 11001–11060) the area is −0.10 ± 0.04, −0.05 ± 0.02 and −0.07 ± 0.02 % off (with a wider bell in place
+    of the spread −0.40 ± 0.05 % in the inner ring), and B(E2) +0.36 ± 0.19, −0.29 ± 0.10 and −0.18 ± 0.09 %: the events
+    take the orientation in a level scheme at the middle of the target, the correlation table at each depth, which is
+    −0.16 and +0.25 % of the correlation factor of the rings."""
+    exp, samples = decaying
+    s = every_particle(det)
+    area, b, mc, low, seen = [], [], [], 0.0, 0.0
+    for a in samples:
+        keep = a._gate(s)[0]
+        true, _ = full_energy_counts(a, keep)
+        fit = a.run(replace(s, subtract_randoms=False)).fit
+        assert "spread" in fit.tails and not fit.tails["simulated"]
+        area.append(fit.area / true - 1)
+        # The tail of the fitted peak, and that of the events' own full-energy counts.
+        g = a.gammas
+        x = 1172.91 + np.arange(-19.975, -8, 0.05)
+        curve = fit.curve(1e-3 * x) - fit.background_curve(1e-3 * x)
+        low += 0.05e-3 / fit.tails["width"] * float(curve.sum()) / len(samples)
+        tail = (keep & (np.abs(g["deposited"] - g["energy_lab"]) < 1e-6)
+                & (np.abs(1e3 * g["corrected_projectile"] - 1172.91 + 14) < 6))
+        seen += float(g["weight"][tail].sum()) * g.events.beam_time_s * g.live_fraction / len(samples)
+        r = a.run(s)
+        b.append(r.b_e2fm4 / exp.excitation.b_up_e2fm - 1)
+        mc.append(r.monte_carlo)
+        assert 0 < r.budget["peak tails (simulated)"] < 0.02 and any("decay inside the target" in n for n in r.notes)
+    assert low == pytest.approx(seen, rel=0.06), det
+    assert abs(np.mean(area)) < 0.001 + 3 * scatter / math.sqrt(len(area)), (det, area)
+    mean, unc = mean_and_error(b, mc)
+    assert abs(mean) < 0.0025 + 3 * unc, (det, mean, unc)
 
 
 # -- a run of few counts ----------------------------------------------------------------------------------------------

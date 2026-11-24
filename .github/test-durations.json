@@ -24,7 +24,7 @@
   "test_nuclear_alignment.py": 104.0,
   "test_nuclear_allmond2014.py": 108.3,
   "test_nuclear_analysis.py": 55.2,
-  "test_nuclear_analysis_closure.py": 182.8,
+  "test_nuclear_analysis_closure.py": 370.0,
   "test_nuclear_analysis_run.py": 168.1,
   "test_nuclear_app.py": 99.7,
   "test_nuclear_app_lifetimes.py": 31.4,
