@@ -1,0 +1,152 @@
+{
+  "nucleus": "62Ni",
+  "level": "2+1 1172.91 keV",
+  "conversions": "A cut-down copy of the shape of planning/paper-verification/allmond2014-ni62/literature.json, for the tests of nucleus.import_points.",
+  "WU_E2_e2b2_A62": 0.00145761,
+  "quantities": {
+    "BE2_up": [
+      {
+        "value": 0.0906,
+        "unc": 0.0037,
+        "unit": "e2b2",
+        "value_e2b2": 0.0906,
+        "method": "Coulomb excitation, inverse kinematics, 62Ni beam 1.8 MeV/u on natC (~1 mg/cm2), particle-gamma, GOSIA",
+        "facility_or_code": "HRIBF ORNL 25-MV tandem; BareBall + CLARION",
+        "reference": "J. M. Allmond et al., Phys. Rev. C 90, 034309 (2014) [2014Al20]",
+        "doi": "10.1103/PhysRevC.90.034309",
+        "source_opened": "",
+        "notes": "a note of the file, kept in the row's detail"
+      },
+      {
+        "value": 0.0885,
+        "unc": 0.003,
+        "unit": "e2b2",
+        "value_e2b2": 0.0885,
+        "method": "EVALUATION: ENSDF 2025 adopted B(E2)up = weighted average of Coulex B(E2)",
+        "facility_or_code": "ENSDF",
+        "reference": "B. Singh, Huang Xiaolong, Wang Xianghan, Nucl. Data Sheets 204, 1 (2025)",
+        "doi": "",
+        "source_opened": "",
+        "notes": ""
+      }
+    ],
+    "BE2_down": [
+      {
+        "value": 12.13,
+        "unc": 0.18,
+        "unit": "W.u.",
+        "value_e2b2": 0.088404,
+        "method": "EVALUATION: ENSDF 2025 adopted B(E2; 2+1->0+1), from adopted T1/2 = 1.442(21) ps",
+        "facility_or_code": "ENSDF",
+        "reference": "B. Singh, Huang Xiaolong, Wang Xianghan, Nucl. Data Sheets 204, 1 (2025)",
+        "doi": "",
+        "source_opened": "",
+        "notes": ""
+      }
+    ],
+    "tau_2plus": [
+      {
+        "value": 2.01,
+        "unc": {"stat": 0.07, "sys": 0.1},
+        "unit": "ps (mean life tau)",
+        "value_e2b2": 0.091455,
+        "method": "DSAM following projectile Coulomb excitation, 62Ni beam 155/160 MeV on 12C",
+        "facility_or_code": "",
+        "reference": "O. Kenn, K.-H. Speidel, R. Ernst, J. Gerber, P. Maier-Komor, F. Nowacki, Phys. Rev. C 63, 064306 (2001) [2001Ke08]",
+        "doi": "10.1103/PhysRevC.63.064306",
+        "source_opened": "",
+        "notes": ""
+      },
+      {
+        "value": 1.6,
+        "unc": {"plus": 0.4, "minus": 0.6},
+        "unit": "ps (mean life tau)",
+        "value_e2b2": 0.11489,
+        "method": "DSAM in 59Co(alpha,p gamma), E_alpha = 8 MeV",
+        "facility_or_code": "",
+        "reference": "H. Ohnuma, J. Kasagi, Y. Iritani, N. Kishida, J. Phys. Soc. Jpn. 45, 1092 (1978) [1978Oh04]",
+        "doi": "10.1143/JPSJ.45.1092",
+        "source_opened": "",
+        "notes": ""
+      },
+      {
+        "value": 1.79,
+        "unc": {"plus": 0.86, "minus": 0.48},
+        "unit": "ps (mean life tau)",
+        "value_e2b2": 0.1027,
+        "method": "DSAM following inelastic neutron scattering 62Ni(n,n'gamma), En = 2.8-4.1 MeV",
+        "facility_or_code": "University of Kentucky Accelerator Laboratory",
+        "reference": "A. Chakraborty, J. N. Orce, S. F. Ashley, B. A. Brown et al., Phys. Rev. C 83, 034316 (2011) [2011Ch05]",
+        "doi": "10.1103/PhysRevC.83.034316",
+        "source_opened": "",
+        "notes": ""
+      },
+      {
+        "value": 2.15,
+        "unc": 0.42,
+        "unit": "ps (mean life tau)",
+        "value_e2b2": 0.0855,
+        "method": "Nuclear resonance fluorescence (gamma,gamma') with bremsstrahlung, 0.5-1.65 MeV (level width)",
+        "facility_or_code": "",
+        "reference": "Y. Cauchois, H. Ben Abdelaziz, R. Kherouf, C. Schloesing-Moller, J. Phys. G 7, 1539 (1981) [1981Ca10]",
+        "doi": "10.1088/0305-4616/7/11/013",
+        "source_opened": "",
+        "notes": ""
+      }
+    ],
+    "Qs_2plus": [
+      {
+        "value": 0.08,
+        "unc": 0.12,
+        "unit": "b",
+        "value_e2b2": null,
+        "method": "Reorientation effect in Coulomb excitation, 70-MeV 28Si projectiles on 62Ni target",
+        "facility_or_code": "",
+        "reference": "O. Hausser, T. K. Alexander, D. Pelte, B. W. Hooton, Phys. Rev. Lett. 23, 320 (1969) [1969Ha31]",
+        "doi": "10.1103/PhysRevLett.23.320",
+        "source_opened": "",
+        "notes": ""
+      }
+    ],
+    "shell_model": [
+      {
+        "value": 15.5,
+        "unc": null,
+        "unit": "W.u. (B(E2; 2+1->0+1))",
+        "value_e2b2": 0.11296,
+        "method": "Shell model, full fp space truncated; ep = 1.5e, en = 0.5e",
+        "facility_or_code": "GXPF1A, NuShellX",
+        "reference": "A. Chakraborty et al., Phys. Rev. C 83, 034316 (2011), Table III",
+        "doi": "10.1103/PhysRevC.83.034316",
+        "source_opened": "",
+        "notes": ""
+      },
+      {
+        "value": null,
+        "unc": null,
+        "unit": "b (Q_s(2+1))",
+        "value_e2b2": null,
+        "method": "No published shell-model Q_s(2+1) for 62Ni found",
+        "facility_or_code": "",
+        "reference": "",
+        "doi": "",
+        "source_opened": "",
+        "notes": ""
+      }
+    ],
+    "other": [
+      {
+        "value": 0.33,
+        "unc": 0.05,
+        "unit": "muN (magnetic moment 2+1)",
+        "value_e2b2": null,
+        "method": "Transient-field IPAC (g = +0.167(24)); ENSDF adopted",
+        "facility_or_code": "",
+        "reference": "O. Kenn et al., Phys. Rev. C 63, 021302(R) (2000) [2001Ke02]",
+        "doi": "10.1103/PhysRevC.63.021302",
+        "source_opened": "",
+        "notes": ""
+      }
+    ]
+  }
+}

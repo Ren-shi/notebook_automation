@@ -25,6 +25,8 @@ with its value and uncertainty, a method, and a reference or "own measurement". 
 as one says it ("2+1", "2+ at 1173 keV", "2+1 > 0+1"; :func:`level`, :func:`transition`). Everything is checked
 and :class:`PointProblem` says all that is wrong at once. A point is never changed: a correction is a new row that
 supersedes it (:func:`correct_data_point`), and so is a retraction (:func:`retract_data_point`).
+:func:`import_points` takes the points of a file (JSON or CSV with the fields of a data point, or a literature
+file of the paper verifications) and says what was added, what the ledger held already and what was refused.
 
 **The views** (:func:`nuclei`, :func:`view`, :func:`observable_view`). The evidence stays in its two groups:
 independent (measured, evaluated, theory, outside program) and projected (a simulated run analysed back, compared
@@ -434,6 +436,20 @@ class PointProblem(ValueError):
         super().__init__("; ".join(self.problems))
 
 
+class PointThere(PointProblem):
+    """A data point that the ledger holds already, word for word: ``row`` is the row that holds it."""
+
+    def __init__(self, problems: list, row: Row):
+        super().__init__(problems)
+        self.row = row
+
+
+def method_choices(evidence: str = "measured") -> str:
+    """The methods a data point of ``evidence`` can have, in words with their keys: "Coulex from the yield (first
+    order): coulex-yield; ..."."""
+    return "; ".join(f"{METHODS[m]}: {m}" for m in POINT_METHODS.get(evidence, tuple(METHODS)))
+
+
 def _reference(ref, problems: list) -> Optional[dict]:
     if not isinstance(ref, dict):
         problems.append("a reference is given as {authors, year, doi, where}, where 'where' is the place in the "
@@ -615,8 +631,11 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
         problems.append("a measured point needs its uncertainty: one total, or stat and sys, or plus and minus")
     elif evidence == "measured" and not _above_zero(uncertainty, stat, sys, plus, minus):
         problems.append("a measured point needs an uncertainty above 0")
-    if method not in METHODS:
-        problems.append(f"the method is one of {', '.join(METHODS)}; got {method!r}")
+    if method is None or not str(method).strip():
+        problems.append("pick the method: " + method_choices(evidence if evidence in POINT_METHODS else "measured"))
+    elif method not in METHODS:
+        problems.append(f"'{method}' is not a method: the method is one of "
+                        + method_choices(evidence if evidence in POINT_METHODS else "measured"))
     elif evidence in POINT_METHODS and method not in POINT_METHODS[evidence]:
         problems.append(f"'{method}' ({METHODS[method]}) is not a method of a {evidence} point; use one of "
                         f"{', '.join(POINT_METHODS[evidence])}")
@@ -642,7 +661,7 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
     held = results.current(results.read(results.nucleus_folder(name, home) / results.POINTS_FILE))
     twin = next((r for r in held if _same(r, row)), None)
     if twin is not None:
-        raise PointProblem([f"this point is in the ledger of {name} already (row {twin.id})"])
+        raise PointThere([f"this point is in the ledger of {name} already (row {twin.id})"], twin)
     if not results.add_point(row, home):  # the same words in the same second as a row since replaced or withdrawn
         raise PointProblem([f"a row that says exactly this was written this very second (row {row.id}, replaced "
                             f"or withdrawn since); add the point again in a moment"])
@@ -689,6 +708,401 @@ def retract_data_point(nuclide: str, row_id: str, reason: str, home: Union[str, 
     row = _data_point(name, row_id, home).revised(retracted=str(reason).strip())
     results.add_point(row, home)
     return row
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Data points from a file
+
+
+#: The fields of a data point in a file: the arguments of :func:`add_data_point`, and "nucleus".
+POINT_FIELDS = ("nucleus", "observable", "key", "value", "unit", "direction", "uncertainty", "stat", "sys", "plus",
+                "minus", "method", "evidence", "reference", "own", "detail")
+#: The columns of a CSV file of data points: the fields of :data:`POINT_FIELDS` with the reference and the own
+#: measurement written out.
+POINT_COLUMNS = ("nucleus", "observable", "key", "value", "unit", "direction", "uncertainty", "stat", "sys", "plus",
+                 "minus", "method", "evidence", "authors", "year", "doi", "where", "date", "note", "detail")
+_NUMBERS = ("value", "uncertainty", "stat", "sys", "plus", "minus")
+
+
+def method_of(words: str) -> tuple:
+    """(method, evidence) that a method said in words in the literature stands for: a key of
+    :data:`physim.nuclear.results.METHODS` (None when the words name none physim knows) and the kind of evidence.
+
+    Read in this order, the first that fits: an evaluation ("EVALUATION: ...", or "adopted" before the first ";":
+    a value someone adopted from other measurements) → "evaluation", evaluated; the shell model → theory;
+    (n,n′γ) → "inelastic-neutron" (DSAM after inelastic neutron scattering included); DSAM or a line shape →
+    "dsam"; RDDS, a plunger or the recoil distance → "rdds"; NRF, (γ,γ′) → "nrf"; (e,e′) or electron scattering →
+    "electron-scattering"; a transient field, a g factor or a magnetic moment → "moment"; Coulomb excitation with
+    GOSIA, the reorientation effect or all orders → "coulex-fit", and otherwise "coulex-yield"; a transfer reaction
+    → "transfer"; other inelastic scattering → "inelastic-scattering"."""
+    low = str(words or "").lower().replace("′", "'").replace("γ", "gamma")
+    first = low.split(";")[0]
+    if low.startswith("evaluation") or re.search(r"\badopted\b", first):
+        return "evaluation", "evaluated"
+    if re.search(r"shell[- ]model", low):
+        return "shell-model", "theory"
+    if re.search(r"\(n\s*,\s*n'", low) or "inelastic neutron" in low:
+        return "inelastic-neutron", "measured"
+    if re.search(r"\bdsam\b|doppler[- ]shift attenuation|line ?shape", low):
+        return "dsam", "measured"
+    if re.search(r"\brdds\b|plunger|recoil[- ]distance", low):
+        return "rdds", "measured"
+    if re.search(r"\bnrf\b|resonance fluorescence|\(gamma\s*,\s*gamma'", low):
+        return "nrf", "measured"
+    if re.search(r"\(e\s*,\s*e'|electron scattering", low):
+        return "electron-scattering", "measured"
+    if re.search(r"transient[- ]field|g[- ]factor|magnetic moment|\bnmr\b|laser spectroscopy", low):
+        return "moment", "measured"
+    if re.search(r"coulomb excitation|\bcoulex\b", low):
+        if re.search(r"gosia|reorientation|all orders|multi-?step", low):
+            return "coulex-fit", "measured"
+        return "coulex-yield", "measured"
+    if "transfer" in low:
+        return "transfer", "measured"
+    if "inelastic" in low and "scattering" in low:
+        return "inelastic-scattering", "measured"
+    return None, "measured"
+
+
+#: A unit as the literature writes it, as the ledger writes it.
+_UNIT_SAID = {"e2b2": "e2b2", "e2fm4": "e2fm4", "w.u.": observables.WEISSKOPF, "wu": observables.WEISSKOPF,
+              "ps": "ps", "fs": "fs", "ns": "ns", "s": "s", "b": "eb", "eb": "eb", "efm2": "efm2", "mun": "mu_N",
+              "mu_n": "mu_N", "μn": "mu_N", "μ_n": "mu_N", "mun2": "mu_N2", "mu_n2": "mu_N2", "kev": "keV",
+              "mev": "MeV"}
+_LEVEL_SAID = re.compile(r"(\d+(?:/2)?[+-])(\d+)")
+_TRANSITION_SAID = re.compile(r"B\((E\d|M\d)\s*;\s*([^)]*?)\s*(?:->|→|>)\s*([^),]*?)\s*\)", re.IGNORECASE)
+
+
+def _literature_level(text: str) -> list:
+    """The ways a level of a literature file can be said, the likeliest first: "2+1 1172.91 keV" is "2+1" (ENSDF's
+    first 2⁺), else "2+ at 1172.91 keV"."""
+    text = str(text or "").strip()
+    out = []
+    m = _LEVEL_SAID.match(text)
+    if m:
+        out.append(m.group(0))
+    energy = _ENERGY.search(text)
+    if m and energy:
+        out.append(f"{m.group(1)} at {energy.group(0)}")
+    out.append(text)
+    return list(dict.fromkeys(out))
+
+
+def _placed(name: str, candidates: list) -> str:
+    """The first way of saying a level that :func:`level` can place (the last one when none can: the point is then
+    refused with the reason)."""
+    for spec in candidates:
+        try:
+            level(name, spec)
+            return spec
+        except ValueError:
+            continue
+    return candidates[-1]
+
+
+def _literature_reference(text: str, doi: str) -> dict:
+    """A reference as a literature file writes it ("J. M. Allmond et al., Phys. Rev. C 90, 034309 (2014)
+    [2014Al20]") as {authors, year, doi, where}: the authors are the parts before the first one with a number in it
+    (three or more become "first author et al."), the year the one in brackets (or of the NSR key number), and
+    "where" the rest: the journal, volume and page. A reference that names only an NSR key number ("1971ChZF")
+    has that as its authors."""
+    text = str(text or "").strip()
+    main = text.split(";")[0].strip()
+    parts = [p.strip() for p in main.split(",")]
+    names = []
+    for p in parts:
+        if re.search(r"\d", p) or not p:
+            break
+        names.append(p)
+    rest = ", ".join(parts[len(names):]).strip()
+    year = re.search(r"\((\d{4})\)", main) or re.search(r"\[(\d{4})[A-Za-z]", main) or re.match(r"(\d{4})[A-Za-z]",
+                                                                                            main)
+    key = re.match(r"(\d{4}[A-Za-z]{2}[A-Za-z0-9]{2})\b", main)
+    if names:
+        authors = names[0] + " et al." if len(names) > 2 else " and ".join(names)
+    elif key:
+        authors = f"NSR {key.group(1)}"
+    else:
+        authors = ""
+    return {"authors": authors, "year": int(year.group(1)) if year else None, "doi": str(doi or "").strip(),
+            "where": rest if names else ""}
+
+
+def _literature_uncertainty(unc) -> dict:
+    """The uncertainty of a literature file in the form :func:`add_data_point` takes: a number is one total,
+    {"stat", "sys"} and {"plus", "minus"} are kept as they are."""
+    if unc is None:
+        return {}
+    if isinstance(unc, dict):
+        if unc.get("total") is not None:
+            return {"uncertainty": unc["total"]}
+        return {k: unc[k] for k in ("stat", "sys", "plus", "minus") if unc.get(k) is not None}
+    return {"uncertainty": unc}
+
+
+def _literature_what(group: str, unit_text: str, level_text: str) -> tuple:
+    """(observable, key as said, direction, unit) of a quantity of a literature file from its group's name
+    ("BE2_up", "BE2_down", "tau_2plus", "Qs_2plus", "mu_2plus", "shell_model", "other") and its unit's words ("W.u.
+    B(E2; 4+1 -> 2+1), 1163.49 keV", "e2b2 (B(E2)up)", "muN (magnetic moment 2+1)"). The level of the file is the
+    default; a B value's lower level is the ground state unless the words name the transition. Raises
+    ``ValueError`` with what could not be read."""
+    words = str(unit_text or "").strip()
+    unit = _UNIT_SAID.get(words.split(" ")[0].lower()) if words else None
+    g = str(group).lower()
+    said = _TRANSITION_SAID.search(words)
+    named = _LEVEL_SAID.search(words.split("(", 1)[1]) if "(" in words else None
+    if g.startswith(("be2", "bm1")) or said or re.search(r"B\((E|M)\d\)", words):
+        multipolarity = said.group(1).upper() if said else ("M1" if g.startswith("bm1") or "B(M1" in words else "E2")
+        observable = f"B({multipolarity})"
+        if unit == observables.WEISSKOPF or g.endswith("down") or re.search(r"down|↓", words):
+            direction = observables.DOWN
+        elif g.endswith("up") or re.search(r"\bup\b|↑|\)up", words):
+            direction = observables.UP
+        else:
+            raise ValueError(f"'{group}' with unit '{words}' does not say whether the B value is ↑ or ↓")
+        if said:
+            key = f"{said.group(2).strip()} > {said.group(3).strip()}"
+        else:
+            key = (_literature_level(level_text)[0], "gs")
+        return observable, key, direction, unit
+    if g.startswith(("tau", "lifetime")) or "mean life" in words.lower():
+        observable = "tau"
+    elif g.startswith(("qs", "q_s", "quadrupole")) or re.search(r"Q_?s", words):
+        observable = "Qs"
+    elif g.startswith(("mu", "magnetic")) or "magnetic moment" in words.lower():
+        observable = "mu"
+    elif g.startswith(("e_level", "energy")):
+        observable = "E_level"
+    else:
+        raise ValueError(f"the quantity '{group}' with unit '{words}' is none of the observables physim holds "
+                         f"({', '.join(observables.OBSERVABLES)})")
+    return observable, named.group(0) if named else None, None, unit
+
+
+def _literature_points(data: dict, name: Optional[str]) -> tuple:
+    """(nuclide, [(where, arguments of add_data_point, or None and the reason)]) of a literature file: {"nucleus",
+    "level", "quantities": {group: [{"value", "unc", "unit", "method", "facility_or_code", "reference", "doi",
+    "notes", ...}]}}."""
+    nuclide = results.nuclide_name(data.get("nucleus") or name)
+    level_text = data.get("level") or ""
+    out = []
+    for group, entries in (data.get("quantities") or {}).items():
+        for i, q in enumerate(entries if isinstance(entries, list) else []):
+            where = f"quantities.{group}[{i}]"
+            words = str(q.get("method") or "").strip()
+            if q.get("value") is None:
+                out.append((where, None, "the file gives no value for it"
+                            + (f": {words[:90]}{'…' if len(words) > 90 else ''}" if words else "")))
+                continue
+            try:
+                observable, key, direction, unit = _literature_what(group, q.get("unit"), level_text)
+            except ValueError as e:
+                out.append((where, None, str(e)))
+                continue
+            if isinstance(key, tuple):
+                key = f"{_placed(nuclide, _literature_level(level_text))} > {key[1]}"
+            elif key is None:
+                key = _placed(nuclide, _literature_level(level_text))
+            method, evidence = method_of(words)
+            facility = str(q.get("facility_or_code") or "").strip()
+            notes = " ".join(str(q.get("notes") or "").split())  # "superseded by ...", "excluded from ...": kept
+            detail = "; ".join(x for x in (words, facility, notes) if x)
+            args = {"nucleus": nuclide, "observable": observable, "key": key, "value": q.get("value"), "unit": unit,
+                    "direction": direction, "method": method, "evidence": evidence,
+                    "reference": _literature_reference(q.get("reference"), q.get("doi")),
+                    "detail": detail, **_literature_uncertainty(q.get("unc"))}
+            out.append((where, args, ""))
+    return nuclide, out
+
+
+def _csv_points(text: str) -> list:
+    """[(where, arguments)] of a CSV file with the columns of :data:`POINT_COLUMNS` (any order; an empty cell is
+    not given)."""
+    import csv
+    import io
+
+    out = []
+    reader = csv.DictReader(io.StringIO(text))
+    for n, line in enumerate(reader, start=2):
+        cells = {str(k).strip().lower(): str(v).strip() for k, v in line.items() if k is not None and v is not None
+                 and str(v).strip()}
+        args = {k: v for k, v in cells.items() if k not in ("authors", "year", "doi", "where", "date", "note")}
+        if any(k in cells for k in ("date", "note")) and not cells.get("authors"):
+            args["own"] = {k: cells.get(k, "") for k in ("date", "note")}
+        elif any(k in cells for k in ("authors", "year", "doi", "where")):
+            args["reference"] = {k: cells[k] for k in ("authors", "year", "doi", "where") if k in cells}
+        out.append((f"line {n}", args))
+    return out
+
+
+def _numbers(args: dict) -> dict:
+    """The numbers of a point read from text ("0.0906", "−0.05") as numbers; text that is no number stays as it
+    is, for :func:`add_data_point` to name."""
+    out = dict(args)
+    for k in _NUMBERS:
+        x = out.get(k)
+        if isinstance(x, str):
+            try:
+                out[k] = float(x.replace("−", "-"))
+            except ValueError:
+                pass
+    ref = out.get("reference")
+    if isinstance(ref, dict) and isinstance(ref.get("year"), str) and ref["year"].strip().isdigit():
+        out["reference"] = {**ref, "year": int(ref["year"])}
+    return out
+
+
+def _point_words(args: dict) -> str:
+    """A point of a file in a few words, for the lists of :func:`import_points`: "B(E2) 0.0906 ± 0.0037 e2b2 ↑,
+    coulex-fit, J. M. Allmond et al. 2014"."""
+    unc = args.get("uncertainty")
+    if args.get("plus") is not None or args.get("minus") is not None:
+        unc_text = f" +{args.get('plus')} −{args.get('minus')}"
+    elif args.get("stat") is not None or args.get("sys") is not None:
+        unc_text = f" ± {args.get('stat')} (stat) ± {args.get('sys')} (sys)"
+    else:
+        unc_text = f" ± {unc}" if unc is not None else ""
+    arrow = observables.DIRECTIONS.get(args.get("direction"), "")
+    ref = args.get("reference") or {}
+    own = args.get("own") or {}
+    whence = (" ".join(str(x) for x in (ref.get("authors"), ref.get("year")) if x) if ref
+              else f"own measurement {own.get('date', '')}".strip() if own else "")
+    key = args.get("key")
+    key = " > ".join(key) if isinstance(key, (tuple, list)) else key
+    return ", ".join(x for x in (f"{args.get('observable')} of {key}: {args.get('value')}{unc_text} "
+                                 f"{args.get('unit') or ''}{arrow}".strip(), str(args.get("method") or "no method"),
+                                 whence) if x)
+
+
+def read_points(path: Union[str, Path], nuclide: Optional[str] = None) -> dict:
+    """The data points of a file, read and not added: {"file", "shape", "points": [(where, arguments of
+    :func:`add_data_point` with "nucleus", or None), "reason" a point was not read]}. The shapes are those of
+    :func:`import_points`. Raises ``ValueError`` for a file that is none of them."""
+    import json
+
+    path = Path(path).expanduser()
+    text = path.read_text(encoding="utf-8-sig")
+    shape, points = None, []
+    if path.suffix.lower() == ".csv":
+        shape = "csv"
+        points = [(w, a, "") for w, a in _csv_points(text)]
+    else:
+        try:
+            data = json.loads(text)
+        except ValueError as e:
+            raise ValueError(f"{path.name} is neither a CSV file (.csv) nor JSON: {e}") from None
+        if isinstance(data, dict) and "quantities" in data:
+            shape = "literature"
+            _, points = _literature_points(data, nuclide)
+        elif isinstance(data, list) or (isinstance(data, dict) and isinstance(data.get("points"), list)):
+            shape = "points"
+            common = data.get("nucleus") if isinstance(data, dict) else None
+            listed = data if isinstance(data, list) else data["points"]
+            for i, p in enumerate(listed):
+                where = f"points[{i}]"
+                if not isinstance(p, dict):
+                    points.append((where, None, f"a point is an object with the fields {', '.join(POINT_FIELDS)}"))
+                    continue
+                points.append((where, {**({"nucleus": common} if common else {}), **p}, ""))
+        else:
+            raise ValueError(f"{path.name} holds no data points: a list of points, {{\"nucleus\", \"points\"}} or a "
+                             f"literature file with \"quantities\"")
+    return {"file": str(path), "shape": shape, "points": points}
+
+
+def import_points(path: Union[str, Path], nuclide: Optional[str] = None,
+                  home: Union[str, Path, None] = None) -> dict:
+    """Add the data points of a file to the nuclei's ledgers, each through :func:`add_data_point`.
+
+    Every point is tried, whatever the others do. Returns {"file", "shape", "added", "already", "refused"}:
+
+    - "added": [{"where", "what", "row"}]: the point's place in the file, it in a few words and its new
+      :class:`~physim.nuclear.results.Row`;
+    - "already": [{"where", "what", "id"}]: points the ledger holds word for word, with the id of that row.
+      Importing the same file twice adds nothing the second time;
+    - "refused": [{"where", "what", "reasons"}]: what is wrong with each, all of it (:class:`PointProblem`).
+
+    ``nuclide`` is the nucleus the points are of: a point that names another one is refused, and a point that
+    names none is of it. Without it each point names its own (or the file names one for all).
+
+    **The shapes of a file.**
+
+    - JSON, a list of points, or ``{"nucleus": "62Ni", "points": [...]}``. A point has the fields of
+      :func:`add_data_point` (:data:`POINT_FIELDS`)::
+
+          {"nucleus": "62Ni", "observable": "B(E2)", "key": "2+1 > 0+1", "value": 0.0906, "unit": "e2b2",
+           "direction": "up", "uncertainty": 0.0037, "method": "coulex-fit",
+           "reference": {"authors": "Allmond et al.", "year": 2014, "doi": "10.1103/PhysRevC.90.034309",
+                         "where": "Table I"}, "detail": "GOSIA"}
+
+      with the uncertainty as ``uncertainty``, as ``stat`` and ``sys``, or as ``plus`` and ``minus``, and
+      ``own``: {"date", "note"} in place of ``reference`` for an own measurement.
+    - CSV (``.csv``), one point per line under a head line of the columns :data:`POINT_COLUMNS` in any order: the
+      reference as ``authors``, ``year``, ``doi``, ``where``; an own measurement as ``date`` and ``note``. An empty
+      cell is a field not given.
+    - JSON in the shape of a literature file of the paper verifications: ``{"nucleus": "62Ni", "level": "2+1
+      1172.91 keV", "quantities": {"BE2_up": [...], "BE2_down": [...], "tau_2plus": [...], "Qs_2plus": [...],
+      "shell_model": [...], "other": [...]}}``, each quantity {"value", "unc" (a number, {"stat", "sys"} or
+      {"plus", "minus"}), "unit" (its first word the unit: "e2b2", "W.u.", "ps", "b", "muN"; the words after may
+      name the transition, "W.u. B(E2; 4+1 -> 2+1)", or the direction, "e2b2 (B(E2)up)"), "method" (in words),
+      "facility_or_code", "reference" (as printed), "doi"}. The group says the observable: B(E2)↑ or ↓, τ, Q_s,
+      μ; "shell_model" and "other" say it in the unit's words. A B value is of the file's level to the ground
+      state unless the words name the transition. The method in words becomes a key of
+      :data:`~physim.nuclear.results.METHODS` (:func:`method_of`) and the words are kept in the row's detail,
+      with the facility or code and the file's notes on the value ("superseded by ..."). Each value is stored as
+      the paper gives it: a lifetime stays a τ row in ps, a B in W.u. stays the ↓ value in W.u.; the views convert on reading. An evaluation (ENSDF's adopted values, a
+      table of averages) is refused: ENSDF's comes in by :func:`snapshot_evaluation`, and another would count
+      the measurements it averages a second time. A quantity without a value is refused with that reason.
+
+    Raises ``ValueError`` for a file that is none of these shapes, and ``OSError`` for one that cannot be read.
+    """
+    read = read_points(path, nuclide)
+    want = results.nuclide_name(nuclide) if nuclide else None
+    added, already, refused = [], [], []
+    for where, args, reason in read["points"]:
+        if args is None:
+            refused.append({"where": where, "what": "", "reasons": [reason]})
+            continue
+        args = _numbers(args)
+        what = _point_words(args)
+        unknown = sorted(set(args) - set(POINT_FIELDS))
+        if unknown:
+            refused.append({"where": where, "what": what,
+                            "reasons": [f"'{unknown[0]}' is not a field of a data point; the fields are "
+                                        + ", ".join(POINT_FIELDS)]})
+            continue
+        args = dict(args)
+        of = args.pop("nucleus", None) or want
+        try:
+            of = results.nuclide_name(of) if of else None
+        except (ValueError, KeyError, TypeError) as e:
+            refused.append({"where": where, "what": what, "reasons": [f"the nucleus: {e}"]})
+            continue
+        if of is None:
+            refused.append({"where": where, "what": what, "reasons": ["the point names no nucleus, and none was "
+                                                                      "given for the file"]})
+            continue
+        if want is not None and of != want:
+            refused.append({"where": where, "what": what, "reasons": [f"the point is of {of}, not of {want}"]})
+            continue
+        if args.get("evidence") == "evaluated":
+            refused.append({"where": where, "what": what, "reasons": [
+                "an evaluation, not a measurement: ENSDF's adopted values come in with the snapshot of the "
+                "evaluation, and another evaluation (an average of measurements) would count the measurements it "
+                "averages a second time"]})
+            continue
+        try:
+            row = add_data_point(of, args.pop("observable", None), args.pop("key", None), args.pop("value", None),
+                                 args.pop("unit", None), home=home, **args)
+        except PointThere as e:
+            already.append({"where": where, "what": what, "id": e.row.id})
+        except PointProblem as e:
+            refused.append({"where": where, "what": what, "reasons": list(e.problems)})
+        except (ValueError, TypeError) as e:
+            refused.append({"where": where, "what": what, "reasons": [str(e)]})
+        else:
+            added.append({"where": where, "what": what, "row": row})
+    return {"file": read["file"], "shape": read["shape"], "added": added, "already": already, "refused": refused}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1126,7 +1540,7 @@ def applies(nuclide: str, observable: str, key, route, rows: Optional[list] = No
 
 
 def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[dict] = None,
-           every: Optional[list] = None, tests: bool = True) -> list:
+           every: Optional[list] = None, tests: bool = True, reference: Optional[str] = None) -> list:
     """The registry's routes to an observable, each with what it is for this level or transition.
 
     ``rows`` are the rows of the observable and key that hold now (converted ones among them, with ``via`` saying
@@ -1143,9 +1557,11 @@ def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[di
     "projected" (how many rows by that method hold now, in the two groups), "ids" (the ids of those rows), "own"
     (how many of them are one's own: from a run of an experiment or an own measurement, not from the literature),
     "open" (physim has the kind and none of the rows is one's own: the route is still worth planning, even where a
-    published value by that method exists) and "applies" and "reason" (:func:`applies`; a route by which an
+    published value by that method exists), "applies" and "reason" (:func:`applies`; a route by which an
     independent value is here is never said not to apply: where physim's test says so, "applies" is None and the
-    reason says both).
+    reason says both), and "is_reference": whether the row ``reference`` (the id of the comparison's reference,
+    usually the evaluated row) is among the route's rows, so that a count of the routes that hold a value besides
+    the reference can leave it out ("others": the route's independent rows that are not the reference).
     """
     from .workbench import KINDS
 
@@ -1165,6 +1581,7 @@ def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[di
         if fits is False and independent:  # a value by this method is here: the test is of what physim plans
             fits, why = None, f"a value by this method is here, so the method reaches it; but {why}"
         own = sum((via or {}).get(r.id, r).origin.get("kind") in ("run", "own measurement") for r in mine)
+        holds_reference = reference is not None and any(r.id == reference for r in mine)
         out.append({
             "method": route.method, "label": METHODS[route.method], "kind": route.kind,
             "kind_label": kinds.get(route.kind), "note": route.note, "status": status, "live": bool(live),
@@ -1172,7 +1589,8 @@ def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[di
                       else "evaluation" if route.method == "evaluation" else "literature"),
             "rows": len(mine), "independent": independent, "projected": len(mine) - independent,
             "ids": [r.id for r in mine], "own": own, "open": bool(live) and own == 0, "applies": fits,
-            "reason": why})
+            "reason": why, "is_reference": holds_reference,
+            "others": independent - (1 if holds_reference else 0)})
     return out
 
 
@@ -1473,9 +1891,11 @@ def partner_nuclide(experiment) -> Optional[str]:
     return None if other == studied else other
 
 
-def _experiments(root: Union[str, Path, None]) -> list:
+def _experiments(root: Union[str, Path, None], rows: Optional[list] = None) -> list:
     """Every experiment under ``root`` with what the nucleus views need: its folder and name, its kind, the nucleus
-    it studies and its Coulex partner, its runs and which of them are analysed, and its ledger."""
+    it studies and its Coulex partner, its runs and which of them are analysed, and its ledger. With ``rows`` (the
+    rows of one nucleus, read already) an experiment's ledger is its rows among them and its own file is not read
+    again."""
     from .analysis import RESULT_FILE
     from .workbench import kind_of
 
@@ -1487,7 +1907,8 @@ def _experiments(root: Union[str, Path, None]) -> list:
         except (ValueError, OSError, KeyError, IndexError):
             setup = None
         kind, kind_label = kind_of(setup) if setup is not None else (None, "the setup cannot be read")
-        ledger = results.of_experiment(folder.path)
+        ledger = (results.of_experiment(folder.path) if rows is None else
+                  [r for r in rows if r.origin.get("kind") == "run" and r.origin.get("experiment") == folder.path.name])
         now = results.current(ledger)
         taken = [p.name for p in folder.run_folders()]
         # A run is analysed when the ledger holds a row from it, or its folder holds a kept Coulex analysis that
@@ -1583,8 +2004,9 @@ def table(nuclide: str, rows: list, extra: tuple = ()) -> list:
                                       energy(t["observable"], t["key"]), t["key"]))
 
 
-def _entry(name: str, experiments: list, home, full: bool) -> dict:
-    """One nucleus of :func:`nuclei` (``full`` False: the headline rows of the table only) or :func:`view`."""
+def _entry(name: str, experiments: list, home, full: bool, rows: Optional[list] = None) -> dict:
+    """One nucleus of :func:`nuclei` (``full`` False: the headline rows of the table only) or :func:`view`.
+    ``rows`` are the nucleus's rows where the caller has them (they are then not read)."""
     mine = []
     for e in experiments:
         own = [r for r in e["now"] if r.nuclide == name]
@@ -1598,9 +2020,12 @@ def _entry(name: str, experiments: list, home, full: bool) -> dict:
         mine.append({"folder": e["folder"], "path": e["path"], "name": e["name"], "kind": e["kind"],
                      "kind_label": e["kind_label"], "role": role, "runs": e["runs"],
                      "analysed_runs": e["analysed_runs"], "rows": len(own), "latest": latest})
-    points = results.read(results.nucleus_folder(name, home) / results.POINTS_FILE)
-    every = sorted([r for e in experiments for r in e["ledger"] if r.nuclide == name] + points,
-                   key=lambda r: r.created)
+    if rows is None:
+        points = results.read(results.nucleus_folder(name, home) / results.POINTS_FILE)
+        every = sorted([r for e in experiments for r in e["ledger"] if r.nuclide == name] + points,
+                       key=lambda r: r.created)
+    else:
+        every = sorted((r for r in rows if r.nuclide == name), key=lambda r: r.created)
     now = results.current(every)
     studied = [x for x in mine if x["role"] == "studied"]
     rows = table(name, now, tuple(("B(E2)", e["key"]) for e in experiments if e["studied"] == name and e["key"]))
@@ -1666,11 +2091,17 @@ def nuclei(root: Union[str, Path, None] = None, home: Union[str, Path, None] = N
                             "reason": _unassigned(e)} for e in experiments if e["studied"] is None]}
 
 
-def view(nuclide: str, root: Union[str, Path, None] = None, home: Union[str, Path, None] = None) -> dict:
+def view(nuclide: str, root: Union[str, Path, None] = None, home: Union[str, Path, None] = None,
+         rows: Optional[list] = None) -> dict:
     """One nucleus: the same dict as one entry of :func:`nuclei`, with every row of the :func:`table` (the
     evaluation's many level energies included; "headline" marks the rows that have more than the evaluation). A
-    nucleus without experiments or rows comes back empty, ready for its first data point."""
-    return _entry(results.nuclide_name(nuclide), _experiments(root), home, full=True)
+    nucleus without experiments or rows comes back empty, ready for its first data point.
+
+    ``rows`` are the nucleus's rows, superseded ones among them, where the caller has read them already
+    (:func:`physim.nuclear.results.of_nuclide`): a screen that shows the view and an :func:`observable_view` reads
+    the ledgers once and passes the same rows to both. The experiments' setups are still read."""
+    name = results.nuclide_name(nuclide)
+    return _entry(name, _experiments(root, rows), home, full=True, rows=rows)
 
 
 def holding(nuclide: str, observable: Optional[str] = None, key=None, root: Union[str, Path, None] = None,
@@ -1714,14 +2145,14 @@ def history(rows: list, observable: Optional[str] = None, key=None) -> list:
 
 def observable_view(nuclide: str, observable: str, key, reference: Optional[str] = None,
                     root: Union[str, Path, None] = None, home: Union[str, Path, None] = None,
-                    ledger: Optional[list] = None) -> dict:
+                    ledger: Optional[list] = None, rows: Optional[list] = None) -> dict:
     """One observable of one level or transition of a nucleus, by every route.
 
     ``key`` names the level or transition as one says it; ``reference`` is the id (or its first characters) of
-    the row to compare against, the evaluated row when left out. ``ledger`` are the nucleus's rows (superseded
-    ones among them) where the caller has them already; they are then not read from ``root`` and ``home`` (the
-    report passes its own, which may hold a row that an analysis gives and the ledger does not hold yet). Nothing
-    is written. Returns a dict:
+    the row to compare against, the evaluated row when left out. ``rows`` are the nucleus's rows (superseded ones
+    among them) where the caller has them already, as :func:`view` takes them; they are then not read from
+    ``root`` and ``home`` (the report passes its own, which may hold a row that an analysis gives and the ledger
+    does not hold yet). ``ledger`` is the older name of ``rows``. Nothing is written. Returns a dict:
 
     - "nuclide", "observable", "key", "label", "unit", "convention";
     - "comparison": the :class:`physim.nuclear.compare.Comparison` (the object: ``.to_dict()`` makes it plain
@@ -1738,9 +2169,10 @@ def observable_view(nuclide: str, observable: str, key, reference: Optional[str]
     name = results.nuclide_name(nuclide)
     o = observables.get(observable)
     key = key_of(name, observable, key, check=False).text
-    every = results.of_nuclide(name, root, home) if ledger is None else list(ledger)
-    rows, via = with_converted(name, results.current(every))
-    group = results.select(rows, observable, key)
+    given = rows if rows is not None else ledger
+    every = results.of_nuclide(name, root, home) if given is None else [r for r in given if r.nuclide == name]
+    now, via = with_converted(name, results.current(every))
+    group = results.select(now, observable, key)
     comparison = None
     if group:
         if reference is not None:
@@ -1755,15 +2187,16 @@ def observable_view(nuclide: str, observable: str, key, reference: Optional[str]
     return {"nuclide": name, "observable": observable, "key": key, "label": label(observable, key), "unit": o.unit,
             "convention": o.convention, "comparison": comparison, "cells": {r.id: cell(r, via) for r in group},
             "reference": None if ref is None else cell(ref, via),
-            "routes": routes(name, observable, key, group, via, rows),
+            "routes": routes(name, observable, key, group, via, now, reference=ref.id if ref is not None else None),
             "gives": gives(name, ref) if ref is not None else [],
-            "checks": checks(name, observable, key, rows, via, ref), "used_for": [u.to_dict() for u in o.used_for],
+            "checks": checks(name, observable, key, now, via, ref), "used_for": [u.to_dict() for u in o.used_for],
             "history": history(every, observable, key)}
 
 
-__all__ = ["DONE", "ENSDF", "IN_PHYSIM", "LATER", "NO_EXPERIMENT", "ONLY_PROJECTED", "POINT_EVIDENCE",
-           "POINT_METHODS", "PointProblem", "add_data_point", "adopted_scheme", "applies", "cell", "checks",
-           "correct_data_point", "decay", "evaluation", "gives", "history", "holding", "is_data_point",
-           "is_evaluation", "key_of", "label", "level", "level_label", "nuclei", "observable_view",
-           "partner_nuclide", "retract_data_point", "routes", "snapshot_evaluation", "source", "stability",
-           "table", "transition", "value_text", "view", "with_converted"]
+__all__ = ["DONE", "ENSDF", "IN_PHYSIM", "LATER", "NO_EXPERIMENT", "ONLY_PROJECTED", "POINT_COLUMNS",
+           "POINT_EVIDENCE", "POINT_FIELDS", "POINT_METHODS", "PointProblem", "PointThere", "add_data_point",
+           "adopted_scheme", "applies", "cell", "checks", "correct_data_point", "decay", "evaluation", "gives",
+           "history", "holding", "import_points", "is_data_point", "is_evaluation", "key_of", "label", "level",
+           "level_label", "method_choices", "method_of", "nuclei", "observable_view", "partner_nuclide",
+           "read_points", "retract_data_point", "routes", "snapshot_evaluation", "source", "stability", "table",
+           "transition", "value_text", "view", "with_converted"]

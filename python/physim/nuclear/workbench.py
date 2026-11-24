@@ -319,15 +319,16 @@ def kind_of(experiment) -> tuple:
 
 def nucleus_href(nuclide: str, observable: Optional[str] = None, key: Optional[str] = None) -> str:
     """The address of a nucleus's page in the app ("/?nucleus=62Ni"), at one observable of one level or
-    transition if given (``key`` as the results ledger writes it, or as one says it)."""
-    from urllib.parse import urlencode
+    transition if given (``key`` as the results ledger writes it, or as one says it). Every part is
+    percent-encoded ("+" as %2B), as the app's :func:`physim.nuclear.app.tab_nucleus.url` writes the address."""
+    from urllib.parse import quote
 
-    query = {"nucleus": nuclide}
+    out = "/?nucleus=" + quote(str(nuclide), safe="")
     if observable is not None:
-        query["observable"] = observable
+        out += "&observable=" + quote(str(observable), safe="")
         if key is not None:
-            query["key"] = str(key)
-    return "/?" + urlencode(query)
+            out += "&key=" + quote(str(key), safe="")
+    return out
 
 
 def studied(experiment) -> Optional[dict]:
@@ -1235,7 +1236,8 @@ def template(key: str):
 def new_setup(beam: str, energy: str, target: str, thickness: str = "0.5 mg/cm2", measure: str = "elastic",
               current: str = "1 pnA", beam_time: str = "24 h", title: Optional[str] = None,
               detectors_from: Optional[str] = None):
-    """A new experiment's setup from what the "New experiment" dialog asks: the beam and its energy, the target,
+    """A new experiment's setup from what the form of a kind of experiment on the start page asks (the app's
+    ``create_experiment``): the beam and its energy, the target,
     and what to measure (:data:`MEASUREMENTS`). It gets one particle detector where the kinematics send the
     particles (behind the target for a light beam on a heavy target, forward otherwise); more come from the Add
     menus. ``detectors_from`` (a key of :data:`TEMPLATES`) takes a template's particle and γ-ray detectors

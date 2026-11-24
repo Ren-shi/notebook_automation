@@ -7,7 +7,6 @@ import asyncio
 import base64
 import math
 import threading
-import time
 from typing import Optional
 
 
@@ -20,7 +19,7 @@ from ..quantity import Quantity
 from .. import dataviews as dv
 from .figures import (CLOVER_FIELDS, REACTION_FIELDS, REACTION_TYPES, STYLE, THEMES, _shown, _value,
                       figure_alignment, figure_gamma_crystal, figure_peak, figure_search, figure_detector_spectrum, figure_efficiency, figure_energy_loss,
-                      figure_excitation, figure_gamma_spectra, figure_residue_gammas, figure_kinematics, figure_levels, figure_overlay,
+                      figure_excitation, figure_gamma_spectra, figure_kinematics, figure_levels, figure_overlay,
                       figure_source_spectrum, figure_spectra, figure_strips, figure_sweep, figure_trajectories,
                       themed)
 
@@ -118,16 +117,60 @@ def _time(seconds) -> str:
     return f"{seconds / 60:.3g} min" if seconds >= 60 else f"{seconds:.3g} s"
 
 
-def _prepared(example: str) -> Planner:
-    """An example's planner with its rates already computed (run in a worker thread while the page waits)."""
-    p = Planner.example(example)
-    p.rates()
-    return p
+def b_words(table: dict, m: dict) -> str:
+    """A matrix element's B value in the level-scheme table of the Physics step, each B with its arrow: B↑ in
+    e²fm^2λ, and B↓ in e²fm^2λ and in Weisskopf units (always the ↓ value), from the report's own helper
+    (:func:`physim.nuclear.logbook.decay_of`). Where a spin of the two levels is not known only B↑ is given: no
+    ratio is assumed. ``table`` is a level scheme's :meth:`~physim.nuclear.levels.LevelScheme.table` and ``m`` one
+    of its "matrix_elements" ("from" the lower level, "to" the upper)."""
+    from .. import ensdf
+    from .. import logbook as _logbook
+    from .. import results as _results
+
+    lam = int(m["multipolarity"][1])
+    unit = f"e²fm^{2 * lam}"
+    up = f"B↑ = {_fmt(m['b_up_e2fm'])} {unit}"
+    key = None
+    try:
+        ends = []
+        for i in (m["to"], m["from"]):
+            lv = table["levels"][i]
+            spin, parity, _ = ensdf.spin_parity(str(lv["jpi"] or ""))
+            ends.append(_results.level_key(table["nuclide"], lv["energy_kev"], spin, parity))
+        key = _results.transition_key(ends[0], ends[1], m["multipolarity"])
+    except (ValueError, KeyError, IndexError, TypeError):
+        key = None
+    found = _logbook.decay_of(m["b_up_e2fm"], key)
+    if found is None:
+        return up + " (B↓ and W.u. need the spins of both levels)"
+    down, wu, _ = found
+    return f"{up} · B↓ = {_fmt(down)} {unit} = {_fmt(wu, 3)} W.u. ↓"
+
+
+def missing_experiment(experiment: Optional[str]) -> Optional[str]:
+    """Why ``experiment=`` in the page's address cannot be opened, in a sentence: it names no experiment folder
+    (one with an ``experiment.toml``), or its setup cannot be read. None when it can be opened, and when the
+    address names none."""
+    from pathlib import Path
+
+    from .. import runs as _runs
+
+    if not experiment:
+        return None
+    path = Path(str(experiment)).expanduser()
+    if not (path / "experiment.toml").is_file():
+        return (f"The address names the experiment “{experiment}”, but there is no experiment folder there (one "
+                f"with an experiment.toml); the experiments are in {_runs.home()}. Pick one from its nucleus below.")
+    try:
+        _runs.ExperimentFolder(path).setup()
+    except Exception as err:  # noqa: BLE001 -- said in the sentence
+        return f"The experiment “{experiment}” in the address could not be opened: {err}. Pick another below."
+    return None
 
 
 def _starting_planner(example: Optional[str], template: Optional[str], experiment: Optional[str]) -> tuple:
-    """The planner a page opens with, and whether to offer the experiment list first: the experiment asked for,
-    else a template or example asked for, else the most recent experiment, else the first template."""
+    """The planner a page opens with, and whether to offer the nuclei first: the experiment asked for, else a
+    template or example asked for, else the most recent experiment, else the first template."""
     from .. import runs as _runs
     from .. import workbench as wb
 
@@ -152,9 +195,10 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     """Build the planner page for the current client (call inside a NiceGUI page function).
 
     It opens ``experiment`` (a folder), or a new setup from ``template`` (:data:`physim.nuclear.workbench.TEMPLATES`)
-    or ``example``, or else the most recent experiment; with no experiment yet it offers the experiment list and
-    "New experiment" first. ``theme`` is "light" or "dark"; ``None`` takes the one this browser used last, the
-    system's setting the first time."""
+    or ``example``, or else the most recent experiment; with no experiment yet it offers the start page (the
+    nuclei, or the kinds of experiment) first. An ``experiment`` that names no experiment folder is said in a
+    sentence above the nuclei screen (:func:`missing_experiment`). ``theme`` is "light" or "dark"; ``None`` takes
+    the one this browser used last, the system's setting the first time."""
     from types import SimpleNamespace
 
     from nicegui import Client, background_tasks, run, ui
@@ -168,9 +212,13 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     from . import panel as _panel
     from . import start as _start
     from . import tab_analysis, tab_data, tab_fusion, tab_lifetimes, tab_physics, tab_plan, tab_report, tab_run
+    from . import tab_nucleus as _tab_nucleus
     from . import tab_setup
     from . import tab_shellmodel
 
+    not_there = missing_experiment(experiment)
+    if not_there:  # the nuclei screen, with the sentence, and the page opens as it would without the address
+        experiment = None
     first, offer_list = _starting_planner(example, template, experiment)
     state = {"planner": first, "events": events, "theme": theme or "light", "open": None, "stage": "setup",
              "export": None, "journal": "physical_review", "width": "single", "format": "pdf",
@@ -638,7 +686,6 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         refresh_results()
 
     async def open_experiment(path: str) -> None:
-        experiments_dialog.close()
         note = ui.notification("Opening the experiment…", spinner=True, timeout=None)
         try:
             planner = await run.io_bound(Planner.open_experiment, path)
@@ -702,8 +749,6 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             return
         finally:
             note.dismiss()
-        new_dialog.close()
-        experiments_dialog.close()
         state["fill_summary"] = summary
         show_start(False)
         use(planner)
@@ -1557,7 +1602,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             from ..record import Explanation
 
             try:
-                shown = _logbook._weisskopf_shown(Explanation(**x), _results.key_of_reaction(P()._data_experiment()))
+                shown = _logbook.weisskopf_shown(Explanation(**x), _results.key_of_reaction(P()._data_experiment()))
             except Exception:  # noqa: BLE001
                 shown = None
             if shown is None:
@@ -2115,51 +2160,6 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         gamma_block()
         if tab_fusion.is_fusion(P()):
             tab_fusion.spectra(ctx)
-
-    def residue_gamma_block() -> None:
-        """Fusion-evaporation (backlog item 75): the residues' γ rays in each γ-ray detector, measured and Doppler
-        corrected."""
-        if P().experiment.fusion is None or not P().experiment.gamma_detectors:
-            return
-        ui.label("The residues' γ rays").classes("font-semibold mt-3")
-        ui.label("Each event picks an exit channel by its cross section; the light particles leave isotropically "
-                 "with an evaporation spectrum, and the residue recoils from each. Its cascade enters the known "
-                 "levels by spin, aligned perpendicular to the beam, and the crystals record the γ rays with their "
-                 "response. The Doppler correction assumes the residue moves along the beam at the compound "
-                 "nucleus's speed. Singles: no particle is asked for.").classes("text-xs ps-muted")
-        holder = ui.column().classes("w-full")
-
-        async def build() -> None:
-            holder.clear()
-            with holder:
-                ui.spinner(size="md")
-            try:
-                g = await run.io_bound(P().snapshot().residue_gamma_spectra, 100_000, 1)
-            except ValueError as err:
-                holder.clear()
-                with holder:
-                    ui.label(str(err)).classes("text-sm ps-warn")
-                return
-            holder.clear()
-            with holder:
-                if not g["available"]:
-                    ui.label(g["reason"]).classes("text-sm")
-                    return
-                ui.label(" ".join(g["notes"])).classes("text-xs ps-muted")
-                sel = ui.select(g["gamma_detectors"], value=g["gamma_detectors"][0], label="γ-ray detector").props(
-                    "dense outlined").classes("w-48")
-                fig_box = ui.column().classes("w-full")
-
-                def draw() -> None:
-                    fig_box.clear()
-                    with fig_box:
-                        ui.plotly(themed(figure_residue_gammas(P(), sel.value, 100_000, 1),
-                                         state["theme"])).classes("w-full")
-
-                sel.on_value_change(lambda e: draw())
-                draw()
-
-        ui.button("Simulate the residues' γ rays", icon="play_arrow", on_click=build).props("dense flat no-caps")
 
     def gamma_block() -> None:
         """Particle–γ coincidences: the matrix, and each γ-ray detector's raw and corrected spectrum."""
@@ -2727,17 +2727,16 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                      "sign where you want one. \"Plan\" sets the reaction to excite that state.").classes(
                 "text-xs ps-muted")
             with ui.grid(columns=6).classes("items-center gap-x-4 gap-y-0 text-sm"):
-                for head in ("Between", "", "Matrix element", "B↑ or Q", "Source", ""):
+                for head in ("Between", "", "Matrix element", "B (↑ and ↓) or Q", "Source", ""):
                     ui.label(head).classes("text-xs ps-muted")
                 for m in table["matrix_elements"]:
-                    lam = int(m["multipolarity"][1])
                     ui.label(names[m["from"]] if m["from"] == m["to"] else f"{names[m['from']]} ↔ {names[m['to']]}")
                     ui.label(m["multipolarity"])
                     matrix_element_input(role, m)
                     if m["q_efm2"] is not None:
                         ui.label(f"Q = {_fmt(m['q_efm2'] / 100)} e b")
-                    elif m["b_up_wu"] is not None:
-                        ui.label(f"{_fmt(m['b_up_e2fm'])} e²fm^{2 * lam} ({_fmt(m['b_up_wu'], 3)} W.u.)")
+                    elif m["b_up_e2fm"] is not None:
+                        ui.label(b_words(table, m))
                     else:
                         ui.label("")
                     ui.label(m["source"]).tooltip(m["note"] or m["source"])
@@ -3365,47 +3364,6 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         if show is not None:
             await show()
 
-    # -- experiments ----------------------------------------------------------------------------------------------
-    @ui.refreshable
-    def experiments_list() -> None:
-        found = _runs.list_experiments()
-        ui.label("Experiments").classes("text-lg font-semibold")
-        ui.label(f"In {_runs.home()}").classes("text-xs ps-muted")
-        if not found:
-            ui.label("No experiment yet: make one with New experiment.").classes("text-sm")
-        for x in found[:30]:
-            with ui.row().classes("w-full items-center no-wrap gap-2"):
-                with ui.column().classes("gap-0"):
-                    ui.label(x["name"]).classes("text-sm font-medium")
-                    ui.label(f"{x['runs']} run{'s' * (x['runs'] != 1)} · "
-                             f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(x['modified']))}").classes(
-                        "text-xs ps-muted")
-                ui.space()
-                ui.button("Open", on_click=lambda path=x["path"]: open_experiment(path)).props("dense flat no-caps")
-        ui.button("New experiment", icon="add", on_click=lambda: (experiments_dialog.close(), new_dialog.open())).props(
-            "unelevated no-caps")
-
-    def new_experiment_form() -> None:
-        ui.label("New experiment").classes("text-lg font-semibold")
-        ui.label("The beam, the target and what to measure; the detectors come after, from the Add menus, or "
-                 "start from a template.").classes("text-xs ps-muted")
-        with ui.grid(columns=2).classes("w-full gap-1"):
-            beam = ui.input("Beam", value="16O", placeholder="16O").props("dense outlined")
-            energy = ui.input("Energy", value="64 MeV", placeholder="64 MeV or 4 MeV/u").props("dense outlined")
-            target = ui.input("Target", value="208Pb", placeholder="208Pb, Au, CD2").props("dense outlined")
-            thickness = ui.input("Thickness", value="0.5 mg/cm2").props("dense outlined")
-        measure = ui.select(dict(wb.MEASUREMENTS), value="coulex-target", label="What to measure").props(
-            "dense outlined").classes("w-full")
-        tmpl = ui.select({k: label for k, label, _ in wb.TEMPLATES}, value="blank", label="Detectors from").props(
-            "dense outlined").classes("w-full")
-        name = ui.input("Name (made from the beam and target if empty)").props("dense outlined").classes("w-full")
-        ui.label("A template brings only its detectors; the beam, target and measurement are the ones above.").classes(
-            "text-xs ps-muted")
-        ui.button("Make the experiment", icon="science",
-                  on_click=lambda: create_experiment(beam.value, energy.value, target.value, thickness.value,
-                                                     measure.value, tmpl.value, name.value)).props(
-            "unelevated no-caps")
-
     # -- the main area --------------------------------------------------------------------------------------------
     stage_modules = {"setup": tab_setup, "plan": tab_plan, "run": tab_run, "data": tab_data,
                      "analysis": tab_analysis, "report": tab_report, "physics": tab_physics}
@@ -3554,15 +3512,15 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             nucleus = wb.studied(p.experiment)
             if nucleus is not None:
                 with ui.element("div").classes("ps-nucleus"):
-                    ui.link(nucleus["label"], nucleus["href"]).tooltip(
+                    ui.link(nucleus["label"], _tab_nucleus.url(nucleus["nuclide"])).tooltip(
                         f"The nucleus this experiment studies: every result for {nucleus['label']}, by every "
                         "route and across its experiments")
                     ui.label("▸ this experiment")
             with ui.button(p.name, color=None).props("flat no-caps icon-right=expand_more").classes(
                     "w-full ps-experiment"):
                 with ui.menu():
-                    ui.menu_item("Open an experiment…", on_click=lambda: show_start(True))
-                    ui.menu_item("New experiment…", on_click=lambda: show_start(True))
+                    ui.menu_item("Open an experiment…", on_click=lambda: open_start("nuclei"))
+                    ui.menu_item("New experiment…", on_click=lambda: open_start("kinds"))
                     ui.separator()
                     ui.menu_item("Import a setup file…", on_click=lambda: upload_dialog.open())
                     ui.menu_item("Export the setup…", on_click=export_setup)
@@ -3603,10 +3561,6 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     with ui.dialog() as upload_dialog, ui.card():
         ui.label("Import a setup file (.toml) as this experiment's setup")
         ui.upload(auto_upload=True, on_upload=import_file).props("accept=.toml max-files=1")
-    with ui.dialog() as experiments_dialog, ui.card().classes("ps-card").style("min-width: min(560px, 95vw)"):
-        experiments_list()
-    with ui.dialog() as new_dialog, ui.card().classes("ps-card").style("min-width: min(560px, 95vw)"):
-        new_experiment_form()
     with ui.dialog() as export_dialog, ui.card().classes("ps-card").style("max-width: min(1100px, 95vw)"):
         with ui.row().classes("items-start gap-6"):
             with ui.column().classes("gap-2").style("width: 320px; max-width: 100%"):
@@ -3655,12 +3609,22 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         if on:
             refresh_start()
 
+    def open_start(view: str) -> None:
+        """The start page on the nuclei ("nuclei": open an experiment from its nucleus) or on the kinds of
+        experiment ("kinds": a new experiment, no nucleus filled in)."""
+        st = state.setdefault("start", {"kind": None})
+        st.update(view=view, kind=None, for_nucleus=None)
+        st.pop("values", None)
+        show_start(True)
+
     start_ctx = SimpleNamespace(ui=ui, state=state, create_experiment=create_experiment,
                                 open_experiment=open_experiment, open_example=open_example,
                                 import_setup=lambda: upload_dialog.open(), refresh_start=refresh_start,
                                 close_start=None if offer_list else (lambda: show_start(False)))
     if nucleus:  # /?nucleus=62Ni: the page of that nucleus (app/tab_nucleus.py), on a row of its table if named
         state["start"] = {"kind": None, "view": "nucleus", "nucleus": nucleus, "observable": observable, "key": key}
+    elif not_there:  # ?experiment= names no experiment: the sentence, above the nuclei
+        state["start"] = {"kind": None, "view": "nuclei", "note": not_there}
     if nucleus or not (example or template or experiment):  # the nuclei are the first screen
         show_start(True)
     if not prebuild:
