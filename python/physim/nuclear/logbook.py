@@ -1757,7 +1757,7 @@ def evidence_missing(rows: list, outside: bool = False, routes: list = ()) -> li
             for k, label, missing in kinds]
 
 
-def _closure_words(p) -> str:
+def closure_words(p) -> str:
     """What a projected row's closure says, in a sentence."""
     given = (f"the value the simulation was given ({number(p.truth)} "
              f"{unit_words(observables.get(p.row.observable).unit)})")
@@ -1773,7 +1773,7 @@ def _closure_words(p) -> str:
             "the value is biased for this setup; the result is not to be read as the setup's reach until it does.")
 
 
-def _known_words(p, c, by_id: Optional[dict] = None) -> str:
+def known_words(p, c, by_id: Optional[dict] = None) -> str:
     """ "This setup reaches ±x %; the value is known to ±y %; the best single measurement to ±z %." """
     reach = (f"This setup reaches {percent(p.reach_percent)}" if p.reach_percent is not None
              else "This setup's reach is not stated (the result has no uncertainty)")
@@ -1862,7 +1862,7 @@ def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None, r
                      f"<th>{e(c.label)} ({e(unit)})</th><th>Given to the simulation</th><th>Closure</th>"
                      "<th>Reaches</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
         lead = next((p for p in c.projected if p.id == mine), c.projected[-1])
-        parts.append(f"<p>{e(_known_words(lead, c, by_id))}</p>")
+        parts.append(f"<p>{e(known_words(lead, c, by_id))}</p>")
     if rule:
         parts.append(f"<p><small>{e(RULE)}</small></p>")
     return "".join(parts)
@@ -2039,7 +2039,7 @@ def _run_describe(summary: Optional[dict]) -> str:
     return f"run {summary['number']}" + (f" ({text[0].lower() + text[1:]})" if text else "")
 
 
-def _weisskopf_shown(x: Explanation, key) -> Optional[Explanation]:
+def weisskopf_shown(x: Explanation, key) -> Optional[Explanation]:
     """The explanation of B(E2) in Weisskopf units as the report shows it: for the decay (the analysis holds
     the excitation's value over the Weisskopf unit; a value in Weisskopf units is always the decay's). None
     where the transition's ``key`` does not hold the spins of both levels: no ratio is assumed."""
@@ -2283,7 +2283,7 @@ def _coulex_results(sec: dict, planner, runs: list, analyses: dict, result, pl) 
     c = _routes_section(sec, planner, nuclide, "B(E2)", key, own, head, unanalysed, outside=True)
     lead = next((p for p in c.projected if p.id == head.id), None) if c is not None else None
     if lead is not None:
-        sec["result"].append(f"<p>{e(_closure_words(lead))}</p>")
+        sec["result"].append(f"<p>{e(closure_words(lead))}</p>")
     down = decay_words(head)
     if down:
         sec["result"].append(f"<p>{e(down)}</p>")
@@ -2365,7 +2365,7 @@ def _lifetime_results(sec: dict, planner, runs: list, analyses: dict, plan) -> N
     c = _routes_section(sec, planner, nuclide, "tau", key, own, head)
     lead = next((p for p in c.projected if p.id == head.id), None) if c is not None else None
     if lead is not None:
-        sec["result"].append(f"<p>{e(_closure_words(lead))}</p>")
+        sec["result"].append(f"<p>{e(closure_words(lead))}</p>")
     # The B that follows from τ: the experiment's own row where it has one, else what the analysis gives.
     bs = [r for r in own if r.observable == "B(E2)" and r.evidence == results.PROJECTED
           and (head.id in r.depends_on or r.origin.get("analysis") == "lifetime")]
@@ -2790,7 +2790,7 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
             sec["numbers"].append("<h3>From the peak area to B(E2) and the shape</h3>")
             key_now = keys.get(planner.run.number) if planner.run is not None else run_key(planner, None)
             for x in ax:
-                shown = _weisskopf_shown(x, key_now) if x.key == "weisskopf" else x
+                shown = weisskopf_shown(x, key_now) if x.key == "weisskopf" else x
                 sec["numbers"].append(
                     _explanation_html(shown) if shown is not None else
                     "<p>B(E2) is not given in Weisskopf units here: they are quoted for the decay, B(E2↓), which "
@@ -2894,7 +2894,208 @@ def experiment_zip(planner, result=None, folder: bool = True, pdf: bool = True, 
     return buf.getvalue()
 
 
-__all__ = ["APPENDICES", "GAMMA_BIN_KEV", "NOT_AVAILABLE", "RESULTS", "RULE", "SECTIONS", "alignment_html",
+# -- the report of a nucleus, across its experiments ------------------------------------------------------------------
+
+#: The appendices of the report of a nucleus, after its results: (anchor, title), lettered.
+NUCLEUS_APPENDICES = (("experiments", "The experiments"), ("history", "The history of the rows"))
+
+#: A route's state in the report of a nucleus.
+_ROUTE_STATE = {nucleus.DONE: "done", nucleus.ONLY_PROJECTED: "simulated runs only", nucleus.IN_PHYSIM:
+                "physim can plan it", nucleus.LATER: "a kind physim does not have yet",
+                nucleus.NO_EXPERIMENT: "no experiment"}
+_APPLIES = {True: "yes", False: "no", None: "not tested"}
+_MEANS = {"calculation": "a calculation", "evaluation": "the evaluation", "literature": "the literature"}
+
+
+def _units_written(text) -> str:
+    """Text with the ledger's units in it ("884 ± 13 e2fm4↑") as the report writes them ("e²fm⁴")."""
+    return re.sub(r"(?<![\w])(e2fm\d|e2b\d?|efm\d?|mu_N2?)(?![\w])", lambda m: unit_words(m.group(1)), str(text))
+
+
+def _nucleus_quantity_html(name: str, t: dict, ov: dict, by_id: dict) -> list:
+    """The parts of the report of a nucleus for one observable of one level or transition: the values side by
+    side in their two groups, the routes, what is still to run, the checks and what the value gives."""
+    def e(text) -> str:
+        return _esc(_units_written(text))
+
+    out = []
+    c = ov.get("comparison")
+    counts = [f"{n} {k}" for k, n in (("evaluated", t["evaluated"] is not None and 1 or 0),
+                                     ("measured", (t["measured"] or {}).get("count", 0)),
+                                     ("from an outside program", (t["outside_program"] or {}).get("count", 0)),
+                                     ("calculated", (t["theory"] or {}).get("count", 0))) if n]
+    projected = (t["projected"] or {}).get("count", 0)
+    out.append(f"<p>{e(', '.join(counts) or 'No independent value')}"
+               + (f"; {projected} projected from simulated runs, kept apart" if projected else "") + ".</p>")
+    out.append("<h3>The values, side by side</h3>")
+    if c is not None:
+        out.append(comparison_html(c, rule=False, by_id=by_id))
+    else:
+        out.append("<p>No row holds for it now.</p>")
+    # The routes, each with its state for this nucleus and whether it applies.
+    rows = []
+    for r in ov.get("routes") or []:
+        state = _ROUTE_STATE.get(r["status"], r["status"])
+        if r["status"] == nucleus.DONE:
+            state += f": {r['independent']} value{'s' * (r['independent'] != 1)}"
+        if r["projected"]:
+            state += f" ({r['projected']} simulated run{'s' * (r['projected'] != 1)})" if r["status"] == \
+                nucleus.DONE else f": {r['projected']}"
+        if r.get("is_reference"):
+            state += "; holds the reference"
+        kind = r["kind_label"] or _MEANS.get(r["means"], "")
+        rows.append(f"<tr><td>{e(r['label'])}</td><td>{e(kind)}</td><td>{e(state)}</td>"
+                    f"<td>{e(_APPLIES[r['applies']])}</td><td>{e(r['reason'] or r['note'])}</td></tr>")
+    if rows:
+        out.append("<h3>The routes to it</h3><table><thead><tr><th>Route</th><th>Experiment</th><th>State</th>"
+                   "<th>Applies here</th><th>Why, or how</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
+    # What is still to run: the routes physim can plan that nothing of one's own has taken, and the independent
+    # evidence that is missing.
+    items = []
+    for r in ov.get("routes") or []:
+        if r["open"] and r["applies"] is not False:
+            items.append(f"<li>☐ <b>{e(r['label'])}.</b> physim has this kind of experiment ({e(r['kind_label'])})"
+                         + (" and a published value by it is here, but no run of one's own" if r["rows"] else
+                            " and no value by it is here") + ".</li>")
+    group = [r for r in results.current(list(by_id.values())) if r.observable == ov["observable"]
+             and r.key == ov["key"]]
+    for x in evidence_missing(group, routes=ov.get("routes") or []):
+        if not x["have"]:
+            items.append(f"<li>☐ <b>{e(x['label'])}.</b> {e(x['missing'])}</li>")
+    out.append("<h3>Still to run</h3>" + (f'<ul style="{_PLAIN_LIST}">' + "".join(items) + "</ul>" if items
+                                         else "<p>Nothing: every route physim can plan has a run of one's own, and "
+                                              "every kind of independent evidence is entered.</p>"))
+    if ov.get("checks"):
+        out.append("<h3>Checks between observables</h3><ul>" + "".join(
+            f"<li><b>{e(x['label'])}:</b> {e(x['text'])}<br><small>{e(x['how'])}"
+            + (f" ({e(x['reference'])})" if x.get("reference") else "") + "</small></li>" for x in ov["checks"])
+                   + "</ul>")
+    ref = ov.get("reference")
+    gives = [g for g in ov.get("gives") or []]
+    if ref is not None and gives:
+        out.append(f"<h3>What the value gives</h3><p>From the reference, {e(ref['text'])} ({e(ref['source'])}):</p>"
+                   "<ul>" + "".join(
+                       f"<li>{e(g['to'])} = {e(g['text'])}<br><small>{e(g['how'])}</small></li>" if g["value"]
+                       is not None else f"<li>{e(g['to'])}: not worked out ({e(g['missing'])})</li>" for g in gives)
+                   + "</ul>")
+    if ov.get("used_for"):
+        out.append("<h3>What it is used for</h3><ul>" + "".join(
+            f"<li>{e(u['text'])}" + (f"<br><small>{e(u['reference'])}</small>" if u.get("reference") else "")
+            + "</li>" for u in ov["used_for"]) + "</ul>")
+    return out
+
+
+def nucleus_html(nuclide: str, root=None, home=None, rows: Optional[list] = None) -> str:
+    """The report of a nucleus across all its experiments, one self-contained HTML page that leads with the
+    results, in the style of the experiment's report (:func:`experiment_html`).
+
+    First, for each observable and level or transition that has more than the evaluation (the headline rows of
+    :func:`physim.nuclear.nucleus.view`), a numbered section from :func:`physim.nuclear.nucleus.observable_view`:
+    the values side by side in the two groups that are never mixed (the independent evidence against the
+    reference with difference, pull and verdict; apart, the simulated runs, each closed against the value its
+    simulation was given and never pulled against the reference: the table the nucleus page and the experiment's
+    report show, :func:`comparison_html`), the routes with their state and whether they apply to this nucleus,
+    what is still to run, the checks between observables, and what the value gives and is used for. Then, as
+    appendices, the experiments (name, kind, runs, the latest result) and the history of the rows, every row ever
+    written, the newest first.
+
+    ``root`` is the experiments folder and ``home`` the nuclei home (the defaults of
+    :func:`physim.nuclear.results.of_nuclide`); ``rows`` the nucleus's rows where the caller has them. Building it
+    writes nothing: it neither takes the evaluation nor backfills an experiment."""
+    def e(text) -> str:
+        return _esc(_units_written(text))
+
+    name = results.nuclide_name(nuclide)
+    every = results.of_nuclide(name, root, home) if rows is None else [r for r in rows if r.nuclide == name]
+    v = nucleus.view(name, root, home, rows=every)
+    by_id = {r.id: r for r in every}
+    title = nuclide_words(name)
+    quantities = [t for t in v["table"] if t["headline"] and t["rows"]]
+    sections = []
+    for i, t in enumerate(quantities, 1):
+        head = f'<h2 id="q{i}">{i}. {e(quantity_words(t["observable"], t["key"]))}</h2>'
+        try:
+            ov = nucleus.observable_view(name, t["observable"], t["key"], rows=every)
+            sections.append((t, head, _nucleus_quantity_html(name, t, ov, by_id)))
+        except (ValueError, TypeError, KeyError) as err:
+            sections.append((t, head, [f"<p>Its values could not be set beside each other: {e(err)}.</p>"]))
+    studied = [x for x in v["experiments"] if x["role"] == "studied"]
+    ev = v["evaluation"]
+    body = [f"<h1>{e(title)}: the report of the nucleus</h1>",
+            f'<p class="sub">Z = {v["z"]}, N = {v["n"]} · {len(studied)} experiment{"s" * (len(studied) != 1)} '
+            f"that stud{'y' if len(studied) != 1 else 'ies'} it, {v['analysed_runs']} analysed "
+            f"run{'s' * (v['analysed_runs'] != 1)}, {v['points']} data point{'s' * (v['points'] != 1)} · "
+            + (f"the evaluation: {e(ev['reference'])} ({ev['rows']} values)" if ev["rows"]
+               else "the evaluation is not taken") + "</p>",
+            '<ol class="toc">' + "".join(f'<li><a href="#q{i}">{e(quantity_words(t["observable"], t["key"]))}</a>'
+                                         "</li>" for i, (t, _, _) in enumerate(sections, 1)) + "</ol>"
+            + '<p style="margin-bottom:0"><a href="#appendices">Appendices</a></p><ol class="toc" '
+              'style="list-style:upper-alpha;margin-top:0.2em">'
+            + "".join(f'<li><a href="#{k}">{e(x)}</a></li>' for k, x in NUCLEUS_APPENDICES) + "</ol>"]
+    if sections:
+        body.append(f"<p>Every value of {e(title)} that is entered, across its experiments and its own data "
+                    "points, one section per observable and level or transition that has more than the "
+                    "evaluation. Each value is shown in the observable's convention and, where it was given in "
+                    f"another, as it was given.</p><p><small>{e(RULE)}</small></p>")
+    else:
+        body.append(f"<p>Nothing beyond the evaluation is entered for {e(title)} yet: no data point, no analysed run "
+                    "and no calculation.</p>")
+    if v["open"]:
+        body.append("<p><b>Still open for the nucleus:</b> " + e("; ".join(o["text"] for o in v["open"])) + ".</p>")
+    for _, head, parts in sections:
+        body.append(head)
+        body += parts
+    body.append('<h2 id="appendices" style="font-size:1.45em;border-top:2px solid #999;padding-top:0.6em;'
+                'margin-top:2em;break-before:page">Appendices</h2>')
+    # A. the experiments
+    rows_ = []
+    for x in v["experiments"]:
+        latest = x["latest"]
+        said = ("—" if latest is None else
+                f"{quantity_words(latest['observable'], latest['key'])} = {latest['text']}, "
+                f"{results.EVIDENCE[latest['evidence']].lower()} ({latest['method_label']})")
+        role = {"studied": "studies it", "partner": "the partner"}.get(x["role"], "results only")
+        rows_.append(f"<tr><td>{e(x['name'])}<br><small>{e(x['folder'])}</small></td><td>{e(x['kind_label'] or '')}"
+                     f"</td><td>{e(role)}</td><td>{x['runs']} ({x['analysed_runs']} analysed)</td>"
+                     f"<td>{e(said)}</td></tr>")
+    body.append(f'<h2 id="experiments">A. {e(NUCLEUS_APPENDICES[0][1])}</h2>'
+                + ("<table><thead><tr><th>Experiment</th><th>Kind</th><th>Role</th><th>Runs</th><th>Latest result"
+                   "</th></tr></thead><tbody>" + "".join(rows_) + "</tbody></table>" if rows_ else
+                   f"<p>No experiment with {e(title)} yet.</p>"))
+    # B. the history of the rows
+    status = {"holds": "holds", "superseded": "superseded by a newer row", "retracted": "withdrawn",
+              "retraction": "the retraction"}
+    past = nucleus.history(every)
+    hist = []
+    for h in past:
+        hist.append(f"<tr><td>{e(h['created'][:10])}</td><td>{e(quantity_words(h['observable'], h['key']))}</td>"
+                    f"<td>{e(results.EVIDENCE[h['evidence']])} · {e(h['method_label'])}"
+                    + (f"<br><small>{e(h['detail'])}</small>" if h["detail"] else "")
+                    + f"</td><td>{e(h['source'])}</td><td>{e('' if h['status'] == 'retraction' else h['text'])}</td>"
+                    f"<td>{e(status.get(h['status'], h['status']))}"
+                    + (f": {e(h['reason'])}" if h["reason"] else "") + "</td></tr>")
+    body.append(f'<h2 id="history">B. {e(NUCLEUS_APPENDICES[1][1])}</h2><p>Every row ever written for '
+                f"{e(title)}, the newest first: rows are never rewritten; a correction or a retraction is a new "
+                "row.</p>" + ("<table><thead><tr><th>Written</th><th>Of</th><th>Evidence · method</th><th>From</th>"
+                              "<th>Value as given</th><th>Status</th></tr></thead><tbody>" + "".join(hist)
+                              + "</tbody></table>" if hist else "<p>No row yet.</p>"))
+    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>"
+            f"{e(name)}: the report of the nucleus</title><style>{record_css()}</style></head><body>"
+            + "\n".join(body) + "</body></html>")
+
+
+def nucleus_pdf(nuclide: str, page: Optional[str] = None, **options) -> Optional[bytes]:
+    """The report of a nucleus as a PDF: :func:`nucleus_html` (or ``page``, if already made) printed by a browser
+    of this computer (:func:`html_to_pdf`). None when no such browser is found."""
+    return html_to_pdf(page if page is not None else nucleus_html(nuclide, **options))
+
+
+# The names these had before the app called them.
+_weisskopf_shown, _closure_words, _known_words = weisskopf_shown, closure_words, known_words
+
+__all__ = ["APPENDICES", "GAMMA_BIN_KEV", "NUCLEUS_APPENDICES", "closure_words", "known_words", "nucleus_html",
+           "nucleus_pdf", "weisskopf_shown", "NOT_AVAILABLE", "RESULTS", "RULE", "SECTIONS", "alignment_html",
            "analysis_html", "analysis_png", "analysis_row", "asymmetric", "budget_html", "comparison_html",
            "decay_of", "decay_words", "doppler_html", "evidence_missing", "experiment_html", "experiment_pdf",
            "experiment_rows", "experiment_zip", "gamma_lines", "html_to_pdf", "level_scheme_png", "level_schemes",

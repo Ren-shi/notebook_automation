@@ -68,7 +68,8 @@ NUCLEUS_STYLE = """
 
 _SUPERSCRIPT = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
 #: The units as the page writes them (the ledger's own spelling otherwise).
-UNIT_TEXT = {"e2fm4": "e²fm⁴", "e2b2": "e²b²", "efm2": "e fm²", "eb": "e b", "e2fm2": "e²fm²"}
+UNIT_TEXT = {"e2fm4": "e²fm⁴", "e2b2": "e²b²", "efm2": "e fm²", "eb": "e b", "e2fm2": "e²fm²", "mu_N": "μ_N",
+             "mu_N2": "μ_N²"}
 #: The units the switch of the nucleus page offers for a B(E2), of the registry's: display only.
 BE2_UNITS = ("e2fm4", "e2b2")
 #: A verdict of the comparison as the page says it, and its colour.
@@ -86,6 +87,8 @@ MEANS_TEXT = {"calculation": "a calculation: run it in the Shell model panel of 
 INDEPENDENT_ORDER = ("evaluated", "measured", "outside program", "theory")
 #: How many headline rows a card or the readouts show, and how many rows of history the page lists at once.
 HEADLINES, HISTORY_ROWS = 4, 25
+#: How much of the line beside a method the comparison table shows (the whole of it on hover).
+DETAIL_SHOWN = 60
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -286,15 +289,18 @@ def load(nuclide: str, observable: Optional[str] = None, key: Optional[str] = No
                     notes.append(f"The local copy of ENSDF has no adopted value of {name}.")
             except (ensdf.EnsdfMissing, ValueError, OSError) as e:
                 notes.append(f"The adopted values of ENSDF could not be taken: {e}")
-    view = nucleus.view(name)
-    return {"nuclide": name, "view": view, "notes": notes,
-            "observable": load_observable(name, view, observable, key, reference, notes)}
+    rows = results.of_nuclide(name)  # the ledgers, read once for the view and the observable shown
+    view = nucleus.view(name, rows=rows)
+    return {"nuclide": name, "view": view, "notes": notes, "rows": rows,
+            "observable": load_observable(name, view, observable, key, reference, notes, rows)}
 
 
 def load_observable(name: str, view: dict, observable: Optional[str] = None, key: Optional[str] = None,
-                    reference: Optional[str] = None, notes: Optional[list] = None) -> Optional[dict]:
+                    reference: Optional[str] = None, notes: Optional[list] = None,
+                    rows: Optional[list] = None) -> Optional[dict]:
     """The :func:`physim.nuclear.nucleus.observable_view` of the row asked for, or of the first row of the
-    nucleus's table. What is asked for and is not there is said in ``notes`` and the nearest thing is shown."""
+    nucleus's table. What is asked for and is not there is said in ``notes`` and the nearest thing is shown.
+    ``rows`` are the nucleus's rows as :func:`load` read them (read again when left out)."""
     notes = [] if notes is None else notes
     table = view["table"]
     chosen = None
@@ -309,13 +315,13 @@ def load_observable(name: str, view: dict, observable: Optional[str] = None, key
     if chosen is None:
         return None
     try:
-        return nucleus.observable_view(name, *chosen, reference=reference)
+        return nucleus.observable_view(name, *chosen, reference=reference, rows=rows)
     except ValueError as e:
         if reference is None:
             notes.append(str(e))
             return None
         notes.append(f"The reference asked for is not there ({e}); the evaluated value is the reference again.")
-        return nucleus.observable_view(name, *chosen)
+        return nucleus.observable_view(name, *chosen, rows=rows)
 
 
 def blank_point(observable: str = "B(E2)", key: str = "") -> dict:
@@ -378,6 +384,41 @@ def point_arguments(form: dict) -> dict:
                              "year": int(year) if isinstance(year, float) and year.is_integer() else year,
                              "doi": str(form.get("doi") or "").strip(), "where": str(form.get("where") or "").strip()}
     return args
+
+
+def import_file(nuclide: str, filename: str, data: bytes, home=None) -> dict:
+    """The data points of a file sent to the page, added to the nucleus's ledger
+    (:func:`physim.nuclear.nucleus.import_points`, which says what was added, already there and refused). The file
+    is put in a temporary folder under its own name for the reader, and removed after."""
+    import tempfile
+    from pathlib import Path
+
+    suffix = Path(str(filename or "points.json")).suffix.lower() or ".json"
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        path = Path(tmp) / f"points{suffix}"
+        path.write_bytes(data)
+        found = nucleus.import_points(path, nuclide, home)
+    found["file"] = str(filename or "")
+    return found
+
+
+def import_lines(found: dict) -> dict:
+    """The three lists of an import as the page shows them: {"added", "already", "refused"}, each a list of
+    lines ("quantities.BE2_up[0] · B(E2) of 2+1 > gs: 0.0906 ± 0.0037 e2b2↑, coulex-fit, J. M. Allmond et al. 2014
+    → Coulex fitted to all orders")."""
+    def head(x: dict) -> str:
+        return f"{x['where']} · {words(x['what'])}" if x["what"] else x["where"]
+
+    return {"added": [f"{head(x)} → {METHODS[x['row'].method]}" for x in found["added"]],
+            "already": [f"{head(x)} (row {x['id'][:8]})" for x in found["already"]],
+            "refused": [f"{head(x)}: " + "; ".join(x["reasons"]) for x in found["refused"]]}
+
+
+def report_html(nuclide: str) -> str:
+    """The report of the nucleus (:func:`physim.nuclear.logbook.nucleus_html`): nothing is written."""
+    from .. import logbook
+
+    return logbook.nucleus_html(nuclide)
 
 
 def add_point(nuclide: str, form: dict, home=None):
@@ -673,7 +714,8 @@ def render(ctx) -> None:
 
         notes: list = []
         try:
-            found = await run.io_bound(load_observable, name, held["view"], observable, key, reference, notes)
+            found = await run.io_bound(load_observable, name, held["view"], observable, key, reference, notes,
+                                       held.get("rows"))
         except Exception as err:  # noqa: BLE001
             ui.notify(str(err), type="negative", multi_line=True)
             return
@@ -721,6 +763,8 @@ def _page(ctx, held: dict, reload, choose, redraw) -> None:
         ui.button("Add a data point", icon="add", on_click=lambda: ui.run_javascript(
             "document.querySelector('.ps-point-form')?.scrollIntoView({behavior: 'smooth', block: 'start'})")).props(
             "outline no-caps")
+        _import_button(ctx, name, reload)
+        _report_button(ctx, name)
         ui.button(f"New experiment for {title}", icon="add", on_click=lambda: plan(ctx, name)).props(
             "unelevated no-caps")
     for note in held.get("notes") or ():
@@ -771,6 +815,115 @@ def _page(ctx, held: dict, reload, choose, redraw) -> None:
             _point_form(ctx, name, ov, reload, redraw)
             if ov is not None:
                 _history(ctx, ov)
+
+
+def _import_button(ctx, name: str, reload) -> None:
+    """"Import points from a file": a window that takes a JSON or CSV file of data points (or a literature file
+    of the paper verifications), adds them through :func:`import_file` and shows the three lists: added, already
+    there, refused with the reasons. The page reads again when the window closes after an import that added
+    something."""
+    ui = ctx.ui
+    st = ctx.state["start"]
+
+    @ui.refreshable
+    def lists() -> None:
+        found = st.get("imported")
+        if not found:
+            return
+        said = import_lines(found)
+        ui.label(f"{found['file']}: {len(said['added'])} added, {len(said['already'])} already there, "
+                 f"{len(said['refused'])} refused").classes("text-sm font-semibold")
+        for key, title, colour in (("added", "Added", "ps-ok"), ("already", "Already there: nothing added", ""),
+                                   ("refused", "Refused", "ps-warn")):
+            if not said[key]:
+                continue
+            ui.label(f"{title} ({len(said[key])})").classes(f"text-xs font-semibold {colour}").style(
+                "margin-top: 6px")
+            with ui.column().classes(f"gap-0 ps-import-{key}"):
+                for line in said[key]:
+                    ui.label(line).classes("text-xs").style("line-height: 1.45")
+
+    async def got(e) -> None:
+        from nicegui import run
+
+        try:
+            data = await e.file.read()
+            found = await run.io_bound(import_file, name, e.file.name, data)
+        except (ValueError, OSError) as err:
+            ui.notify(f"The file could not be read: {err}", type="negative", multi_line=True)
+            return
+        st["imported"] = found
+        st["import_added"] = st.get("import_added", False) or bool(found["added"])
+        lists.refresh()
+        upload.reset()
+
+    def closed() -> None:
+        """The page reads again when the window closes, if the import added a point (reading again while it is
+        open would rebuild the page and the window with it)."""
+        st["imported"] = None
+        if st.pop("import_added", False):
+            reload()
+
+    with ui.dialog().on("hide", closed) as dialog, ui.card().classes("ps-card ps-import").style(
+            "width: min(820px, 95vw); max-width: 95vw"):
+        with ui.row().classes("w-full items-center"):
+            ui.label(f"Import points of {nuclide_text(name)} from a file").classes("text-base font-semibold")
+            ui.space()
+            ui.button(icon="close", color=None, on_click=dialog.close).props("flat round dense").classes("ps-muted")
+        ui.label("JSON or CSV, one data point each with the fields of the form (observable, level or transition, "
+                 "value, unit, direction, uncertainty, method, evidence, reference or own measurement), or a "
+                 "literature file of a paper verification (nucleus, level, quantities). Every point is tried; one "
+                 "that is in the ledger already is not added again, and one that cannot be taken is listed with "
+                 "every reason.").classes("text-xs ps-muted").style("line-height: 1.5")
+        upload = ui.upload(auto_upload=True, on_upload=got, label="A .json or .csv file").props(
+            "accept=.json,.csv max-files=1 flat bordered").classes("w-full")
+        with ui.column().classes("w-full gap-0").style("max-height: 55vh; overflow-y: auto"):
+            lists()
+    ui.button("Import points from a file", icon="upload_file", on_click=dialog.open).props("outline no-caps")
+
+
+def _report_button(ctx, name: str) -> None:
+    """"Report for this nucleus": the report of the nucleus across its experiments
+    (:func:`physim.nuclear.logbook.nucleus_html`), saved as HTML or as PDF, as the Report step of an experiment
+    offers its report. Building it writes nothing."""
+    ui = ctx.ui
+    made: dict = {}
+
+    async def page() -> str:
+        from nicegui import run
+
+        note = ui.notification("Building the report of the nucleus…", spinner=True, timeout=None)
+        try:
+            made["page"] = await run.io_bound(report_html, name)
+        finally:
+            note.dismiss()
+        return made["page"]
+
+    async def save_html() -> None:
+        ui.download.content((await page()).encode("utf-8"), f"{name}-nucleus-report.html")
+
+    async def save_pdf() -> None:
+        from nicegui import run
+
+        from .. import logbook
+
+        text = await page()
+        note = ui.notification("Printing the report to PDF…", spinner=True, timeout=None)
+        try:
+            data = await run.io_bound(logbook.html_to_pdf, text)
+        finally:
+            note.dismiss()
+        if data is None:
+            ui.notify("No browser was found to print the PDF (Edge, Chrome or Chromium). Save the report as HTML, "
+                      "open it and print it to PDF: it has the same pages.", type="warning", timeout=12000)
+            return
+        ui.download.content(data, f"{name}-nucleus-report.pdf")
+
+    with ui.button("Report for this nucleus", icon="description").props("outline no-caps").tooltip(
+            "Every result of this nucleus across its experiments, results first: as HTML or PDF"):
+        with ui.menu():
+            ui.menu_item("Save as HTML", on_click=save_html)
+            ui.menu_item("Save as PDF", on_click=save_pdf)
 
 
 def _panel(ui, title: str, sub: str = ""):
@@ -886,9 +1039,13 @@ def _comparison(ctx, held: dict, reload, choose, redraw) -> None:
                                                  "◦ not independent of the reference"
                                                  if e.independent_of_reference is False else ""])
                         given = as_given(cell)
-                        _td(ui, method_words(cell), [detail_words(cell),
-                                                     f"given as {given}: {words(cell['converted'])}"
-                                                     if given and not cell.get("via") else "", cell["problem"]])
+                        detail = detail_words(cell)
+                        short = detail if len(detail) <= DETAIL_SHOWN else detail[:DETAIL_SHOWN].rstrip() + "…"
+                        method_cell = _td(ui, method_words(cell), [short, f"given as {given}: {words(cell['converted'])}"
+                                                                   if given and not cell.get("via") else "",
+                                                                   cell["problem"]])
+                        if short != detail:  # a literature point's method in words: whole on hover
+                            method_cell.tooltip(detail)
                         _td(ui, shown(e.value, e.plus, e.minus, factor=factor), classes="ps-nt-num")
                         _td(ui, percent(e.uncertainty_percent) if e.uncertainty_percent is not None
                             else "no uncertainty", classes="ps-nt-num",
@@ -1079,6 +1236,11 @@ def _routes(ctx, name: str, ov: dict) -> None:
                  for r in done + [r for r in quiet if not r["rows"]]]
         ui.label("Not experiments of the planner (the evaluation, a calculation, methods known from the literature: "
                  "their values come in as data points): " + " · ".join(words) + ".").classes("text-xs ps-muted")
+        for r in quiet:  # the calculation: whether it fits this computer now
+            if r["method"] == "shell-model" and r.get("reason"):
+                fits = {True: "fits this computer", False: "does not fit this computer now",
+                        None: "not tested"}[r.get("applies")]
+                ui.label(f"{r['label']}: {fits}. {r['reason']}").classes("text-xs ps-muted ps-route-shell")
 
 
 def _gives(ctx, ov: dict) -> None:

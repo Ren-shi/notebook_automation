@@ -305,7 +305,10 @@ def band(ctx, pl: dict) -> None:
                              + (f" {b['reference']}" if b.get("reference") else "")).classes("text-xs ps-muted")
                 nucleus = wb.studied(p.experiment)
                 if nucleus is not None:  # the residue of the channel marked as studied: its page has every route
-                    ui.link(f"What is known about {nucleus['label']}, by every route →", nucleus["href"]).classes(
+                    from .tab_nucleus import url
+
+                    ui.link(f"What is known about {nucleus['label']}, by every route →",
+                            url(nucleus["nuclide"])).classes(
                         "ps-nucleus-link")
         with ui.element("div").style("flex: 1 1 300px; min-width: 0"):
             with ctx.panel("Measure the lifetimes", "stage 2: plunger (RDDS) or line shapes (DSAM)"):

@@ -170,3 +170,38 @@ def test_words_units_addresses_and_the_figure(lab, monkeypatch):
     assert tn.uses("B(E2)") == [{"text": "collectivity", "reference": "a book"}, {"text": "a text", "reference": ""}]
     entry.used_for = "one line"
     assert tn.uses("B(E2)") == [{"text": "one line", "reference": ""}]
+
+
+def test_an_experiment_in_the_address_that_is_not_there(lab, tmp_path):
+    from physim.nuclear.app import page
+
+    assert page.missing_experiment(None) is None and page.missing_experiment(str(lab.coulex.path)) is None
+    said = page.missing_experiment(str(tmp_path / "no-such-experiment"))
+    assert "there is no experiment folder there" in said
+
+    async def scenario(user, st):
+        await user.should_see("there is no experiment folder there", retries=100)
+        await user.should_see("What are you studying?")
+        assert "note" not in st  # said once
+
+    _on_screen(scenario, view="nuclei", note=said)
+
+
+def test_an_import_and_the_report_from_the_page(lab, tmp_path):
+    data = (b"observable,key,value,unit,uncertainty,method,authors,year\n"
+            b"tau,2+1,2.01,ps,0.12,dsam,Kenn et al.,2001\ntau,2+1,2.2,ps,,,Roe,2020\n")
+    said = tn.import_lines(tn.import_file("62Ni", "mine.csv", data))
+    assert said["added"] == ["line 2 · tau of 2+1: 2.01 ± 0.12 ps, dsam, Kenn et al. 2001 → DSAM (line shape)"]
+    assert not said["already"] and "pick the method" in said["refused"][0]
+    assert tn.import_lines(tn.import_file("62Ni", "mine.csv", data))["already"][0].startswith("line 2 · tau")
+    assert "B(E2; 0⁺₁ → 2⁺₁)↑" in tn.report_html("62Ni")
+
+
+def test_the_b_values_of_a_level_scheme_carry_their_arrows():
+    from physim.nuclear.app.page import b_words
+
+    table = {"nuclide": "62Ni", "levels": [{"energy_kev": 0.0, "jpi": "0+"}, {"energy_kev": 1172.91, "jpi": "2+"},
+                                           {"energy_kev": 2000.0, "jpi": ""}]}
+    m = {"from": 0, "to": 1, "multipolarity": "E2", "b_up_e2fm": 884.1}
+    assert b_words(table, m) == "B↑ = 884.1 e²fm^4 · B↓ = 176.8 e²fm^4 = 12.1 W.u. ↓"
+    assert b_words(table, {**m, "to": 2}).endswith("(B↓ and W.u. need the spins of both levels)")

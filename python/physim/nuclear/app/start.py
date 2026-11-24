@@ -103,7 +103,10 @@ def nuclei_page(ctx) -> None:
     of experiments from before the ledger."""
     ui = ctx.ui
     tn.add_style(ctx)
+    note = ctx.state["start"].pop("note", None)  # said once: why the address's experiment was not opened
     with ui.column().classes("w-full gap-3").style("max-width: 1100px; margin: 0 auto"):
+        if note:
+            ui.label(note).classes("text-sm ps-warnbox rounded p-3 w-full ps-start-note")
         with ui.row().classes("w-full items-end gap-2"):
             with ui.column().classes("gap-1"):
                 ui.label("What are you studying?").classes("text-xl font-semibold")

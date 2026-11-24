@@ -60,7 +60,8 @@ its nucleus, level or transition, method and evidence. list_nuclei gives the nuc
 is still open; list_results the rows of one nucleus; snapshot_evaluation takes ENSDF's adopted values in as
 evaluated rows; add_data_point adds a published value or an own measurement (a value with its uncertainty, never
 raw spectra; a correction is a new point that names the one it corrects, and retract_data_point withdraws one:
-nothing is deleted); compare_results sets every result for one observable of one level or transition beside a
+nothing is deleted); import_data_points adds the points of a JSON or CSV file and says what was added, already
+there or refused; compare_results sets every result for one observable of one level or transition beside a
 reference, with the routes to it and what the value gives. Evidence is in two groups that are never mixed:
 independent (measured, evaluated, theory, outside program) and projected (a simulated run analysed back: it shows
 the precision a setup would reach and is compared only with the value its simulation was given, never with a

@@ -63,7 +63,8 @@ def test_the_short_comparison_with_a_reference(tmp_path):
     assert "This setup reaches ±7.1%; the value is known to ±1.5%" in said["Reach"].replace(" %", "%")
     assert "the best single measurement reaches ±3.4%" in said["Reach"].replace(" %", "%")
     assert "pull" not in " ".join(said.values())
-    assert said["Other routes"].startswith("Of the other routes, ") and "hold a value" in said["Other routes"]
+    # The evaluation holds the reference alone: it is not counted as another route that holds a value.
+    assert said["Other routes"].startswith("Of the other routes, 1 holds a value (Coulex fitted to all orders);")
     assert "still open" in said["Other routes"] and "Evaluation" not in said["Other routes"].split("still open")[1]
     assert short["link"] == {"text": "Compare on the ⁶²Ni page",
                              "href": "/?nucleus=62Ni&observable=B%28E2%29&key=62Ni%3A2%2B1%3E0%2B1%3AE2"}

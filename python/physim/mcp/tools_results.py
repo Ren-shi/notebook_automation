@@ -192,6 +192,18 @@ class ResultTools:
         own = getattr(self.session, "_root", None)
         return own.parent / "nuclei" if own is not None else results.nuclei_home()
 
+    def _backfill(self) -> None:
+        """Rows for the experiments from before the results ledger, as the app's nuclei screen makes them
+        (:func:`physim.nuclear.result_rows.backfill_if_new`): a kept analysis of an experiment the app never opened
+        is then in the results too. An experiment that cannot be read is left as it is."""
+        from ..nuclear import result_rows, runs
+
+        for e in runs.list_experiments(self.session.root):
+            try:
+                result_rows.backfill_if_new(e["path"])
+            except Exception:  # noqa: BLE001 -- an experiment that cannot be read shows without its rows
+                pass
+
     def list_nuclei(self) -> dict:
         """The nuclei physim holds something about, lightest first, each with its experiments (the role is
         "studied", "partner" for the other nucleus of a Coulomb-excitation experiment, or "results"), their runs
@@ -200,6 +212,7 @@ class ResultTools:
         one's own has taken, runs not analysed, ENSDF's values not taken). not_in_a_nucleus_yet lists the
         experiments that study no nucleus: elastic scattering, and fusion-evaporation without a studied channel.
         No experiment needs to be open."""
+        self._backfill()
         found = _nucleus.nuclei(self.session.root, self.home)
         apart = [{"experiment": f"{u['name']} [{u['folder']}]", "kind": u["kind_label"], "reason": u["reason"]}
                  for u in found["unassigned"]]
@@ -217,6 +230,7 @@ class ResultTools:
         one gamma ray are listed too and say what they were made from. history true lists every row ever written,
         the newest first, with its status (holds, superseded, retracted, retraction): rows are never deleted."""
         name = results.nuclide_name(nucleus)
+        self._backfill()
         if key is not None and observable is None:
             raise ValueError("Name the observable the key belongs to: " + ", ".join(OBSERVABLES) + ".")
         if history:
@@ -301,13 +315,47 @@ class ResultTools:
         calculations (plain ratios of independent rows, such as E(4+)/E(2+), and the rotor reading of B(E2) beside
         Q_s), each with how to read it and what it does not show: pass that on with the number; and what a value of
         the observable is used for, with a reference for each."""
+        self._backfill()
         return plain(comparison_view(_nucleus.observable_view(nucleus, observable, key, reference,
                                                               self.session.root, self.home)))
+
+    def import_data_points(self, path: str, nucleus: Optional[str] = None) -> dict:
+        """Add the data points of a file (path on this computer) to the nuclei's results, each as add_data_point
+        would, and say what was added, what was there already (importing a file twice adds nothing) and what was
+        refused, with every reason; one bad point does not stop the others. nucleus, if given, is the nucleus the
+        points must be of (a point of another is refused; a point that names none is of it). The file is JSON or
+        CSV. JSON: a list of points, or {"nucleus": "62Ni", "points": [...]}, each point with the fields of
+        add_data_point ("observable", "key", "value", "unit", "direction", "uncertainty" or "stat"/"sys" or
+        "plus"/"minus", "method", "evidence", "reference" {authors, year, doi, where} or "own" {date, note},
+        "detail", and "nucleus"). CSV: a head line with the columns nucleus, observable, key, value, unit,
+        direction, uncertainty, stat, sys, plus, minus, method, evidence, authors, year, doi, where, date, note,
+        detail (any order; an empty cell is not given). Or a literature file of the paper verifications:
+        {"nucleus", "level", "quantities": {"BE2_up": [...], "BE2_down": [...], "tau_2plus": [...], "Qs_2plus":
+        [...], "shell_model": [...], "other": [...]}}, each quantity with value, unc (a number, {stat, sys} or
+        {plus, minus}), unit, method in words and reference as printed: the words become a method (GOSIA or
+        reorientation: coulex-fit; other Coulomb excitation: coulex-yield; DSAM: dsam; (n,n'gamma): inelastic-
+        neutron; NRF: nrf; (e,e'): electron-scattering; transient field: moment; shell model: theory) and are kept
+        in the row's detail; each value is stored as the paper gives it (a lifetime stays tau). An evaluation (ENSDF
+        adopted, a table of averages) is refused: ENSDF's comes in with snapshot_evaluation."""
+        found = _nucleus.import_points(path, nucleus, self.home)
+
+        def listed(entries: list, extra) -> list:
+            return [{"where": x["where"], **({"point": x["what"]} if x["what"] else {}), **extra(x)}
+                    for x in entries]
+
+        return plain({
+            "file": found["file"], "shape": found["shape"],
+            "added": listed(found["added"], lambda x: {"id": x["row"].id, "as_stored": row_line(x["row"]),
+                                                       "method": results.METHODS[x["row"].method]}),
+            "already_there": listed(found["already"], lambda x: {"id": x["id"]}),
+            "refused": listed(found["refused"], lambda x: {"reasons": x["reasons"]}),
+            "summary": f"{len(found['added'])} added, {len(found['already'])} already there, "
+                       f"{len(found['refused'])} refused"})
 
     #: The tools in the order they are listed to the model, and whether each writes files.
     TOOLS: tuple = (
         ("list_nuclei", False), ("list_results", False), ("snapshot_evaluation", True), ("add_data_point", True),
-        ("retract_data_point", True), ("compare_results", False),
+        ("import_data_points", True), ("retract_data_point", True), ("compare_results", False),
     )
 
 

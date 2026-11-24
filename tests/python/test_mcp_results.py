@@ -175,6 +175,39 @@ def test_the_server_has_the_results_tools(tools):
             assert "where the point is from" in refused.content[0].text
             refused = await c.call_tool("snapshot_evaluation", {"nucleus": "62Ni"})
             assert refused.is_error and "no local copy of ENSDF" in refused.content[0].text
+            assert not listed["import_data_points"].annotations.read_only_hint
 
     asyncio.run(talk())
     assert server.session.planner is None
+
+
+def test_points_imported_from_a_file(tools, tmp_path):
+    points = tmp_path / "points.json"
+    points.write_text(json.dumps([
+        {"observable": "tau", "key": "2+1", "value": 1.6, "unit": "ps", "plus": 0.4, "minus": 0.6,
+         "method": "dsam", "reference": {"authors": "Ohnuma et al.", "year": 1978}},
+        {"observable": "tau", "key": "2+1", "value": 2.0, "method": "dsam", "evidence": "evaluated",
+         "reference": {"authors": "Someone", "year": 2020}}]), encoding="utf-8")
+    out = tools.import_data_points(str(points), "62Ni")
+    json.dumps(out)
+    assert out["summary"] == "1 added, 0 already there, 1 refused" and out["shape"] == "points"
+    assert out["added"][0]["as_stored"] == "τ(2+₁) = 1.60 +0.40 −0.60 ps" and out["added"][0]["where"] == "points[0]"
+    assert "an evaluation, not a measurement" in out["refused"][0]["reasons"][0]
+    again = tools.import_data_points(str(points), "62Ni")
+    assert again["summary"] == "0 added, 1 already there, 1 refused"
+    assert again["already_there"][0]["id"] == out["added"][0]["id"]
+
+
+def test_the_tools_make_the_rows_of_an_experiment_the_app_never_opened(tools):
+    folder = ExperimentFolder.create(Experiment.example("coulex_ni62_pt194"), root=tools.session.root)
+    run = folder.path / "runs" / "01-beam-12h"
+    run.mkdir(parents=True)
+    folder.setup().save(run / "setup.toml")
+    (run / "summary.json").write_text("{}", encoding="utf-8")
+    (run / "analysis.json").write_text(json.dumps({
+        "settings": {}, "b_e2fm4": 930.0, "statistical": 0.02, "systematic": 0.07, "truth_e2fm4": 884.1,
+        "saved": "2026-11-09T22:14:36+00:00"}), encoding="utf-8")
+    assert not (folder.path / results.RESULTS_FILE).exists()
+    rows = tools.compare_results("62Ni", "B(E2)", KEY)["projected"]
+    assert any(r["value"].startswith("930") for r in rows)
+    assert (folder.path / results.RESULTS_FILE).exists()

@@ -116,7 +116,7 @@ def short_comparison(view: dict, mine=None, missing: str = "") -> dict:
     report's (:mod:`physim.nuclear.logbook`).
     """
     from .. import logbook, results
-    from .. import workbench as wb
+    from . import tab_nucleus
 
     c = view["comparison"]
     nuclide = logbook.nuclide_words(view["nuclide"])
@@ -142,23 +142,25 @@ def short_comparison(view: dict, mine=None, missing: str = "") -> dict:
                       + (f" ({others} independent value{'s' * (others != 1)} without a reference to compare with)"
                          if others else "") + "."))
     if mine is not None:
-        lines.append(("Closure", logbook._closure_words(mine)))
-        lines.append(("Reach", logbook._known_words(mine, c)))
+        lines.append(("Closure", logbook.closure_words(mine)))
+        lines.append(("Reach", logbook.known_words(mine, c)))
     lines.append(("Other routes", _routes_words(view["routes"], mine.method if mine is not None else None)))
     return {"title": f"{what} of {nuclide}", "lines": lines,
             "link": {"text": f"Compare on the {nuclide} page",
-                     "href": wb.nucleus_href(view["nuclide"], view["observable"], view["key"])}}
+                     "href": tab_nucleus.url(view["nuclide"], view["observable"], view["key"])}}
 
 
 def _routes_words(routes: list, own: Optional[str] = None) -> str:
     """How many of the routes to an observable (:func:`physim.nuclear.nucleus.routes`) hold a value and how many
-    are still open, in a sentence; ``own`` is the method of the result shown, which is left out."""
+    are still open, in a sentence; ``own`` is the method of the result shown, which is left out. The reference
+    itself is not counted as a value a route holds (the route's "is_reference": the evaluation, usually): a route
+    holds a value when it has an independent row besides the reference."""
     others = [r for r in routes if r["method"] != own]
 
     def named(found: list) -> str:
         return ", ".join(r["label"] for r in found)
 
-    hold = [r for r in others if r["independent"]]
+    hold = [r for r in others if r.get("others", r["independent"])]
     simulated = [r for r in others if r["projected"] and not r["independent"]]
     open_ = [r for r in others if r["open"]]
     parts = [f"{len(hold)} hold{'s' * (len(hold) == 1)} a value ({named(hold)})" if hold else "none holds a value yet"]
