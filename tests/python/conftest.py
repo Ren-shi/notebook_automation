@@ -23,8 +23,6 @@ def is_slow(file: str, name: str, fixtures, entries: set) -> bool:
 
 def pytest_addoption(parser):
     parser.addoption("--quick", action="store_true", help="leave out the tests of .github/slow-tests.txt")
-    parser.addoption("--slow-in", default="", metavar="FILES",
-                     help="with --quick: the test files, by name and separated by commas, whose slow tests run")
 
 
 # Last, so that the whole collection is judged by its final order and fixtures.
@@ -32,9 +30,8 @@ def pytest_addoption(parser):
 def pytest_collection_modifyitems(config, items):
     if not config.getoption("--quick"):
         return
-    entries, wanted = slow_entries(), set(filter(None, config.getoption("--slow-in").split(",")))
-    out = [x for x in items if x.path.name not in wanted
-           and is_slow(x.path.name, x.name, getattr(x, "fixturenames", ()), entries)]
+    entries = slow_entries()
+    out = [x for x in items if is_slow(x.path.name, x.name, getattr(x, "fixturenames", ()), entries)]
     if out:
         config.hook.pytest_deselected(items=out)
         gone = set(map(id, out))

@@ -590,6 +590,11 @@ workflow builds the wheels, tests them and publishes to PyPI.
   marked stale by a change, the one on screen too.
 
 ### Changed
+- CI runs a test file only if something that it used changed since it last passed (`scripts/ci_tests.py`): each file runs in a
+  process of its own that records the functions, modules and data files it used (`scripts/ci_record.py`), and what passed is
+  kept, for main and for each pull request. A change of text (documents, comments, docstrings) runs no tests, and after a fix
+  run the test that failed and what else uses the code of the fix. The virtual environment and the built extension are cached.
+  main runs everything unless only text changed.
 - CI on pull requests leaves out the slow tests (`.github/slow-tests.txt`, `pytest --quick`) except in the test files the change concerns, and Docs executes the notebooks there only if they change; main runs everything. Two tests that polled a run without a pause no longer starve it.
 - The planner app has a new look and layout ("control room").
   - The steps stand in a rail on the left, from the top down, with the experiment's name above them and
