@@ -269,7 +269,10 @@ class PeakFit:
     #: share of the peak within ±3σ of the Gaussian; "gain", what the tails took off the fit's deviance; where nuclei
     #: decay inside the target, the "spread" that the peak has instead of the wider component (its "share" is 0): the
     #: "shift" (MeV) and the "share" of each of its steps, every one of them with the core about it
-    #: (:meth:`Analysis._spread`); and whether the tails are "simulated" (the share, the offset and the width of the
+    #: (:meth:`Analysis._spread`); where other lines of the nucleus are in the window, the "lines" of the peak, its own
+    #: first (the "shift" from it in MeV, the "share" of the "area" each has, the "transition" (initial, final) and
+    #: whether the area is "counted" with it: the area is that of all the counted ones, :meth:`Analysis._beside`); and
+    #: whether the tails are "simulated" (the share, the offset and the width of the
     #: wider component, relative to the core, or the spread are those of a simulated peak:
     #: :meth:`Analysis.simulated_peak`). With simulated tails also the σ of the Gaussian fitted to that peak
     #: ("simulated_sigma", MeV), the share of it that the area of that Gaussian loses ("simulated_loss") and the area
@@ -298,6 +301,13 @@ class PeakFit:
             return curve(energy)
         return sum(share * curve(energy - shift) for shift, share in zip(spread["shift"], spread["share"]))
 
+    def _over_lines(self, curve, energy: np.ndarray) -> np.ndarray:
+        """``curve`` (of the energy) of the peak and of the lines beside it, each with its share of the area."""
+        lines = self.tails.get("lines")
+        if not lines:
+            return self._over_spread(curve, energy)
+        return sum(ln["share"] * self._over_spread(curve, energy - ln["shift"]) for ln in lines)
+
     def background_curve(self, energy) -> np.ndarray:
         """The fitted background under the peak at ``energy`` (MeV), counts per bin."""
         e = np.asarray(energy, dtype=float)
@@ -310,7 +320,8 @@ class PeakFit:
                                 0.5 * np.vectorize(math.erfc, otypes=[float])((e - centre) / sigma / math.sqrt(2)))
                        for share, centre, sigma, ends in self._components())
 
-        return t["level"] + t["slope"] * (e - t["origin"]) + t["step"] * self._over_spread(above, e)
+        whole = sum(ln["share"] for ln in t["lines"]) if t.get("lines") else 1.0
+        return t["level"] + t["slope"] * (e - t["origin"]) + t["step"] * self._over_lines(above, e) / whole
 
     def curve(self, energy) -> np.ndarray:
         """The fitted peak on its background at ``energy`` (MeV), counts per bin."""
@@ -324,7 +335,7 @@ class PeakFit:
                                 np.exp(-0.5 * ((e - centre) / sigma) ** 2) / math.sqrt(2 * math.pi)) / sigma
                        for share, centre, sigma, ends in self._components())
 
-        return t["area"] * t["width"] * self._over_spread(peak, e) + self.background_curve(e)
+        return t["area"] * t["width"] * self._over_lines(peak, e) + self.background_curve(e)
 
     @property
     def fwhm_kev(self) -> float:
@@ -336,8 +347,14 @@ class PeakFit:
         if self.tails is None:
             return "Gaussian on a line"
         if "spread" in self.tails:
-            return "Gaussian spread as the setup's Doppler shifts are, on a line with a step"
-        return f"Gaussian with {'simulated ' if self.tails.get('simulated') else ''}tails on a line with a step"
+            what = "Gaussian spread as the setup's Doppler shifts are,"
+        elif self.tails["share"] == 0 and self.tails.get("lines"):
+            what = "Gaussian"
+        else:
+            what = f"Gaussian with {'simulated ' if self.tails.get('simulated') else ''}tails"
+        beside = len(self.tails.get("lines") or [None]) - 1
+        with_ = f" (and {'another line' if beside == 1 else f'{beside} other lines'} of the same shape)" if beside else ""
+        return f"{what}{with_} on a line with a step"
 
 
 def _biweight(z) -> tuple:
@@ -532,7 +549,8 @@ def _likeliest(model, y: np.ndarray, scale: float, start: np.ndarray, low: np.nd
 
 
 def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: float = 4.0, variance=None,
-              shape: Optional[dict] = None, worth: float = TAILS_WORTH, spread: Optional[tuple] = None) -> PeakFit:
+              shape: Optional[dict] = None, worth: float = TAILS_WORTH, spread: Optional[tuple] = None,
+              lines: tuple = ()) -> PeakFit:
     """The peak of ``fit`` (:func:`fit_peak`) with the tails it has beyond a Gaussian, or ``fit`` itself if it has none
     worth fitting.
 
@@ -558,6 +576,13 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
     core does not follow (0.4 % of the area was lost). The core's width is then what the counts ask for besides the
     spread: the detectors' resolution, or more. Nothing else of the shape is fitted, and it is worth fitting when it is
     better than the Gaussian without the spread by more than ``worth``.
+
+    ``lines``: the other lines of the same nucleus in and near the window, as dicts with the "shift" from the peak (MeV),
+    the "ratio" of their counts to the peak's, the "transition" and whether they are "counted" (:meth:`Analysis._beside`).
+    Each has the shape of the peak and is in the fit with its ratio to it, so that a line 2σ away is not taken for a
+    tail, nor the tails for background: the area is that of the peak and the counted lines together, as the coupled
+    equations count them. Such a fit is kept with the lines also where the wider component is not worth fitting (its
+    share is then 0).
 
     With a ``shape`` (:func:`tail_shape` of a peak that was fitted with its tails: one from a simulation of the setup)
     the share, the centre and the width of the wider component, relative to the core's, or the spread (as many times
@@ -587,18 +612,27 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
 
     steps = None if spread is None else in_bins()
 
-    def peak(p):  # the share of the peak in each bin
+    # The lines of the peak, its own first: the shift of each (in σ of the Gaussian), and its share of the area, which
+    # is that of the counted ones.
+    of_area = 1.0 + sum(ln["ratio"] for ln in lines if ln["counted"])
+    parts = [(0.0, 1.0 / of_area)] + [(ln["shift"] / s0, ln["ratio"] / of_area) for ln in lines]
+    whole = sum(part for _, part in parts) if lines else 1.0
+
+    def one(p, shift=0.0):  # the share of one line in each bin
         if steps is not None:
             part, first = steps if shape is None else in_bins(p[2] * s0 / shape["core_sigma"])
-            at = x[0] + b * np.arange(1 - len(part) - first, len(x) - first)
+            at = x[0] - shift + b * np.arange(1 - len(part) - first, len(x) - first)
             core = np.exp(-0.5 * ((at - p[1]) / p[2]) ** 2) / p[2]
             return np.convolve(core, part, "valid") / math.sqrt(2 * math.pi) * b
-        core = np.exp(-0.5 * ((x - p[1]) / p[2]) ** 2) / p[2]
-        wide = _biweight((x - p[1] - p[4] * p[2]) / (p[2] * p[5]))[0] / (p[2] * p[5])
+        core = np.exp(-0.5 * ((x - shift - p[1]) / p[2]) ** 2) / p[2]
+        wide = _biweight((x - shift - p[1] - p[4] * p[2]) / (p[2] * p[5]))[0] / (p[2] * p[5])
         return ((1 - p[3]) * core / math.sqrt(2 * math.pi) + p[3] * wide) * b
 
+    def peak(p):  # the share of the area in each bin
+        return sum(part * one(p, shift) for shift, part in parts) if lines else one(p)
+
     def background(p, share):
-        return p[6] * (1 - u) + p[7] * u + p[8] * (1 - np.cumsum(share) + share / 2)
+        return p[6] * (1 - u) + p[7] * u + p[8] * (1 - (np.cumsum(share) - share / 2) / whole)
 
     def model(p):
         share = peak(p)
@@ -620,14 +654,16 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
             gaussian = start.copy()
             gaussian[3] = 0.0
             from_setup, steps = steps, None
-            _, plain, _ = _likeliest(model, y, scale, gaussian, low, high, alone)
+            without, plain, cov_without = _likeliest(model, y, scale, gaussian, low, high, alone)
             steps = from_setup
             if steps is not None:  # the core alone about the spread, and as narrow as the detectors' resolution is
                 free, start[2:4], low[2] = alone, (0.5, 0.0), 0.1
             p, deviance, cov = _likeliest(model, y, scale, start, low, high, free)
             gain = plain - deviance
             if not gain > worth:
-                return fit
+                if not lines:
+                    return fit
+                p, deviance, cov, steps, spread = without, plain, cov_without, None, None
         else:
             core = shape["core_sigma"] / s0
             start[:6] = [max(float(y.sum()) - 0.5 * len(y) * (below + above), 1.0), (shape["centre"] - origin) / s0,
@@ -663,7 +699,11 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
                       centroid=tails["centre"] + stretch * (shape["centroid"] - shape["centre"]))
         tails["simulated_sigma"] = shape["sigma"]
     inside = np.abs(centres[m] - fit.centroid) < 3 * fit.sigma
-    tails["inside"] = float(share[inside].sum())
+    tails["inside"] = float((one(p) if lines else share)[inside].sum())
+    if lines:
+        tails["lines"] = [{"shift": 0.0, "share": 1.0 / of_area, "counted": True}] + [
+            {"shift": float(ln["shift"]), "share": float(ln["ratio"] / of_area), "counted": bool(ln["counted"]),
+             "transition": [int(n) for n in ln["transition"]]} for ln in lines]
     unc = math.sqrt(max(float(cov[0, 0]), float(p[0])))
     return replace(fit, area=float(p[0]), area_unc=unc, background=float(background(p, share)[inside].sum()),
                    chi2=deviance, bins=int(m.sum()), tails=tails)
@@ -1880,14 +1920,79 @@ class Analysis:
         return any(ln["nucleus"] == nucleus and abs(ln["energy_kev"] - energy_kev) > 0.05
                    and abs(ln["energy_kev"] - 1e3 * fit.centroid) <= half for ln in self._lines)
 
+    def _seen(self, nucleus: int, transition: tuple) -> np.ndarray:
+        """For a transition of a nucleus's level scheme, and each particle detector: the full-energy counts of all
+        crystals per γ ray (the efficiency at its energy × the angular-correlation factor). Kept."""
+        kept = self.__dict__.setdefault("_seen_lines", {})
+        key = (nucleus, int(transition[0]), int(transition[1]))
+        if key not in kept:
+            ln = next(x for x in self._lines if (x["nucleus"], x["initial"], x["final"]) == key)
+            factor = {(r["particle_detector"], r["gamma_detector"]): r["detector_factor"]
+                      for r in correlation_table(self.experiment, nucleus="other" if nucleus else "reaction",
+                                                 transition=key[1:])}
+            effs = {}
+            for cr in self.gammas.crystals:
+                name = cr.name.rsplit(" ", 1)[0] if cr.element is not None else cr.name
+                effs[name] = effs.get(name, 0.0) + float(cr.response.peak_efficiency(1e-3 * ln["energy_kev"],
+                                                                                     cr.element))
+            kept[key] = np.array([sum(e * factor.get((d, n), 1.0) for n, e in effs.items())
+                                  for d in self.events.detectors])
+        return kept[key]
+
+    def _beside(self, s: Settings, nucleus: int, energy: float, fit: PeakFit) -> tuple:
+        """The lines of the nucleus, other than the one at ``energy`` (MeV), that are in or near the fit window of that
+        peak, for :func:`fit_tails`: each with its shift from it, and the counts it has for one of the peak's: from
+        the γ rays of both per particle in the gate's detectors and rings that the level scheme of the setup gives, and
+        what the crystals see of each (:meth:`_seen`: a 4⁺ → 2⁺ line has another angular distribution than the
+        2⁺ → 0⁺ one). Those inside the peak's ±3σ window are counted with it, for the ``[reaction]`` nucleus, whose
+        coupled equations count them too (what the other nucleus's peak is held against is its own transition). Empty
+        without a level scheme."""
+        em = next((x for x in self._emitters if x["nucleus"] == nucleus), None)
+        own = min((ln for ln in self._lines if ln["nucleus"] == nucleus),
+                  key=lambda ln: abs(ln["energy_kev"] - 1e3 * energy), default=None)
+        if em is None or em["solution"] is None or own is None or abs(own["energy_kev"] - 1e3 * energy) > 1.0:
+            return ()
+        reach = 1e3 * (s.fit_half_width * FWHM_PER_SIGMA + 3) * fit.sigma
+        near = [ln for ln in self._lines if ln["nucleus"] == nucleus and ln is not own
+                and abs(ln["energy_kev"] - 1e3 * fit.centroid) <= reach]
+        rows = self._elastic_rows(s)
+        if not near or not rows.any():
+            return ()
+        c = self.events.columns
+        theta, w, det = c["theta_cm"][rows], c["weight"][rows], c["detector"][rows]
+        grid, states = em["solution"].table()
+
+        def counts(ln) -> float:
+            pair = (ln["initial"], ln["final"])
+            y = np.interp(theta, grid, [st.gamma_yield(*pair) for st in states])
+            return float(np.sum(w * y * self._seen(nucleus, pair)[det]))
+
+        peak = counts(own)
+        if not peak > 0:
+            return ()
+        return tuple({"shift": 1e-3 * (ln["energy_kev"] - own["energy_kev"]), "ratio": counts(ln) / peak,
+                      "transition": (ln["initial"], ln["final"]),
+                      "counted": nucleus == 0 and abs(ln["energy_kev"] - 1e3 * fit.centroid) <= 3e3 * fit.sigma}
+                     for ln in near)
+
+    def _inside(self, nucleus: int, fit: PeakFit) -> list:
+        """The lines of the nucleus that the area of the peak counts (the peak's own among them): those that the fit
+        counted with it, or where it has no lines beside it the ones in the ±3σ window."""
+        mine = [ln for ln in self._lines if ln["nucleus"] == nucleus]
+        beside = {tuple(x["transition"]): x["counted"] for x in (fit.tails or {}).get("lines", ())
+                  if "transition" in x}
+        return [ln for ln in mine if beside.get((ln["initial"], ln["final"]), abs(
+            ln["energy_kev"] - 1e3 * fit.centroid) <= 3e3 * fit.sigma)]
+
     def _peak(self, s: Settings, nucleus: int, energy: float, counts, edges, sigma: float, variance,
               like: Optional[PeakFit] = None) -> PeakFit:
         """The fit of the peak at ``energy`` (MeV) of one nucleus's corrected spectrum, ``sigma`` a first idea of its
         width. A Gaussian first; with its tails where the counts show them (:func:`fit_tails`); in a run whose counts
         cannot, with those of the simulated peak of the same setup (:meth:`simulated_peak`), and as the Gaussian where
-        that one shows none either. As the Gaussian, too, when the nucleus has another line where the tails would be.
-        A fit that ends at a bound is :attr:`PeakFit.failed`, with no area. ``like``: a fit of the same peak whose
-        kind of tails (its own, the simulated ones, none) this one is to have too."""
+        that one shows none either. Other lines of the nucleus in the window are in the fit (:meth:`_beside`); where no
+        level scheme says how strong they are, the peak is the Gaussian. A fit that ends at a bound is
+        :attr:`PeakFit.failed`, with no area. ``like``: a fit of the same peak whose kind of tails (its own, the
+        simulated ones, none) this one is to have too."""
         top = 0.03 * energy  # no Doppler residue is wider than a few percent
         # Two passes: the peak after the Doppler correction is wider than the resolution by what the segments
         # leave, so the window is set from a first fit's width.
@@ -1896,14 +2001,20 @@ class Analysis:
                        variance=variance)
         if like is not None and like.tails is None:
             return fit
-        if self._blended(s, nucleus, 1e3 * energy, fit):
+        lines = self._beside(s, nucleus, energy, fit)
+        if not lines and self._blended(s, nucleus, 1e3 * energy, fit):
             return self._checked(fit)
         simulated = like is not None and like.tails["simulated"]
+        alone = fit  # the best there is without a simulated peak
         if not fit.failed and not simulated:
             own = fit_tails(counts, edges, fit, s.fit_half_width, variance=variance,
                             worth=TAILS_WORTH if like is None else -math.inf,
-                            spread=self._spread(s) if nucleus == 0 else None)
-            if own.tails is not None:
+                            spread=self._spread(s) if nucleus == 0 else None, lines=lines)
+            # A run whose counts do not show the tails takes those of the simulated peak; a sample, and a run that has
+            # no simulated one, is the Gaussian with the lines beside it, if there are any.
+            bare = own.tails is not None and own.tails["share"] == 0 and "spread" not in own.tails
+            alone = own
+            if own.tails is not None and not (bare and self.taken is not None and like is None):
                 if "spread" in own.tails and not fit.failed:
                     # What the spread may be wrong by (:meth:`_tails_uncertainty`): the width that it and the
                     # resolution of the detectors give the peak, for the measured one.
@@ -1911,13 +2022,13 @@ class Analysis:
                         fit.sigma**2 - own.tails["sigma"] ** 2, 0.0) + self._resolution() ** 2))
                 return own
         if self.taken is None or not float(np.sum(counts)) > 0:
-            return self._checked(fit)
+            return self._checked(alone)
         sim = self.simulated_peak(s, nucleus)
         if sim is None:
-            return self._checked(fit)
+            return self._checked(alone)
         shape = tail_shape(sim)
         if shape is not None:
-            got = fit_tails(counts, edges, fit, s.fit_half_width, shape=shape)
+            got = fit_tails(counts, edges, fit, s.fit_half_width, shape=shape, lines=lines)
             if got.tails is not None:
                 gauss = sim.tails["gaussian_area"]
                 got.tails.update(simulated_loss=max(1 - gauss / sim.area, 0.0),
@@ -2073,10 +2184,8 @@ class Analysis:
 
     def _blends(self, nucleus: int, energy_kev: float, fit: PeakFit) -> list:
         """The other transitions of the same nucleus inside the ±3σ window the area is counted in."""
-        half = 3e3 * fit.sigma
-        return [f"{ln['label']} ({ln['energy_kev']:.1f} keV)" for ln in self._lines
-                if ln["nucleus"] == nucleus and abs(ln["energy_kev"] - energy_kev) > 0.05
-                and abs(ln["energy_kev"] - 1e3 * fit.centroid) <= half]
+        return [f"{ln['label']} ({ln['energy_kev']:.1f} keV)" for ln in self._inside(nucleus, fit)
+                if abs(ln["energy_kev"] - energy_kev) > 0.05]
 
     def _own_line(self, s: Settings, fit: PeakFit, area: float, area_unc: float, eff: float, corr: float,
                   gate_eff: float, yield_: float, elastic_counts: float, spectrum: dict, search: dict) -> dict:
@@ -2237,8 +2346,7 @@ class Analysis:
                    None)
         if own is None:
             return None
-        inside = [ln for ln in self._lines if ln["nucleus"] == 0
-                  and abs(ln["energy_kev"] - 1e3 * fit.centroid) <= 3e3 * fit.sigma]
+        inside = self._inside(0, fit)
         if own not in inside:
             inside.append(own)
         lines = tuple(sorted((ln["initial"], ln["final"]) for ln in inside))
@@ -2256,10 +2364,16 @@ class Analysis:
         mid = float(np.average(SchemeProbability(sol).probability(th), weights=w))
         forward = self._mean_probability(s, mode="forward")
         kappa = forward / mid if mid > 0 and forward > 0 else 1.0
+        # What the crystals see of a γ ray of each line, over what they see of one of the peak's own (the yield is the
+        # counts over the efficiency and the correlation of that one).
+        det = c["detector"][rows]
+        seen = {k: 1.0 if k == (level, ground) else (self._seen(0, k) / self._seen(0, (level, ground)))[det]
+                for k in lines}
 
         def expected(b_up: float, which: tuple = lines) -> float:
             grid, y = self._scheme_yield(b_up, level, lo, hi)
-            return kappa * float(np.average(np.interp(th, grid, sum(y[k] for k in which if k in y)), weights=w))
+            return kappa * float(np.average(sum(seen[k] * np.interp(th, grid, y[k]) for k in which if k in y),
+                                            weights=w))
 
         # The yield is nearly proportional to B(E2): one pass by proportion, then the straight line through the
         # two points, which is good to a few parts in ten thousand; a third pass only if the two were far apart.
@@ -2554,9 +2668,9 @@ class Analysis:
 
     def _response(self, found: dict, fit: PeakFit) -> _Response:
         """The :class:`_Response` of the γ rays inside the peak's ±3σ window, from :meth:`_scheme_responses`."""
-        levels, ground, level = found["scheme"].levels, found["ground"], found["level"]
-        lines = tuple(sorted(k for k in found["yields"][0] if k == (level, ground) or abs(
-            levels[k[0]].energy.value - levels[k[1]].energy.value - 1e3 * fit.centroid) <= 3e3 * fit.sigma))
+        ground, level = found["ground"], found["level"]
+        counted = {(ln["initial"], ln["final"]) for ln in self._inside(0, fit)}
+        lines = tuple(sorted(k for k in found["yields"][0] if k == (level, ground) or k in counted))
         none = np.zeros((len(found["energies"]), len(found["grid"])))
         sums = [sum((y[k] for k in lines), none) for y in found["yields"]]
         base = np.where(sums[0] > 0, sums[0], 1.0)

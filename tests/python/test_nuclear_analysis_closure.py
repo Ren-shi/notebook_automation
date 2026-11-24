@@ -560,3 +560,54 @@ def test_no_warning_when_the_groups_are_apart():
     a = Analysis(exp, simulate_gammas(exp, 60_000, seed=3))
     r = a.run(Settings(particle_gate="inelastic"))
     assert r.gate == "inelastic" and r.gate_overlap < GATE_OVERLAP_WARN and r.gate_warning is None, r.gate_overlap
+
+
+# -- another line of the nucleus in the window -------------------------------------------------------------------------
+
+
+#: The seeds of the clovers' closure test (fixed before they were run).
+BLENDED_SEEDS = (31, 32, 33, 34)
+
+
+@pytest.fixture(scope="module")
+def blended():
+    """The shipped 62Ni on 194Pt example with clovers (the 4⁺ → 2⁺ line of 62Ni, 2.5 % of the 2⁺ → 0⁺ one, is 9.4 keV below
+    it, at 2σ of the peak the clovers make; 237 MeV, 0.5 mg/cm² of 194Pt, one slice of the target)."""
+    exp = Experiment.example("coulex_ni62_pt194_clovers")
+    return exp, [Analysis(exp, simulate_gammas(exp, 200_000, seed=seed)) for seed in BLENDED_SEEDS]
+
+
+@pytest.mark.parametrize("det, scatter", [("CD", 0.0010), (None, 0.0024)])
+def test_a_peak_with_another_line_in_its_window_keeps_its_area(blended, det, scatter):
+    """The area is the full-energy counts of the 2⁺ → 0⁺ and the 4⁺ → 2⁺ lines, not 4 % less (a Gaussian on a line,
+    as the peak was fitted whenever the window held another line, lost the tails that the add-back gives it: a γ ray put down
+    to the crystal beside is corrected with that one's angle);
+    ``scatter`` is of one sample. Lines more than 3σ away are in the fit, not in the area. Over sixteen samples (seeds
+    1–16): +0.07 ± 0.02 % (CD) and +0.09 ± 0.06 % (all); before, −3.58 ± 0.05 and −4.00 ± 0.07 %."""
+    exp, samples = blended
+    s = every_particle(det)
+    dev = []
+    for a in samples:
+        keep = a._gate(s)[0]
+        g = a.gammas
+        full = keep & (np.abs(g["deposited"] - g["energy_lab"]) < 1e-6)
+        r = a.run(replace(s, subtract_randoms=False))
+        assert r.fit.tails is not None and r.fit.tails["lines"]
+        true = full & a._own & (((g["initial"] == 1) & (g["final"] == 0)) | ((g["initial"] == 4) & (g["final"] == 1)))
+        counted = float(g["weight"][true].sum()) * g.events.beam_time_s * g.live_fraction
+        dev.append(r.area / counted - 1)
+    err = scatter / math.sqrt(len(dev))
+    assert abs(np.mean(dev)) < 0.001 + 3 * err, (det, dev)
+
+
+@pytest.mark.parametrize("det", ["CD", None])
+def test_b_e2_comes_back_from_a_peak_with_another_line_in_its_window(blended, det):
+    """B(E2) comes back. Over sixteen samples (seeds 1–16) it was −6.19 ± 0.33 % (CD) and −6.48 ± 0.40 % (all detectors)
+    off, the area 4 % short, B(E2) moving 1.43 times as much as the yield, and the 4⁺ → 2⁺ line counted as if it were seen as
+    often as the 2⁺ → 0⁺ one; now −0.14 ± 0.36 and +0.11 ± 0.50 %."""
+    exp, samples = blended
+    results = [a.run(every_particle(det)) for a in samples]
+    b = np.array([r.b_e2fm4 / exp.excitation.b_up_e2fm - 1 for r in results])
+    mean, unc = mean_and_error(b, [r.monte_carlo for r in results])
+    assert unc < 0.009 and abs(mean) < 2.5 * unc, (det, mean, unc)
+    assert all(any("4+ → 2+" in x for x in r.lines[0]["blends"]) for r in results)

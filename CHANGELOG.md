@@ -165,6 +165,28 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- A peak with another line of the nucleus in its window keeps its tails (closure of `coulex_ni62_pt194_clovers`, gate "all").
+  The example read B(E2) 6.5 % low. The 4⁺ → 2⁺ line of ⁶²Ni (1163.5 keV, 2.5 % of the 2⁺ → 0⁺ one) is 2σ from the peak the
+  clovers make, so the peak was fitted as a Gaussian on a straight line and lost 4.0 % of the two lines' full-energy counts
+  in its tails (B(E2) moves 1.43 times as much as the yield, since the excitation saturates). The tails are the add-back's: with
+  neither add-back nor shields the old fit closes, and so it nearly does with the 4⁺ line moved out of the window (eight
+  seeds, all detectors/CD: +0.07 ± 0.52/−0.56 ± 0.47 % and −0.48 ± 0.57/−1.02 ± 0.46 %); it takes both. The half-lives, the
+  gate (inelastic, with twice the error) and the target's thickness (0.02 mg/cm²) do not change the bias. The lines of the level scheme
+  in and beside the window are now in the fit, at the ratio that the scheme, the efficiency and the angular correlation give
+  (`Analysis._beside`, `fit_tails(lines=)`; `PeakFit.tails["lines"]`); those within ±3σ are in the area, as in the coupled
+  equations. The result hardly depends on the ratio (±35 % of it: 0.06 % of the area). And the coupled equations count such a
+  line with what the crystals see of it, not as if it had the peak's correlation: the events see the 4⁺ → 2⁺ line 0.825 ± 0.013
+  times as well as the 2⁺ → 0⁺ one (`gamma.correlation_table(transition=)`, which now also covers levels reached in several
+  steps, gives 0.82 in the CD), 0.5 % of the yield. Sixteen seeds of 200 000 reactions (1–16), B(E2) over the 884.1
+  put in: all detectors −6.48 ± 0.40 → +0.11 ± 0.50 %, CD −6.19 ± 0.33 → −0.14 ± 0.36 %, area over the 2⁺ → 0⁺ and 4⁺ → 2⁺
+  full-energy counts −4.00 ± 0.07 → +0.09 ± 0.06 % and −3.58 ± 0.05 → +0.07 ± 0.02 %. The particles excited per particle
+  (+0.06 ± 0.14 %) and efficiency × correlation of the 2⁺ → 0⁺ line (−0.06 ± 0.31 %) were right.
+  `coulex_ni62_pt194` (single crystals, σ 7.1 keV) closed and closes, all detectors −0.10 ± 0.62 → −0.33 ± 0.64 %, with an
+  area +0.87 ± 0.09 → +0.49 ± 0.09 % high. Misses, not explained or not better: that area; the clovers without add-back and
+  shields now read +1.26 ± 0.51/+0.92 ± 0.44 % (eight seeds); the two strip detectors alone (about 430 full-energy entries
+  per sample, too few to show the tails) have an area 1.2 ± 0.4 % low with clovers, and B(E2) scatters more from seed to
+  seed there than it did (7.5 and 8.8 → 10.2 and 10.7 %) and 1.8 ± 0.2 times as much as `Result.monte_carlo` says (5.9 %).
+  First order (`order="first"`) reads the larger area too.
 - `CoupledChannels.cross_sections` holds every excited level the collision populates, each with its own v_i/v_f, as it
   said. It went over the levels a matrix element joins to the ground state, so those reached in two steps had no
   "direct" cross section, no γ rays, and no part in the feeding of the levels below. ⁶²Ni in `coulex_ni62_pt194`
