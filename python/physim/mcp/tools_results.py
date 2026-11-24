@@ -182,6 +182,7 @@ class ResultTools:
 
     def __init__(self, session: Session):
         self.session = session
+        self._backfill()  # once, when the server starts: the tools that only read then write nothing
 
     @property
     def home(self) -> Path:
@@ -195,10 +196,16 @@ class ResultTools:
     def _backfill(self) -> None:
         """Rows for the experiments from before the results ledger, as the app's nuclei screen makes them
         (:func:`physim.nuclear.result_rows.backfill_if_new`): a kept analysis of an experiment the app never opened
-        is then in the results too. An experiment that cannot be read is left as it is."""
+        is then in the results too. An experiment that cannot be read is left as it is. Done once, when the
+        tools are made (the server starts), and not by the tools that read: those are marked read-only and write
+        nothing. Every analysis since the ledger writes its own row, so nothing is missed later."""
         from ..nuclear import result_rows, runs
 
-        for e in runs.list_experiments(self.session.root):
+        try:
+            experiments = runs.list_experiments(self.session.root)
+        except Exception:  # noqa: BLE001 -- no experiments folder yet
+            return
+        for e in experiments:
             try:
                 result_rows.backfill_if_new(e["path"])
             except Exception:  # noqa: BLE001 -- an experiment that cannot be read shows without its rows
@@ -212,7 +219,6 @@ class ResultTools:
         one's own has taken, runs not analysed, ENSDF's values not taken). not_in_a_nucleus_yet lists the
         experiments that study no nucleus: elastic scattering, and fusion-evaporation without a studied channel.
         No experiment needs to be open."""
-        self._backfill()
         found = _nucleus.nuclei(self.session.root, self.home)
         apart = [{"experiment": f"{u['name']} [{u['folder']}]", "kind": u["kind_label"], "reason": u["reason"]}
                  for u in found["unassigned"]]
@@ -230,7 +236,6 @@ class ResultTools:
         one gamma ray are listed too and say what they were made from. history true lists every row ever written,
         the newest first, with its status (holds, superseded, retracted, retraction): rows are never deleted."""
         name = results.nuclide_name(nucleus)
-        self._backfill()
         if key is not None and observable is None:
             raise ValueError("Name the observable the key belongs to: " + ", ".join(OBSERVABLES) + ".")
         if history:
@@ -315,7 +320,6 @@ class ResultTools:
         calculations (plain ratios of independent rows, such as E(4+)/E(2+), and the rotor reading of B(E2) beside
         Q_s), each with how to read it and what it does not show: pass that on with the number; and what a value of
         the observable is used for, with a reference for each."""
-        self._backfill()
         return plain(comparison_view(_nucleus.observable_view(nucleus, observable, key, reference,
                                                               self.session.root, self.home)))
 

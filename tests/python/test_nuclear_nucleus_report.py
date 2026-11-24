@@ -45,6 +45,7 @@ def test_a_literature_file_is_imported_once_with_its_methods_and_refusals(lab):
     assert (allmond.key, allmond.value, allmond.unit, allmond.direction, allmond.method, allmond.total) == (
         KEY, 0.0906, "e2b2", "up", "coulex-fit", 0.0037)
     assert allmond.detail.startswith("Coulomb excitation, inverse kinematics") and "GOSIA" in allmond.detail
+    assert allmond.detail.endswith("a note of the file, kept in the row's detail")  # "superseded by ..." stays
     assert nucleus.source(allmond) == "J. M. Allmond et al. 2014" and allmond.origin["doi"].endswith("034309")
     # A lifetime stays a τ, as the paper gives it; stat and sys, and an asymmetric uncertainty, are kept.
     kenn, ohnuma = added["quantities.tau_2plus[0]"], added["quantities.tau_2plus[1]"]

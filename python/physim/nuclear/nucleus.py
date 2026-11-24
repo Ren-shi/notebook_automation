@@ -905,10 +905,12 @@ def _literature_points(data: dict, name: Optional[str]) -> tuple:
                 key = _placed(nuclide, _literature_level(level_text))
             method, evidence = method_of(words)
             facility = str(q.get("facility_or_code") or "").strip()
+            notes = " ".join(str(q.get("notes") or "").split())  # "superseded by ...", "excluded from ...": kept
+            detail = "; ".join(x for x in (words, facility, notes) if x)
             args = {"nucleus": nuclide, "observable": observable, "key": key, "value": q.get("value"), "unit": unit,
                     "direction": direction, "method": method, "evidence": evidence,
                     "reference": _literature_reference(q.get("reference"), q.get("doi")),
-                    "detail": words + (f"; {facility}" if facility else ""), **_literature_uncertainty(q.get("unc"))}
+                    "detail": detail, **_literature_uncertainty(q.get("unc"))}
             out.append((where, args, ""))
     return nuclide, out
 
@@ -1047,8 +1049,8 @@ def import_points(path: Union[str, Path], nuclide: Optional[str] = None,
       μ; "shell_model" and "other" say it in the unit's words. A B value is of the file's level to the ground
       state unless the words name the transition. The method in words becomes a key of
       :data:`~physim.nuclear.results.METHODS` (:func:`method_of`) and the words are kept in the row's detail,
-      with the facility or code. Each value is stored as the paper gives it: a lifetime stays a τ row in ps, a B in
-      W.u. stays the ↓ value in W.u.; the views convert on reading. An evaluation (ENSDF's adopted values, a
+      with the facility or code and the file's notes on the value ("superseded by ..."). Each value is stored as
+      the paper gives it: a lifetime stays a τ row in ps, a B in W.u. stays the ↓ value in W.u.; the views convert on reading. An evaluation (ENSDF's adopted values, a
       table of averages) is refused: ENSDF's comes in by :func:`snapshot_evaluation`, and another would count
       the measurements it averages a second time. A quantity without a value is refused with that reason.
 

@@ -207,7 +207,10 @@ def test_the_tools_make_the_rows_of_an_experiment_the_app_never_opened(tools):
     (run / "analysis.json").write_text(json.dumps({
         "settings": {}, "b_e2fm4": 930.0, "statistical": 0.02, "systematic": 0.07, "truth_e2fm4": 884.1,
         "saved": "2026-11-09T22:14:36+00:00"}), encoding="utf-8")
+    # A tool that reads writes nothing: the rows are made once, when the tools are (the server starts).
+    tools.compare_results("62Ni", "B(E2)", KEY)
     assert not (folder.path / results.RESULTS_FILE).exists()
-    rows = tools.compare_results("62Ni", "B(E2)", KEY)["projected"]
-    assert any(r["value"].startswith("930") for r in rows)
+    started_again = type(tools)(tools.session)
     assert (folder.path / results.RESULTS_FILE).exists()
+    rows = started_again.compare_results("62Ni", "B(E2)", KEY)["projected"]
+    assert any(r["value"].startswith("930") for r in rows)
