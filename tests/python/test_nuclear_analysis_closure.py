@@ -194,15 +194,16 @@ def decaying():
     return exp, [Analysis(exp, simulate_gammas(exp, EVENTS, seed=seed)) for seed in (11301, 11302, 11303, 11304)]
 
 
-@pytest.mark.parametrize("det, scatter", [("Ring2", 0.0031), ("Ring3", 0.0017), (None, 0.0013)])
-def test_the_area_and_b_e2_come_back_with_the_half_life(decaying, det, scatter):
+@pytest.mark.parametrize("det, scatter, of_tail", [("Ring2", 0.0031, 0.027), ("Ring3", 0.0017, 0.019),
+                                                   (None, 0.0013, 0.016)])
+def test_the_area_and_b_e2_come_back_with_the_half_life(decaying, det, scatter, of_tail):
     """The tail of the decays inside the target is in the area, and B(E2) comes back. ``scatter``: of the area of one
-    sample.
+    sample; ``of_tail``: of the tail of four, relative to the fitted one (55 groups of four seeds, whose mean is right to
+    0.6 %).
 
-    Over sixty (seeds 11001–11060) the area is −0.10 ± 0.04, −0.05 ± 0.02 and −0.07 ± 0.02 % off (with a wider bell in place
-    of the spread −0.40 ± 0.05 % in the inner ring), and B(E2) +0.36 ± 0.19, −0.29 ± 0.10 and −0.18 ± 0.09 %: the events
-    take the orientation in a level scheme at the middle of the target, the correlation table at each depth, which is
-    −0.16 and +0.25 % of the correlation factor of the rings."""
+    Over 160 (seeds 17001–17160) the area is −0.08 ± 0.03, −0.03 ± 0.01 and −0.05 ± 0.01 % off (with a wider bell in place of
+    the spread it was −0.40 ± 0.05 % in the inner ring), and B(E2) +0.15 ± 0.11, −0.06 ± 0.07 and −0.09 ± 0.06 % (with the
+    orientation of the middle of the target in every event +0.36 ± 0.19, −0.29 ± 0.10 and −0.18 ± 0.09 % over sixty)."""
     exp, samples = decaying
     s = every_particle(det)
     area, b, mc, low, seen = [], [], [], 0.0, 0.0
@@ -224,7 +225,7 @@ def test_the_area_and_b_e2_come_back_with_the_half_life(decaying, det, scatter):
         b.append(r.b_e2fm4 / exp.excitation.b_up_e2fm - 1)
         mc.append(r.monte_carlo)
         assert 0 < r.budget["peak tails (simulated)"] < 0.02 and any("decay inside the target" in n for n in r.notes)
-    assert low == pytest.approx(seen, rel=0.06), det
+    assert low == pytest.approx(seen, rel=0.03 + 3 * of_tail), det
     assert abs(np.mean(area)) < 0.001 + 3 * scatter / math.sqrt(len(area)), (det, area)
     mean, unc = mean_and_error(b, mc)
     assert abs(mean) < 0.0025 + 3 * unc, (det, mean, unc)

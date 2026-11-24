@@ -126,9 +126,18 @@ transition, the simulated events take that solution (`gamma.cascade_excitation`)
   bit those of earlier versions). A setup without a level scheme is first order in any case, since its one matrix
   element allows nothing else.
 
-The solution is made once per setup, at the beam energy in the middle of the target, on a grid of 90 CM angles
-(2° apart) with a relative accuracy of 10⁻⁴ in the probabilities, and kept. The equations of all angles are
-integrated together (`CoupledChannels.solve_many`), and the forward angles at which first order excites less than
+**Through a thick target** (one the generator cuts into slices) the excitation probability and the orientation are
+those of each event's own beam energy: the equations are solved at 3 to 8 beam energies through the target, the
+probability is interpolated between them in ln P, and the density matrix of the level the excitation starts in by the
+polynomial through them (`gamma.DepthOrientation`), as the correlation table's coefficients are. A matrix that the
+polynomial leaves with an eigenvalue below −10⁻⁴ (close to 0°, or at the back of a very thick target; none of the
+⁶²Ni-on-carbon events) has its negative eigenvalues set to zero. Which level the excitation starts in is still drawn from
+the populations in the middle of the target. A target of one slice, a lifetime measurement and the other nucleus have the
+middle's solution alone.
+
+The solution is made once per setup and beam energy (in the middle of the target, and the others of a thick one), on a
+grid of 90 CM angles (2° apart) with a relative accuracy of 10⁻⁴ in the probabilities, and kept. The equations of all
+angles are integrated together (`CoupledChannels.solve_many`), and the forward angles at which first order excites less than
 10⁻⁶ of the collisions are left in first order (below 14° in the ⁶²Ni example, where no population changes by
 more than 3 × 10⁻⁹). The table then takes about 2 s for the six levels of ⁶²Ni, where one angle after the other
 takes 16 s; first order takes 0.2 s.

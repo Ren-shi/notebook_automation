@@ -414,6 +414,13 @@ class _LevelPopulation:
         return np.interp(np.asarray(theta_cm, dtype=float), self._grid, self._values)
 
 
+#: A density matrix interpolated between beam energies may have eigenvalues down to this below zero (what the
+#: polynomial between the solutions is off by); one with a lower eigenvalue is made physical again.
+NEGATIVE_EIGENVALUE = 1e-4
+#: Density matrices interpolated at once.
+DENSITY_BLOCK = 20_000
+
+
 class DepthOrientation:
     """The population and orientation of the levels of the ``[reaction]`` nucleus at the beam energies the beam has
     through the target: those of ``solutions``, solved at the energies of ``depth`` (the
@@ -423,6 +430,7 @@ class DepthOrientation:
     def __init__(self, depth, solutions: list):
         self.depth, self.solutions = depth, solutions
         self._tables: dict = {}
+        self._densities: dict = {}
 
     @property
     def thin(self) -> bool:
@@ -441,10 +449,8 @@ class DepthOrientation:
         """{(k, q): a_kq} of a transition (:meth:`~physim.nuclear.orientation.Populated.coefficients`) at each CM
         angle of ``theta_cm`` (degrees, an array) and the beam energy there (MeV, an array like it or a number)."""
         theta = np.asarray(theta_cm, dtype=float)
-        weights = (np.ones((1, 1)) if self.thin
-                   else self.depth.lagrange(np.broadcast_to(np.asarray(energy, dtype=float), theta.shape)))
         out: dict = {}
-        for (grid, tensors, populated), w in zip(self._table(initial, final), weights):
+        for (grid, tensors, populated), w in zip(self._table(initial, final), self._weights(theta, energy)):
             p = np.interp(theta, grid, populated)
             safe = np.where(p > 0, p, 1.0)
             for key, v in tensors.items():
@@ -454,6 +460,58 @@ class DepthOrientation:
                     a = (np.interp(theta, grid, v.real) + 1j * np.interp(theta, grid, v.imag)) / safe
                 out[key] = out.get(key, 0.0) + w * a
         return out
+
+    def density(self, level: int, theta_cm, energy) -> np.ndarray:
+        """The density matrices (n × (2I + 1)², trace 1, hermitian, M ascending from −I, in the orbit's frame) that the
+        collision leaves ``level`` in, before any decay, at each CM angle of ``theta_cm`` (degrees, an array) and the
+        beam energy there (MeV, an array like it or a number).
+
+        Each solution's matrix is normalised at the angle, as
+        :meth:`~physim.nuclear.orientation.Excitation.density_table` interpolated in it (unoriented where the level is
+        not excited), and the matrices are weighted as :meth:`coefficients` weighs the coefficients: a transition's
+        distribution from the one is that from the other. Some weights are negative, so an eigenvalue can be too. One
+        below −:data:`NEGATIVE_EIGENVALUE` (close to 0°, or so deep that the level is hardly excited) has the negative
+        eigenvalues of its matrix set to zero and the trace to 1 again; smaller ones are left as they are."""
+        grid, rho, trace = self._density_table(level)
+        theta = np.asarray(theta_cm, dtype=float)
+        d = int(round(math.sqrt(rho.shape[-1] / 2)))
+        out = np.empty((len(theta), d, d), dtype=complex)
+        energy = np.broadcast_to(np.asarray(energy, dtype=float), theta.shape)
+        unit = np.eye(d).ravel()
+        for block in (slice(a, a + DENSITY_BLOCK) for a in range(0, len(theta), DENSITY_BLOCK)):
+            t = np.clip(theta[block], grid[0], grid[-1])
+            i = np.clip(np.searchsorted(grid, t) - 1, 0, len(grid) - 2)
+            f = (t - grid[i]) / (grid[i + 1] - grid[i])
+            weights = np.broadcast_to(self._weights(t, energy[block]), (len(self.solutions), len(t)))
+            total = (1 - f) * trace[:, i] + f * trace[:, i + 1]
+            share = np.where(total > 0, weights / np.where(total > 0, total, 1.0), 0.0)
+            low, high = share * (1 - f), share * f
+            flat = np.empty((len(t), 2 * d * d))
+            # The events between the same two angles of the grid take the same matrices.
+            order = np.argsort(i, kind="stable")
+            cuts = np.r_[0, np.flatnonzero(np.diff(i[order])) + 1, len(t)]
+            for a, b in zip(cuts[:-1], cuts[1:]):
+                here, j = order[a:b], i[order[a]]
+                flat[here] = np.concatenate([low[:, here], high[:, here]]).T @ np.concatenate([rho[:, j], rho[:, j + 1]])
+            flat[:, ::2] += (weights * (total <= 0)).sum(axis=0)[:, None] / d * unit
+            out[block] = _physical(flat.view(complex).reshape(len(t), d, d))
+        return out
+
+    def _weights(self, theta: np.ndarray, energy) -> np.ndarray:
+        """The weight of each solution (rows) at the beam energies ``energy`` of the CM angles ``theta``."""
+        return (np.ones((1, 1)) if self.thin
+                else self.depth.lagrange(np.broadcast_to(np.asarray(energy, dtype=float), theta.shape)))
+
+    def _density_table(self, level: int) -> tuple:
+        """(grid of CM angles, density matrices of the level as the collision leaves it: solutions × grid ×
+        2 (2I + 1)² real numbers, real and imaginary part in turn, their traces: solutions × grid)."""
+        if level not in self._densities:
+            each = [s.density_table(level) for s in self.solutions]
+            rho = np.array([r for _, r in each])
+            trace = np.einsum("sgaa->sg", rho).real
+            flat = np.ascontiguousarray(rho.reshape(*rho.shape[:2], -1)).view(float)
+            self._densities[level] = (each[0][0], flat, trace)
+        return self._densities[level]
 
     def largest(self, initial: int, final: int) -> float:
         """The largest ``Σ |a_kq|`` of a transition's distribution, which 4π W nowhere exceeds: at the CM angles of the
@@ -473,6 +531,24 @@ class DepthOrientation:
                 out.append((grid, {key: np.asarray(v) * populated for key, v in coeff.items()}, populated))
             self._tables[(initial, final)] = out
         return self._tables[(initial, final)]
+
+
+def _physical(rho: np.ndarray) -> np.ndarray:
+    """Density matrices (n × d × d, trace 1) without eigenvalues below −:data:`NEGATIVE_EIGENVALUE`: those that have one
+    get their negative eigenvalues set to zero and trace 1; the others are unchanged."""
+    d = rho.shape[-1]
+    try:
+        np.linalg.cholesky(rho + NEGATIVE_EIGENVALUE * np.eye(d))  # much faster than the eigenvalues of every one
+        return rho
+    except np.linalg.LinAlgError:
+        pass
+    values, vectors = np.linalg.eigh(rho)
+    bad = values[:, 0] < -NEGATIVE_EIGENVALUE
+    if bad.any():
+        kept = np.maximum(values[bad], 0.0)
+        kept /= kept.sum(axis=1)[:, None]
+        rho[bad] = (vectors[bad] * kept[:, None, :]) @ np.swapaxes(vectors[bad].conj(), 1, 2)
+    return rho
 
 
 def depth_orientation(experiment, solution=None) -> DepthOrientation:
@@ -530,10 +606,12 @@ def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucle
     **Through the depth of the target** the factor is averaged as the rates and the events are
     (:func:`~physim.nuclear.rates.depth_probability`): at each depth the kinematics, the excitation cross section
     (the weight) and the orientation are those of the beam energy there, and the emitting nucleus slows down on its
-    way out (to where it decays, if its level has a half-life), as the γ-ray events have it. A thin target (the beam
-    loses less than :data:`~physim.nuclear.rates.THIN_SPAN` of its energy) and a lifetime measurement (a
-    ``[lifetime]`` section) keep the kinematics of the middle of the target, with the emitter at its speed just
-    after the reaction; so does the table of the other nucleus, whose excitation the events take there too.
+    way out (to where it decays, if its level has a half-life), as the γ-ray events have it, of a single state and of
+    a level scheme. (The feeding of the state is that of each depth too, where the events draw the level an excitation
+    starts in from the populations in the middle of the target.) A thin target (the beam loses less than
+    :data:`~physim.nuclear.rates.THIN_SPAN` of its energy) and a lifetime measurement (a ``[lifetime]`` section) keep
+    the kinematics of the middle of the target, with the emitter at its speed just after the reaction; so does the
+    table of the other nucleus, whose excitation the events take there too.
 
     ``nucleus`` "other" gives the table for the other nucleus of the collision
     (:func:`other_excitation`; empty without its level scheme): for the transition from its first excited level

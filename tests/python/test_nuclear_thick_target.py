@@ -19,13 +19,15 @@ import math
 import numpy as np
 import pytest
 
-from physim.nuclear import Experiment, data
+from physim.nuclear import Experiment, coulex_reproduction, data, gamma_events
 from physim.nuclear import rates as rates_module
+from physim.nuclear.correlation import Emission
 from physim.nuclear.coulex import Coulex
 from physim.nuclear.detectors import Array, angles
 from physim.nuclear.events import generator_config, simulate
-from physim.nuclear.gamma import (_disc_directions, cascade_excitation, correlation_table, depth_orientation,
-                                  excitation_of, has_static_moment)
+from physim.nuclear.gamma import (NEGATIVE_EIGENVALUE, DepthOrientation, _disc_directions, cascade_excitation,
+                                  correlation_table, depth_orientation, excitation_of, has_static_moment)
+from physim.nuclear.gamma_events import _distribution, _interp_density
 from physim.nuclear.kinematics import TwoBody
 from physim.nuclear.levels import quadrupole_factor
 from physim.nuclear.rates import (Rates, beam_energy_at, beam_ion, channels, depth_probability, exit_energy,
@@ -587,3 +589,145 @@ def test_the_correlation_is_that_of_the_events_through_the_depth():
                       * 4 * math.pi / state.gamma_yield(1, 0))
         # The statistical error of the mean of 4000 events is 0.1 %.
         assert np.mean(table[det]) == pytest.approx(total / len(rows), rel=4e-3), det
+
+
+def mean_legendre(coefficients: dict, axis) -> dict:
+    """{k: ⟨P_k⟩} of the angle of γ rays to ``axis`` of the orbit's frame, of a distribution Σ a_kq √(4π/(2k+1)) Y_kq."""
+    theta, phi = math.acos(axis[2]), math.atan2(axis[1], axis[0])
+    out = {}
+    for k in (2, 4):
+        of_k = {key: np.atleast_1d(v) for key, v in coefficients.items() if key[0] == k}
+        n = max([len(v) for v in of_k.values()] or [1])
+        out[k] = _distribution(of_k, np.full(n, theta), np.full(n, phi)) / (2 * k + 1) if of_k else np.zeros(n)
+    return out
+
+
+def test_the_gamma_rays_of_a_scheme_follow_the_orientation_of_their_depth(monkeypatch):
+    """In a level scheme through a thick target the γ rays have the orientation of each event's own beam energy: in thirds
+    of the target by depth, the mean P2 and P4 of their angles to the axes of the orbit's frame are those of solutions at
+    the beam energies there (solved anew, at other energies than the events take). Of an excitation that starts in the
+    2⁺₁, and of both γ rays of one that starts in the 2⁺₂ and goes through the 2⁺₁."""
+    d = coulex_reproduction.setup(levels="ensdf").to_dict()
+    d["reaction"]["order"] = "first"
+    for m in d["levels"]["beam"]["matrix_element"]:
+        if (m["from"], m["to"]) == (0, 3):
+            m["value"] = "400 efm2"  # so that the 2⁺₂ is excited often
+    exp = Experiment.from_dict(d)
+    cex, orient = cascade_excitation(exp), depth_orientation(exp, cascade_excitation(exp))
+    assert not orient.thin and orient.depth.slice_count() > 1
+    seen = {}
+    real = gamma_events._correlated
+
+    def spy(cex, theta_cm, taken, first, *args):
+        known, deferred = real(cex, theta_cm, taken, first, *args)
+        seen.update(theta=theta_cm, taken=taken, first=first, known=known)
+        return known, deferred
+
+    monkeypatch.setattr(gamma_events, "_correlated", spy)
+    ev = simulate(exp, 40_000, 4)
+    gamma_events.simulate_gammas(exp, seed=4, particle_events=ev, gammas_per_event=8, aimed=False)
+    c = ev.columns
+    rows = np.flatnonzero(np.isin(c["channel"], [i for i, lab in enumerate(ev.channels) if "excited" in lab]))
+    theta, beam, depth = (np.repeat(c[k][rows], 8) for k in ("theta_cm", "beam_energy", "depth"))
+    np.testing.assert_array_equal(seen["theta"], theta)
+    # The γ rays in the order of their excitations, and within one in the order they are emitted.
+    src, ini, fin, emit = seen["taken"]
+    o = np.argsort(src, kind="stable")
+    o = o[emit[o]]
+    src, ini, fin = src[o], ini[o], fin[o]
+    through = np.zeros(len(theta), dtype=bool)
+    through[src[(ini == 3) & (fin == 1)]] = True
+    energies = np.linspace(beam.min(), beam.max(), 8)
+    solutions = [cascade_excitation(exp, energy=e) for e in energies]
+    grid = solutions[0].table()[0]
+    near = np.flatnonzero((grid >= theta.min() - 4) & (grid <= theta.max() + 4))[::2]
+    thirds = np.minimum((3 * depth / depth.max()).astype(int), 2)
+    pulls, moved = [], []
+    for start, pair in ((1, (1, 0)), (3, (3, 1)), (3, (1, 0))):
+        mine = (seen["first"][src] == start) & (ini == pair[0]) & (fin == pair[1])
+        if start == 3:
+            mine &= through[src]
+        # The coefficients on ``near`` when every excitation starts in ``start``: at each energy, and in the middle.
+        each = [[s._populated(grid[n], {start: s.table()[1][n].density[start]}).coefficients(*pair) for n in near]
+                for s in (*solutions, cex)]
+        for axis in np.eye(3):
+            cos = seen["known"] @ axis
+            legendre = {2: (3 * cos**2 - 1) / 2, 4: (35 * cos**4 - 30 * cos**2 + 3) / 8}
+
+            *here, mid = [[mean_legendre(a, axis) for a in row] for row in each]
+            here, mid = ({k: np.array([[float(x[k][0]) for x in row] for row in rows]) for k in (2, 4)}
+                         for rows in (here, [mid]))
+            for third in range(3):
+                g = mine & (thirds[src] == third)
+                if g.sum() < 1000:  # the beam hardly excites the 2⁺₂ at the back
+                    continue
+                th, e = theta[src[g]], beam[src[g]]
+                j = np.clip(np.searchsorted(energies, e) - 1, 0, len(energies) - 2)
+                f = (e - energies[j]) / (energies[j + 1] - energies[j])
+                for k, p in legendre.items():
+                    at = np.array([np.interp(th, grid[near], row) for row in here[k]])
+                    want = ((1 - f) * at[j, np.arange(len(th))] + f * at[j + 1, np.arange(len(th))]).mean()
+                    err = p[g].std() / math.sqrt(g.sum())
+                    pulls.append((p[g].mean() - want) / err)
+                    moved.append((np.interp(th, grid[near], mid[k][0]).mean() - want) / err)
+    assert len(pulls) >= 30 and np.max(np.abs(pulls)) < 3, np.round(pulls, 1)
+    # With the orientation of the middle for every event the front and the back would be off.
+    assert np.max(np.abs(moved)) > 5, np.round(moved, 1)
+
+
+def test_the_start_states_of_a_scheme_are_physical_and_those_of_the_table():
+    """The density matrices a level starts in, between the solutions of the depth: hermitian, of trace 1, with no
+    eigenvalue below −NEGATIVE_EIGENVALUE even where the interpolation makes one (close to 0°, at the back), and with the
+    distribution the table's coefficients give."""
+    d = coulex_reproduction.setup(levels="ensdf").to_dict()
+    d["reaction"]["order"] = "first"
+    orient = depth_orientation(Experiment.from_dict(d), cascade_excitation(Experiment.from_dict(d)))
+    rng = np.random.default_rng(6)
+    n = 30_000  # more than one block
+    th, e = rng.uniform(1, 180, n), rng.uniform(orient.depth.e_low - 1, orient.depth.e_front + 1, n)
+    made = 0
+    for level in (1, 3):
+        rho = orient.density(level, th, e)
+        assert rho.shape == (n, 5, 5)
+        np.testing.assert_allclose(np.einsum("naa->n", rho), 1.0, atol=1e-12)
+        np.testing.assert_allclose(rho, np.swapaxes(rho.conj(), 1, 2), atol=1e-12)
+        assert np.linalg.eigvalsh(rho).min() >= -NEGATIVE_EIGENVALUE * (1 + 1e-9)
+        # The solutions' matrices at the angle, with the weights of the depth.
+        raw = sum(w[:, None, None] * _interp_density(s.density_table(level), th)
+                  for w, s in zip(orient.depth.lagrange(e), orient.solutions))
+        as_it_is = np.linalg.eigvalsh(raw).min(axis=1) >= -NEGATIVE_EIGENVALUE
+        made += int(np.sum(~as_it_is))
+        np.testing.assert_allclose(rho[as_it_is], raw[as_it_is], atol=1e-12)
+    assert made > 0
+    ok = (th > 60) & (th < 178)
+    dirs = rng.normal(size=(int(ok.sum()), 3))
+    dirs /= np.linalg.norm(dirs, axis=1)[:, None]
+    alone = DepthOrientation(orient.depth, [cascade_excitation(coulex_reproduction.setup(levels="two"), energy=x)
+                                            for x in orient.depth.energies])
+    w = Emission(2, 0, 2).weights(alone.density(1, th[ok], e[ok]), dirs)
+    a = alone.coefficients(1, 0, th[ok], e[ok])
+    np.testing.assert_allclose(w, _distribution(a, np.arccos(dirs[:, 2]), np.arctan2(dirs[:, 1], dirs[:, 0])),
+                               atol=1e-9)
+
+
+@pytest.mark.parametrize("change", ["isotropic", "one slice", "lifetime"])
+def test_only_oriented_schemes_through_slices_take_the_depth(change, monkeypatch):
+    """The γ rays of a scheme that emits isotropically, of a target of one slice and of a lifetime measurement start in
+    the states of the middle of the target."""
+    if change == "lifetime":
+        exp = Experiment.example("coulex_ru98_plunger")
+    else:
+        d = coulex_reproduction.setup(levels="ensdf").to_dict()
+        d["reaction"]["order"] = "first"
+        if change == "isotropic":
+            d["reaction"]["emission"] = "isotropic"
+        else:
+            d["target"]["thickness"] = "0.02 mg/cm2"
+        exp = Experiment.from_dict(d)
+
+    def never(*a, **k):
+        raise AssertionError("the states of the event's own beam energy were used")
+
+    monkeypatch.setattr(DepthOrientation, "density", never)
+    for aimed in (True, False):
+        assert len(gamma_events.simulate_gammas(exp, 20_000, seed=2, aimed=aimed, gammas_per_event=2))
