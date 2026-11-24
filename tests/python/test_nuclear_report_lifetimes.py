@@ -53,7 +53,9 @@ def test_caveats_say_what_this_setup_reaches(rep):
     assert "Caveats" in html and "Static deorientation only" in html
     with_dor = report.lifetime_limits(_coulex(deorientation={"alpha2": 0.2, "gamma2": "0.1 /ps", "alpha4": 0.2,
                                                              "gamma4": "0.3 /ps"}), rep.lifetime["plan"])
-    assert "no correction" not in with_dor[0]["flag"] and "does not correct" in with_dor[0]["flag"]
+    # The analysis corrects for deorientation where it has the alignment: the caveat no longer says it does not.
+    assert "does not correct" not in with_dor[0]["flag"]
+    assert "corrects the shifted and unshifted intensities" in with_dor[0]["flag"]
 
 
 def test_a_setup_without_lifetime_has_no_section():

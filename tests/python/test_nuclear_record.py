@@ -7,6 +7,7 @@ import pytest
 from physim.nuclear import Experiment
 from physim.nuclear.analysis import Analysis, Settings
 from physim.nuclear.gamma_events import simulate_gammas
+from physim.nuclear.logbook import number
 from physim.nuclear.planner import Planner
 from physim.nuclear.record import LEFT_OUT, analysis_explanations, explanations, provenance, record_html
 
@@ -36,7 +37,8 @@ def test_every_explanation_recomputes_to_its_value(ni):
             if isinstance(v, (int, float)) and math.isfinite(v) and v != 0:
                 assert any(f"{v:.{d}g}" in x.substituted for d in (3, 4, 6)) or f"{v:.1f}" in x.substituted \
                     or f"{v:.2f}" in x.substituted or f"{v:.3f}" in x.substituted or f"{v:.4f}" in x.substituted \
-                    or str(v) in x.substituted, (x.key, name, v, x.substituted)
+                    or str(v) in x.substituted or any(number(v, d) in x.substituted for d in (3, 4, 6)), \
+                    (x.key, name, v, x.substituted)
 
 
 def test_the_numbers_are_those_of_the_calculation(ni):

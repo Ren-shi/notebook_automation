@@ -101,7 +101,8 @@ def test_exports(tmp_path, alpha):
     for heading in ("Warnings", "Detectors", "Kinematics", "Expected peaks", "Energy loss",
                     "Simulated spectra", "Models and their validation", "Data and references"):
         assert f"<h3>{heading}" in text, heading
-    assert '<h2 id="setup">2. The setup</h2>' in text and "No run yet" in text  # the one report, without runs
+    assert '<h2 id="setup">A. The setup</h2>' in text and "No run yet" in text  # the one report, without runs
+    assert text.index('<h2 id="result">1. What this setup gives</h2>') < text.index('<h2 id="appendices"')
     for heading in ("Warnings", "Setup", "Detectors", "Kinematics", "Expected peaks", "Energy loss",
                     "Simulated spectra", "Models and their validation", "Data and references"):
         assert f"<h2>{heading}" in alpha.to_html(), heading  # the plan alone, as a page

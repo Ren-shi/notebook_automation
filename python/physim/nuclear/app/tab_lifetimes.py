@@ -9,7 +9,10 @@ fusion-evaporation, through the steps.
 - Data: the runs of a plunger setup grouped by distance, with the spectra per distance and ring
   (:func:`physim.nuclear.dataviews.distance_spectra`); a fusion run's singles, γγ matrix and gated spectra.
 - Analysis: the decay curve and the DDCM τ(x), or the DSAM line-shape fit, from
-  :meth:`~physim.nuclear.planner.Planner.analyse_lifetimes`, with τ, its budget, B(Eλ) and the comparison.
+  :meth:`~physim.nuclear.planner.Planner.analyse_lifetimes`, with τ, its budget and B(Eλ); then τ and the B(E2)
+  that follows from it beside what is known about the nucleus, in short (:func:`.tab_analysis.short_comparison`,
+  as under a Coulex result). After the app is opened again the analysis kept with the experiment is shown
+  (:meth:`~physim.nuclear.planner.Planner.kept_lifetimes`), marked as kept, and is not run again until asked.
 
 Each planner function is read through :func:`call`: a physim without it (or one that fails) gives a plain
 ``{"available": False, "reason": ...}``, which the panels show as a note. The panels read only the keys of the
@@ -18,6 +21,9 @@ shapes frozen for wave 3 of the lifetime work."""
 from __future__ import annotations
 
 import math
+import os
+import time
+from typing import Optional
 
 import numpy as np
 
@@ -622,15 +628,50 @@ def fusion_data(ctx, run) -> None:
 # -- Analysis -----------------------------------------------------------------------------------------------------
 
 def analysis_choice(ctx) -> dict:
-    return ctx.state.setdefault("lifetime_analysis", {"level": None, "method": None})
+    """The level and method chosen for the analysis, and whether one was run in this session ("session"); begun
+    afresh for another experiment."""
+    of = str(getattr(ctx.state.get("planner"), "experiment_folder", None))
+    if ctx.state.get("lifetime_analysis", {}).get("of") != of:
+        ctx.state["lifetime_analysis"] = {"level": None, "method": None, "session": False, "of": of}
+    return ctx.state["lifetime_analysis"]
+
+
+def kept_analysis(p) -> Optional[dict]:
+    """The lifetime analysis kept with the experiment from an earlier session
+    (:func:`physim.nuclear.workbench.kept_lifetimes`), with "kept" (when it was written) added; None if there is
+    none, the setup's physics changed since, or a run was taken that it did not read."""
+    kept = wb.kept_lifetimes(p)
+    if kept is None:
+        return None
+    try:
+        if wb.runs_not_read(p, kept):
+            return None
+    except Exception:  # noqa: BLE001 -- the runs cannot be listed: the kept analysis is not vouched for
+        return None
+    try:
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(
+            os.path.join(str(p.experiment_folder), "lifetime.json"))))
+    except OSError:
+        when = ""
+    return dict(kept, kept=when or "earlier")
 
 
 def analysis_of(ctx, p) -> dict:
-    """``Planner.analyse_lifetimes`` for the level and method chosen, kept by the runs it reads."""
+    """The lifetime analysis the step shows for the level and method chosen: the one kept with the experiment
+    from an earlier session (:func:`kept_analysis`) until one is run in this session; else
+    ``Planner.analyse_lifetimes``, kept by the runs it reads."""
     choice = analysis_choice(ctx)
+    if not choice.get("session") and choice["level"] is None and choice["method"] is None:
+        kept = kept_analysis(p)
+        if kept is not None:
+            return kept
     runs = tuple((r["number"], str(r.get("finished"))) for r in p.runs()) if p.folder is not None else ()
-    return ctx.keep(p, ("lifetimes", "analysis", choice["level"], choice["method"], runs),
-                    lambda: call(p, "analyse_lifetimes", level=choice["level"], method=choice["method"]))
+
+    def analyse() -> dict:
+        choice["session"] = True
+        return call(p, "analyse_lifetimes", level=choice["level"], method=choice["method"])
+
+    return ctx.keep(p, ("lifetimes", "analysis", choice["level"], choice["method"], runs), analyse)
 
 
 def prepare_analysis(ctx, p) -> None:
@@ -668,6 +709,19 @@ def analysis_panel(ctx) -> None:
             ui.label(f"Runs at {len(taken)} of the plunger's {len(exp.lifetime.distances_um)} distances so far.").classes(
                 "text-sm ps-muted")
         return
+    if res.get("kept"):
+        n = len(res.get("runs") or [])
+        with ui.row().classes("w-full items-center gap-3 ps-note rounded p-2"):
+            ui.icon("history").classes("ps-muted")
+            ui.label("Kept from an earlier session"
+                     + (f" ({res['kept']})" if res["kept"] != "earlier" else "")
+                     + f": the analysis of {wb.analysed_level(res)}"
+                     + (f" by {ANALYSES.get(res.get('method'), res.get('method'))}" if res.get("method") else "")
+                     + (f", of {n} run{'s' * (n != 1)}" if n else "")
+                     + ". It is shown as it was left, and was not run again.").classes("text-sm")
+            ui.space()
+            ui.button("Analyse again", icon="refresh", on_click=lambda: rechoose(ctx, session=True)).props(
+                "dense outline no-caps").classes("px-2")
     render_analysis(ctx, res)
 
 
@@ -680,13 +734,65 @@ def rechoose(ctx, **choice) -> None:
     async def go() -> None:
         await run.io_bound(analysis_of, ctx, ctx.P().snapshot())
         ctx.analysis_view.refresh()
+        sync = getattr(ctx, "sync_steps", None)
+        if sync is not None:  # the rail's status line shows the τ that is kept
+            sync()
 
     ctx.later(go)
 
 
+def lifetime_comparisons(ctx, res: dict) -> tuple:
+    """τ of the analysed level and the B(E2) that follows from it, each beside what is known about the nucleus
+    in short (:func:`.tab_analysis.short_comparison`): ([the comparisons], the sources of the analysis's own
+    comparison table that the τ comparison says too: "level scheme" when it closes the result against the value
+    the simulation was given, "ENSDF" when it has the evaluated value as its reference). Nothing for an analysis
+    that does not name its line, or of a nucleus without rows."""
+    from .. import results
+    from . import tab_analysis as ta
+
+    line = res.get("transition")
+    if not line:
+        return [], set()
+    p = ctx.P()
+    try:
+        nuclide = results.nuclide_name(line["nuclide"])
+        upper, lower = (results.level_key(nuclide, x["energy_kev"], x.get("spin"), x.get("parity"))
+                        for x in (line["initial"], line["final"]))
+    except Exception:  # noqa: BLE001 -- the result stands without its comparison
+        return [], set()
+    here = p.experiment_folder.name if p.experiment_folder is not None else None
+    held = any(str(c.get("source", "")).startswith("level scheme") for c in res.get("compare") or [])
+    missing = ("Not in the results ledger yet: analyse again to enter it." if held else
+               "No row in the results ledger: the setup's level scheme holds no lifetime for this level, so there "
+               "is no value the simulation was given to close the result against.")
+    out, said = [], set()
+    view = ta.comparison_of(p, "tau", upper.text, nuclide)
+    if view is not None:
+        mine = ta.own_projection(view, here, res.get("tau_ps"), analysis="lifetime")
+        out.append(ta.short_comparison(view, mine, missing))
+        if mine is not None:
+            said.add("level scheme")
+        if view["comparison"] is not None and view["comparison"].reference is not None:
+            said.add("ENSDF")
+    b = res.get("b_down")
+    if view is not None and res.get("b_multipole", "E2") == "E2" and b and b[0] is not None:
+        try:
+            key = results.transition_key(upper, lower, "E2")
+        except ValueError:
+            key = None
+        b_view = ta.comparison_of(p, "B(E2)", key.text, nuclide) if key is not None else None
+        if b_view is not None:
+            mine = ta.own_projection(b_view, here, b[0], analysis="lifetime")
+            out.append(ta.short_comparison(b_view, mine, missing))
+    return out, said
+
+
 def render_analysis(ctx, res: dict) -> None:
     """A lifetime analysis (the frozen shape of ``Planner.analyse_lifetimes``): τ with its budget and B(Eλ),
-    the decay curve and τ(x) (or the line shape), and the comparison with τ from elsewhere."""
+    τ and the B(E2) that follows from it beside what is known about the nucleus (:func:`lifetime_comparisons`),
+    the decay curve and τ(x) (or the line shape), and what the analysis's own comparison with τ from elsewhere
+    holds beyond that."""
+    from . import tab_analysis as ta
     from .figures import figure_decay_curve, figure_lineshape, figure_tau_distance
 
     ui = ctx.ui
@@ -699,11 +805,23 @@ def render_analysis(ctx, res: dict) -> None:
         if value is not None:
             b_text = f"{_fmt(value)}" + (f" ± {_fmt(unc, 2)}" if unc else "") + f" {res.get('b_unit') or ''}"
     _readouts(ui, [
-        ("τ", _tau(res.get("tau_ps"), res.get("stat_ps")), f"{res.get('level') or ''}, "
+        ("τ", _tau(res.get("tau_ps"), res.get("stat_ps")), f"{wb.analysed_level(res)}, "
          f"{ANALYSES.get(res.get('method'), res.get('method') or '')}; statistical", ""),
         ("Total uncertainty", _tau(total, like=res.get("tau_ps")) if total is not None else "—",
          "all of the budget in quadrature", ""),
         ("B(Eλ)↓", b_text.strip(), "from τ, the branching and the conversion", "")])
+    try:
+        beside, said = lifetime_comparisons(ctx, res)
+    except Exception:  # noqa: BLE001 -- the analysis stands without its comparison
+        beside, said = [], set()
+    if beside:
+        with ui.element("div").classes("w-full grid gap-3").style(
+                "grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); align-items: start"):
+            for short in beside:
+                ta.comparison_block(ctx, short)
+    # The analysis's own table of τ from elsewhere: only the lines the comparison above does not say already.
+    elsewhere = [c for c in res.get("compare") or []
+                 if not any(str(c.get("source", "")).startswith(x) for x in said)]
     if res.get("method") == "lineshape":
         ui.plotly(ctx.in_theme(figure_lineshape(res))).classes("w-full")
     else:
@@ -726,11 +844,11 @@ def render_analysis(ctx, res: dict) -> None:
                          rows=[{"k": k.replace("_", " "), "v": f"{v:.3g}",
                                 "s": f"{100 * v * v / (total * total):.0f}%" if total else "—"}
                                for k, v in sorted(budget.items(), key=lambda kv: -abs(kv[1]))]).props("dense flat")
-        if res.get("compare"):
+        if elsewhere:
             with ui.column().classes("gap-0 min-w-0"):
                 ui.label("Beside τ from elsewhere").classes("ps-section")
                 rows = []
-                for c in res["compare"]:
+                for c in elsewhere:
                     bd = c.get("b_down")
                     if isinstance(bd, (list, tuple)):
                         bd = f"{_fmt(bd[0])}" + (f" ± {_fmt(bd[1], 2)}" if len(bd) > 1 and bd[1] else "") \

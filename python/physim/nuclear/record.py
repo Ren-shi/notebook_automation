@@ -65,9 +65,12 @@ class Explanation:
 
 
 def _g(x: float, digits: int = 4) -> str:
-    if x is None or (isinstance(x, float) and not math.isfinite(x)):
-        return "—"
-    return f"{x:.{digits}g}"
+    """A number to ``digits`` significant figures as the report prints numbers
+    (:func:`physim.nuclear.logbook.number`): thousands grouped and no exponent form for ordinary sizes, so 130 is
+    "130" and not "1.3e+02"."""
+    from .logbook import number
+
+    return number(None if x is None else float(x), digits)
 
 
 # -- the plan -------------------------------------------------------------------------------------------------------
@@ -363,20 +366,27 @@ def analysis_explanations(planner, result) -> list:
             "The rotational model: Q_s(2⁺) = −(2/7) Q₀ for K = 0.",
             f"{DOCS}nuclear-setup.html#level-schemes",
             {"b": result.b_e2fm4}, lambda b: math.sqrt(16 * math.pi * b / 5)))
-        b_down = result.b_e2fm4 / 5
-        tau = 1 / (rate_per_b(2, 1e3 * exc.energy_mev) * b_down)
-        out.append(Explanation(
-            "lifetime", "Mean lifetime of the 2⁺ state from B(E2)", tau * 1e12, "ps",
-            "τ = 1 / T(E2), T(E2) = (8π(λ+1) / (λ[(2λ+1)!!]²)) (e²/ħ) (E_γ/ħc)^5 B(E2↓), B(E2↓) = B(E2↑)/(2J_f+1)",
-            f"B(E2↓) = {_g(result.b_e2fm4)} / 5 = {_g(b_down)} e²fm⁴;  T = {_g(rate_per_b(2, 1e3 * exc.energy_mev), 4)} "
-            f"/s per e²fm⁴ × {_g(b_down)} = {_g(1 / tau, 4)} /s;  τ = {_g(tau * 1e12, 3)} ps",
-            "A strong B(E2) means a short-lived state: the same matrix element that lets the field excite the "
-            "state lets the state decay. The lifetime decides whether the nucleus decays in flight (the Doppler "
-            "shift) or after stopping.",
-            "No internal conversion, no other branch; the 2⁺ → 0⁺ transition only.",
-            f"{DOCS}nuclear-setup.html#level-schemes",
-            {"rate_per_b": rate_per_b(2, 1e3 * exc.energy_mev), "b_down": b_down},
-            lambda rate_per_b, b_down: 1e12 / (rate_per_b * b_down)))
+        # B(E2↓) from B(E2↑) by the spins of the two levels: 5 for 0⁺ → 2⁺ only. Where the spins are not known
+        # no ratio is assumed, and the lifetime is not given.
+        decay = _decay(exp)
+        if decay is not None:
+            ratio, upper, lower = decay
+            b_down = result.b_e2fm4 / ratio
+            tau = 1 / (rate_per_b(2, 1e3 * exc.energy_mev) * b_down)
+            out.append(Explanation(
+                "lifetime", f"Mean lifetime of the {upper} state from B(E2)", tau * 1e12, "ps",
+                "τ = 1 / T(E2), T(E2) = (8π(λ+1) / (λ[(2λ+1)!!]²)) (e²/ħ) (E_γ/ħc)^5 B(E2↓), "
+                "B(E2↓) = B(E2↑) × (2J_lower + 1) / (2J_upper + 1)",
+                f"B(E2↓) = {_g(result.b_e2fm4)} / {_g(ratio)} = {_g(b_down)} e²fm⁴;  "
+                f"T = {_g(rate_per_b(2, 1e3 * exc.energy_mev), 4)} "
+                f"/s per e²fm⁴ × {_g(b_down)} = {_g(1 / tau, 4)} /s;  τ = {_g(tau * 1e12, 3)} ps",
+                "A strong B(E2) means a short-lived state: the same matrix element that lets the field excite the "
+                "state lets the state decay. The lifetime decides whether the nucleus decays in flight (the Doppler "
+                "shift) or after stopping.",
+                f"No internal conversion, no other branch; the {upper} → {lower} transition only.",
+                f"{DOCS}nuclear-setup.html#level-schemes",
+                {"rate_per_b": rate_per_b(2, 1e3 * exc.energy_mev), "b_down": b_down},
+                lambda rate_per_b, b_down: 1e12 / (rate_per_b * b_down)))
     out.append(Explanation(
         "uncertainty", "Total relative uncertainty of B(E2↑)", result.total_unc, "",
         "δB/B = √(δ_stat² + Σ δ_sys,i²)",
@@ -399,6 +409,23 @@ def _excited(experiment) -> str:
     return ex_nuclide(experiment)
 
 
+def _decay(experiment) -> Optional[tuple]:
+    """(B(E2↑) / B(E2↓), the upper level, the lower level) of the transition the ``[reaction]`` names: the ratio
+    from the spins of its two levels (:func:`physim.nuclear.observables.b_up_over_down`: 5 for 0⁺ → 2⁺), the
+    levels as the report writes them ("2⁺₁", "0⁺₁"). None where the spins are not known: no ratio is assumed."""
+    from . import observables, results
+    from .logbook import level_words
+
+    try:
+        key = results.key_of_reaction(experiment)
+        if key.initial.spin is None or key.final.spin is None:
+            return None
+        ratio = observables.b_up_over_down(key.final.spin, key.initial.spin, key.multipolarity)
+        return ratio, level_words(key.initial), level_words(key.final)
+    except (ValueError, TypeError, ZeroDivisionError):
+        return None
+
+
 # -- the record -----------------------------------------------------------------------------------------------------
 
 
@@ -408,7 +435,12 @@ def provenance(experiment) -> list:
             ("γ-ray attenuation", "NIST XCOM", "data")]
     exc = experiment.excitation
     if exc is not None:
-        rows.append((f"State at {1e3 * exc.energy_mev:g} keV, B({exc.multipolarity}↑)", exc.b_up, "user"))
+        # "user" only where the setup holds a value of its own: a B that the level scheme's matrix element gives
+        # (ENSDF's, read or derived) is sourced as that matrix element is.
+        from .logbook import reaction_b_source
+
+        rows.append((f"State at {1e3 * exc.energy_mev:g} keV, B({exc.multipolarity}↑)", exc.b_up,
+                     reaction_b_source(experiment)))
     for role, scheme in experiment.levels.items():
         for i, lev in enumerate(scheme.levels):
             rows.append((f"{role}: level {i} {lev.label} energy", f"{lev.energy.value:g} keV", lev.energy.source))
@@ -464,19 +496,22 @@ def record_html(planner, result=None, title: Optional[str] = None, scene_png: Op
     """The run record as one self-contained HTML page: the setup (with the scene if ``scene_png`` is given as
     base64), the data and its provenance, the method, every number with its explanation, the analysis chain, the
     uncertainty budget and what is left out. ``result`` is a :class:`~physim.nuclear.analysis.Result`."""
+    from .logbook import reaction_words
+
     exp = planner.experiment
     e = html.escape
     parts = []
     parts.append(f"<h1>{e(title or exp.title)}: run record</h1>")
     b, t = exp.beam, exp.target
+    # The reaction as the report's head names it: Coulomb excitation with its state, fusion-evaporation with the
+    # studied channel, or elastic scattering; and the lifetime method where the setup measures a lifetime.
+    reaction = reaction_words(planner)
     parts.append("<h2>1. The setup</h2><ul>"
                  f"<li>Beam: {e(b.nuclide)} at {e(str(b.energy))}, {e(str(b.current))}.</li>"
                  f"<li>Target: {e(t.material)}, {e(str(t.thickness))}.</li>"
                  f"<li>Particle detectors: {e(', '.join(d.name or f'D{i + 1}' for i, d in enumerate(exp.detectors)))}.</li>"
                  f"<li>γ-ray detectors: {e(', '.join(g.name or f'G{i + 1}' for i, g in enumerate(exp.gamma_detectors))) or 'none'}.</li>"
-                 + (f"<li>Reaction: Coulomb excitation of the {e(exp.excitation.excite)} to "
-                    f"{1e3 * exp.excitation.energy_mev:g} keV ({e(exp.excitation.multipolarity)}).</li>"
-                    if exp.excitation else "<li>Reaction: elastic scattering.</li>") + "</ul>")
+                 f"<li>Reaction: {e(reaction[0].upper() + reaction[1:])}.</li></ul>")
     if scene_png:
         parts.append(f'<p><img src="data:image/png;base64,{scene_png}" alt="the scene" style="max-width:100%"></p>')
     parts.append("<h2>2. The nuclear data and where it comes from</h2>")
@@ -514,7 +549,8 @@ def record_html(planner, result=None, title: Optional[str] = None, scene_png: Op
                         if getattr(result, "whole_run_statistical", None) is None else
                         f"<p>The statistics come from {html.escape(result.statistics_from)}; the whole run would give "
                         f"{100 * result.whole_run_statistical:.1f}%. ")
-                     + f"Against the value put in, the result pulls by {result.pull:+.2f} standard deviations.</p>")
+                     + f"Against the value the simulation was given, the result closes at {result.pull:+.2f} "
+                     "standard deviations.</p>")
         parts.append("<h2>7. What the simulation leaves out</h2>")
     else:
         parts.append("<h2>5. What the simulation leaves out</h2>")

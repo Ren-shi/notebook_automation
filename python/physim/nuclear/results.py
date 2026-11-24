@@ -2,7 +2,8 @@
 
 A **row** (:class:`Row`) is one value of one observable of one nucleus by one method: what was found, with its
 uncertainty, how, on what evidence and where it came from. Rows are appended to JSON-lines files and never
-rewritten; a new analysis adds a row that names the one it supersedes, so the files are the history::
+rewritten; a new analysis adds a row that names the one it supersedes, and a value that is withdrawn gets a row
+that supersedes it and says why (``retracted``), so the files are the history::
 
     from physim.nuclear import results
 
@@ -52,7 +53,11 @@ from . import ensdf, observables, runs
 from .levels import LevelScheme
 from .names import SYMBOLS, parse_nuclide
 
-#: The methods a value can come from, with their labels. The last four are for values from the literature only.
+#: The methods a value can come from, with their labels. Those of :data:`LITERATURE_ONLY` are for values from the
+#: literature (or one's own data points): physim has no analysis that produces them. "inelastic-scattering" and
+#: "transfer" are kinds of experiment physim does not have yet and "moment" is a measurement of a static moment;
+#: each has a name of its own so that a published value by it counts for its route, which "other" (no one method)
+#: cannot.
 METHODS = {
     "coulex-yield": "Coulex from the yield (first order)",
     "coulex-fit": "Coulex fitted to all orders",
@@ -64,9 +69,13 @@ METHODS = {
     "nrf": "NRF",
     "inelastic-neutron": "(n,n′γ)",
     "electron-scattering": "Electron scattering",
+    "inelastic-scattering": "Inelastic scattering",
+    "transfer": "Transfer reaction",
+    "moment": "Moment measurement",
     "other": "Other",
 }
-LITERATURE_ONLY = ("nrf", "inelastic-neutron", "electron-scattering", "other")
+LITERATURE_ONLY = ("nrf", "inelastic-neutron", "electron-scattering", "inelastic-scattering", "transfer", "moment",
+                   "other")
 
 #: The kinds of evidence, with their labels, in the two groups: independent of physim's simulation, and projected.
 EVIDENCE = {"measured": "Measured", "evaluated": "Evaluated", "theory": "Theory",
@@ -419,6 +428,9 @@ class Row:
     depends_on: tuple = ()
     #: The id of the earlier row that this one, a new analysis of the same thing, replaces.
     supersedes: Optional[str] = None
+    #: Why the row it supersedes was withdrawn. A retraction keeps that row's content and holds no value of its
+    #: own: :func:`current` leaves it out, the history shows it.
+    retracted: str = ""
     created: str = ""
     code: Optional[dict] = None
     id: str = ""
@@ -476,6 +488,9 @@ class Row:
         put("origin", origin)
         put("depends_on", tuple(str(x) for x in (self.depends_on or ())))
         put("supersedes", str(self.supersedes) if self.supersedes else None)
+        put("retracted", str(self.retracted or "").strip())
+        if self.retracted and not self.supersedes:
+            raise ValueError("a retraction names the row it withdraws ('supersedes')")
         put("detail", str(self.detail or ""))
         put("created", self.created or _now())
         put("code", _plain(dict(self.code)) if self.code is not None else code())
@@ -594,6 +609,29 @@ def _append(path: Path, row: Row) -> bool:
     return True
 
 
+def _append_all(path: Path, rows: list) -> list:
+    """Add rows at the end of a ledger file, reading it once. Returns the rows written: those the file did not
+    hold already."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    before = path.read_text(encoding="utf-8") if path.is_file() else ""
+    have = set()
+    for line in before.splitlines():
+        try:
+            have.add(json.loads(line).get("id") if line.strip() else None)
+        except (ValueError, AttributeError):
+            continue
+    new = []
+    for row in rows:
+        if row.id not in have:
+            have.add(row.id)
+            new.append(row)
+    if new:
+        with path.open("a", encoding="utf-8", newline="\n") as f:
+            f.write(("" if not before or before.endswith("\n") else "\n")
+                    + "".join(json.dumps(row.to_dict(), ensure_ascii=False) + "\n" for row in new))
+    return new
+
+
 def append(folder: Union[str, Path], row: Row) -> bool:
     """Add a row to an experiment's ledger (``results.jsonl`` in its folder). False if it is already there."""
     return _append(Path(folder).expanduser() / RESULTS_FILE, row)
@@ -603,6 +641,15 @@ def add_point(row: Row, home: Union[str, Path, None] = None) -> bool:
     """Add a row that belongs to no experiment to its nucleus's ledger (``points.jsonl`` in the nucleus's
     folder of the nuclei home). False if it is already there."""
     return _append(nucleus_folder(row.nuclide, home) / POINTS_FILE, row)
+
+
+def add_points(rows: list, home: Union[str, Path, None] = None) -> list:
+    """Add several rows of one nucleus that belong to no experiment to its ledger, as :func:`add_point` does one,
+    reading the file once. Returns the rows written."""
+    rows = list(rows)
+    if len({r.nuclide for r in rows}) > 1:
+        raise ValueError("the rows are of several nuclei: " + ", ".join(sorted({r.nuclide for r in rows})))
+    return _append_all(nucleus_folder(rows[0].nuclide, home) / POINTS_FILE, rows) if rows else []
 
 
 def of_experiment(folder: Union[str, Path]) -> list:
@@ -627,14 +674,33 @@ def of_nuclide(nuclide: str, root: Union[str, Path, None] = None, home: Union[st
     return sorted(rows, key=lambda r: r.created)
 
 
+def studied_nuclide(experiment) -> Optional[str]:
+    """The nucleus a setup studies: the excited one of a Coulomb-excitation setup, and the residue of the exit
+    channel a fusion-evaporation setup marks as studied (``[run] channel``). None for a fusion-evaporation setup
+    without that mark (its largest channel only sets the beam time: it is not a choice of nucleus) and for
+    elastic scattering."""
+    name = reaction_nuclide(experiment)
+    if name is not None:
+        return name
+    fusion, run = getattr(experiment, "fusion", None), getattr(experiment, "run", None)
+    if fusion is None or not fusion.channels or run is None or run.channel is None:
+        return None
+    from .experiment import studied_channel_index
+
+    i = studied_channel_index(fusion.channels, run.channel)
+    try:
+        return None if i is None else nuclide_name(fusion.channels[i].residue_name)
+    except ValueError:  # a residue the mass table does not know
+        return None
+
+
 def experiment_nuclide(folder: Union[str, Path]) -> Optional[str]:
-    """The nucleus an experiment studies, from its current setup: the excited one of a Coulomb-excitation
-    experiment. None for the other kinds (which residue a fusion-evaporation experiment studies is not settled
-    yet) and for a setup that cannot be read."""
+    """The nucleus an experiment studies, from its current setup (:func:`studied_nuclide`). None for a setup
+    that studies none and for one that cannot be read."""
     from .experiment import Experiment
 
     try:
-        return reaction_nuclide(Experiment.load(Path(folder).expanduser() / "experiment.toml"))
+        return studied_nuclide(Experiment.load(Path(folder).expanduser() / "experiment.toml"))
     except (ValueError, OSError, KeyError, IndexError):
         return None
 
@@ -664,9 +730,10 @@ def nuclei(root: Union[str, Path, None] = None, home: Union[str, Path, None] = N
 
 
 def current(rows: list) -> list:
-    """The rows that hold now: those no other row of the list supersedes."""
+    """The rows that hold now: those no other row of the list supersedes, without the retractions (a retraction
+    withdraws the row it supersedes and holds no value itself)."""
     replaced = {r.supersedes for r in rows if r.supersedes}
-    return [r for r in rows if r.id not in replaced]
+    return [r for r in rows if r.id not in replaced and not r.retracted]
 
 
 def history(rows: list, row: Row) -> list:
@@ -691,6 +758,22 @@ def select(rows: list, observable: Optional[str] = None, key=None, evidence: Opt
 # Backfill: rows from the analyses that runs already hold
 
 
+def _says_the_same(a: Row, b: Row) -> bool:
+    """Whether two rows of one run say the same thing: the same value, uncertainties, budget and truth (to
+    rounding), in the same unit and direction, by the same analysis settings. When each was made, and by which
+    code, is left aside."""
+    def close(x, y) -> bool:
+        if isinstance(x, float) and isinstance(y, float):
+            return math.isclose(x, y, rel_tol=1e-9, abs_tol=0.0)
+        return x == y
+
+    said = ("unit", "direction", "detail", "value", "stat", "sys", "total", "plus", "minus", "truth")
+    budget_a, budget_b = a.budget or {}, b.budget or {}
+    return (all(close(getattr(a, name), getattr(b, name)) for name in said)
+            and a.origin.get("settings") == b.origin.get("settings") and set(budget_a) == set(budget_b)
+            and all(close(budget_a[k], budget_b[k]) for k in budget_a))
+
+
 def backfill(folder: Union[str, Path]) -> list:
     """Make projected rows from the ``analysis.json`` files an experiment's runs already hold, and append them to
     the experiment's ledger. Returns the rows added; calling it again adds none.
@@ -699,8 +782,9 @@ def backfill(folder: Union[str, Path]) -> list:
     transition the run's ``[reaction]`` names, with the statistical and systematic uncertainties and the budget
     made absolute, and the value the setup held as ``truth``. The row is dated by when the analysis was saved;
     the code that made it was not recorded and is left unknown. A run analysed again since the last backfill
-    gives a row that supersedes the earlier one. Runs of other reactions, runs without an analysis and analyses
-    that cannot be read are passed over.
+    gives a row that supersedes the run's earlier row by the same method (a row of the all-orders fit is left
+    alone); analysed again with the same settings and the same result, it gives none. Runs of other reactions,
+    runs without an analysis and analyses that cannot be read are passed over.
     """
     from .analysis import RESULT_FILE
     from .experiment import Experiment
@@ -728,13 +812,15 @@ def backfill(folder: Union[str, Path]) -> list:
                 origin=from_run(folder.name, run.name, d.get("settings"), analysed=saved, backfilled=True))
         except (OSError, ValueError, TypeError, KeyError):
             continue
-        earlier = [r for r in have if r.origin.get("run") == run.name and r.observable == row.observable
-                   and r.key == row.key]
-        if any(r.origin.get("analysed") == saved for r in earlier):
+        earlier = {r.id: r for r in have if r.origin.get("run") == run.name
+                   and (r.observable, r.key, r.method) == (row.observable, row.key, row.method)}
+        if any(r.origin.get("analysed") == saved for r in earlier.values()):
             continue
-        earlier = current(earlier)
-        if earlier:
-            row = Row.from_dict({**row.to_dict(), "id": "", "supersedes": earlier[-1].id})
+        standing = [r for r in current(have) if r.id in earlier]
+        if standing and _says_the_same(standing[-1], row):
+            continue  # analysed again with the same settings and the same result: nothing new to say
+        if standing:
+            row = Row.from_dict({**row.to_dict(), "id": "", "supersedes": standing[-1].id})
         if append(folder, row):
             have.append(row)
             added.append(row)
@@ -742,8 +828,10 @@ def backfill(folder: Union[str, Path]) -> list:
 
 
 __all__ = ["ANCHOR_KEV", "ENV", "EVIDENCE", "INDEPENDENT", "LITERATURE_ONLY", "METHODS", "ORIGINS", "POINTS_FILE",
-           "PROJECTED", "RESULTS_FILE", "LevelKey", "Row", "TransitionKey", "add_point", "append", "backfill",
+           "PROJECTED", "RESULTS_FILE", "LevelKey", "Row", "TransitionKey", "add_point", "add_points", "append",
+           "backfill",
            "code", "current", "ensdf_levels", "experiment_nuclide", "from_run", "history", "key_of_level",
            "key_of_name", "key_of_reaction", "key_of_shell_state", "key_of_transition", "level_key", "nuclei",
            "nuclei_home", "nucleus_folder", "nuclide_name", "of_experiment", "of_nuclide", "own_measurement",
-           "reaction_nuclide", "read", "reference", "select", "shell_model_job", "transition_key"]
+           "reaction_nuclide", "read", "reference", "select", "shell_model_job", "studied_nuclide",
+           "transition_key"]
