@@ -49,8 +49,9 @@ SLOW_TESTS = ROOT / ".github" / "slow-tests.txt"
 UNKNOWN_S, START_S = 10.0, 2.0  # a file without a time; what a process takes beside its tests
 SHARD_S, MAX_SHARDS = 75.0, 10
 KEPT = 8  # records of a file and mode
-#: Programs that libraries ask about the system (the fonts, the libraries, the processor): they use nothing of this repository.
-HARMLESS = {"fc-list", "ldconfig", "gcc", "cc", "ld", "objdump", "lscpu", "uname", "lsb_release", "file"}
+#: Programs that use nothing of this repository but what is given to them: those that libraries ask about the system, git (for
+#: the commit in a record) and the browser that prints a report.
+HARMLESS = {"fc-list", "ldconfig", "gcc", "cc", "ld", "objdump", "lscpu", "uname", "lsb_release", "file", "git", "google-chrome"}
 
 RUST = re.compile(r"(src/|benches/|examples/|tests/[^/]+\.rs$|Cargo\.|\.cargo/|[^/]*\.toml$|rust-toolchain)")
 MACHINERY = ("requirements-dev.txt", "scripts/ci_tests.py", "scripts/ci_record.py", "tests/python/conftest.py")
