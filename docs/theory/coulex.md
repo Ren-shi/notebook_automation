@@ -59,8 +59,18 @@ the ⁶²Ni-on-carbon rings and target below, the app's Rutherford factor and GO
 agree to 0.03 %. The factor v_i/v_f is 1.04 for ⁶²Ni at 90 MeV on carbon (E_cm 14.7 MeV, E* 1.17 MeV), 1.03 in
 `coulex_ni58`, and under 1 % in the other examples. Every place the app forms a Coulomb-excitation cross section
 uses it: `Coulex.cross_section_cm` and `rutherford_cm`, the rates and the event generator (`rates.
-rutherford_factor`), the Doppler table, and the all-orders yields (each level with its own v_f; the rates and the
-events with that of the `[reaction]` state, whose kinematics the channel follows, as GOSIA does with its NCM level).
+rutherford_factor`), the Doppler table, and the solutions of a level scheme. (The other nucleus's γ rays are the
+exception: they come per particle of the `[reaction]`, with no factor of their own.) Which level's v_f it is:
+
+- `cross_sections` of `Excitation` and of `CoupledChannels` (mb, over all angles): **each level its own**. The
+  coupled equations give a cross section to every excited level the collision populates, in one step or several.
+- `Multistep.yields` (γ rays in the detectors): that of the **reference level**, the first that a matrix element
+  joins to the ground state, for every level, with its kinematics.
+- The rates and the events: that of the **`[reaction]` state**, whose kinematics the channel follows, for the
+  populations of all levels.
+
+The last two do as GOSIA does with its NCM level. A level at E_n then gets √((E_cm − E_n)/(E_cm − E_ref)) of what it
+has with its own v_f: for the 2.3 MeV levels of ⁶²Ni 0.3 % less at 237 MeV on ¹⁹⁴Pt and 4 % less at 100 MeV on carbon.
 
 **Which Rutherford a ratio divides by.** An experiment divides its excited counts by the elastic ones, so the
 app's ratios σ_Coulex/σ_Rutherford divide by the **elastic** Rutherford cross section: `Coulex.ratio_to_elastic`
