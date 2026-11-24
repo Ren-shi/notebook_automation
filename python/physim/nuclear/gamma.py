@@ -25,6 +25,7 @@ import math
 import threading
 from collections import OrderedDict
 from functools import lru_cache
+from typing import Optional
 
 import numpy as np
 
@@ -585,7 +586,8 @@ def depth_orientation(experiment, solution=None) -> DepthOrientation:
 DECAY_SHARES = 4
 
 
-def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucleus: str = "reaction") -> list:
+def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucleus: str = "reaction",
+                      transition: Optional[tuple] = None) -> list:
     """For every particle detector × γ-ray crystal: how many γ rays the crystal sees when the particle is seen in
     that detector, relative to isotropic emission (1 = isotropic).
 
@@ -615,8 +617,10 @@ def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucle
 
     ``nucleus`` "other" gives the table for the other nucleus of the collision
     (:func:`other_excitation`; empty without its level scheme): for the transition from its first excited level
-    to the ground state, each point weighted by that level's population with the feeding from above."""
-    transition = None
+    to the ground state, each point weighted by that level's population with the feeding from above.
+
+    ``transition`` (initial, final), of a nucleus with a level scheme: the table for that one instead."""
+    asked, transition = transition, None
     if nucleus == "other":
         ex = other_excitation(experiment)
         if ex is None:
@@ -625,6 +629,8 @@ def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucle
         ex = cascade_excitation(experiment)
         if ex is not None:
             transition = state_transition(experiment)
+    if asked is not None and ex is not None:
+        transition = tuple(asked)
     solution = ex if ex is not None else excitation_of(experiment)
     # Kept with the solution, by the detectors and by the target the beam slows down in (the solution is that of
     # its middle): the plan asks again at every change of anything else.
@@ -685,6 +691,7 @@ def _correlation_rows(experiment, solution, order: int, crystal_points: int, tra
     solution of a level scheme (by default from its first excited level to the ground state), or without a
     solution for the ``[reaction]`` state alone."""
     from . import data
+    from .coupled import CoupledChannels
     from .gamma_events import _directions, _distribution, _mean_lives
     from .kinematics import TwoBody
     from .rates import rutherford_factor
@@ -732,7 +739,9 @@ def _correlation_rows(experiment, solution, order: int, crystal_points: int, tra
         x, wq = np.polynomial.legendre.leggauss(len(depth.energies))
         zs = (x + 1) / 2 * deepest
         points = list(zip(zs, wq, (float(e) for e in beam_energy_at(experiment, 0, zs, layers))))
-    if lev_i not in ex.paths or ex.decay(lev_i, lev_f).gamma <= 0:
+    # (In first order only the levels reached in one step are excited; the coupled equations reach the others too.)
+    reached = lev_i in ex.paths or isinstance(ex, CoupledChannels)
+    if not reached or ex.decay(lev_i, lev_f).gamma <= 0:
         points = []
     steps = []
     for z, share, e_beam in points:

@@ -503,7 +503,13 @@ The steps, each adjustable through `Settings`:
    the reaction was: the corrected peak then has tails that a Gaussian leaves out. When they show (they improve the
    fit's deviance by more than 25), a core with a wider bell that ends (as the tails do) on a background that steps down across the peak is
    fitted, and the area is that of this peak: the counts of the whole window less the background under them
-   (`analysis.fit_tails`; `PeakFit.tails`). Not where the nucleus has another line inside the fit window.
+   (`analysis.fit_tails`; `PeakFit.tails`).
+   - **Another line of the nucleus in the window.** It is in the fit with the peak's shape, at the ratio the setup's level
+     scheme gives it per particle in the rings and the crystals see it with (`Analysis._beside`; a 4⁺ → 2⁺ line has another
+     angular distribution than the 2⁺ → 0⁺ one, `gamma.correlation_table(transition=)`). A line within ±3σ is counted in
+     the area, as the coupled equations count it; one further away is in the fit only. The ratio hardly matters (±35 % of
+     it moves the area by 0.06 %, with 2.5 % of the peak 2σ away), but without it, and without a level scheme to give it,
+     the peak is a Gaussian on a line, which loses the tails: 4 % of the area with the ⁶²Ni clovers, 6 % in B(E2).
    - **Decays inside the target.** When the level has a half-life (the level scheme's), some nuclei decay before they
      have left the target, faster than the Doppler correction takes them, and leave a tail on one side of the peak
      (⁶²Ni in 1.04 mg/cm² of carbon: 5 to 8 % of the peak moves to 3 to 20 keV below it). A bell about the core does not

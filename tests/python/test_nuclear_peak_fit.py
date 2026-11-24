@@ -250,3 +250,60 @@ def test_few_counts_take_the_spread_with_the_shape(one_sided):
     t = toys[0].tails
     wide = np.ptp(t["spread"]["shift"]) / np.ptp(shape["spread"][0])
     assert wide == pytest.approx(t["sigma"] / shape["core_sigma"], rel=0.03)
+
+
+# -- another line beside the peak ------------------------------------------------------------------------------------
+
+
+def blended_peak(n: float, ratio: float = 0.025, at: float = -9.36) -> np.ndarray:
+    """The peak of ``n`` counts as the clovers of ``coulex_ni62_pt194_clovers`` see it (σ 4.5 keV, with tails that end),
+    and a line of the same shape with ``ratio`` of its counts 9.36 keV below (4⁺ → 2⁺ of ⁶²Ni)."""
+    def one(centre):
+        z = (X - centre) / 3.0
+        return 0.8 * gaussian(4.0, centre) + 0.2 * _biweight(z / 3.2)[0] / 3.0 / 3.2 * 0.2
+
+    both = one(0.0) + ratio * one(at)
+    return n * both + 4e-4 * n * 0.2 * np.ones(len(X))
+
+
+BESIDE = ({"shift": -9.36e-3, "ratio": 0.025, "transition": (4, 1), "counted": True},)
+
+
+def test_the_peak_and_the_line_beside_it_keep_their_area():
+    """With the line in the fit, at its ratio to the peak, the area is that of both. (The Gaussian on a line, which is
+    what a peak with another line in the window got, counts them low.)"""
+    mu = blended_peak(1e6)
+    fit = gauss_fit(mu, mu)
+    with_line = fit_tails(mu, EDGES, fit, variance=mu, lines=BESIDE)
+    assert with_line.area == pytest.approx(1.025e6, rel=0.004)
+    assert fit.area / 1.025e6 - 1 < -0.01
+    ln = with_line.tails["lines"]
+    assert [x["counted"] for x in ln] == [True, True] and ln[1]["transition"] == [4, 1]
+    assert sum(x["share"] for x in ln) == pytest.approx(1.0)
+    assert with_line.tails["inside"] < 1 and json.loads(json.dumps(asdict(with_line)))["tails"]["lines"] == ln
+    # The curve on its background is the fitted counts, whichever way the fit is drawn or kept.
+    kept = PeakFit.of(json.loads(json.dumps(asdict(with_line))))
+    x = (EDGES[:-1] + EDGES[1:]) / 2
+    m = np.abs(x - E0) < 0.04
+    assert kept.curve(x)[m].sum() == pytest.approx(mu[m].sum(), rel=0.003)
+    assert np.sum((kept.curve(x) - kept.background_curve(x))[m]) == pytest.approx(with_line.area, rel=0.01)
+    assert "another line" in with_line.shape
+
+
+def test_a_line_outside_the_window_is_in_the_fit_but_not_in_the_area():
+    """A line 40 keV (9 σ) away is in the fit, at the edge of its window, and not in the area."""
+    mu = blended_peak(1e6, ratio=0.05, at=-40.0)
+    apart = ({"shift": -40e-3, "ratio": 0.05, "transition": (3, 1), "counted": False},)
+    fit = gauss_fit(mu, mu)
+    with_line = fit_tails(mu, EDGES, fit, variance=mu, lines=apart)
+    assert with_line.area == pytest.approx(1e6, rel=0.006)
+    assert [x["counted"] for x in with_line.tails["lines"]] == [True, False]
+
+
+def test_a_gaussian_peak_with_a_line_beside_it_has_no_tails():
+    mu = 1e4 * gaussian(4.0) + 300 * gaussian(4.0, -9.36)
+    y = np.random.default_rng(5).poisson(mu).astype(float)
+    fit = fit_tails(y, EDGES, gauss_fit(y), lines=({"shift": -9.36e-3, "ratio": 0.03, "transition": (4, 1),
+                                                    "counted": True},))
+    assert fit.tails["share"] == 0.0 and fit.tails["lines"][1]["transition"] == [4, 1]
+    assert fit.area == pytest.approx(10_300, abs=4 * fit.area_unc) and "Gaussian (and another" in fit.shape
