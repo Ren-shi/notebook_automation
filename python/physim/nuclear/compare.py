@@ -25,7 +25,9 @@ that of the best single measurement.
 
 The result is plain data (:class:`Comparison`, :meth:`Comparison.to_dict`) that a table, a plot and a report can
 be built from. :func:`convert` makes a row of another observable from a row (a B(E2) from a τ, through the γ-ray
-energy, the branching and the conversion), so that it can join the comparison.
+energy, the branching and the conversion), so that it can join the comparison. :func:`ratio` is one independent
+row over another (E(4⁺₁) over E(2⁺₁), a shell-model value over the reference), for the checks between observables
+of :func:`physim.nuclear.nucleus.checks`.
 """
 
 from __future__ import annotations
@@ -166,6 +168,43 @@ def convert(row: Row, to: str, key: Union[TransitionKey, LevelKey, str, None] = 
                direction=direction, detail=detail, truth=truth, depends_on=(row.id, *row.depends_on),
                origin={"kind": "conversion", "from": row.id, "function": function, **inputs},
                created=row.created, code=row.code, **unc)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# A plain ratio of two rows
+
+
+@dataclass(frozen=True)
+class Ratio:
+    """One row over another, each in its canonical convention."""
+
+    value: float
+    #: The uncertainty of the ratio, or None when neither row has one.
+    unc: Optional[float]
+    #: False when the two rows share a source (``depends_on``): their uncertainties are then not independent and
+    #: the quadrature overstates or understates the ratio's.
+    independent: bool
+
+
+def ratio(numerator: Row, denominator: Row, scale: float = 1.0) -> Ratio:
+    """``numerator`` over ``denominator``, both in their canonical convention, times ``scale`` (a factor of
+    convention, such as the one that turns two B↑ values into B↓ values).
+
+    A plain ratio and nothing else: no model is in it. Its uncertainty is the two relative uncertainties in
+    quadrature (first order, the two rows taken as independent; an asymmetric uncertainty counts with the mean of
+    its sides), as the pull of :func:`compare` adds two uncertainties; a row without an uncertainty adds none.
+    Raises ``ValueError`` for a denominator of 0 and for projected rows: a simulated run is compared with the
+    value its simulation was given and with nothing else.
+    """
+    if PROJECTED in (numerator.evidence, denominator.evidence):
+        raise ValueError("a projected row is not set against another row: it is closed against its own truth")
+    a, b = canonical(numerator), canonical(denominator)
+    if b.value == 0:
+        raise ValueError(f"row {denominator.id} is 0: there is no ratio to it")
+    value = scale * a.value / b.value
+    parts = [c.unc() / abs(c.value) for c in (a, b) if c.unc() is not None and c.value != 0]
+    shared = {numerator.id, *numerator.depends_on} & {denominator.id, *denominator.depends_on}
+    return Ratio(value, abs(value) * math.hypot(*parts) if parts else None, not shared)
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -343,5 +382,5 @@ def compare(rows: list, reference: Union[Row, str, None] = None) -> Comparison:
         best)
 
 
-__all__ = ["AGREE_BELOW", "DIFFER_ABOVE", "VERDICTS", "Canonical", "Comparison", "Entry", "Projection",
-           "canonical", "compare", "convert", "verdict"]
+__all__ = ["AGREE_BELOW", "DIFFER_ABOVE", "VERDICTS", "Canonical", "Comparison", "Entry", "Projection", "Ratio",
+           "canonical", "compare", "convert", "ratio", "verdict"]

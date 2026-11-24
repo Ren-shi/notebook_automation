@@ -77,7 +77,7 @@ POINT_METHODS = {
 DONE, ONLY_PROJECTED, IN_PHYSIM, LATER, NO_EXPERIMENT = "done", "projected", "in physim", "later", "no experiment"
 
 #: The observables whose value must be above 0, and those that cannot be negative.
-POSITIVE, NOT_NEGATIVE = ("tau",), ("B(E2)", "E_level")
+POSITIVE, NOT_NEGATIVE = ("tau",), ("B(E2)", "B(M1)", "E_level")
 
 _SUBSCRIPT = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 #: What people write in a spin and parity or a level's name, as the keys write it.
@@ -220,10 +220,10 @@ def key_of(nuclide: str, observable: str, key, check: bool = True) -> Union[Leve
     whichever the observable belongs to."""
     o = observables.get(observable)
     if o.belongs_to == "transition":
-        m = re.search(r"\(([EM][1-6])\)", o.key)
-        found = transition(nuclide, key, m.group(1) if m else "E2", check)
-        if m and found.multipolarity != m.group(1):
-            raise ValueError(f"{o.label} belongs to an {m.group(1)} transition, not {found.multipolarity}")
+        multipolarity = o.multipolarity
+        found = transition(nuclide, key, multipolarity or "E2", check)
+        if multipolarity and found.multipolarity != multipolarity:
+            raise ValueError(f"{o.label} belongs to an {multipolarity} transition, not {found.multipolarity}")
         return found
     return level(nuclide, key, check)
 
@@ -285,6 +285,8 @@ def evaluation(nuclide: str, max_energy_kev: Optional[float] = None) -> list:
       approximate or a systematic value arrives here (the reader keeps no mark of which), and it is no value to
       pull a measurement against.
     - **Qs**: the quadrupole moment in e b as ENSDF writes it, for the levels the level scheme takes it for.
+    - **mu**: the magnetic moment in μ_N as ENSDF writes it.
+    - **B(M1)**: ENSDF's B(M1)↓ in Weisskopf units, for the γ rays it states one for. None is derived.
     - **B(E2)**: for each γ ray between levels of known spin, ENSDF's B(E2)↓ in Weisskopf units as written; where
       ENSDF gives none, the B(E2)↓ in e² fm⁴ that the level scheme derives from the half-life and the branching
       (:meth:`LevelScheme.derive <physim.nuclear.levels.LevelScheme.derive>`), which depends on the τ row.
@@ -326,11 +328,19 @@ def evaluation(nuclide: str, max_energy_kev: Optional[float] = None) -> list:
         if q is not None and scheme.matrix_element(i, i, "E2") is not None:
             add("Qs", key, q[0], "eb", total=q[1],
                 detail="ENSDF gives no sign" if "E2" in data.levels[i].unsigned else "")
+        mu = data.levels[i].moments.get("M1")
+        if mu is not None:
+            add("mu", key, mu[0], "mu_N", total=mu[1],
+                detail="ENSDF gives no sign" if "M1" in data.levels[i].unsigned else "")
     for t in scheme.transitions:
         if t.initial not in inside:
             continue
         if scheme.levels[t.initial].spin is None or scheme.levels[t.final].spin is None:
             continue
+        m1 = t.weisskopf.get("M1")
+        if m1 is not None and m1.value > 0:  # as written; none is derived (the mixing ratio would be needed)
+            add("B(M1)", results.transition_key(keys[t.initial], keys[t.final], "M1"), m1.value,
+                observables.WEISSKOPF, direction=observables.DOWN, total=m1.unc)
         key = results.transition_key(keys[t.initial], keys[t.final], "E2")
         w = t.weisskopf.get("E2")
         if w is not None and w.value > 0:
@@ -845,22 +855,265 @@ def with_converted(nuclide: str, rows: list) -> tuple:
 # The routes to an observable and what a value gives
 
 
-def applies(nuclide: str, observable: str, key: str, route) -> tuple:
-    """Whether a route applies to this nucleus: (True, False, or None for "not tested", and the reason in words).
+_TIME_WORDS = {"Y": "y", "D": "d", "H": "h", "M": "min", "S": "s", "MS": "ms", "US": "µs", "NS": "ns", "PS": "ps",
+               "FS": "fs"}
 
-    Nothing is tested yet: this is the place for it. A later wave fills it in with what the code already has
-    (stable enough for a target or a beam; τ in the range of RDDS or DSAM, from
-    :func:`physim.nuclear.lifetime_plan.method_for`; a valence space that fits this computer, from the
-    shell-model estimate). :func:`routes` puts the answer in each route as "applies" and "reason".
+
+def _time_words(seconds: float) -> str:
+    """A time in the largest of ENSDF's units that keeps it at 1 or more: "5.27 y", "2.6e+06 y", "12.7 h"."""
+    units = sorted(((size, name) for name, size in ensdf.TIME_UNITS.items() if name in _TIME_WORDS), reverse=True)
+    size, name = next(((s, n) for s, n in units if seconds >= s), units[-1])
+    return f"{seconds / size:.3g} {_TIME_WORDS[name]}"
+
+
+def _ps_words(tau_ps: float) -> str:
+    """A mean life given in ps in the unit one says it in: "10 fs", "1 ps", "1 ns"."""
+    for factor, unit in ((1e3, "ns"), (1.0, "ps")):
+        if tau_ps >= factor:
+            return f"{tau_ps / factor:g} {unit}"
+    return f"{tau_ps * 1e3:g} fs"
+
+
+def stability(nuclide: str) -> dict:
+    """What the data say about a nucleus as a target or a beam: {"abundance" (its atom fraction in the natural
+    element, from the NIST table of :func:`physim.nuclear.data.element`; None if it is not in it), "stable"
+    (ENSDF's ground state is marked STABLE; None without a local ENSDF copy or without the nuclide),
+    "half_life_s" (the ground state's half-life in ENSDF, or None), "words" (the same in a few words: "stable,
+    3.63 % of natural Ni", "T½ = 5.27 y in ENSDF, not in the natural element")}."""
+    from . import data
+    from .names import SYMBOLS
+
+    name = results.nuclide_name(nuclide)
+    z, a = parse_nuclide(name)
+    symbol = SYMBOLS[z]
+    try:
+        abundance = dict(data.element(symbol).isotopes).get(a)
+    except (KeyError, ValueError):
+        abundance = None
+    stable = half_life = None
+    found = adopted_scheme(name)
+    if found is not None and found[0].levels:
+        ground = found[0].levels[0]
+        stable = bool(ground.stable)
+        half_life = ground.half_life[0] if ground.half_life is not None else None
+    words = ("stable" if stable else f"T½ = {_time_words(half_life)} in ENSDF" if half_life is not None
+             else "in the natural element" if abundance is not None else "no half-life at hand")
+    if abundance is not None and words != "in the natural element":
+        words += f", {100 * abundance:.3g} % of natural {symbol}"
+    elif abundance is None:
+        words += ", not in the natural element" if stable is not None or half_life is not None else \
+            " (not in the natural element, and no local ENSDF copy has its ground state)"
+    return {"abundance": abundance, "stable": stable, "half_life_s": half_life, "words": words}
+
+
+def _target_test(name: str, beam_too: bool) -> tuple:
+    """Whether the nucleus can be a target (and, with ``beam_too``, whether it then matters): True for a nucleus
+    of the natural element or one ENSDF marks stable. For another nucleus nothing in the code says how long-lived
+    a target must be, nor which beams exist: None, with the half-life."""
+    s = stability(name)
+    if s["abundance"] is not None or s["stable"]:
+        return True, (f"{name} is {s['words']}: it can be the target or the beam" if beam_too
+                      else f"{name} is {s['words']}: a target of it can be made")
+    return None, (f"{name}: {s['words']}. " + ("It would be the beam, or a target made for the purpose; whether "
+                                               "either can be had is not checked" if beam_too else
+                                               "The method needs a target of it; whether one can be made is not "
+                                               "checked"))
+
+
+def _is_ground(level_key: LevelKey) -> Optional[bool]:
+    """Whether a level is the ground state: by ENSDF's first level where there is a local copy; else an anchored
+    0⁺₁ of an even-even nucleus is, and for another level it is not known (None)."""
+    known = results.ensdf_levels(level_key.nuclide)
+    if known:
+        e, j2, parity, n = known[0]
+        return n is not None and level_key.anchored and (level_key.j2, level_key.parity,
+                                                         level_key.ordinal) == (j2, parity, n)
+    if level_key.energy_kev is not None and not level_key.anchored:
+        return level_key.energy_kev == 0.0
+    z, a = parse_nuclide(level_key.nuclide)
+    if z % 2 == 0 and a % 2 == 0 and level_key.anchored:
+        return (level_key.j2, level_key.parity, level_key.ordinal) == (0, 1, 1)
+    return None
+
+
+def _standing(rows: list, observable: str, key: str, evidence: tuple = ("evaluated", "measured",
+                                                                      "outside program")) -> Optional[Row]:
+    """The value of one observable of one level or transition that a test or a check reads: the evaluated row
+    (the newest) where there is one, else the measured row with the smallest relative uncertainty. Never a
+    projected row (a simulated run tests nothing) and, unless ``evidence`` names it, never a calculation."""
+    found = [r for r in results.select(rows, observable, key) if r.evidence in evidence and not r.retracted]
+    for kind in evidence:
+        mine = [r for r in found if r.evidence == kind]
+        if not mine:
+            continue
+        if kind == "evaluated":
+            return max(mine, key=lambda r: r.created)
+        judged = [r for r in mine if r.relative is not None]
+        return min(judged, key=lambda r: r.relative) if judged else mine[-1]
+    return None
+
+
+def _lifetime_test(level_key: LevelKey, method: str, rows: Optional[list], via: Optional[dict]) -> tuple:
+    """Whether the level's mean life is in the range physim plans a plunger or DSAM for
+    (:func:`physim.nuclear.lifetime_plan.method_for`), with the evaluated τ of the ledger or, without one, the
+    best measured one (a τ made from a B(E2) row counts)."""
+    from . import lifetime_plan
+
+    ranges = {"rdds": ("a plunger", lifetime_plan.RDDS_RANGE_PS), "dsam": ("DSAM", lifetime_plan.DSAM_RANGE_PS)}
+    row = _standing(rows or [], "tau", level_key.text)
+    if row is None:
+        return None, (f"no τ of the level {level_label(level_key)} is entered (take the evaluation or add a data "
+                      f"point): whether it is in the range of a plunger or of DSAM is not tested")
+    tau = _compare.canonical(row).value
+    what, (low, high) = ranges[method]
+    known = f"τ = {tau:.3g} ps ({source((via or {}).get(row.id, row))})"
+    span = f"{_ps_words(low)} to {_ps_words(high)}"
+    suited = lifetime_plan.method_for(tau)
+    if suited == method:
+        return True, f"{known} is in the range physim plans {what} for ({span})"
+    other = {"rdds": "a plunger", "dsam": "DSAM"}.get(suited)
+    return False, (f"{known} is {'above' if tau >= high else 'below'} the range physim plans {what} for ({span})"
+                   + (f"; it is in that of {other}" if other else ""))
+
+
+@lru_cache(maxsize=64)
+def _shell_model_fit(name: str, states: tuple, free_gb: int) -> tuple:
+    """(True, False or None; the reason) for a shell-model calculation of ``states`` ((2J, parity, how many),
+    ...) of a nucleus with ``free_gb`` GB of RAM free: :func:`physim.nuclear.shellmodel_spaces.estimate` for each
+    interaction that holds the nucleus (:func:`~physim.nuclear.shellmodel_spaces.options`)."""
+    from . import shellmodel as _sm
+    from . import shellmodel_spaces as _spaces
+
+    options = _spaces.options(name)
+    if not options:
+        return False, (f"none of the interactions physim has holds {name} in its valence space; a calculation "
+                       f"run elsewhere can be imported")
+    fits, too_big, cannot = [], [], []
+    for opt in options:
+        if any(p not in opt.parities for _, p, _ in states):
+            cannot.append(f"{opt.spec.name} makes no state of that parity")
+            continue
+        try:
+            est = _spaces.estimate(_sm.ShellModelRequest(name, opt.spec.name, states),
+                                   free_bytes=free_gb * 1024**3)
+        except ValueError as e:
+            cannot.append(f"{opt.spec.name}: {e}")
+            continue
+        (fits if est.fits else too_big).append((est.memory_bytes, opt.spec.name, opt.spec.space.name, est.reason))
+    if fits:
+        _, interaction, space, reason = min(fits)
+        others = [n for _, n, _, _ in sorted(fits)[1:]]
+        return True, (f"{interaction} ({space} space): {reason}"
+                      + (f" Also fitting: {', '.join(others)}." if others else "")
+                      + (f" Too big now: {', '.join(n for _, n, _, _ in sorted(too_big))}." if too_big else ""))
+    if too_big:
+        _, interaction, space, reason = min(too_big)
+        return False, f"{interaction} ({space} space), the smallest: {reason}"
+    return False, "; ".join(cannot)
+
+
+def _shell_model_test(name: str, levels: tuple) -> tuple:
+    """Whether a shell-model calculation of the levels fits this computer now: the size estimate behind
+    ``estimate_shell_model`` for a request of exactly these states (for 2⁺₁ → 0⁺₁, one 0⁺ and one 2⁺)."""
+    from . import shellmodel_spaces as _spaces
+
+    states: dict = {}
+    for lv in levels:
+        if lv.j2 is None or lv.parity is None:
+            return None, (f"the spin and parity of the level {level_label(lv)} are not known: there is no "
+                          f"calculation to size")
+        states[(lv.j2, lv.parity)] = max(states.get((lv.j2, lv.parity), 0), lv.ordinal or 1)
+    try:
+        free = _spaces.available_memory_bytes()
+    except OSError as e:
+        return None, f"the memory free on this computer could not be read ({e}): the size is not tested"
+    try:
+        return _shell_model_fit(name, tuple(sorted((j2, p, n) for (j2, p), n in states.items())),
+                                int(free // 1024**3))
+    except (ValueError, KeyError, OSError) as e:
+        return None, f"the size of a shell-model calculation could not be estimated ({e})"
+
+
+def applies(nuclide: str, observable: str, key, route, rows: Optional[list] = None,
+            via: Optional[dict] = None) -> tuple:
+    """Whether a route applies to this nucleus: (True, False, or None for "not tested"; the reason in a line).
+
+    Only tests the code already has are made, and the reason says which:
+
+    - a route that needs the nucleus as a **target or a beam** (Coulomb excitation; photon, neutron and electron
+      scattering, which need a target): True for a nucleus of the natural element or one ENSDF marks stable
+      (:func:`stability`). For another nucleus nothing in the code says how long-lived a target must be or which
+      beams exist: None, with the half-life;
+    - the **Coulex yield** (first order) is of the excitation from the ground state, as the setup's
+      ``[reaction]`` is: False for a transition between excited states; and a τ by Coulomb excitation needs the
+      level's one γ ray (:func:`decay`);
+    - a **lifetime** by a plunger or by DSAM: whether the level's τ is in the range physim plans the method for
+      (:func:`physim.nuclear.lifetime_plan.method_for`), with the evaluated τ of ``rows`` or the best measured
+      one; None without a τ;
+    - the **shell model**: whether a calculation of exactly these states fits this computer now
+      (:func:`physim.nuclear.shellmodel_spaces.estimate`, half of the RAM free); False where no interaction
+      physim has holds the nucleus;
+    - the **evaluation**: whether the local ENSDF copy has adopted levels for the nucleus;
+    - Q_s of a level of spin 0 or 1/2 does not exist, by any route.
+
+    A kind of experiment physim does not have yet (inelastic scattering, transfer) and a moment measurement have
+    no test: None, and the reason says that nothing is checked. ``rows`` are the nucleus's rows that hold now
+    (converted ones among them, ``via`` saying what each was made from). :func:`routes` puts the answer in each
+    route as "applies" and "reason".
     """
-    return None, ""
+    name = results.nuclide_name(nuclide)
+    o = observables.get(observable)
+    try:
+        k = key if isinstance(key, (LevelKey, TransitionKey)) else key_of(name, observable, key, check=False)
+    except ValueError as e:
+        return None, f"the {o.belongs_to} could not be read ({e}): nothing is tested"
+    transition_ = k if isinstance(k, TransitionKey) else None
+    level_ = k.initial if transition_ is not None else k  # the level that decays: its τ is what a lifetime is of
+    if observable == "Qs" and level_.spin is not None:
+        try:
+            observables.diagonal_matrix_element(1.0, level_.spin)
+        except ValueError as e:
+            return False, str(e)
+    if route.method == "evaluation":
+        if not ensdf.available():
+            return None, "there is no local copy of ENSDF (scripts/fetch_ensdf.py): not tested"
+        found = adopted_scheme(name)
+        if found is None:
+            return False, f"the local ENSDF copy has no adopted levels for {name}"
+        return True, (f"the local ENSDF copy has the adopted levels of {name} ({found[0].reference}, data set of "
+                      f"{found[0].date}); the snapshot takes them")
+    if route.method == "shell-model":
+        return _shell_model_test(name, (transition_.initial, transition_.final) if transition_ else (level_,))
+    if route.kind == "lifetimes":
+        return _lifetime_test(level_, route.method, rows, via)
+    if route.kind == "coulex":
+        if transition_ is None and observable == "tau":  # a τ from a B(E2): through the level's one γ ray
+            transition_, _, why = decay(name, level_)
+            if transition_ is None:
+                return None, f"τ from a Coulex B(E2) is not converted here: {why}"
+        if route.method == "coulex-yield" and transition_ is not None and _is_ground(transition_.final) is False:
+            return False, ("the yield analysis is of the excitation from the ground state (the setup's "
+                           "[reaction]); a transition between excited states needs the fit to all orders")
+        return _target_test(name, beam_too=True)
+    if route.method in ("nrf", "inelastic-neutron", "electron-scattering"):
+        return _target_test(name, beam_too=False)
+    if route.kind is not None and not route.live:
+        from .workbench import KINDS
+
+        kind = next(x.label for x in KINDS if x.key == route.kind)
+        return None, f"physim has no {kind[0].lower() + kind[1:]} yet: nothing is tested for this route"
+    return None, "physim has no test for this route: nothing is checked"
 
 
-def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[dict] = None) -> list:
+def routes(nuclide: str, observable: str, key: str, rows: list, via: Optional[dict] = None,
+           every: Optional[list] = None, tests: bool = True) -> list:
     """The registry's routes to an observable, each with what it is for this level or transition.
 
     ``rows`` are the rows of the observable and key that hold now (converted ones among them, with ``via`` saying
-    what each was made from: a B(E2) made from a DSAM lifetime counts for the DSAM route). Each route is a dict:
+    what each was made from: a B(E2) made from a DSAM lifetime counts for the DSAM route). ``every`` are all the
+    nucleus's rows that hold now, for the tests of :func:`applies` (the level's τ is among them; ``rows`` when
+    left out); with ``tests`` False no test is made and every route has "applies" None (a table of many rows
+    needs the status only). Each route is a dict:
     "method" and "label", "kind" and "kind_label" (the kind of experiment that plans it, or None), "note", "status"
     (:data:`DONE`: an independent row by that method holds now; :data:`ONLY_PROJECTED`: only simulated runs
     by that method hold, so nothing is measured yet; :data:`IN_PHYSIM`: physim has that kind of experiment;
