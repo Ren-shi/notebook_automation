@@ -188,6 +188,11 @@ The result has `points` per distance (the unshifted and shifted shares, their er
 (the fitted curve, or the fitted line shape), a `budget` (statistics, distance, velocity, feeding, stopping) and
 `notes` that say what was assumed.
 
+`Planner.analyse_lifetimes` also writes τ, and the B(E2)↓ derived from it, as projected rows to `results.jsonl` in
+the experiment's folder (see {doc}`results`), and keeps the last analysis as `lifetime.json`, which
+`Planner.kept_lifetimes()` returns after the app is opened again. In the app, the Analysis step sets τ and the B(E2)
+beside what is known about the nucleus (see {doc}`planner-app`).
+
 ## The examples
 
 Three example setups reproduce published measurements (their numbers and validation status are in the

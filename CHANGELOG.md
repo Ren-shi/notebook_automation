@@ -11,22 +11,67 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
-- The data layer of the results pages (wave 0; nothing is visible in the app yet and no number it computes changes).
-  `physim.nuclear.results` is a ledger with one row per result: one value of one observable of one nucleus by one
-  method, with its uncertainty (stat and sys, one total, or asymmetric), the method, the evidence (measured,
-  evaluated, theory, outside program, or projected: a simulated run analysed back, which carries the value the
-  simulation was given), where it came from, what it depends on and which row it supersedes. Rows are appended to
-  JSON-lines files and never rewritten: `results.jsonl` in an experiment's folder, and
-  `<nuclei home>/<nuclide>/points.jsonl` (`$PHYSIM_NUCLEI`, or `nuclei` beside the experiments) for rows that belong
-  to no experiment. A level has one name (nuclide, Jπ and ordinal, anchored to the ENSDF level within 2 keV;
-  "62Ni:2+1") and so has a transition ("62Ni:2+1>0+1:E2"), with helpers from a scheme index, a level name, a
-  shell-model state and the `[reaction]` energy. `results.backfill` makes projected rows from the `analysis.json`
-  files runs already hold (not called by the app). `physim.nuclear.observables` is the registry of B(E2), τ, Q_s and
-  level energies: the canonical convention (B(E2)↑ in e²fm⁴; Weisskopf units always ↓), the routes that reach each
-  and the conversions, which call existing functions only. `physim.nuclear.compare` puts the rows of one observable
-  of one transition beside a reference: difference, ratio, pull and a verdict by a fixed rule (|pull| < 2 agree, 2–3
-  tension, above 3 differ), rows that are not independent flagged, and projected rows apart (closure against the
-  given value; the precision reached beside what is known). What needs new formulas is backlog 76.
+- Results and comparison: every result is a row, and the nucleus is a level above the experiments. No number the
+  app computes has changed: the rows store the numbers the analyses already gave, and the conversions call the
+  functions the code already had (see `docs/results.md`). The one printed number that differs is in a text: the
+  record's "lifetime" explanation (below).
+  - The results ledger (`physim.nuclear.results`): one row per result, one value of one observable of one nucleus
+    by one method, with its uncertainty (one total, stat and sys, or plus and minus), the method, the evidence,
+    where it came from, what it depends on and which row it supersedes. The evidence is in two groups that are
+    never mixed: independent (measured, evaluated, theory, outside program) and projected (a simulated run analysed
+    back, which carries the value its simulation was given). Rows are appended to JSON-lines files and never
+    rewritten: `results.jsonl` in an experiment's folder, and `<nuclei home>/<nuclide>/points.jsonl`
+    (`$PHYSIM_NUCLEI`, or `nuclei` beside the experiments) for rows that belong to no experiment. A level has one
+    name (nuclide, Jπ and ordinal, anchored to the ENSDF level within 2 keV: "62Ni:2+1") and so has a transition
+    ("62Ni:2+1>0+1:E2").
+  - The registry of observables (`physim.nuclear.observables`): B(E2), τ, Q_s, B(M1), μ and level energies, each with
+    its convention (B(E2)↑ in e²fm⁴; Weisskopf units always ↓), the routes that reach it and whether each applies to
+    a nucleus (stable enough for a target or beam, τ in a plunger's or DSAM's range, a shell-model calculation that
+    fits this computer), what a value gives and what it is used for, with references. The comparison engine
+    (`physim.nuclear.compare`) sets the rows of one observable beside a reference: difference, pull and a verdict by
+    a fixed rule (|pull| < 2 agree, 2–3 tension, above 3 differ; no uncertainty, no verdict), rows that share a
+    source with the reference flagged, and projected rows apart, each closed against the value its simulation was
+    given, with "this setup reaches ±x %; the value is known to ±y %". Checks between observables: E(4⁺)/E(2⁺),
+    B(E2; 4→2)/B(E2; 2→0), the rotor's Q_s from B(E2) beside the measured one, a calculation over the evaluated
+    value.
+  - The planner writes the ledger. A Coulex analysis of a run, a lifetime analysis (τ is saved at last, with the
+    B(E2) that depends on it) and a fit of matrix elements to all orders each append projected rows to the
+    experiment's `results.jsonl`; a new analysis supersedes the row that stood and an identical one adds nothing.
+    Shell-model level energies, B(E2), B(M1), Q_s and μ are copied as theory rows into the nucleus's own ledger
+    whenever a result is read or applied, so cleaning the job cache cannot lose them. An experiment from before the
+    ledger is backfilled when it is opened. The last lifetime analysis is kept as `lifetime.json`
+    (`Planner.kept_lifetimes()`). A ledger that cannot be written never fails an analysis.
+  - The nucleus store (`physim.nuclear.nucleus`): ENSDF's adopted values as evaluated rows (`snapshot_evaluation`),
+    data points with their uncertainty, method and reference or "own measurement" (`add_data_point`; corrections
+    and retractions are new rows, nothing is deleted), data points read from a JSON or CSV file or from the
+    literature file of a nucleus (`import_points`, which says what was added, already there and refused), and the
+    nuclei and one nucleus as plain data. A fusion-evaporation experiment belongs to the residue of the channel its
+    setup marks as studied.
+  - The planner opens on the nuclei: each with its experiments, what is known and projected about it and what is
+    still open. A nucleus has a page of its own (`/?nucleus=62Ni`): its observables by evaluated, measured, theory and
+    projected; for one of them every value side by side with its method in words, the independent evidence against
+    the reference and the simulated runs apart; the plot; the routes, with "Plan it" where physim has the kind of
+    experiment; what the value gives, the checks and what it is used for; a form for data points and "Import points
+    from a file"; the history; and "Report for this nucleus", a report of the nucleus across its experiments
+    (`logbook.nucleus_html`). "Start from a kind of experiment" is the start page as it was.
+  - An experiment's screens show its results beside what is known. The rail names the nucleus the experiment
+    studies and links to its page, and shows τ for a lifetime experiment. Under a Coulex B(E2), a τ and the B(E2)
+    that follows from it, "Beside what is known" gives the comparison in short and links to the nucleus's page. A
+    lifetime analysis is shown again after the app is reopened. Fusion-evaporation and elastic-scattering
+    experiments lead to the report instead of to an analysis physim does not have.
+  - The report of an experiment leads with the results: the result with its statistical and systematic
+    uncertainties, method and runs; the result beside the other routes, the same rows and route states as the
+    nucleus page; the comparisons still to run; what limits it; and what it means. What the report held before
+    follows as appendices A to H. Every B(E2) carries ↑ or ↓ and Weisskopf units are always ↓; values and
+    uncertainties have matching decimals without exponent forms; a failing check in the models table comes with
+    its reason; a fusion-evaporation experiment is no longer titled "elastic scattering". One printed number
+    differs: the record's "lifetime" explanation takes B↑/B↓ from the spins instead of dividing by 5 (the same for
+    0⁺ → 2⁺; left out where the spins are not known).
+  - Seven MCP tools that need no open experiment: `list_nuclei`, `list_results`, `snapshot_evaluation`,
+    `add_data_point`, `retract_data_point`, `compare_results` and `import_data_points`.
+  - What would need a new formula (effective charges, B(E2) from E(2⁺), sum rules, the uncertainty of the checks)
+    is backlog 76. The planner page of the docs describes the app as it now is: the nuclei, the page of a nucleus,
+    the kinds, the lifetime and shell-model parts.
 - A reproduced Coulomb-excitation experiment in the validation (Allmond 2014 verification, fix wave 3, S6): Allmond et al., PRC 90, 034309 (2014), ⁶²Ni at 111.6 MeV on carbon, as the example `coulex_ni62_c_allmond` and the check `reproduction_allmond2014` (`physim.nuclear.coulex_reproduction`, `scripts/reproduce_allmond2014.py`; the paper's numbers, the GOSIA references and the bands in `tests/reference/nuclear/coulex/allmond2014.toml`). The thickness gives the measured ⁵⁸Ni/⁶⁰Ni losses; σ_C/σ_R per ring within 0.2% of GOSIA with nuclear masses and DIP off and 1.3% of GOSIA as run (outside its 1%: a known, explained miss, see below); closure; the paper's per-ring B(E2), rebuilt through GOSIA's ratio(M) (the paper gives no yields), recovered 1.2–1.3% low, inside its 4.1%; the Q_s and feeding sensitivities within 0.25 percentage points of GOSIA's.
 - Outside programs run out of sight (`physim.external`): GOSIA, SRIM's SR Module and TRIM, PACE4 and GEMINI++
   start on a hidden Windows desktop with no console window, so nothing shows or takes the focus, and in a job

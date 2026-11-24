@@ -107,7 +107,10 @@ The two rules are written into the tools' descriptions, which is what the model 
 
 ## From the app
 
-A **Shell model** panel beside the level scheme runs and applies calculations in the planner app (being added).
+The panel **Shell model: calculate or import the levels of …**, beside the level scheme of the target and of the
+beam, runs, imports and applies calculations in the planner app (see {doc}`planner-app`). Every result read or
+applied is also copied into the nucleus's own results as theory rows (level energies, B(E2), B(M1), Q_s and μ),
+so it stays on the nucleus's page after the job cache is cleaned (see {doc}`results`).
 
 ## Interactions
 

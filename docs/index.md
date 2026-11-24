@@ -25,6 +25,7 @@ guide
 new-ideas
 nuclear-setup
 planner-app
+results
 shell-model
 lifetimes
 ```
