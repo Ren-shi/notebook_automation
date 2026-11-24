@@ -10,7 +10,7 @@ It is the same interface as first order, so everything built on :class:`~physim.
 
     cc = CoupledChannels("16O", "194Pt", "60 MeV", scheme, excite="target")
     state = cc.at(150.0)                      # populations and tensors with all orders
-    cc.cross_sections()                       # mb per level and per γ ray
+    cc.cross_sections()                       # mb per level (in one step or several) and per γ ray
 
 **The equations.** In the orbit's frame (see :mod:`physim.nuclear.orientation`), with the orbit written as
 r = a(ε cosh w + 1), t = (a/v)(ε sinh w + w),
@@ -26,8 +26,10 @@ Each pair of levels has its own symmetrised orbit (Alder and Winther; GOSIA's PS
 β_nm = √(β_n β_m), so that K_λ,nm ∝ [(E_cm − E_n)(E_cm − E_m)]^((2λ−1)/4), with E_n above the ground state. A diagonal
 element so acts at the speed the nucleus has in its level. Every level that a matrix element joins to the ground state
 is then first order exactly where the coupling is weak (:mod:`physim.nuclear.orientation` gives each its own orbit).
-:attr:`CoupledChannels.a` and ``beta`` are the orbit of the ground state and a reference level, which the collision's
-kinematics and Rutherford factor follow; the equations don't depend on it, as they are in units of a pair's own a.
+:attr:`CoupledChannels.a`, ``beta`` and ``cx`` are the orbit of the ground state and a reference level; the equations
+don't depend on it, as they are in units of a pair's own a. :mod:`physim.nuclear.multistep` takes its kinematics and
+Rutherford factor for every level, as GOSIA does with its NCM level; :meth:`CoupledChannels.cross_sections` takes each
+level's own v_f.
 
 The equations are integrated by a fourth-order Runge–Kutta scheme in w, with steps that follow the fastest phase,
 from where the coupling is negligible on the way in to where it is on the way out. The probabilities of all
@@ -81,7 +83,7 @@ class CoupledChannels(Excitation):
         self.basis = [(n, m) for n in self.included for m in _ms(float(levels[n].spin))]
         self._index = {b: i for i, b in enumerate(self.basis)}
         self._level_slices = {n: [i for i, (k, _) in enumerate(self.basis) if k == n] for n in self.included}
-        # The kinematics and the Rutherford factor: those of the reference level, on the orbit symmetrised between it
+        # The reference level's kinematics and Rutherford factor (for multistep), on the orbit symmetrised between it
         # and the ground state.
         self.reference = reference if reference is not None else (min(self.paths) if self.paths else None)
         if self.reference is None or self.reference not in self.paths:
@@ -369,6 +371,13 @@ class CoupledChannels(Excitation):
         """{level: density matrix} after the collision, excited levels only (the ground state's population is
         not a yield)."""
         return self._densities(self.solve(theta_cm))
+
+    def _rutherford(self, theta_cm) -> dict:
+        """As in first order, the elastic Rutherford cross section times v_i/v_f with each level's own v_f, of every
+        excited level of the coupling, whether one step or several reach it."""
+        elastic = np.asarray(self.cx.elastic_rutherford_cm(theta_cm))
+        return {n: elastic * (self._beta_level[self.ground] / self._beta_level[n]) for n in self.included
+                if n != self.ground}
 
     def second_order_check(self, level: int, theta_cm: float) -> tuple:
         """For the tests: the first- and second-order perturbation amplitudes of ``level`` from the ground state,

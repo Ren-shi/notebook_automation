@@ -149,6 +149,14 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- `CoupledChannels.cross_sections` holds every excited level the collision populates, each with its own v_i/v_f, as it
+  said. It went over the levels a matrix element joins to the ground state, so those reached in two steps had no
+  "direct" cross section, no γ rays, and no part in the feeding of the levels below. ⁶²Ni in `coulex_ni62_pt194`
+  (233.8 MeV, mid-target): 0⁺₂ 0 → 9.18 mb, 4⁺₁ 0 → 18.21 mb, 0⁺₃ 0 → 0.017 mb; the 2⁺₁ with feeding 854.2 → 881.6 mb,
+  as its γ ray. Nothing else moves: the app's table of levels is first order's, and the rates, the events and
+  `Multistep.yields` take the populations themselves. `docs/theory/coulex.md` says which v_f each of them takes (each level's
+  own only in `cross_sections`; the reference level's in `Multistep.yields`, the `[reaction]` state's in the rates and
+  the events), where it gave the all-orders yields each level's own.
 - Coupled equations: each pair of levels has the orbit symmetrised between its own two speeds (Allmond 2014 verification,
   second fix plan, wave 6, S9). `CoupledChannels` took the orbit of the ground state and the reference level (the first
   2⁺) for the coupling of every pair; Alder and Winther, first order and GOSIA take the pair's own, K_λ,nm ∝
