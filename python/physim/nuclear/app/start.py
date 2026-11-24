@@ -112,7 +112,7 @@ def nuclei_page(ctx) -> None:
                          "worth planning.").classes("text-sm ps-muted").style("max-width: 78ch")
             ui.space()
             if ctx.close_start is not None:
-                ui.button("Back to the experiment", icon="arrow_back", on_click=ctx.close_start).props(
+                ui.button("Back to the experiment", icon="arrow_back", on_click=lambda: tn.close(ctx)).props(
                     "flat no-caps").classes("ps-muted")
             ui.button("Start from a kind of experiment", on_click=lambda: tn.plan(ctx, None)).props(
                 "outline no-caps")
@@ -233,7 +233,7 @@ def kinds_page(ctx) -> None:
                          "afterwards.").classes("text-sm ps-muted").style("max-width: 70ch")
             ui.space()
             if ctx.close_start is not None:
-                ui.button("Back to the experiment", icon="arrow_back", on_click=ctx.close_start).props(
+                ui.button("Back to the experiment", icon="arrow_back", on_click=lambda: tn.close(ctx)).props(
                     "flat no-caps").classes("ps-muted")
             ui.button("The nuclei", icon="arrow_back", on_click=lambda: leave(None)).props("outline no-caps").tooltip(
                 "The nuclei, each with its experiments and what is known about it")
@@ -285,12 +285,14 @@ def kinds_page(ctx) -> None:
 
 
 def filled_for(k, nuclide) -> dict:
-    """What the form of the kind ``k`` starts with for an experiment that a nucleus asked for: the nucleus in the
-    field of the nucleus that is excited (the beam, which the first templates of Coulomb excitation and of the
-    lifetimes excite), where the form has that field. Everything else is the kind's own default; nothing is
-    computed. Empty for a kind whose form has no such field, and without a nucleus."""
+    """What the form of the kind ``k`` starts with for an experiment that a nucleus asked for: the nucleus as the
+    one that is excited, where the form has that field (as the beam, or as the target where it is the kind's own
+    target). Everything else is the kind's own default; nothing is computed. Empty for a kind whose form has no
+    such field, and without a nucleus."""
     if not nuclide or k.key not in ("coulex", "lifetimes"):
         return {}
+    if nuclide == k.defaults[2]:
+        return {"target": nuclide, "excite": "target"}
     return {"beam": nuclide, "excite": "beam"}
 
 
@@ -311,9 +313,10 @@ def kind_form(ctx, k) -> None:
             ui.button("Change the kind", on_click=lambda: (st.update(kind=None), ctx.refresh_start())).props(
                 "flat no-caps dense")
         if nuclide:
-            ui.label((f"{nuclide} is filled in as the beam, the nucleus that is excited. The energy, the target and "
-                      f"its thickness are this kind's usual ones: set them for {nuclide} (the Setup step says "
-                      f"whether the energy is safe). To excite it as the target instead, swap the two."
+            as_, other = ("target", "beam") if filled.get("excite") == "target" else ("beam", "target")
+            ui.label((f"{nuclide} is filled in as the {as_}, the nucleus that is excited. The {other}, the energy and "
+                      f"the target's thickness are this kind's usual ones: set them for {nuclide} (the Setup step "
+                      f"says whether the energy is safe). To excite it as the {other} instead, swap the two."
                       if filled else
                       f"This form has no field for the nucleus studied: choose the beam and target that reach "
                       f"{nuclide}.")).classes("text-sm ps-note p-2").style("margin: 10px 12px 0")
@@ -421,4 +424,4 @@ def experiments_table(ctx, found=None, title: str = "Or open an experiment") -> 
             "w-full")
         table.add_slot("body-cell-name", '<q-td :props="props" style="cursor: pointer"><span class="ps-accent">'
                                          '{{ props.value }}</span></q-td>')
-        table.on("rowClick", lambda e: ctx.open_experiment(e.args[1]["path"]))
+        table.on("rowClick", lambda e: tn.open_experiment(ctx, e.args[1]["path"]))

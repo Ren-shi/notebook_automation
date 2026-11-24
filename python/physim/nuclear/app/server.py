@@ -60,7 +60,8 @@ def main(argv: Optional[list] = None) -> None:
 
     ap = argparse.ArgumentParser(prog="physim app", description="Start the experiment planner in the browser.")
     ap.add_argument("--example", default=None,
-                    help="start from this example as a template (default: the most recent experiment)")
+                    help="start from this example as a template (default: the nuclei, with the most recent experiment "
+                         "behind them)")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="127.0.0.1",
                     help="address to listen on (default: this computer only; 0.0.0.0 serves the local network)")

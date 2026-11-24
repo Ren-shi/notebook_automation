@@ -31,6 +31,9 @@ NUCLEUS_STYLE = """
   border-bottom: 1px solid var(--ps-line); }
 .ps-nt td { padding: 6px 10px; border-bottom: 1px solid var(--ps-hair); vertical-align: top; }
 .ps-nt tr:last-child td { border-bottom: 0; }
+.ps-nt th.ps-nt-wrap { white-space: normal; }
+.ps-nt .ps-nt-keep .ps-nt-sub { white-space: nowrap; }
+.ps-nt-box { overflow-x: auto; }
 .ps-nt .ps-nt-num { font-family: var(--ps-mono); font-variant-numeric: tabular-nums; text-align: right;
   white-space: nowrap; }
 .ps-nt tr.ps-nt-group td { background: var(--ps-sunk); font-weight: 600; font-size: 12px; color: var(--ps-muted);
@@ -54,7 +57,7 @@ NUCLEUS_STYLE = """
 .ps-nuc-head { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; padding: 10px 16px;
   border-bottom: 1px solid var(--ps-line); }
 .ps-nuc-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); }
-.ps-nuc-body > div { padding: 10px 16px 12px; min-width: 0; }
+.ps-nuc-body > div { padding: 10px 16px 12px; min-width: 0; overflow-x: auto; }
 .ps-nuc-body > div + div { border-left: 1px solid var(--ps-hair); }
 .ps-nuc-h { font-size: 11px; color: var(--ps-muted); letter-spacing: .04em; margin-bottom: 4px; }
 .ps-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 13px; }
@@ -163,8 +166,15 @@ def method_words(cell: dict) -> str:
     made from ("DSAM (line shape), from τ = 2.01 ± 0.12 ps")."""
     via = cell.get("via")
     if via:
-        return f"{via['method_label']}, from {label_text(via['text'])}"
+        return f"{via['method_label']}, from {words(label_text(via['text']))}"
     return cell["method_label"]
+
+
+def detail_words(cell: dict) -> str:
+    """The line beside the method; for a converted value, with what it was converted (the method says what it was
+    made from already)."""
+    made = re.match(r"from .*? (?=with )", cell["detail"]) if cell.get("via") else None
+    return words(cell["detail"][made.end():] if made else cell["detail"])
 
 
 def stat_sys(value: float, stat: Optional[float], sys: Optional[float], total: Optional[float],
@@ -244,6 +254,12 @@ def _as_typed(key: Optional[str]) -> Optional[str]:
     return None if not key else re.sub(r"(?<=\d) (?=[\d(@])", "+", str(key))
 
 
+def evaluation_taken(name: str) -> bool:
+    """Whether the nucleus's ledger holds the evaluation already (a read of its own small file, before the view)."""
+    points = results.read(results.nucleus_folder(name) / results.POINTS_FILE)
+    return any(nucleus.is_evaluation(r) for r in results.current(points))
+
+
 def load(nuclide: str, observable: Optional[str] = None, key: Optional[str] = None,
          reference: Optional[str] = None, first: bool = True) -> dict:
     """Everything the page of one nucleus shows, read once: {"nuclide", "view", "observable", "notes"}.
@@ -259,18 +275,18 @@ def load(nuclide: str, observable: Optional[str] = None, key: Optional[str] = No
     if first:
         backfill()
     notes = []
-    view = nucleus.view(name)
-    if view["evaluation"]["taken"] is None:
+    if not evaluation_taken(name):
         if not ensdf.available():
             notes.append("There is no local copy of ENSDF, so the adopted values are not here to compare with "
                          "(scripts/fetch_ensdf.py fetches it).")
         else:
             try:
                 taken = nucleus.snapshot_evaluation(name)
-                if taken["added"] or taken["superseded"]:
-                    view = nucleus.view(name)
+                if not taken["added"] and not taken["unchanged"]:
+                    notes.append(f"The local copy of ENSDF has no adopted value of {name}.")
             except (ensdf.EnsdfMissing, ValueError, OSError) as e:
                 notes.append(f"The adopted values of ENSDF could not be taken: {e}")
+    view = nucleus.view(name)
     return {"nuclide": name, "view": view, "notes": notes,
             "observable": load_observable(name, view, observable, key, reference, notes)}
 
@@ -458,10 +474,18 @@ def waiting(ui, text: str) -> None:
         ui.label(text).classes("text-sm ps-muted")
 
 
+def show_from_top(ctx) -> None:
+    """Build the start page again and show it from its top. The client is taken first: the button that asked for
+    it is gone with the page it was on."""
+    client = ctx.ui.context.client
+    ctx.refresh_start()
+    client.run_javascript("window.scrollTo({top: 0})")
+
+
 def open_nuclei(ctx) -> None:
     """Show the nuclei screen."""
     ctx.state["start"].update(view="nuclei")
-    ctx.refresh_start()
+    show_from_top(ctx)
 
 
 def open_nucleus(ctx, nuclide: str, observable: Optional[str] = None, key: Optional[str] = None) -> None:
@@ -473,18 +497,29 @@ def open_nucleus(ctx, nuclide: str, observable: Optional[str] = None, key: Optio
         return
     ctx.state["start"].update(view="nucleus", nucleus=name, observable=observable, key=key, reference=None,
                               point=None, point_problems=[])
-    ctx.refresh_start()
-    ctx.ui.run_javascript("window.scrollTo({top: 0})")
+    show_from_top(ctx)
 
 
-def plan(ctx, nuclide: str, kind: Optional[str] = None) -> None:
+def open_experiment(ctx, path: str):
+    """Open an experiment, as the list of experiments always did. The start page is the nuclei again when it is
+    shown next."""
+    ctx.state["start"].update(view="nuclei")
+    return ctx.open_experiment(path)
+
+
+def close(ctx) -> None:
+    """Back to the open experiment; the start page is the nuclei again when it is shown next."""
+    ctx.state["start"].update(view="nuclei")
+    ctx.close_start()
+
+
+def plan(ctx, nuclide: Optional[str], kind: Optional[str] = None) -> None:
     """Today's new-experiment form for a kind of experiment (the kinds to pick from when none is named), with the
     nucleus filled in where the form has a field for it (:func:`.start.kind_form`). Nothing is computed."""
     st = ctx.state["start"]
     st.update(view="kinds", kind=kind, for_nucleus=nuclide)
     st.pop("values", None)
-    ctx.refresh_start()
-    ctx.ui.run_javascript("window.scrollTo({top: 0})")
+    show_from_top(ctx)
 
 
 def _table(ui, head: tuple, numeric: tuple = ()):
@@ -494,7 +529,8 @@ def _table(ui, head: tuple, numeric: tuple = ()):
     with table:
         with ui.element("tr"):
             for i, text in enumerate(head):
-                with ui.element("th").classes("ps-nt-num" if i in numeric else ""):
+                with ui.element("th").classes(("ps-nt-num" if i in numeric else "")
+                                              + (" ps-nt-wrap" if len(text) > 14 else "")):
                     ui.label(text)
     return table
 
@@ -531,13 +567,15 @@ def experiments_table(ctx, experiments: list, display: Optional[str] = None) -> 
     """The experiments of a nucleus: name, kind, runs and the latest result or "not analysed". A row opens the
     experiment, as the list of experiments always did."""
     ui = ctx.ui
+    names = [x["name"] for x in experiments]
     with _table(ui, ("Experiment", "Kind", "Runs", "Latest result"), numeric=(2, 3)):
         for x in experiments:
             row = ui.element("tr").classes("ps-nt-click")
-            row.on("click", lambda path=x["path"]: ctx.open_experiment(path))
+            row.on("click", lambda path=x["path"]: open_experiment(ctx, path))
             with row:
-                _td(ui, x["name"], "" if x["role"] == "studied" else (
-                    "as the partner" if x["role"] == "partner" else "results only"), colour="ps-accent")
+                _td(ui, x["name"], [x["folder"] if names.count(x["name"]) > 1 else "",
+                                    {"studied": "", "partner": "as the partner"}.get(x["role"], "results only")],
+                    colour="ps-accent")
                 with ui.element("td"):
                     ui.label(x["kind_label"] or "").classes("ps-tag")
                 _td(ui, f"{x['runs']} run{'s' * (x['runs'] != 1)}", classes="ps-nt-num")
@@ -608,7 +646,7 @@ def render(ctx) -> None:
             ui.label("▸ " + nuclide_text(name)).classes("text-sm ps-muted")
             ui.space()
             if ctx.close_start is not None:
-                ui.button("Back to the experiment", icon="arrow_back", on_click=ctx.close_start).props(
+                ui.button("Back to the experiment", icon="arrow_back", on_click=lambda: close(ctx)).props(
                     "flat no-caps").classes("ps-muted")
         body = ui.column().classes("w-full gap-3")
     with body:
@@ -642,6 +680,7 @@ def render(ctx) -> None:
         if body.is_deleted:
             return
         held.update(observable=found, notes=notes)
+        st["reference"] = reference
         fill()
 
     def fill() -> None:
@@ -708,8 +747,9 @@ def _page(ctx, held: dict, reload, choose, redraw) -> None:
         with ui.element("div").classes("ps-readout"):
             ui.label("Still open").classes("text-xs ps-muted")
             ui.label(str(len(view["open"]))).classes("ps-readout-value" + (" ps-warn" if view["open"] else ""))
-            ui.label("routes physim can plan, runs to analyse" if view["open"] else "nothing").classes(
-                "text-xs ps-muted")
+            kinds = {"route": "routes physim can plan", "runs": "runs to analyse", "evaluation": "the evaluation"}
+            ui.label(", ".join(dict.fromkeys(kinds.get(o["what"], o["what"]) for o in view["open"]))
+                     or "nothing").classes("text-xs ps-muted")
 
     _observables(ctx, view, ov, choose, redraw)
     if ov is None:
@@ -741,7 +781,7 @@ def _panel(ui, title: str, sub: str = ""):
             ui.label(title)
             if sub:
                 ui.label(sub).classes("ps-muted text-sm")
-        return head, ui.element("div")
+        return head, ui.element("div").classes("ps-nt-box")
 
 
 def _observables(ctx, view: dict, ov: Optional[dict], choose, redraw) -> None:
@@ -778,7 +818,7 @@ def _observables(ctx, view: dict, ov: Optional[dict], choose, redraw) -> None:
                         "ps-nt-click" + (" ps-nt-on" if (t["observable"], t["key"]) == on else ""))
                     row.on("click", lambda t=t: choose(t["observable"], t["key"]))
                     with row:
-                        _td(ui, label_text(t["label"]), colour="font-medium")
+                        _td(ui, label_text(t["label"]), colour="font-medium").style("white-space: nowrap")
                         _td(ui, cell_text(t["evaluated"], display) if t["evaluated"] else "—",
                             as_given(t["evaluated"]) and "given as " + as_given(t["evaluated"])
                             if t["evaluated"] else "", classes="ps-nt-num")
@@ -829,8 +869,9 @@ def _comparison(ctx, held: dict, reload, choose, redraw) -> None:
     with body:
         # -- independent: measured, evaluated, theory, outside program, each against the reference
         value_head = f"{c.label} ({unit_text(unit)})"
-        with _table(ui, ("Source", "Method", value_head, "Known to", "Difference", "Pull", "Verdict", ""),
-                    numeric=(2, 3, 4, 5)):
+        with ui.element("div").classes("ps-nt-box"), _table(
+                ui, ("Source", "Method", value_head, "Known to", "Difference", "Pull", "Verdict", ""),
+                numeric=(2, 3, 4, 5)):
             _group(ui, "INDEPENDENT · " + ("against the reference: " + cells[ref.id]["source"] if ref is not None
                                              else "no reference yet: pick a row to compare against"), 8)
             for evidence in INDEPENDENT_ORDER:
@@ -845,7 +886,7 @@ def _comparison(ctx, held: dict, reload, choose, redraw) -> None:
                                                  "◦ not independent of the reference"
                                                  if e.independent_of_reference is False else ""])
                         given = as_given(cell)
-                        _td(ui, method_words(cell), [cell["detail"],
+                        _td(ui, method_words(cell), [detail_words(cell),
                                                      f"given as {given}: {words(cell['converted'])}"
                                                      if given and not cell.get("via") else "", cell["problem"]])
                         _td(ui, shown(e.value, e.plus, e.minus, factor=factor), classes="ps-nt-num")
@@ -871,7 +912,7 @@ def _comparison(ctx, held: dict, reload, choose, redraw) -> None:
                  f"◦ not independent of the reference: the two share a source, so their agreement is no test."
                  ).classes("text-xs ps-muted").style("padding: 8px 12px; line-height: 1.5")
         # -- projected: simulated runs analysed back, apart, each against what its simulation was given
-        with ui.element("div").style("border-top: 1px solid var(--ps-line)"):
+        with ui.element("div").classes("ps-nt-box").style("border-top: 1px solid var(--ps-line)"):
             with _table(ui, ("Simulated run", "Method", f"{c.label} ({unit_text(unit)})", "Given to the simulation",
                              "Closure", "Reaches"), numeric=(2, 3, 5)):
                 _group(ui, "PROJECTED · simulated runs analysed back. Each is closed against the value its "
@@ -883,9 +924,12 @@ def _comparison(ctx, held: dict, reload, choose, redraw) -> None:
                     cell = cells[p.id]
                     with ui.element("tr"):
                         _td(ui, cell["source"])
-                        _td(ui, method_words(cell), cell["detail"])
-                        _td(ui, stat_sys(p.value, p.stat, p.sys, p.total, factor), classes="ps-nt-num")
-                        _td(ui, f"{p.truth * factor:.5g}", classes="ps-nt-num")
+                        _td(ui, method_words(cell), detail_words(cell))
+                        value, _, parts = stat_sys(p.value, p.stat, p.sys, p.total, factor).partition(" ± ")
+                        split = "(" in parts  # the statistical and systematic uncertainty on a line of their own
+                        _td(ui, value if split else f"{value} ± {parts}" if parts else value,
+                            [f"± {x}" for x in parts.split(" ± ")] if split else "", classes="ps-nt-num ps-nt-keep")
+                        _td(ui, f"{p.truth * factor:.4g}", classes="ps-nt-num")
                         text, colour = CLOSURE_TEXT.get(p.closure_verdict, ("no uncertainty", "ps-muted"))
                         _td(ui, f"{text} ({signed(p.closure)}σ)" if p.closure is not None else text, colour=colour)
                         _td(ui, percent(p.reach_percent), classes="ps-nt-num")
@@ -898,8 +942,9 @@ def _row_menu(ctx, name: str, row, cell: dict, reload, redraw) -> None:
 
     def correct() -> None:
         st.update(point=point_of(row), point_problems=[])
+        client = ui.context.client  # the menu is gone once the page is drawn again
         redraw()
-        ui.run_javascript("document.querySelector('.ps-point-form')?.scrollIntoView({behavior: 'smooth'})")
+        client.run_javascript("document.querySelector('.ps-point-form')?.scrollIntoView({behavior: 'smooth'})")
 
     def retract() -> None:
         with ui.dialog() as dialog, ui.card().classes("ps-card").style("min-width: min(480px, 95vw)"):
@@ -1008,10 +1053,9 @@ def _routes(ctx, name: str, ov: dict) -> None:
                 nucleus.IN_PHYSIM: ("in physim", "ps-tag-can"),
                 nucleus.LATER: ("later", "")}.get(status, (status, "")))
             with ui.element("div").classes("ps-route" + (" ps-route-later" if off or status == nucleus.LATER else "")):
-                with ui.row().classes("w-full items-start no-wrap gap-2"):
+                with ui.row().classes("w-full items-start justify-between gap-x-2 gap-y-1"):
                     ui.label(r["label"] if r["method"] != "other" else (r["kind_label"] or r["label"])).classes(
                         "text-sm font-semibold")
-                    ui.space()
                     ui.label(tag).classes("ps-tag " + colour)
                 how = [r["kind_label"] if r["method"] != "other" else "", r["note"]]
                 if any(how):
@@ -1129,8 +1173,9 @@ def _point_form(ctx, name: str, ov: Optional[dict], reload, redraw) -> None:
     corrects a point (a new row that supersedes it)."""
     ui = ctx.ui
     st = ctx.state["start"]
-    if not st.get("point"):
-        st["point"] = blank_point(*((ov["observable"], ov["key"]) if ov is not None else ("B(E2)", "")))
+    blank = blank_point(*((ov["observable"], ov["key"]) if ov is not None else ("B(E2)", "")))
+    if not st.get("point") or st["point"] == st.get("point_blank"):  # nothing typed yet: it follows the row shown
+        st.update(point=dict(blank), point_blank=blank)
     f = st["point"]
 
     def set_(key: str, refresh: bool = False):

@@ -3596,7 +3596,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                                 close_start=None if offer_list else (lambda: show_start(False)))
     if nucleus:  # /?nucleus=62Ni: the page of that nucleus (app/tab_nucleus.py), on a row of its table if named
         state["start"] = {"kind": None, "view": "nucleus", "nucleus": nucleus, "observable": observable, "key": key}
-    if offer_list or nucleus or not (example or template or experiment):  # the nuclei are the first screen
+    if nucleus or not (example or template or experiment):  # the nuclei are the first screen
         show_start(True)
     if not prebuild:
         refresh_results()  # the numbers on the worker, then the panel, the strip and the stages
