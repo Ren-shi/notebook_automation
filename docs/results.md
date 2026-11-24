@@ -122,7 +122,8 @@ direction is converted for the comparison and keeps what it was given as ("given
 
 **A value in Weisskopf units is always the ↓ value** (the decay's), and is marked so. B↑ and B↓ differ by the ratio
 of the spin factors (2J + 1) of the two levels: for 0⁺ → 2⁺, B↑ = 5 × B↓. The page of a nucleus can write B(E2)↑ in
-e²b² instead of e²fm⁴; that changes the display only.
+e²b² instead of e²fm⁴; that changes the display only. (One table does not follow this yet: the matrix elements of a
+level scheme, on the Plan step and in Physics, give B↑ with B↑ over the Weisskopf unit beside it, unmarked.)
 
 **What a value gives.** From the reference value of an observable the page works out B↓, the value in Weisskopf
 units, the size of the matrix element, and τ from B(E2) (or B(E2) from τ) through the γ-ray energy, the branching and
