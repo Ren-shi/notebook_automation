@@ -118,7 +118,9 @@ def test_the_nuclei_screen_and_the_page_of_one_nucleus(lab):
         assert "✓ closes (+0.53σ)" in texts and "884.1" in texts
         assert texts.index("△ tension") < texts.index("PROJECTED · simulated runs") < texts.index("✓ closes")
         assert "This setup reaches ±7.0 %" in texts and "the value is known to ±1.5 %" in texts
-        assert "no local copy of ENSDF" not in texts  # the evaluation is here already
+        # The evaluation is here already, so the page's own note of a missing ENSDF copy is not (a route may
+        # still say that it could not test itself against ENSDF: that is another sentence).
+        assert "There is no local copy of ENSDF, so the adopted values" not in texts
         # Plan it: the new-experiment form of that kind, with the nucleus as the one that is excited.
         _press(user, "Plan it for ⁶²Ni")
         await user.should_see("62Ni is filled in as the beam", retries=100)
