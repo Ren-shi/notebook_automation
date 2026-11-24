@@ -162,8 +162,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
   160 samples (seeds 17001–17160), with the half-life: efficiency × correlation +0.20 ± 0.09, −0.02 ± 0.06,
   −0.04 ± 0.05 %; B(E2) +0.15 ± 0.11, −0.06 ± 0.07, −0.09 ± 0.06 %; area −0.08 ± 0.03, −0.03 ± 0.01, −0.05 ± 0.01 %;
   60 samples without it (17201–17260): B(E2) +0.04 ± 0.17, +0.33 ± 0.10, +0.14 ± 0.08 %. What is left of efficiency ×
-  correlation is the analysis's own: the table's eight points across a ring (0.03 % in the outer ring), and for both
-  rings together the particles it averages over (those with a γ ray: +0.08 %). The closure of `reproduction_allmond2014`
+  correlation is not the orientation: the table's eight points across a ring (0.03 % in the outer ring), for both rings
+  together the particles the analysis averages over (those with a γ ray: +0.08 %), and with the half-life about 0.05 % in
+  the outer ring that is not explained (without it nothing is left, ±0.02 %). The closure of `reproduction_allmond2014`
   is −0.41/−0.29/−0.42 % (it was +0.10/−0.61/−0.49 %), its stored run −0.34/−0.07/−0.16 % (it was +1.7/−0.3/+0.3 %).
   Setups without a level scheme, targets of one slice (as every example with a scheme has), lifetime measurements, the other
   nucleus's γ rays, isotropic emission, the correlation table and the Doppler correction are unchanged. Not changed:
