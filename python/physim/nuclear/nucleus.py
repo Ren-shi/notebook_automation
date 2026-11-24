@@ -800,10 +800,17 @@ def with_converted(nuclide: str, rows: list) -> tuple:
 
     Converted rows are not written to the ledger: they are made each time, say what they were made from and
     depend on it, so the comparison does not count them as independent of their source. The evaluation is not
-    converted (it states its own B(E2) and τ), nor is a row that was itself converted.
+    converted (it states its own B(E2) and τ), nor is a row that was itself converted, nor a row whose partner
+    is in the ledger already: a lifetime analysis writes its B(E2) beside its τ, and the B(E2) depends on the τ.
     """
     out, via = list(rows), {}
     decays: dict = {}
+    observable_of = {r.id: r.observable for r in rows}
+    made_from = {(i, r.observable) for r in rows for i in r.depends_on}
+
+    def linked(row: Row, to: str) -> bool:
+        """Whether the ledger holds a row of ``to`` made from this row, or this row was made from one."""
+        return (row.id, to) in made_from or any(observable_of.get(i) == to for i in row.depends_on)
 
     def decay_of(level_text: str) -> tuple:
         if level_text not in decays:
@@ -816,12 +823,12 @@ def with_converted(nuclide: str, rows: list) -> tuple:
         try:
             if row.observable == "tau":
                 key, inputs, _ = decay_of(row.key)
-                if key is None or key.multipolarity != "E2":
+                if key is None or key.multipolarity != "E2" or linked(row, "B(E2)"):
                     continue
                 new = _compare.convert(row, "B(E2)", key, **inputs)
             elif row.observable == "B(E2)":
                 key, inputs, _ = decay_of(TransitionKey.parse(row.key).initial.text)
-                if key is None or key.text != row.key:
+                if key is None or key.text != row.key or linked(row, "tau"):
                     continue
                 new = _compare.convert(row, "tau", **inputs)
             else:

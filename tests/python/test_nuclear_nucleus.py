@@ -130,6 +130,12 @@ def test_limits_and_unplaced_gamma_rays_are_not_made_into_values(tmp_path, monke
     (_, first), (_, again) = (nucleus.with_converted("62Ni", [kenn])[0] for _ in range(2))
     assert (first.key, first.created, first.code, first.depends_on) == (KEY, kenn.created, kenn.code, (kenn.id,))
     assert first.id == again.id == compare.convert(kenn, "B(E2)", key, **inputs).id
+    # A lifetime analysis writes its own B(E2) beside its τ (the B depends on the τ): neither is converted again.
+    run = results.from_run("62Ni-plunger", "01-beam-24h")
+    tau = results.Row("62Ni", "tau", "62Ni:2+1", 2.0, "ps", "rdds", "projected", stat=0.1, truth=2.08, origin=run)
+    b = results.Row("62Ni", "B(E2)", KEY, 180.0, "e2fm4", "rdds", "projected", direction="down", total=9.0,
+                    truth=176.8, depends_on=(tau.id,), origin=run)
+    assert nucleus.with_converted("62Ni", [tau, b]) == ([tau, b], {})
 
 
 @needs_ensdf
