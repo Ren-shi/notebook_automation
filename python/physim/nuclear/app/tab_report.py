@@ -1,6 +1,8 @@
-"""The Report tab (backlog item 69): the report of the experiment, one document with the setup, the plan, every run
-and its spectra, the gates, the Doppler correction, the analysis and every number explained
-(:mod:`physim.nuclear.logbook`), shown on the page and saved as HTML, as PDF or as a zip with the data."""
+"""The Report tab (backlog item 69): the report of the experiment, one document that leads with the results (the
+result, the result beside the other routes, the comparisons still to run, what limits it, what it means) and keeps
+the setup, the plan, every run and its spectra, the gates, the Doppler correction, the analysis and every number
+explained behind them as appendices (:mod:`physim.nuclear.logbook`), shown on the page and saved as HTML, as PDF or
+as a zip with the data."""
 
 from __future__ import annotations
 
@@ -31,7 +33,12 @@ def experiment_block(ctx) -> None:
     state = ctx.state
     runs = p.runs()
     name = p.experiment_folder.name if p.folder else "experiment"
-    ui.label(f"{p.name}: one report, with everything in it. The setup with its level schemes and warnings; the plan "
+    ui.label(f"{p.name}: one report, and it leads with the results. First the result with its statistical and "
+             "systematic uncertainties, its method and its runs, and whether it is projected from a simulated run; "
+             "then the result beside the other routes to the same quantity, the comparisons still to run, what "
+             "limits it and what it means. (An elastic or fusion-evaporation experiment opens with what it gives: "
+             "rates, residues.)").classes("text-sm ps-muted")
+    ui.label(f"Behind them, as appendices, everything else: the setup with its level schemes and warnings; the plan "
              f"(rates, beam time, kinematics, expected peaks, predicted spectra); the {len(runs)} run"
              f"{'s' * (len(runs) != 1)} with their spectra (each particle detector, the energy against ring with "
              "your gates drawn on it, each γ-ray detector as measured and Doppler-corrected to the top of the "

@@ -35,6 +35,7 @@ import numpy as np
 from . import data
 from .detectors import Array
 from .experiment import Experiment
+from .logbook import note_words, number, plain_numbers, plus_minus, unit_words
 from .paper import JOURNALS, WIDTHS
 from .planner import Planner
 from .rutherford import Rutherford
@@ -137,8 +138,10 @@ LIFETIME_LIMITS = (
      "title": "Static deorientation only",
      "text": "The recoil's alignment fades in vacuum by the static model G_k(t) = α_k + (1 − α_k) e^(−Γ_k t) (Radeck "
              "et al. 2012), with α_k and Γ_k given in the setup. Dynamic deorientation (fluctuating electron "
-             "configurations) and an a-priori calculation of α_k and Γ_k from atomic physics are left out; the "
-             "analysis applies no deorientation correction to the shifted and unshifted intensities.",
+             "configurations) and an a-priori calculation of α_k and Γ_k from atomic physics are left out. The "
+             "analysis corrects the shifted and unshifted intensities with the setup's own α_k and Γ_k where it "
+             "has the alignment (the first excited state's line after Coulomb excitation), and says in its notes "
+             "whether it did.",
      "source": "docs/theory/lifetimes.md (Deorientation); planning, Not in this plan"},
     {"key": "stopping", "affects": ("dsam", "rdds"),
      "title": "Stopping powers",
@@ -184,13 +187,15 @@ def _commit() -> str:
 
 
 def _fmt(x, digits: int = 4) -> str:
+    """A number of a table: ``digits`` significant figures, and no exponent form for ordinary sizes
+    (:func:`physim.nuclear.logbook.number`)."""
     if x is None:
         return "—"
     if isinstance(x, (int, np.integer)):
         return str(int(x))
     if isinstance(x, float) and not math.isfinite(x):
         return "∞" if x > 0 else "—"
-    return f"{x:.{digits}g}"
+    return number(float(x), digits)
 
 
 def _hours(seconds) -> str:
@@ -372,7 +377,8 @@ class Report:
             return "\n".join(out + ["</tbody></table>"])
 
         level_class = {"error": "err", "warning": "warn", "note": "note"}
-        warn_html = "".join(f'<li class="{level_class[lv]}">{e(text)}</li>' for lv, text in self.warnings) \
+        warn_html = "".join(f'<li class="{level_class[lv]}">{e(plain_numbers(text))}</li>'
+                            for lv, text in self.warnings) \
             or "<li>None.</li>"
         setup_rows = [
             ("Beam", f"{b.nuclide}, {b.energy} ({_fmt(b.energy_mev)} MeV), {b.current}"
@@ -390,7 +396,7 @@ class Report:
             det_rows.append((row["detector"], setup_det.shape, f"{row['theta_min_deg']:.1f}–{row['theta_max_deg']:.1f}",
                              f"{row['phi_min_deg']:.1f}–{row['phi_max_deg']:.1f}", _fmt(row["solid_angle_msr"]),
                              _fmt(row["dsigma_domega_lab_mb_sr"]), _fmt(row["rate_per_s"]),
-                             f"{_fmt(row['mc_rate_per_s'])} ± {_fmt(row['mc_rate_error_per_s'], 2)}",
+                             plus_minus(row["mc_rate_per_s"], row["mc_rate_error_per_s"]),
                              _fmt(row["counts_in_run"]), _hours(row["beam_time_s"])))
         peak_rows = [(p["detector"], p["channel"], p["particle"] + (" (2nd)" if p["branch"] == 2 else ""),
                       f"{p['mean_MeV']:.4f}", f"{p['fwhm_keV']:.1f}", _fmt(p["rate_per_s"]),
@@ -398,9 +404,16 @@ class Report:
         loss_rows = [(r["layer"], r["material"], _fmt(r["thickness_mg_cm2"]), f"{r['energy_in_mev']:.4f}",
                       f"{r['energy_out_mev']:.4f}", f"{r['loss_mev'] * 1e3:.1f}", f"{r['straggling_fwhm_mev'] * 1e3:.1f}")
                      for r in self.energy_loss["layers"]]
-        mark = {"pass": "✅", "pending": "🟡", "fail": "❌", "none": "—", "unchecked": "see register",
+        mark = {"pass": "✅", "pending": "🟡", "fail": "❌ fails", "none": "—", "unchecked": "see register",
                 "known": "❌ known failure"}
         reg_rows = [(r["capability"], mark[r["tool"]], mark[r["literature"]]) for r in self.register]
+        why = "".join(
+            f"<li><b>{e(r['capability'])}</b>, against {e(x['checker'])}: "
+            + ("a known failure, a disagreement the register documents with its tolerance kept. " if x["known"]
+               else "fails, and is not among the failures the register documents. ")
+            + f"Tolerance: {e(x['tolerance'])}. Found: {e(note_words(x['detail'] or 'no detail given'))}.</li>"
+            for r in self.register for x in r.get("failed", []))
+        why = f"<p>Why a model is marked ❌:</p><ul>{why}</ul>" if why else ""
         m = self.meta
         what = {"all": "counts", "excitations": "Coulomb-excitation events",
                 "coincidences": "particle–γ coincidences from Coulomb excitation"}[self.planner.rates()["measured"]]
@@ -441,10 +454,12 @@ angle, at the beam energy in the middle of the target. {e(counts_note)}</p>""",
 <figcaption>Measured-energy spectra, counts per bin in the planned beam time ({self.events:,} events, seed
 {self.seed}).</figcaption></figure>""",
             "models": f"""<p>Status in physim's physics register (✅ checked by an automated test, 🟡 reference requested, — not
-applicable; "see register": the tool reference files are only in physim's source tree, so the comparison was not run
-here). Assumptions: elastic Rutherford scattering; straight tracks; Gaussian straggling and resolution;
-detector faces without inter-strip effects. See the register for each model's range of validity.</p>
-{table(("Model", "vs tools", "vs literature"), reg_rows)}""" + (
+applicable, ❌ a check is outside its tolerance, with the reason under the table; "see register": the tool reference
+files are only in physim's source tree, so the comparison was not run here). Assumptions: elastic Rutherford
+scattering; straight tracks; Gaussian straggling and resolution; detector faces without inter-strip effects. See the
+register for each model's range of validity.</p>
+{table(("Model", "vs tools", "vs literature"), reg_rows)}
+{why}""" + (
                 "\n" + self._fusion_models_html() if self.fusion is not None else "") + (
                 "\n" + self._lifetime_models_html() if self.lifetime is not None else ""),
             "fusion": self._fusion_html(),
@@ -542,9 +557,10 @@ setup file and seed reproduce every number.</p>
             except Exception:  # noqa: BLE001 - the report stands without the figure
                 drawn = ""
         sub = level + 1
+        b_unit = unit_words(f"e2fm{2 * int(s['multipolarity'][1])}")
         return f"""<h{level}>Coulomb excitation</h{level}>
 <p>{e(s['excite'].capitalize())} excited to {s['energy_kev']:g} keV (B({e(s['multipolarity'])}↑) =
-{s['b_up_e2fm']:.4g} e² fm^{2 * int(s['multipolarity'][1])}), first-order semiclassical theory: adiabaticity
+{_fmt(s['b_up_e2fm'])} {b_unit}), first-order semiclassical theory: adiabaticity
 ξ = {x['xi']:.2f}, Sommerfeld parameter η = {x['eta']:.1f}, total cross section {x['total_mb']:.3g} mb. Safe
 (Cline's criterion, closest approach ≥ {x['safe_distance_fm']:.1f} fm) at {safe}.</p>
 {drawn}
@@ -765,15 +781,15 @@ setup file and seed reproduce every number.</p>
         if a is not None and a.get("available"):
             out.append(f"<h{sub}>Analysis of the runs</h{sub}>")
             arow = [("Level", a["level"]), ("Method", a["method"]),
-                    ("τ", f"{_fmt(a['tau_ps'], 4)} ± {_fmt(a['stat_ps'], 2)} (stat.) ps, "
-                          f"± {_fmt(a['total_ps'], 2)} ps in all"),
+                    ("τ", f"{plus_minus(a['tau_ps'], a['stat_ps'])} (stat) ps; "
+                          f"{plus_minus(a['tau_ps'], a['total_ps'])} ps in all"),
                     ("Budget", ", ".join(f"{k} {_fmt(v, 2)} ps" for k, v in a["budget"].items() if v))]
             if a.get("b_down"):
                 arow.append((f"B({a.get('b_multipole', 'E2')}↓)",
-                             f"{_fmt(a['b_down'][0], 4)} ± {_fmt(a['b_down'][1], 2)} {a['b_unit']}"))
+                             f"{plus_minus(a['b_down'][0], a['b_down'][1])} {unit_words(a['b_unit'])}"))
             out.append(_table(("", ""), arow))
             if a["compare"]:
-                out.append(_table(("Compared with", "τ (ps)", "B↓"), [
+                out.append(_table(("Compared with", "τ (ps)", f"B({a.get('b_multipole', 'E2')}↓)"), [
                     (c["source"], _fmt(c["tau_ps"], 4), "—" if c["b_down"] is None else _fmt(c["b_down"], 4))
                     for c in a["compare"]]))
             if a["notes"]:
@@ -1204,10 +1220,12 @@ def lifetime_checks(results, have_refs: bool = True, known=None, method: Optiona
     return sorted(rows, key=lambda x: order[x["capability"]])
 
 
-def lifetime_limits(experiment, plan: Optional[dict] = None) -> list:
+def lifetime_limits(experiment, plan: Optional[dict] = None, analysis: Optional[dict] = None) -> list:
     """The documented limits (:data:`LIFETIME_LIMITS`), each with ``flag``: None where this setup is outside what
     the limit covers, else the plain warning for this setup (and ``level``). ``plan`` is
-    :meth:`physim.nuclear.planner.Planner.lifetimes`."""
+    :meth:`physim.nuclear.planner.Planner.lifetimes`; ``analysis`` is the analysis of the runs
+    (:meth:`~physim.nuclear.planner.Planner.analyse_lifetimes`) where there is one, so that the deorientation
+    caveat says what that analysis did."""
     lt_ = experiment.lifetime
     method = lt_.method if lt_ is not None else None
     plan = plan or {}
@@ -1222,10 +1240,26 @@ def lifetime_limits(experiment, plan: Optional[dict] = None) -> list:
         elif key == "dynamic_deorientation" and experiment.excitation is not None:
             tau = first.get("tau_ps")
             if lt_.deorientation is not None:
-                flag = ("Deorientation is set: the events follow the static model, and the analysis does not "
-                        "correct the shifted/unshifted ratio for it (lifetime_analysis.deorientation_correction "
-                        "with measured α_k, Γ_k does): expect τ biased where G_k differs between the components.")
-                level = "warning"
+                notes = [str(n) for n in ((analysis or {}).get("notes") or [])] if (analysis or {}).get(
+                    "available") else []
+                done = any("Deorientation in vacuum corrected" in n for n in notes)
+                not_done = next((n for n in notes if "deorientation" in n.lower() and "no correction" in n), None)
+                flag = "Deorientation is set: the events follow the static model with the setup's α_k and Γ_k. "
+                if done:
+                    flag += ("The analysis of the runs corrected the shifted and unshifted intensities for it with "
+                             "the same α_k and Γ_k (its note says how), so τ here is not biased by it. In a real "
+                             "measurement α_k and Γ_k are fitted or taken from the literature, and τ moves with "
+                             "them.")
+                    level = "note"
+                elif not_done is not None:
+                    flag += f"The analysis of the runs made no correction for it: {not_done}"
+                    level = "warning"
+                else:
+                    flag += ("An analysis of the runs corrects the shifted and unshifted intensities for it where "
+                             "it has the alignment (the first excited state's line after Coulomb excitation) and "
+                             "says so in its notes; where it cannot, τ is biased where G_k differs between the "
+                             "two components.")
+                    level = "warning"
             elif tau is not None and tau > 1.0:
                 flag = (f"No deorientation set, and τ = {tau:.3g} ps: the real recoil's alignment fades in vacuum, "
                         "which the simulation then leaves out.")
@@ -1280,7 +1314,7 @@ def _lifetime_data(planner, experiment, runs_from=None) -> Optional[dict]:
             analysis = {"available": False, "reason": str(err)}
         if analysis is not None and not analysis.get("available") and "No " in str(analysis.get("reason", ""))[:3]:
             analysis = None  # no runs yet: nothing to say
-    return {"plan": plan, "analysis": analysis, "limits": lifetime_limits(experiment, plan), "checks": []}
+    return {"plan": plan, "analysis": analysis, "limits": lifetime_limits(experiment, plan, analysis), "checks": []}
 
 
 def build(experiment: Experiment, seed: int = 1, events: int = 200_000, validation: bool = True,
@@ -1369,7 +1403,7 @@ def build(experiment: Experiment, seed: int = 1, events: int = 200_000, validati
             fusion["checks"] = fusion_checks(results, experiment, have_refs)
         if lifetime is not None:
             lifetime["checks"] = lifetime_checks(results, have_refs, method=experiment.lifetime.method)
-        checked = (fusion["checks"] if fusion is not None else []) + (lifetime["checks"] if lifetime else [])
+        known = known_failures()
         for cap in models:
             row = {"capability": cap}
             for kind in ("tool", "literature"):
@@ -1380,10 +1414,17 @@ def build(experiment: Experiment, seed: int = 1, events: int = 200_000, validati
                 else:
                     row[kind] = ("fail" if "fail" in mine else "pending" if "pending" in mine
                                  else "pass" if mine else "none")
-                if row[kind] == "fail" and cap not in MODELS and checked:
-                    failed = {c["name"] for c in checked if c["capability"] == cap and c["kind"] == kind
-                              and c["status"] in ("fail", "known failure")}
-                    if failed and all(c["status"] == "known failure" for c in checked if c["name"] in failed):
+                failed = [x for x in results if x.capability == cap and x.kind == kind and x.status == "fail"]
+                if row[kind] == "fail" and failed:
+                    if cap in MODELS:
+                        # Each failing check with what it found, so the table's ❌ comes with its reason. (The
+                        # fusion-evaporation and lifetime checks have tables of their own with the same.)
+                        row.setdefault("failed", []).extend(
+                            {"kind": kind, "name": x.name, "tolerance": x.tolerance, "detail": x.detail,
+                             "known": x.name in known,
+                             "checker": " ".join(y for y in _checker(x) if y not in ("—", "not stated"))}
+                            for x in failed)
+                    if all(x.name in known for x in failed):
                         row[kind] = "known"  # every failure here is one the register documents
             status.append(row)
     meta = {"version": __version__, "commit": _commit(), "date": _dt.date.today().isoformat(),
