@@ -2445,7 +2445,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                          f"closure {r['pull']:+.2f} σ: the result against it", None, False),
                         ("Beam time", f"{r['hours_for_precision']:.3g} h",
                          f"for {100 * r['settings']['wanted_precision']:.3g} % statistics; "
-                         f"{r['counts_per_shift']:.3g} counts in the peak per {SHIFT_H:g} h shift", None, False)):
+                         f"{_logbook.number(r['counts_per_shift'], 3)} counts in the peak per {SHIFT_H:g} h shift",
+                         None, False)):
                     with ui.element("div").classes("ps-readout" + (" ps-readout-main" if main else "")):
                         with ui.row().classes("items-center no-wrap gap-1"):
                             ui.label(title).classes("text-xs ps-muted")

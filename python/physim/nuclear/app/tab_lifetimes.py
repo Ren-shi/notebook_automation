@@ -628,8 +628,12 @@ def fusion_data(ctx, run) -> None:
 # -- Analysis -----------------------------------------------------------------------------------------------------
 
 def analysis_choice(ctx) -> dict:
-    """The level and method chosen for the analysis, and whether one was run in this session ("session")."""
-    return ctx.state.setdefault("lifetime_analysis", {"level": None, "method": None, "session": False})
+    """The level and method chosen for the analysis, and whether one was run in this session ("session"); begun
+    afresh for another experiment."""
+    of = str(getattr(ctx.state.get("planner"), "experiment_folder", None))
+    if ctx.state.get("lifetime_analysis", {}).get("of") != of:
+        ctx.state["lifetime_analysis"] = {"level": None, "method": None, "session": False, "of": of}
+    return ctx.state["lifetime_analysis"]
 
 
 def kept_analysis(p) -> Optional[dict]:
@@ -639,12 +643,10 @@ def kept_analysis(p) -> Optional[dict]:
     kept = wb.kept_lifetimes(p)
     if kept is None:
         return None
-    read = set(kept.get("runs") or [])
     try:
-        now = {r["label"] for r in p.runs() if not r.get("stale") and r.get("kind") not in ("source", "alignment")}
+        if wb.runs_not_read(p, kept):
+            return None
     except Exception:  # noqa: BLE001 -- the runs cannot be listed: the kept analysis is not vouched for
-        return None
-    if read and now - read:
         return None
     try:
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(
@@ -739,13 +741,6 @@ def rechoose(ctx, **choice) -> None:
     ctx.later(go)
 
 
-def _same(a, b) -> bool:
-    try:
-        return abs(float(a) - float(b)) <= 1e-6 * abs(float(b))
-    except (TypeError, ValueError):
-        return False
-
-
 def lifetime_comparisons(ctx, res: dict) -> tuple:
     """τ of the analysed level and the B(E2) that follows from it, each beside what is known about the nucleus
     in short (:func:`.tab_analysis.short_comparison`): ([the comparisons], the sources of the analysis's own
@@ -773,9 +768,7 @@ def lifetime_comparisons(ctx, res: dict) -> tuple:
     out, said = [], set()
     view = ta.comparison_of(p, "tau", upper.text, nuclide)
     if view is not None:
-        mine = ta.own_projection(view, here, analysis="lifetime")
-        if mine is not None and not _same(mine.row.value, res.get("tau_ps")):
-            mine = None  # the ledger's row is of another analysis than the one shown
+        mine = ta.own_projection(view, here, res.get("tau_ps"), analysis="lifetime")
         out.append(ta.short_comparison(view, mine, missing))
         if mine is not None:
             said.add("level scheme")
@@ -789,9 +782,7 @@ def lifetime_comparisons(ctx, res: dict) -> tuple:
             key = None
         b_view = ta.comparison_of(p, "B(E2)", key.text, nuclide) if key is not None else None
         if b_view is not None:
-            mine = ta.own_projection(b_view, here, analysis="lifetime")
-            if mine is not None and not _same(mine.row.value, b[0]):
-                mine = None
+            mine = ta.own_projection(b_view, here, b[0], analysis="lifetime")
             out.append(ta.short_comparison(b_view, mine, missing))
     return out, said
 

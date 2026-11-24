@@ -366,7 +366,8 @@ def not_analysed(experiment) -> Optional[dict]:
     """For an experiment whose runs physim does not analyse back yet (fusion-evaporation and elastic scattering
     without a lifetime measurement): {"kind", "what", "has", "needs", "line"}, where "line" says in a sentence
     what an analysis would need that physim does not have for that kind, and "has" what the experiment does
-    have beside its runs (the Plan step shows it, and the report holds it). None for Coulomb excitation and for a lifetime measurement, which have an analysis."""
+    have beside its runs (the Plan step shows it, and the report holds it). None for Coulomb excitation and for a
+    lifetime measurement, which have an analysis."""
     try:
         kind = kind_of(experiment)[0]
     except Exception:  # noqa: BLE001 -- an unfinished setup
@@ -404,6 +405,19 @@ def kept_lifetimes(planner) -> Optional[dict]:
     if isinstance(cache, dict):
         cache[key] = (stamp, out)
     return out
+
+
+def runs_not_read(planner, analysis: dict, runs: Optional[list] = None) -> list:
+    """The names of this setup's runs that a kept lifetime analysis did not read, because they were taken after
+    it (``runs``: :meth:`Planner.runs`, listed if not given). A plunger analysis reads the runs at a distance, a
+    line-shape analysis every beam run. Empty for an analysis that does not name the runs it read."""
+    read = set(analysis.get("runs") or [])
+    if not read:
+        return []
+    plunger = planner.experiment.lifetime is not None and planner.experiment.lifetime.method == "rdds"
+    return [r["label"] for r in (planner.runs() if runs is None else runs)
+            if r["label"] not in read and not r.get("stale") and r.get("kind") not in ("source", "alignment")
+            and not (plunger and r.get("distance_um") is None)]
 
 
 def template_label(key: str) -> tuple:
@@ -1069,7 +1083,10 @@ def steps(planner) -> list:
     kept = _try(lambda: kept_lifetimes(p), None) if lifetime is not None else None
     gap = not_analysed(p.experiment)
     if kept is not None:  # a lifetime experiment's result is τ, as a Coulex one's is B(E2)
-        analysis, analysis_state = f"τ({kept.get('level') or '?'}) {_tau_pm(kept['tau_ps'], kept.get('stat_ps'))}", "done"
+        later = len(_try(lambda: runs_not_read(p, kept, runs), []))
+        analysis = f"τ({kept.get('level') or '?'}) {_tau_pm(kept['tau_ps'], kept.get('stat_ps'))}" + (
+            f" · {later} run{'s' * (later != 1)} since" if later else "")
+        analysis_state = "ready" if later else "done"
     elif lifetime is not None and not (result is not None and getattr(result, "b_e2fm4", None) is not None):
         if lifetime.method == "rdds":
             have = {r.get("distance_um") for r in runs if not r.get("stale") and r.get("distance_um") is not None}
@@ -1080,9 +1097,9 @@ def steps(planner) -> list:
             analysis = "lifetimes: line shapes of run " + str(run.number) if run is not None else \
                 "lifetimes: take a run for the line shapes"
         analysis_state = "ready"
-    elif gap is not None:  # no analysis for this kind yet: the step waits, and says for what
-        analysis, analysis_state = f"not for {gap['what']} yet", "waiting"
-    elif not coulex:
+    elif gap is not None and not _coulex_run(p):  # no analysis for this kind yet: the step waits, and says for what
+        analysis, analysis_state = "no analysis yet", "waiting"
+    elif not coulex and not _coulex_run(p):
         analysis, analysis_state = "needs γ-ray detectors", "waiting"
     elif result is not None and getattr(result, "b_e2fm4", None) is not None:
         analysis, analysis_state = f"run {run.number}: B(E2↑) {_num(result.b_e2fm4, 4)} e²fm⁴", "done"
@@ -1106,6 +1123,18 @@ def steps(planner) -> list:
              "warn": out[key][2]} for i, (key, label) in enumerate(STEPS, 1)]
 
 
+def _coulex_run(planner) -> bool:
+    """Whether the current run is a beam run of a Coulomb excitation with γ-ray detectors, whatever the setup has
+    become since: it is analysed."""
+    run = planner.run
+    if run is None or run.kind == "source":
+        return False
+    try:
+        return run.experiment.excitation is not None and bool(run.experiment.gamma_detectors)
+    except Exception:  # noqa: BLE001 -- a setup that cannot be read
+        return False
+
+
 def next_step(planner, key: str, pending: int = 0) -> Optional[dict]:
     """What the foot of the step ``key`` says and where its button leads: {"hint", "label", "to"} (``label`` and
     ``to`` None when there is nothing to go on to yet), or None for a stage that is not a step. ``pending`` is the
@@ -1114,7 +1143,7 @@ def next_step(planner, key: str, pending: int = 0) -> Optional[dict]:
     run = p.run
     # Fusion-evaporation and elastic scattering have no analysis of a run yet: their steps lead from the data to
     # the report, and say what an analysis would need.
-    gap = not_analysed(p.experiment)
+    gap = None if _coulex_run(p) else not_analysed(p.experiment)
     if key == "setup":
         if p.problems:
             return {"hint": "The setup has a problem: the checks at the top of the setup panel say what.",
@@ -1145,7 +1174,7 @@ def next_step(planner, key: str, pending: int = 0) -> Optional[dict]:
         if gap is not None:
             return {"hint": f"{gap['line'][0].upper()}{gap['line'][1:]} The report holds {gap['has']}, and run "
                             f"{run.number} beside the plan.", "label": "Next: the report", "to": "report"}
-        if p.experiment.lifetime is None and not p.experiment.gamma_detectors:
+        if p.experiment.lifetime is None and not p.experiment.gamma_detectors and not _coulex_run(p):
             return {"hint": "The analysis reads the γ rays: this setup has no γ-ray detector to analyse a run with.",
                     "label": "Next: the report", "to": "report"}
         return {"hint": "A gate saved here can be used by the analysis.", "label": f"Next: analyse run {run.number}",

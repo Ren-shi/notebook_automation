@@ -16,7 +16,9 @@ def _value(x, unit: str, time_text) -> str:
         return f"{100 * x:.3g}%"
     if isinstance(x, float) and not math.isfinite(x):
         return "—"
-    return f"{x:,.4g} {unit}".strip() if abs(x) >= 1000 else f"{x:.4g} {unit}".strip()
+    from ..logbook import number
+
+    return f"{number(float(x))} {unit}".strip()
 
 
 def compare_block(ctx) -> None:
@@ -67,11 +69,21 @@ def comparison_of(p, observable: str, key, nuclide: Optional[str] = None) -> Opt
         return None
 
 
-def own_projection(view: Optional[dict], here: Optional[str], run: Optional[str] = None,
+def same_value(a, b) -> bool:
+    """Whether two values are the same one, as written and read back."""
+    try:
+        return abs(float(a) - float(b)) <= 1e-6 * abs(float(b))
+    except (TypeError, ValueError):
+        return False
+
+
+def own_projection(view: Optional[dict], here: Optional[str], value: Optional[float], run: Optional[str] = None,
                    analysis: Optional[str] = None):
-    """This experiment's own projected row in a comparison (a :class:`physim.nuclear.compare.Projection`): the
-    one of the run named ``run`` (a Coulex analysis), or of the analysis named ``analysis`` ("lifetime"); the
-    newest if there are several. ``here`` is the experiment's folder name. None without one."""
+    """This experiment's own projected row in a comparison (a :class:`physim.nuclear.compare.Projection`) of the
+    result shown, which is ``value``: the one of the run named ``run`` (a Coulex analysis: the B(E2) from the
+    yield, not a fit of the same run to all orders), or of the analysis named ``analysis`` ("lifetime"); the newest
+    if there are several. ``here`` is the experiment's folder name. None without one, and when the row the ledger
+    holds is of another analysis than the one shown."""
     c = view.get("comparison") if view else None
     if c is None or here is None:
         return None
@@ -80,10 +92,11 @@ def own_projection(view: Optional[dict], here: Optional[str], run: Optional[str]
         origin = p.row.origin  # (a value converted from another row is no run's: its origin is the conversion)
         if origin.get("kind") != "run" or origin.get("experiment") != here:
             continue
-        if (run is not None and origin.get("run") == run and origin.get("analysis") is None) or \
+        if (run is not None and origin.get("run") == run and p.method == "coulex-yield") or \
                 (analysis is not None and origin.get("analysis") == analysis):
             found.append(p)
-    return max(found, key=lambda p: p.row.created) if found else None
+    mine = max(found, key=lambda p: p.row.created) if found else None
+    return mine if mine is not None and same_value(mine.row.value, value) else None
 
 
 def short_comparison(view: dict, mine=None, missing: str = "") -> dict:
@@ -195,7 +208,7 @@ def coulex_comparison(ctx, result=None) -> None:
         return
     run = p._beam_run()
     here = p.experiment_folder.name if p.experiment_folder is not None else None
-    mine = own_projection(view, here, run=run.label) if run is not None else None
+    mine = own_projection(view, here, getattr(result, "b_e2fm4", None), run=run.label) if run is not None else None
     missing = ""
     if run is None:
         missing = ("Analysed on a simulated sample without a run: it is not kept and has no row in the results "
@@ -260,12 +273,16 @@ def render_view(ctx) -> None:
     exp = p._data_experiment()
     coulex = exp.excitation is not None and bool(exp.gamma_detectors)
     lifetime = p.experiment.lifetime is not None
-    # Fusion-evaporation and elastic scattering: no analysis of a run yet. The step says so, and what it has.
-    gap = wb.not_analysed(p.experiment)
+    # Fusion-evaporation and elastic scattering: no analysis of a run yet. The step says so, and what it has. (A
+    # current run taken while the setup was a Coulomb excitation is still analysed.)
+    gap = wb.not_analysed(p.experiment) if not coulex else None
     if gap is not None:
         not_analysed_note(ctx, gap)
         with ui.column().classes("w-full gap-2 analysis-compare ps-panel").style("padding: 10px 14px 12px"):
             compare_block(ctx)
+        if p.experiment.levels and p.experiment.fusion is None:  # solved from the level scheme, without a run
+            with ui.column().classes("w-full gap-2 analysis-all-orders ps-panel").style("padding: 10px 14px 12px"):
+                ctx.multistep_block()
         return
     shown = [(a, t) for a, t in PARTS if (a == "lifetimes" and lifetime)
              or (a != "lifetimes" and (coulex or a in ("compare", "all-orders")))]
