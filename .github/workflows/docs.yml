@@ -20,9 +20,11 @@ on:
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
+# A new push to a pull request replaces its run. Each push to main has its own: whether it runs the notebooks depends on
+# what that push changed.
 concurrency:
-  group: docs-${{ github.ref }}
-  cancel-in-progress: true
+  group: docs-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
