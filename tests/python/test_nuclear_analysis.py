@@ -2,7 +2,8 @@
 
 import json
 import math
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -25,11 +26,16 @@ def ni():
 def projectile_case() -> Experiment:
     d = Experiment.example("coulex_ni58").to_dict()
     d["beam"]["energy"] = "70 MeV"
-    # Without the E1 polarisation, so that the sample stays the one the test was written with: its peak of about 200
-    # counts at 6.9 MeV is one the fit does not find in many samples (3 seeds of 10 without, 5 of 8 with).
     d["reaction"] = {"type": "coulex", "excite": "projectile", "energy": "6.917 MeV", "multipolarity": "E2",
-                     "b_up": "0.004 e2b2", "e1_polarisation": 0}
+                     "b_up": "0.004 e2b2"}
     return Experiment.from_dict(d)
+
+
+@pytest.fixture(scope="module")
+def projectile():
+    """A sample that the fit failed on when it had a straight line for its background (seed 2, as seeds 1, 4 and 6)."""
+    exp = projectile_case()
+    return exp, Analysis(exp, simulate_gammas(exp, EVENTS, seed=2))
 
 
 # -- the peak fit ---------------------------------------------------------------------------------------------------
@@ -133,20 +139,110 @@ def test_b_e2_agrees_with_the_input_with_the_rutherford_normalisation(ni):
     assert a.history[-1].statistical < a.history[-2].statistical    # the gate costs counts
 
 
-def test_b_e2_agrees_with_the_input_with_the_target_normalisation():
-    """The ¹⁶O projectile is excited and the ⁵⁸Ni 2⁺ state (known B(E2)) is the reference."""
-    exp = projectile_case()
-    a = Analysis(exp, simulate_gammas(exp, EVENTS, seed=2))
+def test_b_e2_agrees_with_the_input_with_the_target_normalisation(projectile):
+    """The ¹⁶O projectile is excited and the ⁵⁸Ni 2⁺ state (known B(E2)) is the reference. The line's Compton edge is in
+    the fit window. Over 24 other seeds, of samples this large, area over true counts scatters by 5 % (half of it the true
+    counts of the peak's 400 effective entries, which the area of the peak and its continuum does not follow), so a
+    single one is judged by 3 % and three times that; with a straight line it was 26 to 33 % too large, or failed."""
+    exp, a = projectile
+    g = a.gammas
     ref = {"energy": "1454.2 keV", "b_up": "0.0695 e2b2", "unc": 0.03}
     both = [a.run(Settings(normalisation="target", reference=ref)), a.run(Settings())]
+    full = a._gate(Settings())[0] & (np.abs(g["deposited"] - g["energy_lab"]) < 1e-6)
+    w = g["weight"][full] * g.events.beam_time_s * g.live_fraction
+    x = g["corrected_projectile"][full]
+    centre = float(np.average(x, weights=w))
+    neff = float(w.sum() ** 2 / (w**2).sum())
     for r in both:
+        assert r.fit.failed is None and r.fit.below is not None and r.fit.shape.endswith("Compton continuum")
+        assert abs(r.fit.area / w.sum() - 1) < 0.03 + 3 / math.sqrt(neff), (r.fit.area, w.sum(), neff)
+        assert abs(r.fit.centroid - centre) < 0.005 + 3 * r.fit.sigma / math.sqrt(neff)
+        assert abs(r.b_e2fm4 / r.truth_e2fm4 - 1) < 0.03 + 3 * max(r.monte_carlo, 1 / math.sqrt(neff)), r.b_e2fm4
         assert abs(r.pull) < 2.5, (r.normalisation, r.b_e2fm4, r.statistical, r.systematic)
+        # What the response gives below the peak for a count in it has its line in the budget.
+        assert 0.02 < r.budget["detector response below the peak"] < 0.06
+        assert any("Compton edge" in n for n in r.notes)
     assert both[0].budget["reference B(E2)"] == pytest.approx(0.03)
     assert any("reference peak" in n for n in both[0].notes)
     # The two normalisations agree with each other more closely than with the truth: the same peak area.
     assert both[0].b_e2fm4 == pytest.approx(both[1].b_e2fm4, rel=0.05)
     with pytest.raises(ValueError, match="or Settings.reference"):
         a.run(Settings(normalisation="target"))
+
+
+def test_a_fit_with_the_edge_is_kept_and_drawn_as_it_was_fitted(projectile):
+    _, a = projectile
+    r = a.run(Settings())
+    again = Result.from_dict(json.loads(json.dumps(r.to_dict())))
+    assert again.fit == r.fit and again.fit.below["area"] == r.fit.area
+    edges, counts = np.array(r.spectrum["edges"]), np.array(r.spectrum["counts"])
+    e = (edges[:-1] + edges[1:]) / 2
+    half = 4 * 2.3548 * r.fit.sigma
+    window = np.abs(e - a.e0) < half
+    assert r.fit.curve(e[window]).sum() == pytest.approx(counts[window].sum(), rel=2e-3)
+    under = r.fit.background_curve(e) - r.fit.level - r.fit.slope * (e - r.fit.origin)
+    # The continuum below the peak, and none above it; more below the edge than between it and the peak.
+    flat, below = (float(under[np.abs(e - x) < 0.01].mean()) for x in (6.76, 6.60))
+    assert 0 < flat < below and abs(under[e > r.fit.centroid + 4.5 * r.fit.sigma]).max() < 1e-3 * flat
+    line = r.lines[0]
+    found = [pk for pk in r.search["projectile"]["peaks"] if pk["label"]]
+    assert len(found) == 1 and found[0]["area"] == pytest.approx(r.fit.area, rel=0.03)  # the search has it too
+    # A result kept before there was such a field has a straight line.
+    old = r.to_dict()
+    del old["fit"]["below"]
+    assert Result.from_dict(old).fit.below is None
+    pytest.importorskip("plotly")
+    from physim.nuclear.app.figures import figure_peak
+
+    traces = {t.name: t for t in figure_peak(line).data}
+    drawn = traces["the background under the peak"]
+    assert np.allclose(np.asarray(drawn.y, dtype=float), 4 * r.fit.background_curve(np.asarray(drawn.x) * 1e-3))
+    assert np.allclose(np.asarray(traces[f"fit: {r.fit.shape}"].y, dtype=float),
+                       4 * r.fit.curve(np.asarray(drawn.x) * 1e-3))
+
+
+def test_a_run_of_few_counts_is_fitted_with_the_edge(projectile):
+    """24 h of beam, 150 counts in the peak, each once: the Poisson fit, and the simulated peak of the same setup."""
+    exp, a = projectile
+    g = a.gammas
+    real = g.events.beam_time_s
+    rows = np.repeat(np.arange(len(g)), np.random.default_rng(5).poisson(g["weight"] * real))
+    cols = {k: np.asarray(v)[rows] for k, v in g.columns.items()}
+    cols["weight"] = np.full(len(rows), 1.0 / real)
+    b = Analysis(exp, replace(g, columns=cols), run=SimpleNamespace(summary={"one_particle": True}, scale=1.0,
+                                                                    real_s=real, duration_s=real))
+    s = Settings(subtract_randoms=False)
+    keep = b._gate(s)[0]
+    true = int((keep & (np.abs(cols["deposited"] - cols["energy_lab"]) < 1e-6)).sum())
+    counts, edges, _, sigma, _ = b._spectrum(s, keep)
+    assert b._variance is None and 100 < true < 200
+    fit = b._peak(s, 0, b.e0, counts, edges, sigma, None)
+    assert fit.failed is None and fit.below is not None
+    # Scatter over 48 runs: 10 % of the true counts, 5 % of the area itself, as it prints.
+    assert fit.area == pytest.approx(true, rel=0.03 + 3 * 0.10) and 0.03 < fit.area_unc / fit.area < 0.08
+    # A Gaussian of any starting width: the detectors' resolution (a single entry), or that of the edge.
+    for start in (0.0023, 0.15):
+        assert b._peak(s, 0, b.e0, counts, edges, start, None).area == pytest.approx(fit.area, rel=1e-3)
+
+
+def test_where_no_edge_is_in_the_window_the_fit_is_what_it_was(ni, monkeypatch):
+    """The fit of a 1454 keV line is the two passes and the tails, with a line and a step, to the last digit: the edge is
+    217 keV below it."""
+    _, a = ni
+    for gate in ("inelastic", "all"):
+        s = Settings(particle_gate=gate)
+        counts, edges, _, sigma, _ = a._spectrum(s, a._gate(s)[0])
+        var = a._variance
+        first = fit_peak(counts, edges, a.e0, sigma, 12.0, max_sigma=0.03 * a.e0, variance=var)
+        second = fit_peak(counts, edges, a.e0, first.sigma, 4.0, max_sigma=0.03 * a.e0, variance=var)
+        expected = fit_tails(counts, edges, second, variance=var)
+        fit = a._peak(s, 0, a.e0, counts, edges, sigma, var)
+        assert fit == expected and fit.below is None and not fit.failed
+        assert a._edge_fit(s, 0, a.e0, counts, edges, var, fit) is None
+        assert a._below_change(s, 0, fit) == 0.0
+    # A spectrum that does not reach down to the edge: the detectors' response is not even asked.
+    monkeypatch.setattr(Analysis, "_below", lambda *args: pytest.fail("not needed"))
+    assert a._edge_fit(s, 0, a.e0, counts, edges, var, fit) is None
 
 
 def test_the_scatter_over_seeds_matches_the_quoted_statistical_uncertainty():

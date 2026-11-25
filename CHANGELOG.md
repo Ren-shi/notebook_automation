@@ -254,6 +254,33 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The peak fit where the line's own Compton edge is in the window. The edge is never more than 256 keV below the line, so a
+  broad peak of a few MeV has it in the window (¹⁶O, 6917 keV, σ 57 keV: 246 keV below), and what the fit had for a background
+  there was a straight line: area 26 to 33 % too large, centroid 26 to 33 keV low, or the width ran to its bound on the edge
+  (seeds 1–6: 1 of 6 without the E1 polarisation, 4 of 6 with it).
+  - The background there is the line and, for each count in the peak, what the response leaves below it: the escape peaks,
+    the continuum with its edge and the flat part above it, at each γ ray's energy in the laboratory, Doppler-corrected and
+    spread as the peak is (`Response.incomplete`, `Analysis._below`, `PeakFit.below`). Nothing more is fitted, and the area is
+    the fitted peak's. A window that stops short of the edge does not do (the edge is 4σ below the peak and both are
+    spread: with a straight line 44 of 80 development samples failed and the rest read 1.5 times the area; with a step the
+    area scatters by a quarter); nor does a step under the peak without the edge (area −22 %), nor the same shape with a
+    free height (−5 %, with four times the scatter).
+  - The first pass goes over the whole spectrum with the continuum in it, from every width a peak may have, so it neither
+    runs onto the edge nor stays on a single entry. Where that pass's σ says that the edge, spread by 3σ, is below the
+    window, the fit is what it was to the last digit (checked on all Coulex examples, samples and runs: none has its line's
+    edge in a window). The peak search fits a line the same way. Stored results without the field load.
+  - The counts below the peak are the line's too, so the area's uncertainty can be smaller than √N of the peak. The budget has
+    the line "detector response below the peak": what the area moves by when the counts below are wrong by the uncertainty
+    of the efficiency (4.3 % for 5 %). A closure test cannot see that ratio: the simulation has it from the same response.
+  - 24 unseen seeds (5101–5124), samples of 400 000, without/with the E1 polarisation: no fit failed; area over true
+    full-energy counts −1.2 ± 1.1/−0.3 ± 1.2 %, centroid +0.5 ± 0.8/+1.5 ± 0.6 keV, scatter of the area over the printed
+    Monte Carlo error 1.07/1.25 (the true counts of a sample scatter by 5 %, which the area does not follow: area over true
+    counts scatters by 2.0/2.2 times it); as runs of 24 h (140 to 150 counts) +0.2 ± 1.9/+1.7 ± 2.3 %, none failed.
+  - Not the cause of what `coulex_ni58` reads: its window reaches no edge, and nothing of it changes. Over the same 24 seeds
+    (200 000 reactions, gate "all") B(E2) is −1.0 ± 0.5 %, with an area 0.50 ± 0.14 % above the true counts (1.35 % before the
+    random coincidences are subtracted); B(E2) follows the efficiency and correlation the analysis takes against the
+    sample's own (r = −0.89), 0.9 ± 0.4 % high.
+  - The projectile case of the tests has the default E1 polarisation and is judged on the area and the centre too.
 - The feeding check of the Allmond 2014 reproduction compares two schemes without internal conversion, as GOSIA's input
   (`coulex_reproduction._ensdf_levels`). The scheme with ENSDF's higher states had ENSDF's conversion, the 0⁺, 2⁺ scheme
   and GOSIA had none: α = 1.72·10⁻⁴ of 2⁺ → 0⁺ took 1.5 % (ring 2) and 2.2 % (ring 3) off a feeding of 1.2 and 0.8 %. The

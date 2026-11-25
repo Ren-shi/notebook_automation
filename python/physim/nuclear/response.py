@@ -440,15 +440,7 @@ class Response:
         the full-energy peak, the escape peaks and the Compton continuum, each with the detector's resolution.
         Sums to 1, apart from what falls outside the bins."""
         e0 = float(energy_mev)
-        pt = float(_peak_to_total(self.crystal, e0))
-        se, de = self.escape_fractions(e0)
-        se, de = min(se, (1 - pt) / 2), min(de, (1 - pt) / 2)
-        if self.addback:
-            pt = pt * float(self.addback_factor(e0))
-        rest = max(1 - pt - se - de, 0.0)
-        if self.suppressed:
-            s = float(self.suppression_factor(e0))
-            se, de, rest = se / s, de / s, rest / s
+        pt, se, de, rest = self._parts(e0)
         total = pt + se + de + rest
         pt, se, de = pt / total, se / total, de / total
         out = pt * _gauss_bins(e0, float(self.fwhm(e0)), edges)
@@ -460,6 +452,31 @@ class Response:
             out = out + rest * _smeared(compton_continuum(e0, edges, self.crystal.multiple), edges,
                                         float(self.fwhm(max(compton_edge(e0), 0.02))))
         return out
+
+    def _parts(self, e0: float) -> tuple:
+        """(full energy, single escape, double escape, continuum): what becomes of the γ rays that interact, after the
+        add-back and the shield (which takes some away: they need not add up to 1)."""
+        pt = float(_peak_to_total(self.crystal, e0))
+        se, de = self.escape_fractions(e0)
+        se, de = min(se, (1 - pt) / 2), min(de, (1 - pt) / 2)
+        if self.addback:
+            pt = pt * float(self.addback_factor(e0))
+        rest = max(1 - pt - se - de, 0.0)
+        if self.suppressed:
+            s = float(self.suppression_factor(e0))
+            se, de, rest = se / s, de / s, rest / s
+        return pt, se, de, rest
+
+    def incomplete(self, energy_mev: float, edges: np.ndarray) -> np.ndarray:
+        """For each γ ray of ``energy_mev`` that leaves its full energy, how many leave less in each bin of ``edges``
+        (MeV): the escape peaks and the Compton continuum with its edge, without the detector's resolution."""
+        e0 = float(energy_mev)
+        pt, se, de, rest = self._parts(e0)
+        out = rest * compton_continuum(e0, edges, self.crystal.multiple)
+        for share, energy in ((se, e0 - ELECTRON_MEV), (de, e0 - 2 * ELECTRON_MEV)):
+            if share > 0:
+                out = out + share * np.histogram([energy], bins=edges)[0]
+        return out / pt
 
     def describe(self) -> dict:
         """The response in words and numbers, for the app and the report."""

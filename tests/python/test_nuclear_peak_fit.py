@@ -12,7 +12,9 @@ from dataclasses import asdict
 import numpy as np
 import pytest
 
+from physim.nuclear import Experiment
 from physim.nuclear.analysis import SHAPE_REACH, TAILS_WORTH, PeakFit, _biweight, fit_peak, fit_tails, tail_shape
+from physim.nuclear.response import ELECTRON_MEV, Response, compton_edge
 
 E0, EDGES = 1.1729, np.arange(1.10, 1.25, 0.0002)
 X = 1e3 * (EDGES[:-1] + EDGES[1:]) / 2 - 1e3 * E0  # keV from the transition
@@ -321,3 +323,137 @@ def test_a_gaussian_peak_with_a_line_beside_it_has_no_tails():
                                                     "counted": True},))
     assert fit.tails["share"] == 0.0 and fit.tails["lines"][1]["transition"] == [4, 1]
     assert fit.area == pytest.approx(10_300, abs=4 * fit.area_unc) and "Gaussian (and another" in fit.shape
+
+
+# -- the line's own Compton edge in the window ----------------------------------------------------------------------------
+
+HIGH, HIGH_EDGES = 6.917, np.arange(6.571, 7.2635, 0.0006)
+HIGH_SIGMA = 0.057
+#: A germanium crystal's response: 16 incomplete energies for each full one, a seventh of them above the Compton edge
+#: 246 keV below the line and so under the peak's foot.
+GE = Response(Experiment.example("coulex_ni58"), Experiment.example("coulex_ni58").gamma_detectors[0])
+
+
+def below_the_line() -> np.ndarray:
+    n = int(0.9 / 0.0006)
+    return GE.incomplete(HIGH, HIGH + 0.0006 * np.arange(-n, 1))
+
+
+def line_and_continuum(n: float, sigma: float = HIGH_SIGMA) -> np.ndarray:
+    """The counts expected of a line of ``n`` full-energy counts: the peak and what it leaves below it, both spread by
+    ``sigma`` (MeV), by summing over the energies that are left."""
+    below = below_the_line()
+    x = (HIGH_EDGES[:-1] + HIGH_EDGES[1:]) / 2
+    at = np.r_[HIGH, HIGH + 0.0006 * (np.arange(len(below)) - len(below) + 0.5)]
+    each = np.r_[1.0, below]
+    out = np.zeros(len(x))
+    for e, c in zip(at, each):
+        out += c * np.exp(-0.5 * ((x - e) / sigma) ** 2)
+    return n * out * 0.0006 / (sigma * math.sqrt(2 * math.pi))
+
+
+def test_the_incomplete_energies_are_those_of_the_response():
+    edges = np.arange(0.0, 7.4, 0.001)
+    r = GE
+    counts = r.incomplete(HIGH, edges)
+    pt = float(r.peak_to_total(HIGH))
+    assert counts.sum() == pytest.approx((1 - pt) / pt, rel=1e-6)
+    whole = r.shape(HIGH, edges)  # with the resolution, and the peak
+    low = edges[1:] < 6.60
+    assert counts[low].sum() * pt == pytest.approx(whole[low].sum(), rel=1e-3)
+    edge = compton_edge(HIGH)
+    at = lambda e: float(counts[np.abs((edges[:-1] + edges[1:]) / 2 - e) < 0.02].mean())  # noqa: E731
+    assert at(edge - 0.03) > 1.1 * at(edge + 0.03) > 0 and at(HIGH + 0.05) == 0
+    assert counts[np.argmin(np.abs(edges - (HIGH - ELECTRON_MEV))) - 1:][:2].max() > 10 * at(6.3)  # the single escape
+    # Add-back puts the Compton deposits into the peak, a shield takes every incomplete energy away.
+    exp = Experiment.example("coulex_ni62_pt194_clovers")
+    clover = Response(exp, exp.gamma_detectors[0])
+    pt = float(clover.peak_to_total(1.1729))
+    assert clover.incomplete(1.1729, edges).sum() == pytest.approx((1 - pt) / pt, rel=1e-3)
+
+
+def test_a_line_whose_compton_edge_is_in_the_window_keeps_its_area():
+    """A straight line for the background reads these expected counts 13 % too large and 0.7 σ low, and in samples the fit
+    often ran to its bound on the edge."""
+    mu = line_and_continuum(150.0)
+    below = below_the_line()
+    plain = fit_peak(mu, HIGH_EDGES, HIGH, HIGH_SIGMA, 4.0, max_sigma=0.03 * HIGH)
+    assert plain.failed or (plain.area > 1.1 * 150 and plain.centroid < HIGH - 0.03)
+    for start in (0.003, 0.02, HIGH_SIGMA, 0.15):  # and the first pass finds it from any width
+        fit = fit_peak(mu, HIGH_EDGES, HIGH, start, 0.35 / (2.3548 * start) + 1, max_sigma=0.03 * HIGH, below=below)
+        assert fit.failed is None and fit.area == pytest.approx(150, rel=2e-3)
+        assert abs(fit.centroid - HIGH) < 2e-4 and fit.sigma == pytest.approx(HIGH_SIGMA, rel=5e-3)
+    x = (HIGH_EDGES[:-1] + HIGH_EDGES[1:]) / 2
+    assert np.allclose(fit.curve(x), mu, atol=2e-3 * mu.max())  # what is drawn
+    assert fit.background_curve(x).sum() == pytest.approx((mu - line_and_continuum_peak(150.0)).sum(), rel=3e-3)
+    assert float(fit.curve(HIGH)) == pytest.approx(float(np.interp(HIGH, x, mu)), rel=5e-3)
+    kept = json.loads(json.dumps(asdict(fit)))
+    assert PeakFit.of(kept) == fit
+    kept.pop("below")
+    assert PeakFit.of(kept).below is None and PeakFit.of(kept).shape == "Gaussian on a line"
+
+
+def line_and_continuum_peak(n: float) -> np.ndarray:
+    x = (HIGH_EDGES[:-1] + HIGH_EDGES[1:]) / 2
+    return n * np.exp(-0.5 * ((x - HIGH) / HIGH_SIGMA) ** 2) * 0.0006 / (HIGH_SIGMA * math.sqrt(2 * math.pi))
+
+
+@pytest.mark.parametrize("weight", [1.0, 0.25])
+def test_few_counts_on_the_edge_are_not_biased_and_scatter_as_printed(weight):
+    """150 counts in the peak, each once (a run) or from entries that stand for a quarter of one (a sample)."""
+    rng = np.random.default_rng(31)
+    mu, below = line_and_continuum(150.0), below_the_line()
+    areas, uncs, centres = [], [], []
+    for _ in range(60):
+        counts = weight * rng.poisson(mu / weight)
+        fit = fit_peak(counts, HIGH_EDGES, HIGH, HIGH_SIGMA, 4.0, max_sigma=0.03 * HIGH, below=below,
+                       variance=None if weight == 1.0 else weight * counts)
+        assert fit.failed is None
+        areas.append(fit.area)
+        uncs.append(fit.area_unc)  # of as many counts
+        centres.append(fit.centroid)
+    scatter = float(np.std(areas, ddof=1))
+    assert abs(np.mean(areas) / 150 - 1) < 3 * scatter / 150 / math.sqrt(60)
+    assert 0.7 < scatter / (math.sqrt(weight) * np.mean(uncs)) < 1.4
+    assert abs(np.mean(centres) - HIGH) < 3 * np.std(centres) / math.sqrt(60)
+
+
+def test_a_peak_with_tails_on_its_own_edge_keeps_its_area():
+    """The tails of the peak (fit_tails) and the continuum spread as they are."""
+    wide = 0.85 * line_and_continuum(20_000.0, 0.045) + 0.15 * line_and_continuum(20_000.0, 0.09)
+    fit = fit_peak(wide, HIGH_EDGES, HIGH, 0.05, 4.0, max_sigma=0.03 * HIGH, below=below_the_line())
+    full = fit_tails(wide, HIGH_EDGES, fit)
+    assert full.tails is not None and full.below is not None and full.tails["step"] == 0
+    # The wider component is a bell that ends, and this one is a Gaussian (the area of the Gaussian alone is 2.6 % off).
+    assert full.area == pytest.approx(20_000, rel=0.01) and abs(full.centroid - HIGH) < 1e-3
+    assert abs(full.area / 20_000 - 1) < 0.5 * abs(fit.area / 20_000 - 1)
+    x = (HIGH_EDGES[:-1] + HIGH_EDGES[1:]) / 2
+    window = np.abs(x - fit.centroid) < 4 * 2.3548 * fit.sigma
+    assert full.curve(x[window]).sum() == pytest.approx(wide[window].sum(), rel=1e-3)
+    assert full.below["area"] == full.area and full.shape.endswith("the line's own Compton continuum")
+    # With the shape of that peak, a few counts.
+    few = np.random.default_rng(8).poisson(wide / 100).astype(float)
+    got = fit_tails(few, HIGH_EDGES, fit_peak(few, HIGH_EDGES, HIGH, 0.05, 4.0, max_sigma=0.03 * HIGH,
+                                              below=below_the_line()), shape=tail_shape(full))
+    assert got.failed is None and got.tails["simulated"] and got.area == pytest.approx(200, rel=0.2)
+
+
+def test_another_background_under_a_line_on_its_edge_is_the_straight_lines():
+    """Twice as many counts in the window that are not the line's as that are: the area is still not biased, and scatters
+    as printed. And no counts at all are a failed fit."""
+    rng = np.random.default_rng(17)
+    below = below_the_line()
+    level = 2 * line_and_continuum(150.0).sum() / (len(HIGH_EDGES) - 1)
+    areas, uncs = [], []
+    for _ in range(60):
+        counts = rng.poisson(level + line_and_continuum(150.0)).astype(float)
+        fit = fit_peak(counts, HIGH_EDGES, HIGH, HIGH_SIGMA, 4.0, max_sigma=0.03 * HIGH, below=below)
+        assert fit.failed is None
+        areas.append(fit.area)
+        uncs.append(fit.area_unc)
+    scatter = float(np.std(areas, ddof=1))
+    assert abs(np.mean(areas) / 150 - 1) < 3 * scatter / 150 / math.sqrt(60)
+    assert 0.7 < scatter / np.mean(uncs) < 1.4
+    nothing = np.zeros(len(HIGH_EDGES) - 1)
+    fit = fit_peak(nothing, HIGH_EDGES, HIGH, HIGH_SIGMA, 4.0, below=below)
+    assert fit.failed.startswith("there are no counts above")
