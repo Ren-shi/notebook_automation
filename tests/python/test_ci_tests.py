@@ -183,13 +183,41 @@ def repo(tmp_path, ci):
             assert old in text
             write(path, text.replace(old, new))
 
-        def call(self, *args):
-            env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PHYSIM_CI_RECORD")}
-            return subprocess.run([sys.executable, "scripts/ci_tests.py", *args], cwd=tmp_path, capture_output=True,
-                                  text=True, env=env)
+        def commit(self, path, old, new):
+            self.edit(path, old, new)
+            git("commit", "-a", "-q", "-m", "x")
 
-        def chosen(self, *stores, event="pull_request"):
-            got = self.call("select", "--event", event, "--base", "HEAD", "--store", *stores)
+        # No bytecode: a .pyc knows the size and the second of its source, so that after an edit that keeps the size in the
+        # same second the code before the edit would run.
+        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PHYSIM_CI_RECORD")}
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+        def call(self, *args):
+            return subprocess.run([sys.executable, "scripts/ci_tests.py", *args], cwd=tmp_path, capture_output=True,
+                                  text=True, env=self.env)
+
+        def cancelled(self, during, *args):
+            """A run that is killed while its tests of the file ``during`` run (and hold)."""
+            hold = tmp_path / "hold"
+            hold.touch()
+            run = subprocess.Popen([sys.executable, "scripts/ci_tests.py", *args], cwd=tmp_path, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   env={**self.env, **dict.fromkeys(("TMPDIR", "TEMP", "TMP"), str(tmp_path))})
+            try:
+                seen = []
+                for line in run.stdout:
+                    seen.append(line)
+                    if line.startswith(f"=== {during} "):
+                        break
+                assert seen and seen[-1].startswith(f"=== {during} ") and run.poll() is None, "".join(seen)
+            finally:
+                run.kill()
+                run.wait()
+                run.stdout.close()
+                hold.unlink()
+
+        def chosen(self, *stores, event="pull_request", base="HEAD"):
+            got = self.call("select", "--event", event, "--base", base, "--store", *stores)
             assert got.returncode == 0, got.stderr
             out = dict(x.split("=", 1) for x in got.stdout.splitlines())
             assert out["python"] == ("true" if json.loads(out["shards"]) else "false")
@@ -253,6 +281,50 @@ def test_a_failure_is_not_recorded_and_does_not_stop_the_others(repo):
     assert repo.chosen("r.json") == [B]
     repo.edit("python/physim/three.py", "DEEP = 8", "DEEP = 6")  # the fix, in what the other test doesn't use
     assert repo.chosen("r.json") == [B]
+
+
+def test_a_cancelled_run_leaves_its_tests_owed(repo):
+    """A commit of code whose run is cancelled, then one of text: what the first one left is chosen by the second."""
+    slow = "test_a.py:test_slow"
+    repo.commit("tests/python/test_b.py", "    assert two", "    hold = Path(__file__).parents[2] / 'hold'\n"
+                "    for _ in range(600):\n        if not hold.exists():\n            break\n        time.sleep(0.1)\n"
+                "    assert two")
+    repo.commit("tests/python/test_b.py", "import subprocess", "import subprocess\nimport time")
+    assert repo.call("run", "--records", "main.json", A, slow, B).returncode == 0
+    repo.commit("python/physim/two.py", "return OWN -", "return +OWN -")
+    repo.commit("tests/python/test_a.py", "== 3", "== 3.0")  # so its slow test is run too
+    owed = [A, slow, B]
+    assert repo.chosen("main.json", base="HEAD~2") == owed
+
+    # Cancelled as the first test file ran: "Keep what passed" has nothing to keep.
+    repo.cancelled("test_b.py", "run", "--records", "r1.json", B, A, slow)
+    assert repo.call("merge", "--out", "pr.json", "r1.json").returncode == 0
+    repo.commit("README.md", "text", "other text")
+    assert repo.chosen("main.json", "pr.json", base="HEAD~3") == owed
+    assert repo.chosen("main.json", base="HEAD~3") == owed
+
+    # Cancelled on one of two runners: what the other one ran is kept, B is still owed.
+    assert repo.call("run", "--records", "r2.json", A, slow).returncode == 0
+    repo.cancelled("test_b.py", "run", "--records", "r3.json", B)
+    assert repo.call("merge", "--out", "pr.json", "pr.json", "r2.json", "r3.json").returncode == 0
+    repo.commit("python/physim/one.py", "# a comment", "# more")
+    assert repo.chosen("main.json", "pr.json", base="HEAD~4") == [B]
+
+    # Cancelled when all had passed (while "Keep what passed" ran): text on top of that runs nothing.
+    assert repo.call("run", "--records", "r4.json", B).returncode == 0
+    assert repo.call("merge", "--out", "pr.json", "pr.json", "r4.json").returncode == 0
+    repo.commit("README.md", "other text", "more text")
+    assert repo.chosen("main.json", "pr.json", base="HEAD~5") == []
+
+
+def test_a_failed_run_leaves_its_tests_owed_after_a_change_of_text(repo):
+    assert repo.call("run", "--records", "main.json", A, B).returncode == 0
+    repo.commit("python/physim/three.py", "DEEP = 6", "DEEP = 8")
+    assert repo.chosen("main.json", base="HEAD~1") == [B]
+    assert repo.call("run", "--records", "r.json", B).returncode == 1
+    assert repo.call("merge", "--out", "pr.json", "r.json").returncode == 0
+    repo.commit("README.md", "text", "other text")
+    assert repo.chosen("main.json", "pr.json", base="HEAD~2") == [B]
 
 
 def test_what_starts_a_program_uses_the_whole_package(repo):
