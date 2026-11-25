@@ -536,7 +536,7 @@ def test_another_evaluation_is_compared_without_a_verdict_and_is_never_the_refer
 def test_an_observable_ready_to_draw(lab):
     add_ledger(*evaluated(), results.Row(
         "62Ni", "B(E2)", KEY, 918.6, "e2fm4", "coulex-yield", "projected", direction="up", stat=12.9, sys=63.4,
-        truth=884.1, origin=results.from_run("62Ni-on-194Pt", "03-beam-24h")))
+        truth=884.105, origin=results.from_run("62Ni-on-194Pt", "03-beam-24h")))
     allmond = point(906.0, uncertainty=37.0)
     li = point(618.0, uncertainty=42.0, method="electron-scattering", detail="(e,e') at 150 MeV",
                reference={"authors": "NSR 1972Li28", "year": 1972})
@@ -573,7 +573,9 @@ def test_an_observable_ready_to_draw(lab):
     place = {i["id"]: (i["value"] - axis["low"]) / (axis["high"] - axis["low"]) for i in items}
     assert all(i["x"] == pytest.approx(place[i["id"]]) for i in items)
     assert [(u["unit"], u["label"]) for u in v["units"]] == [("e2fm4", "e²fm⁴↑"), ("e2b2", "e²b²↑"), ("W.u.", "W.u.↓")]
-    assert next(i for i in items if i["id"] == model.id)["texts"]["W.u."] == "15.5"
+    # A value without an uncertainty keeps the three digits it was given with, in every unit.
+    bare = next(i for i in items if i["id"] == model.id)
+    assert (bare["text"], bare["texts"]) == ("1130", {"e2fm4": "1130", "e2b2": "0.113", "W.u.": "15.5"})
     assert v["orders"]["pull"][1] == li.id and v["orders"]["year"][1] == allmond.id
     assert all(sorted(o) == sorted(i["id"] for i in items) for o in v["orders"].values())
     # The card of the landing page says the same; the evaluation's own rows have none.
@@ -584,6 +586,7 @@ def test_an_observable_ready_to_draw(lab):
     assert table["E_level", "62Ni:2+1"]["counts"] is None and table["E_level", "62Ni:2+1"]["strip"] is None
     # The τ of the same nucleus: what Coulex gives is converted, what a lifetime gives is not.
     tau = {g["id"]: g for g in nucleus.observable_view("62Ni", "tau", "2+1")["groups"]}
+    assert tau["theory"]["entries"][0]["texts"] == {"ps": "1.63", "fs": "1630"}  # by way of the B(E2) it was given as
     assert tau["coulex"]["note"] == "1 value, converted from the B(E2) it reports" and tau["lifetime"]["note"] == "1 value"
     empty = nucleus.observable_view("62Ni", "mu", "2+1")
     assert (empty["groups"], empty["axis"], empty["counts"]["measured"]["count"]) == ([], None, 0)

@@ -2119,6 +2119,25 @@ def _judged_words(entry, reference) -> str:
     return "not judged: no uncertainty" if entry.plus is None else "not judged"
 
 
+def _significant(value: float, digits: int) -> str:
+    """A value without an uncertainty to ``digits`` significant digits, without trailing zeros after the point:
+    "1130" for 1129.73 to three."""
+    return f"{float(f'{value:.{digits}g}'):.12g}"
+
+
+def _digits_given(value: float) -> int:
+    """How many significant digits a value was given with, from 3 to 6. The ledger holds a number, not its text, so
+    16.0 looks like 16: three digits are always kept, and a calculation's full precision is cut to six."""
+    mantissa = f"{abs(value):.12g}".partition("e")[0].replace(".", "").lstrip("0")
+    return min(6, max(3, len(mantissa)))
+
+
+def _item_text(value: float, plus: Optional[float], minus: Optional[float], digits: int) -> str:
+    """A value as :func:`value_text` writes it; without an uncertainty to round to, with ``digits`` digits."""
+    bare = not any(u is not None and math.isfinite(u) and u > 0 for u in (plus, minus))
+    return _significant(value, digits) if bare else value_text(value, plus, minus)
+
+
 def _made_from_words(row: Row) -> str:
     """The row a converted value was made from: "from τ = 2.01 ± 0.12 ps", "from B(E2)↓ = 15.5 W.u."."""
     return (f"from {observables.get(row.observable).label}{observables.DIRECTIONS.get(row.direction, '')} = "
@@ -2143,7 +2162,8 @@ def _item(entry, cell_: dict, made_from: Row, kind: str, comparison) -> dict:
                      + observables.DIRECTIONS.get(given["direction"], "")
                      if cell_["converted"] and via is None else ""),
         "value": entry.value, "plus": plus, "minus": minus, "low": entry.value - (minus or 0.0),
-        "high": entry.value + (plus or 0.0), "text": value_text(entry.value, plus, minus),
+        "high": entry.value + (plus or 0.0),
+        "text": _item_text(entry.value, plus, minus, _digits_given(made_from.value)),
         "is_data_point": is_data_point(row), "is_best": best is not None and best.id == entry.id,
         "is_reference": False, "difference": None, "difference_percent": None, "difference_text": "—",
         "ratio": None, "pull": None, "pull_text": "—", "verdict": None, "independent_of_reference": None,
@@ -2317,7 +2337,7 @@ def _groups(items: list, comparison, key: str) -> list:
     add("theory", "Theory", mine, _plural(len(mine), "value") + (
         " without an uncertainty: a ratio and no verdict" if all(i["plus"] is None for i in mine) else ""))
     mine = [i for i in rest if i["family"] == "projected"]
-    truths = {f"{i['truth']:.6g}" for i in mine}
+    truths = {_significant(i["truth"], 4) for i in mine}
     add("projected", "Projected · simulated runs, analysed back", mine, _plural(len(mine), "run") + "; " + (
         "each" if len(mine) != 1 else "it") + " is closed against the value given to its simulation"
         + (f" ({truths.pop()})" if len(truths) == 1 else "") + ", never against the reference")
@@ -2337,9 +2357,10 @@ def drawing(nuclide: str, observable: str, key: str, comparison, cells: dict, vi
                 "orders": {"method": [], "year": [], "pull": []}}
     o = observables.get(observable)
     by_id = {r.id: r for r in every or ()}
-    items = []
+    items, digits = [], {}
     for entry in (*comparison.entries, *comparison.projected):
         made_from = _source_row(entry.row, via, by_id)
+        digits[entry.id] = _digits_given(made_from.value)
         items.append(_item(entry, cells[entry.id], made_from, family(entry.row, via, by_id), comparison))
     ref = comparison.reference
     low, high = min(i["low"] for i in items), max(i["high"] for i in items)
@@ -2355,8 +2376,9 @@ def drawing(nuclide: str, observable: str, key: str, comparison, cells: dict, vi
     for i in items:
         i.update(x=at(i["value"]), x_low=at(i["low"]), x_high=at(i["high"]),
                  x_truth=None if i["truth"] is None else at(i["truth"]),
-                 texts={u["unit"]: value_text(i["value"] * u["factor"], *(
-                     None if w is None else w * u["factor"] for w in (i["plus"], i["minus"]))) for u in units})
+                 texts={u["unit"]: _item_text(i["value"] * u["factor"], *(
+                     None if w is None else w * u["factor"] for w in (i["plus"], i["minus"])), digits[i["id"]])
+                     for u in units})
     band = None
     if ref is not None:
         mine = next(i for i in items if i["is_reference"])
