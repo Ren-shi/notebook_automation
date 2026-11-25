@@ -9,7 +9,8 @@ multipolarity λ (from a 0⁺ ground state) is first-order perturbation theory a
     c = Coulex("16O", "58Ni", "48 MeV", excite="target", energy="1.454 MeV", multipolarity="E2",
                b_up="0.0695 e2b2")
     c.probability(120.0)              # excitation probability at a CM angle (degrees)
-    c.cross_section_cm(120.0)         # dσ/dΩ for exciting the state, mb/sr
+    c.cross_section_cm(120.0)         # dσ/dΩ for exciting the state, mb/sr: P (v_i/v_f) dσ_R,elastic/dΩ
+    c.ratio_to_elastic(120.0)         # σ_Coulex / σ_Rutherford(elastic) at that angle
     c.total()                         # integrated over all angles, mb
     c.xi                              # adiabaticity ξ: excitation is suppressed when ξ ≳ 1
     c.safe(120.0)                     # Cline's safe-distance criterion at that angle
@@ -166,6 +167,11 @@ class Coulex:
     ``energy`` is E* (MeV or text), ``multipolarity`` "E1", "E2" or "E3" (from a 0⁺ ground state), ``b_up``
     B(Eλ↑) in e² fm^(2λ) or text with a unit (``"0.0695 e2b2"``). The orbit is symmetrised between the initial and
     final velocities (Alder and Winther): a = Z₁Z₂e²/(μ v_i v_f), ξ = (Z₁Z₂e²/ħ)(1/v_f − 1/v_i).
+
+    The cross section is dσ/dΩ = P(θ) (v_f/v_i) (a²/4) / sin⁴(θ/2) (Alder, Bohr, Huus, Mottelson and Winther,
+    Rev. Mod. Phys. 28, 432 (1956), section II A; Alder and Winther, *Electromagnetic Excitation* (1975), ch. II;
+    GOSIA's convention): the elastic Rutherford cross section at the initial E_cm times v_i/v_f, times P. Ratios
+    say which Rutherford they divide by: :meth:`ratio_to_elastic` the elastic one, P the inelastic one.
     """
 
     def __init__(self, beam: str, target: str, beam_energy, *, excite: str = "target", energy=None,
@@ -243,17 +249,46 @@ class Coulex:
             self._grid = (grid, np.array([self._p(t) for t in grid]))
         return self._grid
 
+    @property
+    def rutherford_factor(self) -> float:
+        """v_i/v_f = √(E_cm / (E_cm − E*)): Alder and Winther's inelastic Rutherford factor
+        (:meth:`rutherford_cm`) over the elastic Rutherford cross section at the initial E_cm, at the same CM angle.
+        1.04 for ⁶²Ni at 90 MeV on carbon (E_cm 14.7 MeV, E* 1.17 MeV); 1.000 for most targets."""
+        return self.beta_i / self.beta_f
+
     def rutherford_cm(self, theta_cm: ArrayLike) -> ArrayLike:
-        """The symmetrised Rutherford cross section (a²/4) / sin⁴(θ/2), mb/sr."""
+        """The Rutherford factor of the *inelastic* cross section, mb/sr (Alder and Winther):
+        dσ_R/dΩ = (v_f/v_i) (a²/4) / sin⁴(θ/2), with the symmetrised a = Z₁Z₂e²/(μ v_i v_f) of the orbit.
+
+        It equals the elastic Rutherford cross section at the initial E_cm times v_i/v_f
+        (:attr:`rutherford_factor`), and is what GOSIA multiplies its probabilities by (its CMLAB: 250 r₃
+        √(E/(E − ΔE)) d² ε⁴, d the head-on half-distance at the initial energy). It is *not* the elastic
+        Rutherford cross section that an experiment normalises to: that is :meth:`elastic_rutherford_cm`
+        (:class:`physim.nuclear.rutherford.Rutherford`)."""
         s = np.sin(np.radians(np.asarray(theta_cm, dtype=float)) / 2)
         with np.errstate(divide="ignore"):
-            out = self.a**2 / 4 / s**4 * 10.0
+            out = self.a**2 / 4 * (self.beta_f / self.beta_i) / s**4 * 10.0
+        return float(out) if np.ndim(theta_cm) == 0 else out
+
+    def elastic_rutherford_cm(self, theta_cm: ArrayLike) -> ArrayLike:
+        """The elastic Rutherford cross section at the initial E_cm, (Z₁Z₂e²/4E_cm)² / sin⁴(θ/2), mb/sr: what an
+        experiment divides its excited counts by (the elastic singles)."""
+        s = np.sin(np.radians(np.asarray(theta_cm, dtype=float)) / 2)
+        with np.errstate(divide="ignore"):
+            out = (self.k / (4 * self.e_cm)) ** 2 / s**4 * 10.0
         return float(out) if np.ndim(theta_cm) == 0 else out
 
     def cross_section_cm(self, theta_cm: ArrayLike) -> ArrayLike:
-        """dσ/dΩ for exciting the state, CM frame, mb/sr: P(θ) × dσ_R/dΩ."""
+        """dσ/dΩ for exciting the state, CM frame, mb/sr: P(θ) × the inelastic Rutherford factor
+        (:meth:`rutherford_cm`), = P(θ) (v_i/v_f) dσ_R,elastic/dΩ."""
         return np.asarray(self.probability(theta_cm)) * np.asarray(self.rutherford_cm(theta_cm)) \
             if np.ndim(theta_cm) else self.probability(theta_cm) * self.rutherford_cm(theta_cm)
+
+    def ratio_to_elastic(self, theta_cm: ArrayLike) -> ArrayLike:
+        """σ_Coulex / σ_Rutherford(elastic) at the same CM angle: P(θ) × v_i/v_f. The ratio over P alone is the
+        ratio to GOSIA's (inelastic) Rutherford factor at that angle."""
+        p = self.probability(theta_cm)
+        return float(p) * self.rutherford_factor if np.ndim(theta_cm) == 0 else np.asarray(p) * self.rutherford_factor
 
     def cross_section_lab(self, theta_lab: ArrayLike, particle: str = "ejectile") -> tuple:
         """dσ/dΩ in the lab at the lab angle of the scattered beam (or the recoil), mb/sr: (first, second)

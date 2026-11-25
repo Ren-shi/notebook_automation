@@ -66,6 +66,7 @@ import copy
 import inspect
 import json
 import math
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -327,7 +328,9 @@ def _trigger(experiment: Experiment, fold, neutrons_min, charged_min, gates: boo
 class FusionRunTaker:
     """A fusion run being taken, with the surface of :class:`~physim.nuclear.runs.RunTaker`: :meth:`step` adds one
     block, :attr:`done` says when the real part is complete, setting :attr:`stop` ends it early, :meth:`write`
-    stores the run, :meth:`progress` and :meth:`sample` are the live counters."""
+    stores the run, :meth:`progress` and :meth:`sample` are the live counters. They may be called from another thread
+    while :meth:`step` runs: a block is made aside, and shown (its beam time, counters and events together) only when
+    all of it is there."""
 
     kind = KIND
 
@@ -378,6 +381,10 @@ class FusionRunTaker:
             self.counters = self._empty_counters()
             self.extended = 0
             self.stored_bytes = 0
+        #: Held while a finished block is shown, and while the front end reads what there is.
+        self._lock = threading.Lock()
+        #: The beam time (s) of the blocks that are stored: the runner's own is ahead of it during a step.
+        self._real_s = self.runner.real_s
         self.real_target = min(self.duration_s, self.budget_s)
         self._last_sample: list = []
 
@@ -389,11 +396,15 @@ class FusionRunTaker:
 
     @property
     def real_s(self) -> float:
-        return self.runner.real_s
+        """The beam time simulated so far (s): that of the events stored."""
+        return self._real_s
 
     @property
     def done(self) -> bool:
-        return self.stop or self.real_s >= self.real_target * (1 - 1e-12)
+        return self._done_at(self.real_s)
+
+    def _done_at(self, real_s: float) -> bool:
+        return self.stop or real_s >= self.real_target * (1 - 1e-12)
 
     def cpu_estimate_s(self) -> float:
         """A rough CPU time for the real part, s: :data:`CPU_S_PER_EVENT` per residue."""
@@ -408,8 +419,10 @@ class FusionRunTaker:
             return
         events, gam, _ = self.runner.next_chunk(self.real_target - self.real_s)
         if not events:
+            with self._lock:
+                self._real_s = self.runner.real_s
             return
-        cnt = self.counters
+        cnt = copy.deepcopy(self.counters)
         n = len(events["event"])
         names = [c.name for c in self.runner.crystals]
         cnt["residues"] += n
@@ -427,6 +440,9 @@ class FusionRunTaker:
             cnt["channels"][labels[i]]["triggered"] += int(b)
         rows = np.flatnonzero(trig)
         if not len(rows):
+            with self._lock:
+                self.counters = cnt
+                self._real_s = self.runner.real_s
             return
         cnt["triggered"] += len(rows)
         # Rows of the recorded events, and their γ rays.
@@ -449,19 +465,22 @@ class FusionRunTaker:
         for key, (name, _) in OPTIONAL_GAMMA_COLUMNS.items():
             if name in gam:
                 out[key] = gam[name][gsel]
-                if key not in self.optional:
-                    self.optional.add(key)
-                    self.parts.setdefault(key, [])
         types = {**EVENT_COLUMNS, **GAMMA_COLUMNS, **{k: t for k, (_, t) in OPTIONAL_GAMMA_COLUMNS.items()}}
-        for key, x in out.items():
-            arr = np.asarray(x).astype(types[key])
-            self.parts[key].append(arr)
-            self.stored_bytes += arr.nbytes
+        stored = {key: np.asarray(x).astype(types[key]) for key, x in out.items()}
         for k, x in enumerate(np.bincount(out["g_crystal"].astype(np.int64), minlength=len(names))):
             cnt["gamma"][names[k]] += int(x)
-        self.last_event = int(numbers[-1])
-        self.n_rows += len(rows)
-        self._last_sample = self._sample_from(events, gam, rows)
+        sample = self._sample_from(events, gam, rows)
+        with self._lock:  # all of the block at once
+            for key, arr in stored.items():
+                if key in OPTIONAL_GAMMA_COLUMNS:
+                    self.optional.add(key)
+                self.parts.setdefault(key, []).append(arr)
+                self.stored_bytes += arr.nbytes
+            self.counters = cnt
+            self.last_event = int(numbers[-1])
+            self.n_rows += len(rows)
+            self._last_sample = sample
+            self._real_s = self.runner.real_s
 
     def _sample_from(self, events: dict, gam: dict, rows: np.ndarray, n: int = 12) -> list:
         labels = self.runner.table.labels
@@ -477,24 +496,25 @@ class FusionRunTaker:
         """The live counters, in experiment time: the beam time simulated so far, the residues made and the events
         the trigger kept (with their rate), per crystal the γ rays in the kept events and the singles of all
         residues, the γ-ray fold distribution of all residues, and per channel its residues and kept events."""
-        real = self.real_s
-        c = self.counters
+        with self._lock:
+            real, c, recorded = self._real_s, self.counters, self.n_rows
         trig = c["triggered"]
         scale = self.duration_s / real if real else 0.0
         return {"number": self.number, "kind": KIND, "duration_s": self.duration_s,
                 "real_target_s": self.real_target, "scaled_s": max(self.duration_s - self.real_target, 0.0),
                 "real_s": real, "fraction": real / self.real_target if self.real_target else 1.0,
-                "real_done": self.done, "residues": c["residues"], "residues_per_s": self.runner.rate,
+                "real_done": self._done_at(real), "residues": c["residues"], "residues_per_s": self.runner.rate,
                 "counts": {"trigger": trig}, "rates_per_s": {"trigger": trig / real if real else 0.0},
                 "projected": {"trigger": trig * scale}, "trigger": dict(self.trigger),
                 "gamma": dict(c["gamma"]), "gamma_singles": dict(c["singles"]), "folds": list(c["folds"]),
                 "channels": copy.deepcopy(c["channels"]), "distance_um": self.distance_um,
-                "elapsed_s": time.time() - self.started, "events": self.n_rows, "stopping": self.stop}
+                "elapsed_s": time.time() - self.started, "events": recorded, "stopping": self.stop}
 
     def sample(self, n: int = 12) -> list:
         """The last ``n`` recorded events of the latest block, newest first: {event, channel, fold, measured γ-ray
         energies (keV)}, for "watch events"."""
-        return self._last_sample[:n]
+        with self._lock:
+            return self._last_sample[:n]
 
     def write(self) -> FusionRunData:
         """Store the run (setup snapshot, compact events, summary) and return it."""

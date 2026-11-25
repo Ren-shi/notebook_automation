@@ -369,19 +369,23 @@ def test_sharing_out_the_events():
     lo = np.array([c["u_min"] for c in config["channels"]])
     p = np.array([c["probability"] for c in config["channels"]])
     grazing = lo < math.sin(math.radians(5)) ** 2
-    assert grazing.sum() == 1 and grazing[0] and 0 < p[0] < 0.03 * p.sum()
+    # One grazing range of the elastic channel per slice of the target (the excitation's P changes through it:
+    # rates.DepthProbability.slice_count), each first among its slice's ranges.
+    slices = len(config["layers"])
+    assert grazing.sum() == slices and grazing[0] and 0 < p[grazing].sum() < 0.03 * p.sum()
     # Elastic scattering and the excitation get the same number of events.
     assert p[owner == 0].sum() == pytest.approx(p[owner == 1].sum(), rel=0.1)
     # Without the pilot run the shares follow Rutherford's cross section: the recoils' range takes most of the
     # events, and the excitation, which has no such range, next to none.
     plain, _ = generator_config(exp, pilot=False)
     q = np.array([c["probability"] for c in plain["channels"]])
-    assert q[0] > 0.6 * q.sum() and q[owner == 1].sum() < 0.01 * q.sum()
+    assert q[grazing].sum() > 0.6 * q.sum() and q[owner == 1].sum() < 0.01 * q.sum()
     # A range in which nothing is counted keeps its part of the floor, by its width in ln u.
-    share_out(config, [0.0] + [1.0] * (len(owner) - 1))
+    share_out(config, np.where(grazing, 0.0, 1.0).tolist())
     p = np.array([c["probability"] for c in config["channels"]])
     width = np.array([math.log(c["u_max"] / c["u_min"]) for c in config["channels"]])
-    assert p[0] / p[owner == 0].sum() == pytest.approx(FLOOR_SHARE * width[0] / width[owner == 0].sum())
+    assert p[grazing].sum() / p[owner == 0].sum() == pytest.approx(
+        FLOOR_SHARE * width[grazing].sum() / width[owner == 0].sum())
     # Nothing counted anywhere: as without a pilot run.
     share_out(config, [0.0] * len(owner))
     assert [c["probability"] for c in config["channels"]] == pytest.approx(list(q))

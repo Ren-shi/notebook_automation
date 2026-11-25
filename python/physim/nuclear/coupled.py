@@ -10,18 +10,26 @@ It is the same interface as first order, so everything built on :class:`~physim.
 
     cc = CoupledChannels("16O", "194Pt", "60 MeV", scheme, excite="target")
     state = cc.at(150.0)                      # populations and tensors with all orders
-    cc.cross_sections()                       # mb per level and per γ ray
+    cc.cross_sections()                       # mb per level (in one step or several) and per γ ray
 
 **The equations.** In the orbit's frame (see :mod:`physim.nuclear.orientation`), with the orbit written as
 r = a(ε cosh w + 1), t = (a/v)(ε sinh w + w),
 
-    da_n/dw = −i Σ_m Σ_λμ K_λ ⟨n|M(Eλ, μ)|m⟩ Y_λμ(π/2, 0) e^{−iμφ(w)} e^{i ξ_nm (ε sinh w + w)} / (ε cosh w + 1)^λ a_m,
+    da_n/dw = −i Σ_m Σ_λμ K_λ,nm ⟨n|M(Eλ, μ)|m⟩ Y_λμ(π/2, 0) e^{−iμφ(w)} e^{i ξ_nm (ε sinh w + w)} / (ε cosh w + 1)^λ a_m,
 
-K_λ = 4π Z e² / (ħc β (2λ+1) a^λ), ξ_nm = (Z₁Z₂e²/ħc)(1/β_n − 1/β_m) with β_n the CM speed after exciting level n,
-and ⟨n M_n|M(Eλ, μ)|m M_m⟩ = (−1)^{I_n − M_n} (I_n λ I_m; −M_n μ M_m) ⟨I_n‖M(Eλ)‖I_m⟩ (Wigner–Eckart). The reduced
-matrix elements are those of the level scheme, with ⟨m‖M‖n⟩ = (−1)^{I_n − I_m} ⟨n‖M‖m⟩; a diagonal E2 element is
-the quadrupole moment's. The orbit (a, β) is the symmetrised one of the ground state and a reference level, so
-with one level and weak coupling the solution is first order exactly.
+K_λ,nm = 4π Z e² / (ħc β_nm (2λ+1) a_nm^λ), ξ_nm = (Z₁Z₂e²/ħc)(1/β_n − 1/β_m) with β_n the CM speed after exciting
+level n, and ⟨n M_n|M(Eλ, μ)|m M_m⟩ = (−1)^{I_n − M_n} (I_n λ I_m; −M_n μ M_m) ⟨I_n‖M(Eλ)‖I_m⟩ (Wigner–Eckart). The
+reduced matrix elements are those of the level scheme, with ⟨m‖M‖n⟩ = (−1)^{I_n − I_m} ⟨n‖M‖m⟩; a diagonal E2 element
+is the quadrupole moment's.
+
+Each pair of levels has its own symmetrised orbit (Alder and Winther; GOSIA's PSI): a_nm = Z₁Z₂e²/(μ β_n β_m),
+β_nm = √(β_n β_m), so that K_λ,nm ∝ [(E_cm − E_n)(E_cm − E_m)]^((2λ−1)/4), with E_n above the ground state. A diagonal
+element so acts at the speed the nucleus has in its level. Every level that a matrix element joins to the ground state
+is then first order exactly where the coupling is weak (:mod:`physim.nuclear.orientation` gives each its own orbit).
+:attr:`CoupledChannels.a`, ``beta`` and ``cx`` are the orbit of the ground state and a reference level; the equations
+don't depend on it, as they are in units of a pair's own a. :mod:`physim.nuclear.multistep` takes its kinematics and
+Rutherford factor for every level, as GOSIA does with its NCM level; :meth:`CoupledChannels.cross_sections` takes each
+level's own v_f.
 
 The equations are integrated by a fourth-order Runge–Kutta scheme in w, with steps that follow the fastest phase,
 from where the coupling is negligible on the way in to where it is on the way out. The probabilities of all
@@ -54,10 +62,11 @@ WEAK = 1e-6
 
 
 class CoupledChannels(Excitation):
-    """Coulomb excitation of a level scheme to all orders. ``reference`` is the level whose symmetrised orbit is
-    used (the lowest excited level with a matrix element to the ground state if None); ``tolerance`` sets the
-    step of the integration (the relative accuracy of the probabilities, roughly); ``max_levels`` caps the
-    scheme (the lowest levels are kept)."""
+    """Coulomb excitation of a level scheme to all orders. ``reference`` is the level whose orbit and kinematics
+    :attr:`a`, :attr:`beta` and :attr:`cx` are (the first level with a matrix element to the ground state if
+    None); the couplings have the orbit of each pair of levels and don't depend on it. ``tolerance`` sets the step of
+    the integration (the relative accuracy of the probabilities, roughly); ``max_levels`` caps the scheme (the lowest
+    levels are kept)."""
 
     def __init__(self, beam: str, target: str, beam_energy, scheme, excite: str = "target", ground: int = 0,
                  isotropic: bool = False, reference: Optional[int] = None, tolerance: float = 1e-5,
@@ -74,7 +83,8 @@ class CoupledChannels(Excitation):
         self.basis = [(n, m) for n in self.included for m in _ms(float(levels[n].spin))]
         self._index = {b: i for i, b in enumerate(self.basis)}
         self._level_slices = {n: [i for i, (k, _) in enumerate(self.basis) if k == n] for n in self.included}
-        # The orbit: the symmetrised one of the ground state and the reference level.
+        # The reference level's kinematics and Rutherford factor (for multistep), on the orbit symmetrised between it
+        # and the ground state.
         self.reference = reference if reference is not None else (min(self.paths) if self.paths else None)
         if self.reference is None or self.reference not in self.paths:
             raise ValueError("no level is connected to the ground state by a matrix element")
@@ -106,14 +116,13 @@ class CoupledChannels(Excitation):
     # -- the coupling matrices ------------------------------------------------------------------------------------
 
     def _build_couplings(self) -> list:
-        """[(λ, μ, K_λ Y_λμ(π/2,0) × matrix of Wigner–Eckart factors × reduced matrix elements)] for every
-        multipole component with a non-zero matrix."""
+        """[(λ, μ, Y_λμ(π/2,0) × matrix of K_λ,nm × Wigner–Eckart factors × reduced matrix elements)] for every
+        multipole component with a non-zero matrix. K_λ,nm is that of the symmetrised orbit of the pair."""
         levels = self.scheme.levels
         n = len(self.basis)
         out = []
         for mult in ELECTRIC:
             lam = int(mult[1])
-            k_lam = 4 * math.pi * self.z_exciting * E2_MEV_FM / (HBARC_MEV_FM * self.beta * (2 * lam + 1) * self.a**lam)
             reduced = {}
             for a in self.included:
                 for b in self.included:
@@ -128,9 +137,13 @@ class CoupledChannels(Excitation):
                     pa, pb = levels[a].parity, levels[b].parity
                     if None not in (pa, pb) and pa * pb != (-1) ** lam:
                         continue
+                    # K_λ on the pair's own orbit, a_ab = k / (μ β_a β_b) and β_ab = √(β_a β_b).
+                    bb = self._beta_level[a] * self._beta_level[b]
+                    k_lam = (4 * math.pi * self.z_exciting * E2_MEV_FM
+                             / (HBARC_MEV_FM * math.sqrt(bb) * (2 * lam + 1) * (self.k / (self.cx.mu * bb)) ** lam))
                     # ⟨b‖M‖a⟩ as stored (a ≤ b); the other direction by the symmetry of real matrix elements.
-                    reduced[(b, a)] = me.value
-                    reduced[(a, b)] = (-1) ** int(round(ia - ib)) * me.value
+                    reduced[(b, a)] = k_lam * me.value
+                    reduced[(a, b)] = (-1) ** int(round(ia - ib)) * k_lam * me.value
             if not reduced:
                 continue
             for mu in range(-lam, lam + 1):
@@ -145,7 +158,7 @@ class CoupledChannels(Excitation):
                         mat[i, j] = ((-1) ** int(round(ii - mi)) * angular.wigner_3j(ii, lam, jj, -mi, mu, mj)
                                      * reduced[(ni, nj)])
                 if np.any(mat):
-                    out.append((lam, mu, k_lam * y * mat))
+                    out.append((lam, mu, y * mat))
         return out
 
     # -- the integration ----------------------------------------------------------------------------------------
@@ -358,6 +371,13 @@ class CoupledChannels(Excitation):
         """{level: density matrix} after the collision, excited levels only (the ground state's population is
         not a yield)."""
         return self._densities(self.solve(theta_cm))
+
+    def _rutherford(self, theta_cm) -> dict:
+        """As in first order, the elastic Rutherford cross section times v_i/v_f with each level's own v_f, of every
+        excited level of the coupling, whether one step or several reach it."""
+        elastic = np.asarray(self.cx.elastic_rutherford_cm(theta_cm))
+        return {n: elastic * (self._beta_level[self.ground] / self._beta_level[n]) for n in self.included
+                if n != self.ground}
 
     def second_order_check(self, level: int, theta_cm: float) -> tuple:
         """For the tests: the first- and second-order perturbation amplitudes of ``level`` from the ground state,

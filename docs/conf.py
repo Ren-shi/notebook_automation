@@ -2,9 +2,10 @@
 
 Build: ``pip install -r docs/requirements.txt`` with the extension installed (``maturin develop --release``),
 then ``sphinx-build -W -b html docs docs/_build/html``. The example notebooks are copied from ``notebooks/``
-and executed during the build; the Rust API docs (``cargo doc --no-deps``) are copied to ``rust/`` by CI.
+and executed during the build (not with ``PHYSIM_DOCS_NOTEBOOKS=off``); the Rust API docs (``cargo doc --no-deps``) are copied to ``rust/`` by CI.
 """
 
+import os
 import shutil
 from pathlib import Path
 
@@ -28,7 +29,7 @@ extensions = [
 ]
 myst_enable_extensions = ["dollarmath", "amsmath", "deflist"]
 myst_heading_anchors = 3
-nb_execution_mode = "force"
+nb_execution_mode = "off" if os.environ.get("PHYSIM_DOCS_NOTEBOOKS") == "off" else "force"
 nb_execution_timeout = 600
 nb_execution_raise_on_error = True
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "requirements.txt"]

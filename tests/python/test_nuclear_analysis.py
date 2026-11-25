@@ -1,12 +1,14 @@
 """Automatic analysis: from peak areas to B(E2) and the shape (backlog 56)."""
 
+import json
 import math
+from dataclasses import asdict
 
 import numpy as np
 import pytest
 
 from physim.nuclear import Experiment
-from physim.nuclear.analysis import Analysis, Settings, fit_peak
+from physim.nuclear.analysis import Analysis, PeakFit, Result, Settings, fit_peak, fit_tails
 from physim.nuclear.gamma_events import simulate_gammas
 from physim.nuclear.levels import weisskopf_unit
 from physim.nuclear.planner import Planner
@@ -46,6 +48,69 @@ def test_the_peak_fit_recovers_a_known_peak():
     assert 0.5 * fit.bins < fit.chi2 < 2 * fit.bins
     with pytest.raises(ValueError, match="too few bins"):
         fit_peak(counts[:3], edges[:4], 1.454, sigma)
+
+
+def peak_with_tails(n: float, share: float, edges: np.ndarray) -> np.ndarray:
+    """The counts expected from a peak of ``n`` at 1172.9 keV, ``share`` of it 2.3 times as wide as the rest (σ =
+    2.8 keV), on a background that its own scattered γ rays leave below it."""
+    x, width = 1e3 * (edges[:-1] + edges[1:]) / 2 - 1172.9, 1e3 * (edges[1] - edges[0])
+    shape = sum(p * np.exp(-0.5 * (x / s) ** 2) / (s * math.sqrt(2 * math.pi)) for p, s in
+                ((1 - share, 2.8), (share, 6.4))) * width
+    return n * shape + 1.7e-3 * n * width * (1 - np.cumsum(shape)) + 1e-4 * n * width
+
+
+def fitted(counts, edges, variance=None) -> PeakFit:
+    first = fit_peak(counts, edges, 1.1729, 0.003, 12.0, max_sigma=0.035, variance=variance)
+    return fit_peak(counts, edges, 1.1729, first.sigma, 4.0, max_sigma=0.035, variance=variance)
+
+
+def test_a_peak_with_tails_keeps_its_area():
+    """The Gaussian's ±3σ leave out more than 0.27 % of such a peak, and its line takes the tails for background."""
+    edges = np.arange(1.10, 1.25, 0.0002)
+    expected = peak_with_tails(5000, 0.12, edges)
+    rng = np.random.default_rng(4)
+    plain, whole = [], []
+    for _ in range(20):
+        counts = rng.poisson(expected).astype(float)
+        fit = fitted(counts, edges)
+        full = fit_tails(counts, edges, fit)
+        assert full.tails is not None and 0.965 < full.tails["inside"] < 0.99
+        assert full.centroid == fit.centroid and full.sigma == fit.sigma   # the window stays that of the Gaussian
+        plain.append(fit.area)
+        whole.append(full.area)
+    assert np.mean(plain) < 0.985 * 5000
+    assert np.mean(whole) == pytest.approx(5000, abs=3 * np.std(whole) / math.sqrt(20) + 15)
+    assert np.std(whole) == pytest.approx(full.area_unc, rel=0.5)
+    # The curve is the fit's: it holds the peak and its background; and it survives being kept as JSON.
+    e = (edges[:-1] + edges[1:]) / 2
+    assert float(np.sum(full.curve(e) - full.background_curve(e))) == pytest.approx(full.tails["area"], rel=2e-3)
+    inside = np.abs(e - full.centroid) < 3 * full.sigma
+    assert float(full.background_curve(e)[inside].sum()) == pytest.approx(full.background, rel=0.02)
+    assert PeakFit.of(dict(json.loads(json.dumps(asdict(full))), later="unknown")) == full
+
+
+def test_a_weighted_sample_with_tails_keeps_its_area():
+    """Entries that stand for many counts each are fitted with their own variance."""
+    edges = np.arange(1.10, 1.25, 0.0002)
+    rng = np.random.default_rng(5)
+    areas = []
+    for _ in range(10):
+        entries = rng.poisson(peak_with_tails(20_000, 0.12, edges)).astype(float)
+        full = fit_tails(50 * entries, edges, fitted(50 * entries, edges, 2500 * entries), variance=2500 * entries)
+        assert full.tails is not None and full.tails["gain"] < 2000   # that of 20 000 entries, not of 10⁶ counts
+        areas.append(full.area)
+    assert np.mean(areas) == pytest.approx(1e6, rel=0.006)
+
+
+@pytest.mark.parametrize("n", [300, 3000, 30_000])
+def test_a_gaussian_has_no_tails(n):
+    """A peak without tails, whatever its background, keeps the Gaussian's fit; so does one of too few counts."""
+    edges = np.arange(1.10, 1.25, 0.0002)
+    rng = np.random.default_rng(6)
+    for _ in range(10):
+        counts = rng.poisson(peak_with_tails(n, 0.0, edges)).astype(float)
+        fit = fitted(counts, edges)
+        assert fit_tails(counts, edges, fit) is fit
 
 
 # -- B(E2) ----------------------------------------------------------------------------------------------------------
@@ -104,19 +169,41 @@ def test_the_scatter_over_seeds_matches_the_quoted_statistical_uncertainty():
 def test_each_systematic_is_found_by_changing_its_input(ni):
     exp, a = ni
     r = a.run(Settings(particle_gate="all"))
-    assert set(r.budget) == {"efficiency", "angular correlation", "beam energy", "detector positions",
-                             "matrix elements assumed"}
+    assert set(r.budget) == {"efficiency", "angular correlation", "beam energy", "detector positions"}
     assert r.budget["efficiency"] == 0.05 and r.budget["angular correlation"] == 0.03
     assert r.systematic == pytest.approx(math.sqrt(sum(v**2 for v in r.budget.values())))
-    # Beam energy: ⟨P⟩/B at E(1 + δ) against E, as the budget computes it.
-    p0 = a._mean_probability(Settings(particle_gate="all"), None)
-    p1 = a._mean_probability(Settings(particle_gate="all"), None, beam_energy=a._e_mid * 1.005)
+    # Beam energy: ⟨P⟩/B with the energy the beam enters with raised by δ, against nominal, as the budget computes it.
+    p0 = a._mean_probability(Settings(particle_gate="all"), exact=True)
+    p1 = a._mean_probability(Settings(particle_gate="all"), energy_scale=1.005, exact=True)
     assert r.budget["beam energy"] == pytest.approx(abs(p1 / p0 - 1))
     assert 0.01 < r.budget["beam energy"] < 0.1
     # Doubling the assumed efficiency uncertainty doubles its entry and grows the total.
     r2 = a.run(Settings(particle_gate="all", efficiency_unc=0.10))
     assert r2.budget["efficiency"] == 0.10 and r2.systematic > r.systematic
     assert r2.total_unc == pytest.approx(math.hypot(r2.statistical, r2.systematic))
+
+
+def test_an_input_without_an_uncertainty_has_no_term_and_the_budget_says_so(ni):
+    """Round 3, fix 12: the target's thickness and the matrix elements that are not measured."""
+    exp, a = ni
+    r = a.run(Settings(particle_gate="all"))
+    assert r.settings["thickness_unc"] is None and "target thickness" not in r.budget
+    assert "matrix elements assumed" not in r.budget       # it was there as 0, with nothing known about it
+    assert r.budget_notes[0].startswith("target thickness: no uncertainty given")
+    assert r.budget_notes[1].startswith("matrix elements assumed: the setup has no level scheme of 58Ni")
+    thick = a.run(Settings(particle_gate="all", thickness_unc=0.1))
+    assert 0 < thick.budget["target thickness"] < 0.1 and thick.systematic > r.systematic
+    assert thick.systematic == pytest.approx(math.sqrt(sum(v**2 for v in thick.budget.values())))
+    assert thick.steps[-1]["step"] == "normalisation" and "thicker" in thick.steps[-1]["text"]
+    assert "thicker" not in r.steps[-1]["text"] and any("thicker" in n for n in thick.budget_notes)
+    # A result kept by an earlier version has neither the setting nor the notes, and still loads.
+    d = json.loads(json.dumps(r.to_dict()))
+    del d["budget_notes"], d["settings"]["thickness_unc"]
+    d["budget"]["matrix elements assumed"] = 0.0
+    old = Result.from_dict(d)
+    assert old.budget_notes is None and old.total_unc == r.total_unc
+    assert Settings(**old.settings).thickness_unc is None
+    assert Result.from_dict(json.loads(json.dumps(thick.to_dict()))).budget_notes == thick.budget_notes
 
 
 def test_a_changed_gate_or_window_changes_the_result_and_is_recorded(ni):

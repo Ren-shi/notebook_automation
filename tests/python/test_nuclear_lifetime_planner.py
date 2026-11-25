@@ -496,3 +496,36 @@ def test_ru98_tau_comes_back_from_a_simulated_series(ru98_closure, deorientation
     assert ("Deorientation in vacuum corrected" in notes) == (deorientation == "with")
     dc = p.analyse_lifetimes(series=series, method="decay_curve")
     assert abs(dc["tau_ps"] - tau) <= 2 * dc["total_ps"] + 0.03 * tau, (dc["tau_ps"], dc["total_ps"])
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# No forward recoil, and DSAM mode
+
+
+def test_no_doppler_method_is_named_when_the_recoil_does_not_fly_forward():
+    """62Ni backscattered off 194Pt (the shipped example): β = 0, so neither RDDS nor DSAM fits; the plan says so
+    plainly instead of naming "rdds" beside a β of zero."""
+    out = Planner.example("coulex_ni62_pt194").lifetimes()
+    assert out["available"] and out["beta_made"] == 0 and out["beta_after_target"] == 0
+    for row in out["levels"]:
+        assert row["method"] == "none" and row["beta"] == 0
+        assert row["recommended_distances_um"] == [] and row["distances_used_um"] == []
+        assert row["hours_per_distance"] is None
+    studied = out["levels"][0]
+    assert studied["tau_ps"] is not None and lp.method_for(studied["tau_ps"]) == "rdds"  # would suit a plunger
+    assert "No Doppler-shift method fits" in studied["note"]
+    w = next(w for w in out["warnings"] if w.startswith("No Doppler-shift method fits this geometry"))
+    assert "62Ni" in w and "β = 0" in w and "RDDS" in w and "DSAM" in w
+    assert not any("suits" in w for w in out["warnings"])
+
+
+def test_a_dsam_plan_lists_no_plunger_distances(sm143):
+    """A level whose τ suits a plunger, in a DSAM setup: no recommended or used plunger distances."""
+    planner = Planner(_sm143(taus_ps=(0.6, 2.0, 0.2)))
+    out = planner.lifetimes()
+    assert out["method"] == "dsam" and out["distances_um"] == []
+    rows = out["levels"]
+    assert any(r["method"] == "rdds" for r in rows)
+    for r in rows:
+        assert r["recommended_distances_um"] == [] and r["sensitive_um"] is None
+        assert r["distances_used_um"] == [] and r["counts_per_distance"] is None

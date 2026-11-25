@@ -1,19 +1,78 @@
 name: CI
 
+# A pull request runs once, on the code as it would be merged. The first job chooses the tests (scripts/ci_tests.py): those
+# that did not yet pass on the code and the files they use, without the slow ones (.github/slow-tests.txt) of what the pull
+# request does not change. A change of text (documents, comments, docstrings) runs none. Pushes to main run everything
+# unless only text changed; version tags and runs started by hand (gh workflow run ci.yml --ref BRANCH) run everything.
 on:
   push:
+    branches: [main]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
+# A new push to a pull request replaces its run. On main it waits for the run before it (and replaces one that waits): a
+# change of text would otherwise throw a full run away and then need one itself.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  choose:
+    name: What to run
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.select.outputs.rust }}
+      python: ${{ steps.select.outputs.python }}
+      shards: ${{ steps.select.outputs.shards }}
+      notebooks: ${{ steps.select.outputs.notebooks }}
+      own: ${{ steps.key.outputs.own }}
+      records: ${{ steps.key.outputs.records }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # a pull request is checked out merged into its base, which is the first parent
+      - uses: ./.github/actions/python
+        with:
+          environment: "false"
+      # What passed, on what (scripts/ci_tests.py): of main, and of this pull request's earlier runs.
+      - id: key
+        run: |
+          if [ "${{ github.event_name }}" = pull_request ]; then own=pr name=pr${{ github.event.number }}; else own=main name=main; fi
+          { echo "own=$own"; echo "records=tests-2-$name-"; } >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        with:
+          path: .ci/main.json
+          key: tests-2-main-none
+          restore-keys: tests-2-main-
+      - uses: actions/cache/restore@v4
+        if: github.event_name == 'pull_request'
+        with:
+          path: .ci/pr.json
+          key: ${{ steps.key.outputs.records }}none
+          restore-keys: ${{ steps.key.outputs.records }}
+      - id: select
+        env:
+          EVENT: ${{ startsWith(github.ref, 'refs/tags/') && 'tag' || github.event_name }}
+        run: |
+          args=(--event "$EVENT")
+          if [ "$EVENT" = pull_request ]; then args+=(--base HEAD^1); fi
+          if ls .ci/*.json > /dev/null 2>&1; then args+=(--store .ci/*.json); fi
+          python scripts/ci_tests.py select "${args[@]}" | tee out
+          cat out >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" != pull_request ] && grep -q '^python=true' out; then echo notebooks=true >> "$GITHUB_OUTPUT"; fi
+      - uses: ./.github/actions/python
+        if: steps.select.outputs.python == 'true'
+        with:
+          environment: only-if-missing
+
   rust:
     name: Rust (fmt, clippy, tests)
+    needs: choose
+    if: needs.choose.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,28 +88,79 @@ jobs:
         run: cargo test --release
       - name: Tests without the parallel feature
         run: cargo test --release --no-default-features --lib --test physics --test world_api --test force_reuse --test events --test checkpoint --test constraints --test adaptive --test forces --test integrators --test chaos --test em --test tree --test collisions --test md --test rigid --test fields --test quantum --test rng --test nuclear_events
+      - uses: ./.github/actions/python
+        with:
+          environment: "false"
+      - run: python scripts/ci_tests.py passed rust --records records-rust.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: records-rust
+          path: records-rust.json
+          overwrite: true
+          retention-days: 3
 
+  # Each test file runs in a process of its own, one after the other: the tests use every core themselves.
   python:
-    name: Python (bindings, notebooks)
+    name: Python (${{ matrix.shard.index }} of ${{ strategy.job-total }})
+    needs: choose
+    if: needs.choose.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.choose.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/python
+      # The slowest tests and what was skipped, and why, are listed after each file.
+      - name: Tests
+        run: .venv/bin/python scripts/ci_tests.py run --records records-${{ matrix.shard.index }}.json ${{ matrix.shard.tests }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: records-${{ matrix.shard.index }}
+          path: records-${{ matrix.shard.index }}.json
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 3
+
+  # Docs executes the notebooks of a pull request that changes them; this also looks for errors in their outputs.
+  notebooks:
+    name: Notebooks
+    needs: choose
+    if: needs.choose.outputs.notebooks == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/python
+      - run: .venv/bin/python scripts/run_notebooks.py
+
+  # What passed is kept for the next run, also when something else failed.
+  record:
+    name: Keep what passed
+    needs: [choose, rust, python]
+    if: always() && needs.choose.result == 'success' && (needs.choose.outputs.python == 'true' || needs.choose.outputs.rust == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/python
         with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-      - name: Install dependencies
-        run: |
-          python -m venv .venv
-          .venv/bin/pip install -r requirements-dev.txt
-      - name: Build extension
-        run: |
-          source .venv/bin/activate
-          maturin develop --release
-      - name: Binding tests
-        run: .venv/bin/pytest tests/python
-      - name: Execute notebooks
-        run: .venv/bin/python scripts/run_notebooks.py
+          environment: "false"
+      - uses: actions/cache/restore@v4
+        with:
+          path: .ci/${{ needs.choose.outputs.own }}.json
+          key: ${{ needs.choose.outputs.records }}none
+          restore-keys: ${{ needs.choose.outputs.records }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: records-*
+          merge-multiple: true
+          path: .ci/new
+      - run: |
+          own=.ci/${{ needs.choose.outputs.own }}.json
+          python scripts/ci_tests.py merge --out "$own" $(ls "$own" .ci/new/records-*.json 2>/dev/null || true)
+          ls -l .ci
+      - uses: actions/cache/save@v4
+        with:
+          path: .ci/${{ needs.choose.outputs.own }}.json
+          key: ${{ needs.choose.outputs.records }}${{ github.run_id }}-${{ github.run_attempt }}

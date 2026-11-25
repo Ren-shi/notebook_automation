@@ -38,9 +38,22 @@ GOSIA installation outside the repository.**
 >     put a wrong one in).
 >   - γ–γ coincidences from cascades: the yields of every transition are there; the angular correlation of two
 >     γ rays is not.
->   - The analytic rates (`Rates`) still use first order with the elastic Rutherford factor; the multistep
->     yields use the symmetrised one (6% apart in the example). Which to use everywhere is best settled with
->     the GOSIA comparison.
+>   - ~~The analytic rates (`Rates`) still use first order with the elastic Rutherford factor; the multistep
+>     yields use the symmetrised one (6% apart in the example).~~ **Settled (Allmond 2014 wave 2):** one
+>     convention everywhere, Alder and Winther's dσ = P (v_f/v_i)(a²/4)/sin⁴(θ/2) with the symmetrised a, which is
+>     the elastic Rutherford cross section at the initial E_cm times v_i/v_f and is GOSIA's (CMLAB). `Coulex.
+>     rutherford_cm`/`cross_section_cm`, the rates and the event generator (`rates.rutherford_factor`), the Doppler
+>     table and the all-orders yields (`multistep`, `orientation`, which take `Coulex.rutherford_cm`) all use it.
+>     Ratios say which Rutherford they divide by: `Coulex.ratio_to_elastic` and `DepthProbability.ratio` the
+>     elastic one (what an experiment normalises to); GOSIA's own ratios divide by its inelastic one. For ⁶²Ni on
+>     carbon the app's integrated factor equals GOSIA's printed integrated Rutherford to 0.03 %, and the app
+>     agrees with GOSIA run on its own input within 0.2 % per ring once GOSIA has the nuclear masses (it uses the
+>     mass numbers, −0.6 % here) and DIP off (the E1 polarisation, −0.5 %, still not in the app). Against the
+>     published-setup GOSIA numbers (mass numbers, DIP 3.8) the app is +1.3 % (ring 2) and +1.2 % (ring 3).
+>     The shipped examples moved by +3.4 % (`coulex_ni58`), +0.6 % (`coulex_ru98_plunger`) and +0.3 % (the two
+>     `coulex_ni62_pt194`) in the rates; the multistep yields by the inverse, v_f/v_i.
+>   - The other nucleus's excitation (`Rates.other_peak`, `gamma_events`), which rides on elastic orbits as a
+>     probability per collision, keeps the elastic Rutherford cross section.
 
 ## Why
 First-order theory fails once excitation probabilities reach a few percent, and it cannot describe the

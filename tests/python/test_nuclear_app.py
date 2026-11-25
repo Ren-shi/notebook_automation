@@ -328,7 +328,11 @@ def _texts(user) -> str:
 def _fields(user, label):
     from nicegui import ui
 
-    return [e for e in user.find(kind=ui.input).elements if e.props.get("label") == label]
+    try:
+        found = user.find(kind=ui.input).elements
+    except AssertionError:  # no field at all on the page yet (find insists on one)
+        return []
+    return [e for e in found if e.props.get("label") == label]
 
 
 async def _open_card(user, title: str, field: str):

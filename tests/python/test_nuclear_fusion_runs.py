@@ -4,6 +4,8 @@ with γγ coincidences that show the band."""
 
 import json
 import math
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -154,6 +156,67 @@ def test_stop_ends_the_run_early(tmp_path):
     assert run.summary["status"] == "stopped"
     assert run.duration_s == pytest.approx(run.real_s) and run.real_s < 60.0
     assert run.describe().endswith("(stopped)")
+
+
+@pytest.mark.parametrize("where", ["block", "counters", "sample"])
+def test_progress_shows_a_block_only_when_its_events_are_stored(tmp_path, monkeypatch, where):
+    """A step is held where the runner has made its block (and counted its beam time), while the counters are added
+    up, or where the events kept are listed: the progress and the sample still show the blocks before it, all of the
+    same beam time, and all of the new block once the step is over."""
+    folder = ExperimentFolder.create(Experiment.example(EXAMPLE), root=tmp_path)
+    taker = fusion_runs.start(folder, duration="1 h", budget="60 s", seed=3)
+    held, go = threading.Event(), threading.Event()
+    owner, name = {"block": (taker.runner, "next_chunk"), "counters": (fusion_runs, "_add_hist"),
+                   "sample": (taker, "_sample_from")}[where]
+    real = getattr(owner, name)
+
+    def wait(*args, **kw):
+        out = real(*args, **kw)
+        held.set()
+        assert go.wait(60)
+        return out
+
+    monkeypatch.setattr(owner, name, wait)
+    for _ in range(2):
+        shown, last = taker.progress(), taker.sample(5)
+        held.clear()
+        go.clear()
+        t = threading.Thread(target=taker.step)
+        t.start()
+        assert held.wait(60)
+        during, sample, ahead = taker.progress(), taker.sample(5), taker.runner.real_s
+        go.set()
+        t.join(60)
+        assert ahead > during["real_s"], "the runner is ahead of what is stored"
+        for k in set(shown) - {"elapsed_s"}:
+            assert during[k] == shown[k], k
+        assert sample == last
+        after = taker.progress()
+        assert after["real_s"] == ahead and after["residues"] > during["residues"]
+        assert after["events"] == after["counts"]["trigger"] > during["events"]
+        assert len(taker.sample(5)) == 5 and taker.sample(5) != last
+    # What is stored goes with the beam time that is stored.
+    taker.stop = True
+    run = taker.write()
+    assert run.summary["generator"]["real_s"] == run.real_s == after["real_s"]
+    assert run.summary["events"] == run.summary["triggered"] == after["events"]
+
+
+def test_a_watched_run_has_the_events_of_its_seed(tmp_path):
+    """The same seed gives the same events whether the run is taken at once or watched from another thread."""
+    folder = ExperimentFolder.create(Experiment.example(EXAMPLE), root=tmp_path)
+    plain = _take(fusion_runs.start(folder, duration="1 h", budget="2 s", seed=5))
+    bg = runs.Background(fusion_runs.start(folder, duration="1 h", budget="2 s", seed=5))
+    while bg.running:
+        p = bg.taker.progress()
+        assert p["events"] == p["counts"]["trigger"]
+        assert bool(p["real_s"]) == bool(p["residues"])
+        time.sleep(0.005)  # without a pause the loop starves the run it watches
+    watched = bg.join()
+    a, b = plain._arrays(), watched._arrays()
+    assert set(a) == set(b) and all(np.array_equal(a[k], b[k]) for k in a)
+    for k in ("generator", "counters_raw", "counts", "real_s", "status"):
+        assert plain.summary[k] == watched.summary[k], k
 
 
 def test_extend_continues_the_stream(tmp_path):

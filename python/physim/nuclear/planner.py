@@ -312,6 +312,9 @@ class Planner:
         folder = _runs.ExperimentFolder(path)
         p = cls(folder.setup())
         p.folder = folder
+        from . import result_rows
+
+        result_rows.backfill_if_new(folder.path)  # an experiment from before the results ledger
         runs = folder.runs()
         if runs:
             p.run = folder.load_run(runs[-1]["number"])
@@ -1558,9 +1561,11 @@ class Planner:
           setup's Coulex B(E2), with its source), ``beta`` (the recoil's speed: in the plunger's gap, or where it
           is made for DSAM);
         - ``method``: "rdds" for τ of about 1 ps to 1 ns, "dsam" for 10 fs to 1 ps, else "outside" (also for a
-          level without a known τ);
+          level without a known τ); "none" for every level when the recoil does not fly forward out of the target
+          (β = 0: no Doppler-shift method fits; the warnings say why);
         - ``recommended_distances_um`` and ``sensitive_um`` (:func:`~physim.nuclear.lifetimes.recommend_distances`,
-          :func:`~physim.nuclear.lifetimes.sensitive_range`) for a plunger level;
+          :func:`~physim.nuclear.lifetimes.sensitive_range`) for a plunger level; empty in DSAM mode (the setup's
+          DSAM, or a recoil that stops in the target);
         - ``separation``: per γ-ray detector its angle, the shifted − unshifted separation against its FWHM, and
           whether they are ``resolved`` (at least two FWHM apart);
         - ``attenuation``: F(τ) on the setup's backing for DSAM (:func:`~physim.nuclear.lifetimes.dsam_attenuation`
@@ -1635,10 +1640,26 @@ class Planner:
         [{``distance_um``, ``unshifted``, ``shifted`` (shares of the line), ``error``, ``tau_ps``, ``tau_err_ps``}]
         (empty for DSAM), ``curve`` = {``x``, ``y``, ``kind``} (the fitted curve, or the line shape), ``b_down`` =
         [value, uncertainty], ``b_unit``, ``compare`` = [{``source``, ``tau_ps``, ``b_down``}], ``notes``, and
-        ``total_ps``, ``beta``, ``rings_deg``."""
-        from . import lifetime_plan
+        ``total_ps``, ``beta``, ``rings_deg``, and ``transition`` (the nucleus and the two levels of the analysed
+        line) and ``runs`` (the names of the runs it read).
 
-        return lifetime_plan.analyse(self, level, series, method)
+        An analysis that gave a τ is written to the experiment's results ledger (τ, and the B(E2) that depends on
+        it: :func:`physim.nuclear.result_rows.write_lifetimes`), and, when it is of this setup's own runs, kept in
+        the experiment's folder (``lifetime.json``, :meth:`kept_lifetimes`)."""
+        from . import lifetime_plan, result_rows
+
+        out = lifetime_plan.analyse(self, level, series, method)
+        if out.get("available"):
+            if series is None:
+                self._keep("lifetime.json", out, self.experiment_folder)
+            result_rows.write_lifetimes(self, out)  # never fails the analysis
+        return out
+
+    def kept_lifetimes(self) -> Optional[dict]:
+        """The last lifetime analysis of the current setup's runs (the dict of :meth:`analyse_lifetimes`), as
+        kept in the experiment's folder (``lifetime.json``): there after the app is opened again. None if there
+        is none, or if the setup's physics changed since. Never starts the analysis."""
+        return self._kept("lifetime.json", self.experiment_folder)
 
     def remove_ancillary(self, name: str) -> bool:
         d = self.draft
@@ -1906,6 +1927,9 @@ class Planner:
                 save_result(self.run.folder, r)
             except OSError:
                 pass
+            from . import result_rows
+
+            result_rows.write_coulex(self, r)  # a row of the results ledger; never fails the analysis
         out = asdict(r)
         out.update(available=True, total_unc=r.total_unc, runs=len(self.analysis(events, seed).history))
         return out
@@ -2116,7 +2140,11 @@ class Planner:
                            "first_order": {d: first.levels[d].get(n, 0.0) for d in first.levels}}
                           for n in range(1, len(scheme.levels)) if any(full.levels[d].get(n, 0.0) > 0
                                                                        for d in full.levels)],
-               "notes": full.notes, "gosia_input": ms.gosia_input(full), "beam_time_s": _q(exp.run.beam_time).to("s")}
+               "notes": full.notes, "gosia_input": None, "beam_time_s": _q(exp.run.beam_time).to("s")}
+        try:
+            out["gosia_input"] = ms.gosia_input(gamma="array" if exp.gamma_detectors else "4pi")
+        except ValueError as e:
+            out["notes"] = list(out["notes"]) + [f"No GOSIA input: {e}."]
         if shapes:
             twos = [n for n, lev in enumerate(scheme.levels) if n and lev.spin == 2 and scheme.b(0, n, "E2")]
             if twos:
@@ -2191,13 +2219,19 @@ class Planner:
         exp = self._data_experiment()
         if role is None:
             role = "target" if exp.excitation is None or exp.excitation.excite == "target" else "beam"
+        of_run = measured is None
         if measured is None:
             y = self.run_yields(gate)
             measured, beam_time_s = y["measured"], y["beam_time_s"]
             if not measured:
                 raise ValueError("the run has no peak to fit in any particle detector")
         free = free or [(0, 1, "E2")]
-        return Multistep(exp, exp.levels[role], role).fit(measured, free, beam_time_s=beam_time_s)
+        fit = Multistep(exp, exp.levels[role], role).fit(measured, free, beam_time_s=beam_time_s)
+        if of_run:  # the run's own yields: rows of the results ledger; counts given from outside have no run
+            from . import result_rows
+
+            result_rows.write_fit(self, fit, role, gate)
+        return fit
 
     def trajectories(self, impact_parameters: Optional[list] = None, nuclide: Optional[str] = None) -> dict:
         """Coulomb orbits (CM frame, fm) for a range of impact parameters, from physim's engine."""
@@ -2377,6 +2411,9 @@ class Planner:
         d = self.draft
         d.setdefault("levels", {})[role] = scheme.to_dict()
         self._apply(d)
+        from . import result_rows
+
+        result_rows.copy_shell_model(result)  # the whole calculation, as theory rows of the nucleus
         return changes
 
     def remove_levels(self, role: str) -> bool:

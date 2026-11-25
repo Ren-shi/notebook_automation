@@ -44,8 +44,41 @@ $$
 
 When ξ ≳ 1 the collision is slower than the nuclear motion, and the excitation dies away (the adiabatic cutoff).
 
-**The cross section.** It is dσ/dΩ = P(θ) dσ_R/dΩ, with the symmetrised Rutherford cross section
-(a²/4)/sin⁴(θ/2), in the CM frame. The lab cross section and the total follow as for elastic scattering.
+**The cross section.** In the CM frame (Alder, Bohr, Huus, Mottelson and Winther, Rev. Mod. Phys. 28, 432 (1956),
+section II A; Alder and Winther, *Electromagnetic Excitation*, 1975, ch. II):
+
+$$
+\frac{d\sigma}{d\Omega} = P(\theta)\,\frac{v_f}{v_i}\,\frac{a^2}{4}\,\frac{1}{\sin^4(\theta/2)}
+= P(\theta)\,\frac{v_i}{v_f}\,\frac{d\sigma_R^{\rm el}}{d\Omega}(E_{cm}),
+$$
+
+with the symmetrised a above. The second form is the same thing: the elastic Rutherford cross section at the
+initial CM energy, (Z₁Z₂e²/4E_cm)²/sin⁴(θ/2), times v_i/v_f = √(E_cm/(E_cm − E*)). It is the convention of GOSIA
+too (its CMLAB: 250 r₃ √(E/(E − ΔE)) d² ε⁴, d the head-on half-distance at the initial energy); integrated over
+the ⁶²Ni-on-carbon rings and target below, the app's Rutherford factor and GOSIA's printed integrated Rutherford
+agree to 0.03 %. The factor v_i/v_f is 1.04 for ⁶²Ni at 90 MeV on carbon (E_cm 14.7 MeV, E* 1.17 MeV), 1.03 in
+`coulex_ni58`, and under 1 % in the other examples. Every place the app forms a Coulomb-excitation cross section
+uses it: `Coulex.cross_section_cm` and `rutherford_cm`, the rates and the event generator (`rates.
+rutherford_factor`), the Doppler table, and the solutions of a level scheme. (The other nucleus's γ rays are the
+exception: they come per particle of the `[reaction]`, with no factor of their own.) Which level's v_f it is:
+
+- `cross_sections` of `Excitation` and of `CoupledChannels` (mb, over all angles): **each level its own**. The
+  coupled equations give a cross section to every excited level the collision populates, in one step or several.
+- `Multistep.yields` (γ rays in the detectors): that of the **reference level**, the first that a matrix element
+  joins to the ground state, for every level, with its kinematics.
+- The rates and the events: that of the **`[reaction]` state**, whose kinematics the channel follows, for the
+  populations of all levels.
+
+The last two do as GOSIA does with its NCM level. A level at E_n then gets √((E_cm − E_n)/(E_cm − E_ref)) of what it
+has with its own v_f: for the 2.3 MeV levels of ⁶²Ni 0.3 % less at 237 MeV on ¹⁹⁴Pt and 4 % less at 100 MeV on carbon.
+
+**Which Rutherford a ratio divides by.** An experiment divides its excited counts by the elastic ones, so the
+app's ratios σ_Coulex/σ_Rutherford divide by the **elastic** Rutherford cross section: `Coulex.ratio_to_elastic`
+(P × v_i/v_f at one angle) and `DepthProbability.ratio` (the same integrated through a thick layer). GOSIA's
+ratios divide by its own integrated Rutherford, which is the inelastic one above, with the inelastic kinematics
+(for the ⁶²Ni rings, 11 % and 16 % above the elastic integral); P alone is the ratio to that one at one angle.
+
+The lab cross section and the total follow as for elastic scattering.
 
 **Numerics.**
 - The integrand at −w is the conjugate of that at w, so I_μ = 2 Re ∫₀^∞. That half is done in Gauss–Legendre
@@ -78,6 +111,26 @@ amplitudes of every magnetic substate of every level along the orbit, which hold
 excitations, the depletion of the ground state and of the 2⁺ state, and the reorientation through the diagonal
 matrix elements (the quadrupole moments).
 
+**The orbit of each pair of levels.** The coupling of levels n and m takes the orbit symmetrised between the speeds
+the nucleus has in the two (Alder and Winther), a_nm = Z₁Z₂e²/(μ v_n v_m) and v_nm = √(v_n v_m), with
+½μv_n² = E_cm − E_n:
+
+$$
+K_{\lambda,nm} = \frac{4\pi Z e^2}{\hbar\, v_{nm}\,(2\lambda+1)\, a_{nm}^\lambda}
+\;\propto\; \big[(E_{cm}-E_n)(E_{cm}-E_m)\big]^{(2\lambda-1)/4} ,
+$$
+
+and ξ_nm = (Z₁Z₂e²/ħ)(1/v_n − 1/v_m). It is GOSIA's ψ (its LOAD: (pp₁ pp₂)^((2λ−1)/4), pp = E − (1 + A₁/A₂)E_n,
+which is (1 + A₁/A₂)(E_cm − E_n) with A₁ the projectile's mass, whichever nucleus is excited), and the orbit first
+order gives each level. A diagonal element acts at the speed the nucleus has in its own level, v_n. The
+eccentricity 1/sin(θ/2) is the same for every pair.
+
+Until 2026-11-24 every pair had the orbit of the ground state and the reference level (the first 2⁺), which is
+too strong by [E_cm(E_cm − E_ref) / ((E_cm − E_n)(E_cm − E_m))]^((2λ−1)/4) for the others. The excitation of a level
+in one step in a scheme of two levels without a quadrupole moment was right. A reorientation effect was too large by
+(E_cm/(E_cm − E*))^¾ (6% for ⁶²Ni at 111.6 MeV on carbon, 5% for ¹⁶O at 30 MeV on ⁵⁸Ni, 0.5% for ⁶²Ni at 237 MeV on
+¹⁹⁴Pt), and the populations of the levels above by more (12 to 26% for ⁶²Ni at 100 MeV on carbon).
+
 When the setup has a level scheme of the excited nucleus (`[levels]`) whose decays follow more than one
 transition, the simulated events take that solution (`gamma.cascade_excitation`):
 
@@ -103,9 +156,18 @@ transition, the simulated events take that solution (`gamma.cascade_excitation`)
   bit those of earlier versions). A setup without a level scheme is first order in any case, since its one matrix
   element allows nothing else.
 
-The solution is made once per setup, at the beam energy in the middle of the target, on a grid of 90 CM angles
-(2° apart) with a relative accuracy of 10⁻⁴ in the probabilities, and kept. The equations of all angles are
-integrated together (`CoupledChannels.solve_many`), and the forward angles at which first order excites less than
+**Through a thick target** (one the generator cuts into slices) the excitation probability and the orientation are
+those of each event's own beam energy: the equations are solved at 3 to 8 beam energies through the target, the
+probability is interpolated between them in ln P, and the density matrix of the level the excitation starts in by the
+polynomial through them (`gamma.DepthOrientation`), as the correlation table's coefficients are. A matrix that the
+polynomial leaves with an eigenvalue below −10⁻⁴ (close to 0°, or at the back of a very thick target; none of the
+⁶²Ni-on-carbon events) has its negative eigenvalues set to zero. Which level the excitation starts in is still drawn from
+the populations in the middle of the target. A target of one slice, a lifetime measurement and the other nucleus have the
+middle's solution alone.
+
+The solution is made once per setup and beam energy (in the middle of the target, and the others of a thick one), on a
+grid of 90 CM angles (2° apart) with a relative accuracy of 10⁻⁴ in the probabilities, and kept. The equations of all
+angles are integrated together (`CoupledChannels.solve_many`), and the forward angles at which first order excites less than
 10⁻⁶ of the collisions are left in first order (below 14° in the ⁶²Ni example, where no population changes by
 more than 3 × 10⁻⁹). The table then takes about 2 s for the six levels of ⁶²Ni, where one angle after the other
 takes 16 s; first order takes 0.2 s.
@@ -114,19 +176,20 @@ For `coulex_ni62_pt194` (⁶²Ni at 237 MeV on ¹⁹⁴Pt, the beam excited), at
 
 | Level of ⁶²Ni | First order | All orders |
 |---|---|---|
-| 2⁺, 1172.9 keV | 0.1932 | 0.1845 |
-| 0⁺, 2048.6 keV | 0 | 0.0081 |
+| 2⁺, 1172.9 keV | 0.1931 | 0.1836 |
+| 0⁺, 2048.6 keV | 0 | 0.0080 |
 | 2⁺, 2301.9 keV | 0.0006 | 0.0017 |
-| 4⁺, 2336.5 keV | 0 | 0.0058 |
-| any level | 0.1938 | 0.2001 |
+| 4⁺, 2336.5 keV | 0 | 0.0057 |
+| any level | 0.1936 | 0.1990 |
 
-The 2⁺ state loses 4.5% to the levels above it and gets it back, with more, when they decay through it: 3% more
+The 2⁺ state loses 4.9% to the levels above it and gets it back, with more, when they decay through it: 2.5% more
 2⁺ → 0⁺ γ rays than first order gives, 4⁺ → 2⁺ γ rays (1163.5 keV) at 3% of them and 0⁺ → 2⁺ γ rays (875.6 keV)
 at 4%.
 
 **One particle per collision.** A collision either excites the nucleus or leaves it as it was, so elastic
 scattering is the Rutherford cross section times 1 − P(θ): 20% fewer elastic particles at backward angles in the
-⁶²Ni example, and elastic and excited particles together are Rutherford scattering.
+⁶²Ni example, and elastic and excited particles together are Rutherford scattering (to the inelastic orbit's
+(v_i/v_f − 1)·P, a few 10⁻⁴: semiclassical theory conserves the flux only on the symmetrised orbit).
 
 **What this leaves out.**
 
@@ -182,12 +245,12 @@ A Coulomb-excitation setup adds excitation channels next to the elastic ones (`r
 Each excitation channel works like an elastic one:
 
 - **Kinematics** use Q = −E*.
-- **Cross section:** Rutherford's at each depth times P(θ). P is computed once, at the beam energy in the middle of
-  the layer, because it changes slowly through a thin target. With a level scheme it is the probability of
-  exciting any level (previous section).
+- **Cross section:** Rutherford's at each depth times v_i/v_f times P(θ) (the cross section above). P follows the
+  beam energy through the layer (`rates.depth_probability`; a thin layer keeps the one P at its middle). With a
+  level scheme it is the probability of exciting any level (previous section).
 - **Event generator:** the excitation channel is picked as often as the elastic one, the masses include E*, and
-  each event's weight is multiplied by P(θ*) from a table every 0.25°. The rare inelastic events therefore get as
-  many samples as the elastic ones.
+  each event's weight is multiplied by P(θ*) × v_i/v_f, averaged over its slice of the target, from a table every
+  0.25°. The rare inelastic events therefore get as many samples as the elastic ones.
 - **Expected peaks:** Coulomb-excitation peaks are always listed, however weak.
 
 The app has an **Excitation and γ rays** tab (P(θ), events per detector, the Doppler table). The report adds a
@@ -214,5 +277,7 @@ at 0.7% statistical error from 2 × 10⁶ events.
 | Monte Carlo against analytic rates, every channel and detector of `coulex_ni58` | `Rates` | 4σ | `test_monte_carlo_rates_agree_with_analytic_rates[coulex_ni58]` |
 | Inelastic peak below the elastic one by the kinematic difference | `TwoBody` with and without E* | 10% | `test_coulomb_excitation_in_the_report` |
 | Against GOSIA, first order, ¹⁶O + ⁵⁸Ni at 30 MeV, five angles | GOSIA 20110524.14 with the matrix element ÷10 (weak coupling), `tests/reference/nuclear/coulex_gosia.csv` | 2% (worst 0.6%) | `validation.coulex_vs_gosia` |
+| Each pair of levels on its own orbit | K_λ ∝ [(E_cm − E_n)(E_cm − E_m)]^((2λ−1)/4) for E1, E2, E3, either nucleus excited; first order for every level where the coupling is weak | 1e-12; 1e-4 | `test_each_pair_of_levels_is_coupled_on_its_own_symmetrised_orbit`, `test_every_level_is_first_order_where_the_coupling_is_weak` |
 | Against GOSIA, all orders, the same case | GOSIA 20110524.14, `coulex_gosia_all_orders.csv` | 1% (worst 0.6%) | `test_all_orders_agree_with_gosia` |
+| Against GOSIA, all orders, feeding and reorientation: ⁶²Ni with Q_s = ±0.3 e b, 0⁺₂, 2⁺₂, 4⁺₁ on ¹²C (100 MeV, either nucleus the beam) and ¹⁹⁴Pt (200 MeV), a rotor ¹⁵²Sm on ¹²C (400 MeV) | GOSIA 20110524.14 (nuclear masses, E1 polarisation off), the app's numbers stored before the runs, `coulex/gosia_pairs.csv` | 1% above 10⁻⁴, 3% above 10⁻⁶ (worst 0.5%; 0.01 to 0.2% with GOSIA's non-relativistic E_cm) | `test_feeding_and_reorientation_agree_with_gosia` |
 | Against a published measurement | Requested from the user (`tests/reference/nuclear/pending/coulex_literature.md`) | — | not yet written |

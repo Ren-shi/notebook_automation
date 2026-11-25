@@ -889,6 +889,49 @@ def coulex_vs_gosia(ref):
     return worst <= 0.02, worst, len(rows), f"worst {worst:.2%}", plot
 
 
+@check("Coulomb excitation, first-order semiclassical", "literature", "Reproduced experiment: Allmond et al., Phys. "
+       "Rev. C 90, 034309 (2014), ⁶²Ni at 111.6 MeV on 1 mg/cm² carbon, carbon recoils in two rings (14–28°, "
+       "28–44°): the example coulex_ni62_c_allmond against the paper's energy losses, GOSIA 20110524.14 (nuclear "
+       "masses and DIP off; and as run, integer masses, DIP 3.8), its own simulated runs (closure over several "
+       "seeds, and one as a stored run) and the paper's per-ring <0⁺‖E2‖2⁺> rebuilt into ratios through GOSIA's "
+       "ratio(M) (the paper gives no yields: this tests that physim extracts the same B(E2) from the same data as "
+       "GOSIA did); all orders judged, first order shown beside it (physim.nuclear.coulex_reproduction; "
+       "coulex/allmond2014.toml)",
+       "⁵⁸Ni, ⁶⁰Ni losses within their 0.8 MeV, ⁶²Ni 42.4(8) MeV; σ_C/σ_R per ring within 1% of GOSIA as run "
+       "(missed: a known, explained +1.3/+1.2%) and 0.5% of GOSIA with nuclear masses and DIP off; closure and the "
+       "stored run within a quarter of the paper's statistical error + 3 σ; B(E2) per ring within the paper's 4.1%; "
+       "Q_s = ±0.1 e b and ENSDF feeding as in GOSIA within 0.5 percentage points and 2% of its change")
+def reproduction_allmond2014(ref):
+    """Fails, for a known and explained miss of one band (GOSIA as run); ``worst`` is the largest deviation in units
+    of its band, the miss included, and the detail says what it is without it."""
+    from . import coulex_reproduction as cr
+
+    r = cr.run(ref)
+    if r is None:
+        return None, math.nan, 0, f"{cr.REFERENCE_FILE} not found", {}
+    c = r["checks"]
+    xs, ours, theirs = [], [], []
+    for x in c["gosia"]["rows"]:
+        xs.append(f"{x['ring']} R vs GOSIA {'matched' if x['setting'] == 'matched' else 'as run'}")
+        ours.append(x["physim"])
+        theirs.append(x["gosia"])
+    for x in c["paper"]["rows"]:
+        xs.append(f"{x['ring']} B(E2) vs paper")
+        ours.append(x["b_physim_e2b2"])
+        theirs.append(x["b_paper_e2b2"])
+    for x in c["closure"]["rows"]:
+        xs.append(f"closure {x['rings']}")
+        ours.append(x["b_e2fm4"])
+        theirs.append(x["b_in_e2fm4"])
+    points = sum(len(v["rows"]) for v in c.values())
+    plot = {"x": xs, "physim": ours, "reference": theirs, "categorical": True}
+    for x in c["stored"]["rows"]:
+        xs.append(f"stored run {x['what']} {x['rings']}")
+        ours.append(x["physim"])
+        theirs.append(x["reference"])
+    return r["passed"], r["worst"], points, r["detail"], plot
+
+
 @check("γ-ray Doppler shift and broadening", "literature", "Lorentz boost of the photon four-vector (relativistic "
        "Doppler formula with aberration), 50 random velocities and angles", "1e-12")
 def doppler_lorentz(ref):

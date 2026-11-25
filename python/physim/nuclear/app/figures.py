@@ -428,29 +428,6 @@ def figure_fusion(planner: Planner):
     return fig
 
 
-def figure_residue_gammas(planner: Planner, detector: str, events: int = 100_000, seed: int = 1):
-    """A γ-ray detector's singles spectrum of the fusion-evaporation residues: as measured, and Doppler-corrected
-    for a residue moving along the beam; the strongest lines of the residue table as dotted lines."""
-    go = _go()
-    g = planner.residue_gamma_spectra(events, seed)
-    fig = go.Figure()
-    if not g["available"]:
-        fig.add_annotation(text=g["reason"], showarrow=False, x=0.5, y=0.5, xref="paper", yref="paper")
-        return fig
-    s = g["spectra"][detector]
-    x = 1e3 * np.repeat(s["edges"], 2)[1:-1]
-    for i, (key, label) in enumerate((("corrected", "Doppler corrected"), ("measured", "measured"))):
-        y = np.repeat(s[key], 2)
-        fig.add_trace(go.Scatter(x=x, y=np.where(y > 0, y, np.nan), mode="lines", name=label,
-                                 line=dict(color=COLORS[i % len(COLORS)], width=1.2 if i == 0 else 0.8)))
-    for e_kev, label in g["lines"]:
-        fig.add_vline(x=e_kev, line=dict(color="#888", width=1, dash="dot"))
-    fig.update_layout(xaxis=dict(title="γ-ray energy (keV)"), yaxis=dict(title="counts / bin in the run",
-                                                                          type="log"),
-                      margin=dict(l=50, r=10, t=10, b=40), height=320, legend=dict(orientation="h", y=-0.3, x=0))
-    return fig
-
-
 def figure_fusion_gammas(planner: Planner, detector: str = "all", corrected: bool = True, by_channel: bool = True,
                          only: Optional[str] = None, log: bool = True, events: int = 100_000, seed: int = 1):
     """The residues' γ rays in one γ-ray detector, or in all of them ("all"): Doppler-corrected or as measured; the
@@ -780,8 +757,9 @@ def figure_search(spectrum: dict, correction: str, height: int = 300):
 
 def figure_peak(line: dict, fit_half_width: float = 4.0, height: int = 300):
     """One integrated peak (an entry of an analysis result's ``lines``): the gated, corrected spectrum round the
-    transition, the random coincidences expected, the fitted Gaussian on its line, and the ±3σ window whose
-    counts over the line are the area."""
+    transition, the random coincidences expected, the fitted peak on its background, and its ±3σ window
+    (whose counts over the background are the area of a peak without tails)."""
+    from ..analysis import PeakFit
     from ..response import FWHM_PER_SIGMA
 
     go = _go()
@@ -803,12 +781,11 @@ def figure_peak(line: dict, fit_half_width: float = 4.0, height: int = 300):
     if sigma > 0 and (fit.get("height", 0) > 0 or fit.get("level", 0) > 0):
         half = fit_half_width * FWHM_PER_SIGMA * sigma
         e = np.linspace(centre - half, centre + half, 300)
-        curve = (fit["height"] * np.exp(-0.5 * ((e - centre) / sigma) ** 2) + fit["level"]
-                 + fit["slope"] * (e - fit["origin"]))
-        base = fit["level"] + fit["slope"] * (e - fit["origin"])
-        fig.add_trace(go.Scatter(x=1e3 * e, y=k * base, mode="lines", name="the line under the peak",
+        peak = PeakFit.of(fit)
+        fig.add_trace(go.Scatter(x=1e3 * e, y=k * peak.background_curve(e), mode="lines",
+                                 name="the line under the peak",
                                  line=dict(color=COLORS[1], width=1, dash="dot")))
-        fig.add_trace(go.Scatter(x=1e3 * e, y=k * curve, mode="lines", name="fit: Gaussian on a line",
+        fig.add_trace(go.Scatter(x=1e3 * e, y=k * peak.curve(e), mode="lines", name=f"fit: {peak.shape}",
                                  line=dict(color=COLORS[1], width=1.6)))
         fig.add_vrect(x0=1e3 * (centre - 3 * sigma), x1=1e3 * (centre + 3 * sigma), fillcolor=COLORS[1], opacity=0.10,
                       line_width=0, annotation_text=f"area {line['area']:.0f} ± {line['area_unc']:.0f}",
@@ -920,10 +897,19 @@ def figure_distance_spectra(view: dict, ring: int = 0, height: int = 340, normal
 
 
 def figure_decay_curve(result: dict, height: int = 320):
-    """The decay curve of a plunger analysis (``Planner.analyse_lifetimes``): the unshifted share
-    I_u / (I_u + I_s) at each distance with its error, and the fitted curve."""
+    """The decay curve of a plunger analysis (``Planner.analyse_lifetimes``): the measured shares at each distance
+    with their errors, and the fitted curve on the axis of what it was fitted to (``curve["kind"]`` says it).
+
+    A decay-curve fit is of the unshifted share I_u / (I_u + I_s): the points are that share. The DDCM's curve is
+    fitted to the (speed-weighted) shifted share: the points are then the shifted share I_s / (I_u + I_s), drawn
+    with the curve on one axis. Any other curve (the three-foil DDCM's, against x₁ + x₂ β/β′) is drawn on an axis
+    of its own at the right, named by its kind. Only the drawing differs: no number of the analysis is changed."""
     go = _go()
     fig = go.Figure()
+    curve = result.get("curve") or {}
+    kind = str(curve.get("kind") or "")
+    shifted = "shifted" in kind and "unshifted" not in kind
+    apart = bool(kind) and not shifted and "unshifted" not in kind and kind not in ("decay_curve", "decay curve")
     pts = result.get("points") or []
     if pts:
         x = np.array([p["distance_um"] for p in pts], dtype=float)
@@ -931,18 +917,25 @@ def figure_decay_curve(result: dict, height: int = 320):
         s = np.array([p["shifted"] for p in pts], dtype=float)
         total = np.where(u + s > 0, u + s, 1.0)
         err = np.array([p.get("error") or 0.0 for p in pts], dtype=float)
-        # The error is the unshifted intensity's; as a share it is divided by the total.
-        fig.add_trace(go.Scatter(x=x, y=u / total, mode="markers", name="measured",
+        # The error is the unshifted intensity's; as a share it is divided by the total. The shifted share has
+        # the same error (the two shares add up to one).
+        fig.add_trace(go.Scatter(x=x, y=(s if shifted else u) / total, mode="markers",
+                                 name="measured, shifted share" if shifted else "measured",
                                  error_y=dict(type="data", array=err / total, visible=True, color=COLORS[0]),
                                  marker=dict(size=7, color=COLORS[0])))
-    curve = result.get("curve") or {}
     if curve.get("x") is not None and len(curve.get("x", [])):
-        fig.add_trace(go.Scatter(x=curve["x"], y=curve["y"], mode="lines", name="fit",
-                                 line=dict(color=COLORS[1], width=1.6)))
-    fig.update_layout(height=height, margin=dict(l=60, r=10, t=10, b=40),
-                      xaxis=dict(title="target-to-stopper distance (µm)", type="log"),
-                      yaxis=dict(title="unshifted share I_u / (I_u + I_s)"),
-                      legend=dict(orientation="h", y=-0.25, x=0))
+        name = ("DDCM fit (speed-weighted shifted share)" if shifted else
+                f"fit: {kind}" if apart else "fit")
+        fig.add_trace(go.Scatter(x=curve["x"], y=curve["y"], mode="lines", name=name,
+                                 line=dict(color=COLORS[1], width=1.6), yaxis="y2" if apart else "y"))
+    layout = dict(height=height, margin=dict(l=60, r=60 if apart else 10, t=10, b=40),
+                  xaxis=dict(title="target-to-stopper distance (µm)", type="log"),
+                  yaxis=dict(title="shifted share I_s / (I_u + I_s)" if shifted
+                             else "unshifted share I_u / (I_u + I_s)"),
+                  legend=dict(orientation="h", y=-0.25, x=0))
+    if apart:
+        layout["yaxis2"] = dict(title=kind, overlaying="y", side="right", showgrid=False)
+    fig.update_layout(**layout)
     return fig
 
 

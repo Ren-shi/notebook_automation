@@ -5,13 +5,16 @@ import math
 import numpy as np
 import pytest
 
-from physim.nuclear import Experiment
+from physim.nuclear import Experiment, gamma_events
+from physim.nuclear.alignment import with_offset
+from physim.nuclear.detectors import Array, target_mass_ratio
 from physim.nuclear.events import simulate
 from physim.nuclear.experiment import SetupError
-from physim.nuclear.gamma import correlation_table, doppler_table
-from physim.nuclear.gamma_events import ROOM_LINES, simulate_gammas
+from physim.nuclear.gamma import correlation_table, doppler_table, excitation_of
+from physim.nuclear.gamma_events import ROOM_LINES, reaction_depths, recorrect, simulate_gammas
+from physim.nuclear.kinematics import TwoBody
 from physim.nuclear.planner import Planner
-from physim.nuclear.rates import Rates
+from physim.nuclear.rates import Rates, stack
 
 EVENTS = 600_000
 
@@ -62,6 +65,112 @@ def test_the_corrected_peak_sits_at_the_transition_energy_for_the_projectile():
         good = peak(g, crystal, None, "corrected_projectile", e0, half=0.25)
         assert good[3] > 30 and abs(good[0] - e0) < 3 * good[2] + 2e-3, (crystal, good)
         assert good[1] < 0.5 * raw[1]
+
+
+def at_the_middle(exp, g, assumed):
+    """The correction of ``g`` for the ``assumed`` nucleus with the reaction in the middle of the target."""
+    c, rows, ex = g.events.columns, g["particle"], excitation_of(exp)
+    th, phi, known = Array.from_experiment(exp).segment_angles(c, target_mass_ratio(exp), rows)
+    tb = TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=exp.excitation.energy_mev,
+                 excite="recoil" if exp.excitation.excite == "target" else "ejectile")
+    d, b = gamma_events._reconstruct(exp, tb, stack(exp), gamma_events._directions(th, phi), th, c["recoil"][rows],
+                                     assumed)
+    u = np.array([crystal.centre / np.linalg.norm(crystal.centre) for crystal in g.crystals])[g["crystal"]]
+    cos_a = known * (u[:, 0] * d[:, 0] + u[:, 1] * d[:, 1]) + u[:, 2] * d[:, 2]
+    return g["measured"] * (1 - b * cos_a) / np.sqrt(1 - b**2)
+
+
+@pytest.fixture(scope="module")
+def thick():
+    """62Ni on 1.04 mg/cm² of carbon: the beam loses 38 % of its energy, and the excitations sit at the front."""
+    exp = Experiment.example("coulex_ni62_c_allmond")
+    return exp, simulate_gammas(exp, 400_000, seed=31)
+
+
+def test_the_reaction_depth_is_that_of_the_simulated_excitations(thick):
+    exp, g = thick
+    depths = reaction_depths(exp)
+    c, p = g.events.columns, g["particle"]
+    assert set(depths) == {(d, kind) for d in range(2) for kind in (False, True)}
+    for d, name in enumerate(g.events.detectors):
+        m = g.select(None, name) & (g["deposited"] == g["energy_lab"])
+        assert c["recoil"][p][m].all()
+        w = g["weight"][m]
+        z = c["depth"][p][m]
+        mean = np.average(z, weights=w)
+        # Each collision holds several γ rays: the error of the mean from the collisions that differ.
+        rows, first = np.unique(p[m], return_inverse=True)
+        per = np.bincount(first, w)
+        err = math.sqrt(np.sum((per * (c["depth"][rows] - mean)) ** 2)) / per.sum()
+        assert depths[(d, True)] == pytest.approx(mean, abs=3 * err + 0.002), name
+        assert depths[(d, True)] < 0.6 * exp.target.material_data().areal_density_mg_cm2(exp.target.thickness) / 2
+
+
+def test_the_doppler_correction_takes_the_speed_the_emitters_have(thick, monkeypatch):
+    """With the energy and the exit path of the middle of the target the assumed speed was 8 % (inner ring) and 5 %
+    (outer ring) too high, and the corrected peak 1 keV too high and wider."""
+    exp, g = thick
+    e0 = exp.excitation.energy_mev
+    speeds, whole = [], gamma_events._reconstruct
+
+    def seen(*a, **k):
+        out = whole(*a, **k)
+        if a[6] == "ejectile":
+            speeds.append(out[1])
+        return out
+
+    monkeypatch.setattr(gamma_events, "_reconstruct", seen)
+    recorrect(g, exp)
+    monkeypatch.undo()
+    middle = at_the_middle(exp, g, "ejectile")
+    assert len(speeds) == 2  # one depth per detector: every particle is a carbon recoil
+    for d, (name, beta) in enumerate(zip(g.events.detectors, speeds)):
+        here = g.events.columns["detector"][g["particle"]] == d
+        full = here & g.select(None, name) & (g["deposited"] == g["energy_lab"])
+        w = g["weight"][full]
+        assert np.average(beta[full[here]], weights=w) == pytest.approx(np.average(g["beta"][full], weights=w),
+                                                                        rel=5e-3), name
+        centre, width = {}, {}
+        for key, x in (("now", g["corrected_projectile"][full]), ("middle", middle[full])):
+            centre[key] = np.average(x, weights=w)
+            width[key] = math.sqrt(np.average((x - centre[key]) ** 2, weights=w))
+        assert abs(centre["now"] - e0) < 0.2e-3, (name, centre)
+        assert abs(centre["middle"] - e0) > 0.5e-3 and width["now"] < 0.98 * width["middle"], (name, centre, width)
+
+
+def test_the_other_nucleus_is_corrected_for_at_the_middle_of_the_target(thick):
+    exp, g = thick
+    np.testing.assert_allclose(g["corrected_recoil"], at_the_middle(exp, g, "recoil"), rtol=1e-12)
+    assert np.max(np.abs(g["corrected_projectile"] / at_the_middle(exp, g, "ejectile") - 1)) > 1e-3
+
+
+def test_a_thick_target_in_the_wrong_place_still_shifts_the_peak(thick):
+    exp, g = thick
+    full = g["counted"] & (g["deposited"] == g["energy_lab"])
+    backward = full & np.array([c.centre[2] < -100 for c in g.crystals])[g["crystal"]]
+
+    def centre(mm):
+        x = recorrect(g, with_offset(exp, mm) if mm else exp)["corrected_projectile"]
+        return np.average(x[backward], weights=g["weight"][backward])
+
+    np.testing.assert_allclose(recorrect(g, exp)["corrected_projectile"], g["corrected_projectile"], rtol=1e-12)
+    assert (centre(5.0) - centre(0.0)) * (centre(-5.0) - centre(0.0)) < 0
+    assert abs(centre(5.0) - centre(0.0)) > 0.5e-3
+
+
+@pytest.mark.parametrize("name", ["coulex_ni62_pt194", "coulex_ru98_plunger", "thin"])
+def test_thin_targets_one_slice_and_lifetime_setups_keep_the_middle_of_the_target(name):
+    if name == "thin":
+        d = Experiment.example("coulex_ni62_c_allmond").to_dict()
+        d["target"]["thickness"] = "0.001 mg/cm2"
+        exp = Experiment.from_dict(d)
+    else:
+        exp = Experiment.example(name)
+    assert reaction_depths(exp) is None
+    g = simulate_gammas(exp, 40_000, seed=4)
+    assert len(g)
+    for assumed, key in (("ejectile", "corrected_projectile"), ("recoil", "corrected_recoil")):
+        np.testing.assert_allclose(g[key], at_the_middle(exp, g, assumed), rtol=1e-12)
 
 
 def test_the_raw_width_agrees_with_the_analytic_doppler_broadening():

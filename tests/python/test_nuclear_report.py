@@ -101,7 +101,8 @@ def test_exports(tmp_path, alpha):
     for heading in ("Warnings", "Detectors", "Kinematics", "Expected peaks", "Energy loss",
                     "Simulated spectra", "Models and their validation", "Data and references"):
         assert f"<h3>{heading}" in text, heading
-    assert '<h2 id="setup">2. The setup</h2>' in text and "No run yet" in text  # the one report, without runs
+    assert '<h2 id="setup">A. The setup</h2>' in text and "No run yet" in text  # the one report, without runs
+    assert text.index('<h2 id="result">1. What this setup gives</h2>') < text.index('<h2 id="appendices"')
     for heading in ("Warnings", "Setup", "Detectors", "Kinematics", "Expected peaks", "Energy loss",
                     "Simulated spectra", "Models and their validation", "Data and references"):
         assert f"<h2>{heading}" in alpha.to_html(), heading  # the plan alone, as a page
@@ -155,8 +156,12 @@ def test_coulomb_excitation_in_the_report(tmp_path):
     text = (tmp_path / "report.html").read_text(encoding="utf-8")
     assert "<h3>Coulomb excitation" in text and "B(E2↑)" in text and "Doppler shift" in text
     assert "<h2>Coulomb excitation" in rep.to_html()
-    # The inelastic peak sits below the elastic one by the kinematic difference at the CD's angles: less than
-    # E* for backscattered 16O, as the recoil takes part of Q.
+    # The inelastic peak sits below the elastic one by about the kinematic difference at the CD's angles: less
+    # than E* for backscattered 16O, as the recoil takes part of Q. But less than that difference at mid-target:
+    # P doubles from the back of the target to the front (30 → 27.9 MeV), so the excitations happen nearer the
+    # front, where the beam is faster and the scattered 16O crosses less of the target on its way out (its
+    # measured energy falls 4.1 MeV from front to back). That lifts the inelastic peak by about 0.24 MeV: the
+    # difference is 0.63 MeV against 0.88 at mid-target (the event generator, cut into 16 slices, gives 0.62).
     from physim.nuclear.kinematics import TwoBody
 
     peaks = {p["channel"]: p for p in rep.peaks if p["detector"] == "CD" and p["particle"] == "ejectile"}
@@ -165,7 +170,7 @@ def test_coulomb_excitation_in_the_report(tmp_path):
     e = 29.0  # MeV, mid-target
     kin = (TwoBody("16O", "58Ni", e).at_lab(theta)[0].energy
            - TwoBody("16O", "58Ni", e, excitation_mev=1.454).at_lab(theta)[0].energy)
-    assert el["mean_MeV"] - inel["mean_MeV"] == pytest.approx(kin, rel=0.1)
+    assert 0.6 * kin < el["mean_MeV"] - inel["mean_MeV"] < 0.85 * kin
     assert kin < 1.454
     assert report.build(Experiment.example("alpha_on_gold"), events=10_000, validation=False).excitation is None
 

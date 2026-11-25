@@ -167,22 +167,98 @@ def test_experiment_names_and_folders(tmp_path):
 
 
 def test_segment_directions_match_each_rows_own_segment():
-    """The table over the hit segments gives every row the centre of its own segment."""
-    import math
-
-    from physim.nuclear.detectors import Array
+    """The table over the hit segments gives every row the mean angles of its own particle in its own segment: the
+    recoils' where a recoil hit, the scattered beam's (at the setup's masses) where that did."""
+    from physim.nuclear.detectors import Array, target_mass_ratio
     from physim.nuclear.runs import _segment_directions
 
     exp = Planner.example("coulex_ni58").experiment
     array = Array.from_experiment(exp)
+    ratio = target_mass_ratio(exp)
+    assert ratio == pytest.approx(16 / 58, rel=0.01)
     rng = np.random.default_rng(3)
     det = rng.integers(0, len(array.geometries), 400)
     si = np.array([rng.integers(0, len({s[0] for s in array.geometries[d].segments})) for d in det])
     sj = np.array([rng.integers(0, len({s[1] for s in array.geometries[d].segments})) for d in det])
-    theta, phi = _segment_directions(exp, {"detector": det, "segment_i": si, "segment_j": sj})
+    recoil = rng.integers(0, 2, 400).astype(bool)
+    theta, phi = _segment_directions(exp, {"detector": det, "segment_i": si, "segment_j": sj, "recoil": recoil})
     for k in range(0, 400, 7):
-        c = array.geometries[int(det[k])].segment_centre((int(si[k]), int(sj[k])), weighted=True)
-        assert theta[k] == math.degrees(math.atan2(math.hypot(c[0], c[1]), c[2]))
-        assert phi[k] == math.degrees(math.atan2(c[1], c[0]))
-    empty = _segment_directions(exp, {"detector": det[:0], "segment_i": si[:0], "segment_j": sj[:0]})
+        th, ph, _ = array.geometries[int(det[k])].segment_angles(
+            (int(si[k]), int(sj[k])), "recoil" if recoil[k] else "ejectile", ratio)
+        assert theta[k] == th and phi[k] == ph
+    # One segment, both particles: two different angles.
+    i = [g.name for g in array.geometries].index("DSSD-L")
+    one = {"detector": np.full(2, i), "segment_i": np.zeros(2), "segment_j": np.full(2, 8),
+           "recoil": np.array([False, True])}
+    th, _ = _segment_directions(exp, one)
+    assert abs(th[1] - th[0]) > 0.01
+    empty = _segment_directions(exp, {"detector": det[:0], "segment_i": si[:0], "segment_j": sj[:0],
+                                      "recoil": recoil[:0]})
     assert len(empty[0]) == 0 and len(empty[1]) == 0
+
+
+@pytest.mark.parametrize("name", ["coulex_ni62_c_allmond", "coulex_ni58", "coulex_ru98_plunger"])
+def test_stored_angles_are_the_mean_angles_of_the_rings(name):
+    """What a stored run takes for its particles' angles is, ring by ring, the mean angle of the particles that hit:
+    within 0.02° (and the statistics of the simulation) for scattered beam and recoils, in normal and inverse
+    kinematics, with sectors, strips and a whole ring."""
+    from physim.nuclear.events import simulate
+    from physim.nuclear.runs import _segment_directions
+
+    exp = Experiment.example(name)
+    c = simulate(exp, 1_000_000, 5).columns
+    theta, _ = _segment_directions(exp, c)
+    seen = 0
+    for d in range(len(exp.detectors)):
+        for kind in (False, True):
+            m = c["counted"] & (c["detector"] == d) & (c["recoil"] == kind)
+            for ring in np.unique(c["segment_i"][m]):
+                r = m & (c["segment_i"] == ring)
+                if r.sum() < 1000:
+                    continue
+                w, off = c["weight"][r], theta[r] - c["theta"][r]
+                mean = np.average(off, weights=w)
+                err = math.sqrt(np.sum((w * (off - mean)) ** 2)) / w.sum()
+                assert abs(mean) < 0.02 + 4 * err, (d, kind, ring, mean, err)
+                seen += 1
+    assert seen >= 2
+
+
+def test_a_ring_without_sectors_corrects_for_the_motion_along_the_beam_only():
+    """A ring all round the beam says nothing about the azimuth: γ rays of one energy in crystals at one polar angle
+    get one corrected energy, whatever their azimuth, and the particle's θ (not 0) sets the emitter's speed."""
+    from physim.nuclear.detectors import Array
+    from physim.nuclear.gamma_events import doppler_correct
+
+    exp = Experiment.example("coulex_ru98_plunger")
+    array = Array.from_experiment(exp)
+    th, _, known = array.geometries[0].segment_angles((0, 0), "recoil")
+    assert known == 0.0 and 15.0 < th < 25.0
+    elements = [(i, k) for i, gd in enumerate(exp.gamma_detectors) for k, _ in enumerate(gd.elements())]
+    names = [gd.name for gd in exp.gamma_detectors]
+    for group in (("F1", "F2", "F3", "F4"), ("B1", "B2", "B3", "B4")):
+        crystals = np.array([c for c, (i, k) in enumerate(elements) if names[i] in group and k == 0])
+        n = len(crystals)
+        cols = {"detector": np.zeros(n), "segment_i": np.zeros(n), "segment_j": np.zeros(n),
+                "recoil": np.ones(n, dtype=bool)}
+        out = doppler_correct(exp, cols, np.arange(n), crystals, np.full(n, 0.65246))["ejectile"]
+        assert out == pytest.approx(np.full(n, out[0]), rel=1e-9)
+        assert abs(out[0] / 0.65246 - 1) > 0.01
+
+
+def test_kinematic_lines_are_at_the_angles_of_their_own_particle():
+    from physim.nuclear.dataviews import kinematic_lines
+    from physim.nuclear.detectors import Array, target_mass_ratio
+
+    exp = Experiment.example("coulex_ni58")
+    g = Array.from_experiment(exp)["CD"]
+    ratio = target_mass_ratio(exp)
+    for line in kinematic_lines(exp, "CD"):
+        assert line["particle"] == "ejectile"
+        assert line["theta"] == pytest.approx([g.segment_angles((r, 0), "ejectile", ratio)[0] for r in line["rings"]])
+    exp = Experiment.example("coulex_ni62_c_allmond")
+    g = Array.from_experiment(exp)["Ring2"]
+    lines = [x for x in kinematic_lines(exp, "Ring2") if x["particle"] == "recoil"]
+    assert {x["group"] for x in lines} == {"elastic", "excited"}
+    for line in lines:
+        assert line["theta"] == pytest.approx([g.segment_angles((r, 0), "recoil")[0] for r in line["rings"]])

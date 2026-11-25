@@ -369,6 +369,10 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
   particle is in the backward ring, and those at 45° and 135° see 1.5 times. With a level scheme that the events
   follow, the table is for the `[reaction]` state in that scheme's solution (to all orders unless the setup
   says first order), with its feeding from above: the plan and the events then share one angular correlation.
+  Through a target that slows the beam the factors are averaged over the depth, each depth at its own beam energy
+  and weighted by the excitation cross section there, with the emitting nucleus slowed down on its way out; a thin
+  target keeps the kinematics of its middle. The simulated events take the orientation at each event's own beam energy
+  too, with and without a level scheme, in a target that the generator cuts into slices.
 - **Not included:** excitation in two or more steps and reorientation (first order only, so the matrix elements
   enter through their size and not their sign), deorientation in vacuum, and lifetimes: every state decays in
   flight with the orientation it was given. The simulated events of a setup with a level scheme do have the
@@ -395,8 +399,19 @@ g["corrected_recoil"], g["weight"]            # per γ ray (see gamma_events.GAM
   two-body partner's of the particle that was detected), emits its γ ray in its rest frame with the angular
   correlation for that orbit, and the γ ray is transformed to the laboratory. A crystal it meets records it with
   the response: full energy, Compton deposit or escape peak, then the resolution and the threshold.
-- **Doppler correction** from what the detectors know: the centre of the segment that fired, the centre of the
-  crystal, and two-body kinematics at the nominal beam energy. It is made for the scattered beam and for the
+- **Doppler correction** from what the detectors know: the segment that fired, the centre of the crystal, and
+  two-body kinematics at one beam energy. A segment stands for the mean polar angle of the particles that
+  hit it, weighted by the elastic cross section of the particle's kind in the laboratory: Rutherford's for the
+  scattered beam (1/sin⁴(θ/2) on a heavy target; with the setup's masses for any other, up to the largest angle of a
+  beam heavier than its target) and 1/cos³θ for the target recoil, at the azimuth of the segment's middle. A ring
+  without sectors knows no azimuth: only the motion along the beam is then corrected for. A stored run takes its
+  particles' angles from the same means. The kinematics and the emitter's way out of the target are those of one
+  reaction depth, the mean depth of the excitations that go with a particle of that kind in that detector, each depth
+  weighted by the Coulomb-excitation cross section at the beam energy there (`gamma_events.reaction_depths`): 0.28 of
+  1.04 mg/cm² for ⁶²Ni at 111.6 MeV on carbon, where the probability falls 150-fold through the target. It is worked
+  out from the setup alone; the depth of each event stays unknown and widens the peak of a thick target. A thin
+  target, one the generator keeps in one slice and a lifetime measurement take the middle of the target, and so does
+  the correction for the nucleus that the `[reaction]` does not name. It is made for the scattered beam and for the
   target recoil (`corrected_projectile`, `corrected_recoil`): the right one puts the peak at the transition
   energy, the wrong one smears it. The width that remains comes from the sizes of segments and crystals.
 - **Coincidences.** Every γ ray is a true coincidence with its particle, weighted as the particle events are.
@@ -471,7 +486,10 @@ The steps, each adjustable through `Settings`:
 1. **Particle gate:** the particle must sit in the inelastic group of its detector (its measured energy nearer
    the kinematic value for a particle that excited the state than for an elastic one, within `gate_width`
    resolutions), in the chosen `detectors` and `rings`. The share of excitations the gate keeps is known from the
-   simulation and divided out, as an experimentalist takes it from one.
+   simulation and divided out, as an experimentalist takes it from one. Through a thick target the two groups
+   spread over the energies of every depth and may overlap; when they do for most of the excitations in the
+   rings, the result warns (`Result.gate_warning`, also the first note) and says to use `particle_gate="all"`.
+   It does not switch by itself; `Result.gate` says which gate was used.
 2. **Doppler correction** for the excited nucleus, or for the other one to see what that does.
 3. **Peak search:** each corrected spectrum (for the projectile, and for the recoil) is searched for peaks over
    its whole range (`analysis.find_peaks`): at every energy the counts in a window are compared with the level
@@ -479,12 +497,56 @@ The steps, each adjustable through `Settings`:
    fitted, and one that sits on a transition of the nucleus that correction is right for is named
    (`analysis.identify`). A nucleus's lines are sharp in its own spectrum and smeared in the other, so each
    nucleus shows its peaks in its own spectrum. `Result.search` holds both spectra and their peaks.
-4. **Peak fit:** a Gaussian on a straight line within `fit_half_width` resolutions, then the counts within ±3σ
-   over the line, with the random coincidences expected in the window subtracted.
-5. **Yield:** the area over the full-energy-peak efficiency, the γ-ray branch and the angular-correlation factor.
+4. **Peak fit:** a Gaussian on a straight line within `fit_half_width` resolutions, by maximum likelihood (the
+   counts of a bin are Poisson), then the counts within ±3σ over the line, with the random coincidences expected in
+   the window subtracted. Through a thick target the emitter's speed, and so the Doppler shift, depends on how deep
+   the reaction was: the corrected peak then has tails that a Gaussian leaves out. When they show (they improve the
+   fit's deviance by more than 25), a core with a wider bell that ends (as the tails do) on a background that steps down across the peak is
+   fitted, and the area is that of this peak: the counts of the whole window less the background under them
+   (`analysis.fit_tails`; `PeakFit.tails`).
+   - **Another line of the nucleus in the window.** It is in the fit with the peak's shape, at the ratio the setup's level
+     scheme gives it per particle in the rings and the crystals see it with (`Analysis._beside`; a 4⁺ → 2⁺ line has another
+     angular distribution than the 2⁺ → 0⁺ one, `gamma.correlation_table(transition=)`). A line within ±3σ is counted in
+     the area, as the coupled equations count it; one further away is in the fit only. The ratio hardly matters (±35 % of
+     it moves the area by 0.06 %, with 2.5 % of the peak 2σ away), but without it, and without a level scheme to give it,
+     the peak is a Gaussian on a line, which loses the tails: 4 % of the area with the ⁶²Ni clovers, 6 % in B(E2).
+   - **Decays inside the target.** When the level has a half-life (the level scheme's), some nuclei decay before they
+     have left the target, faster than the Doppler correction takes them, and leave a tail on one side of the peak
+     (⁶²Ni in 1.04 mg/cm² of carbon: 5 to 8 % of the peak moves to 3 to 20 keV below it). A bell about the core does not
+     follow it. The peak is then a Gaussian spread by what the correction leaves of the shift
+     (`gamma_events.doppler_spread`): the depth, the decay time, the place in the segment and on the crystal's face,
+     and the add-back's crystal, from the setup alone, with no more to fit than the Gaussian's width. Runs of few
+     counts take this spread with the simulated shape. The budget has the line "peak tails (simulated)" for it too.
+     Thin targets, lifetime measurements, the other nucleus's peak and setups without a half-life are fitted as above.
+   - **Few counts.** A run whose counts cannot fix the tails takes the share, the offset and the width of the wider
+     bell, relative to the core, from a peak of 15 000 counts simulated with the same setup, rings, crystals,
+     gate, Doppler correction and fit window, and with a seed of its own (`Analysis.simulated_peak`). The run's
+     counts fix the area, the centre, the width of the core and the background. The simulation is made once per
+     choice of rings (it takes seconds) and kept with the analysis. Where the simulated peak is a Gaussian, so is
+     the fit. `PeakFit.tails["simulated"]`, the step's text and the record say when the tails are simulated. A
+     spectrum of weighted events is a simulation itself and is fitted with its own.
+   - The budget then has the line **peak tails (simulated)**: the area with the simulated tails against that
+     without them (or what a Gaussian loses of the simulated peak, if larger), times how far the simulated width is
+     from the measured one, at least a tenth. A simulation analysed by the same simulation cannot test this
+     assumption: a closure test does not see it.
+   - **A failed fit.** A fit whose width or centre ends at the bound it may not pass (twice what the simulated peak
+     has, where there is one) is reported as failed (`PeakFit.failed`, the step and a note), without an area and
+     without a B(E2).
+5. **Yield:** the area over the full-energy-peak efficiency (each crystal's at the Doppler-shifted energy it sees
+   the line at, read from the measured over the corrected energies), the γ-ray branch and the angular-correlation
+   factor.
 6. **Normalisation:** `"rutherford"`, to the particles counted in the same rings (beam current and target
    thickness cancel); or `"target"`, to a transition of the other nucleus of the collision whose strength is
-   known.
+   known. The excitations expected per particle, ⟨P⟩/B, come from the forward model's own cross sections (those
+   of the rates and the event generator): at each particle's lab angle, the Coulomb-excitation cross section
+   over that of every particle reaching the angle, each integrated over the depth of the target at the beam
+   energy there and through its own kinematics (the excited particle's CM angle and Jacobian), then averaged
+   over the particles in the rings.
+   - **A run** knows which segment each particle hit, not its angle. There the two cross sections are each integrated
+     over the segment's solid angle before they are divided, for the scattered beam and the recoils on their own.
+     Directions in another detector's shadow and particles below the detector's threshold are left out of both.
+     With one ring per detector, ⟨P⟩/B at the segment's mean angle was 0.6 and 1.2% too large for ⁶²Ni on carbon
+     (14–28° and 28–44°). A weighted simulation keeps the angle of each of its particles.
    - With a level scheme of that nucleus in the setup its γ rays are in the events (see *Both nuclei* under
      {ref}`Particle–γ events <particle-gamma-events>`). Its first transition's peak is then found, fitted and
      integrated in its own corrected spectrum, in coincidence with every particle counted in the same rings.
@@ -497,9 +559,19 @@ The steps, each adjustable through `Settings`:
    the yield, the yield per particle and, for the other nucleus, the expected one and their ratio.
 7. **B(E2↑)** from the first-order proportionality of the excitation probability to B(E2), in e²fm⁴, e²b² and
    Weisskopf units; the statistical uncertainty from the fit and the normalisation; a budget of systematics
-   (efficiency, angular correlation, beam energy, detector positions, the reference's B(E2)), each found by
-   changing its input by one standard deviation and running again; and the Monte Carlo sample's own uncertainty,
-   quoted separately.
+   (efficiency, angular correlation, beam energy, detector positions, the peak's tails if they are simulated, the
+   reference's B(E2), the target's thickness, the matrix elements assumed), each found by changing its input by one
+   standard deviation and running again (the beam energy at the entry of the target: it slows down from there); and
+   the Monte Carlo sample's own uncertainty, quoted separately.
+   - **Target thickness:** the change of ⟨P⟩/B with the thickness changed by `Settings.thickness_unc` (relative). Left
+     at None there is no term, and `Result.budget_notes` says so: 1.3% of 1.04 mg/cm² of carbon is 2.1% on B(E2).
+   - **Matrix elements assumed:** every other matrix element of the excited nucleus's level scheme (its static
+     moments, the other transitions) is moved up and down by its uncertainty in the scheme. The term is the change of
+     the γ rays in the peak, from the coupled equations at one to three beam energies through the target (always to
+     all orders, whatever the `order`). Elements without an uncertainty are named, and not counted; so is a Q_s
+     that the scheme does not have. Without a level scheme, or without any uncertainty, there is no term and the
+     notes say so (it was always 0). The elements' signs are taken from the scheme, and the γ-ray branching stays as
+     given.
    - **To all orders.** When the events follow a level scheme to all orders, first order is only the start (the
      "all orders" step). The scheme's coupled equations are solved with B(E2↑) of the transition as the one
      unknown, until they give the measured γ rays per particle in the peak's window, every transition inside
@@ -562,10 +634,11 @@ from physim.nuclear.coupled import CoupledChannels
 cc = CoupledChannels("16O", "194Pt", "60 MeV", scheme, excite="target")
 cc.probabilities(150.0)           # every level, summing to one
 cc.at(150.0).gamma_yield(1, 0)    # with the decay through the scheme
+cc.cross_sections()               # mb, over all angles: every populated level, in one step or several; each γ ray
 ```
 
-- **The orbit** is the symmetrised one of the ground state and a reference level (the lowest with a matrix element
-  to the ground state); with weak coupling the solution is first order exactly.
+- **The orbit** of each pair of levels is the one symmetrised between their two speeds, as in first order and in
+  GOSIA ({doc}`theory/coulex`); with weak coupling the solution is first order exactly, for every level.
 - **Matrix elements** enter with their signs, from the level scheme; a diagonal E2 element is the quadrupole
   moment's, through `quadrupole_factor`.
 - **Speed:** a Runge–Kutta integration whose steps follow the fastest phase. 25 levels (265 substates) take
@@ -580,19 +653,25 @@ ms = Multistep(exp, scheme, role="target")
 y = ms.yields()                     # γ rays per second of each transition in each detector and ring
 ms.shapes(level=1)                  # Q(2⁺) prolate, zero, oblate: can the run tell them apart?
 ms.fit({"CD": {(1, 0): (counts, unc)}}, free=[(0, 1, "E2"), (1, 1, "E2")])
-ms.gosia_input(y)                   # a GOSIA input file for this setup, with the yields
+ms.gosia_input()                    # a GOSIA input that integrates the same yields over target and detectors
 ```
 
 - The probabilities are solved on a grid of CM angles at a few beam energies through the target and interpolated
-  to every quadrature direction of every segment, weighted by the Rutherford cross section of the symmetrised
-  orbit (the analytic rates use the elastic one, 6% apart at the ⁵⁸Ni example's energy).
+  to every quadrature direction of every segment, weighted by the Rutherford factor of the reference level (the
+  first that a matrix element joins to the ground state) for every level, as GOSIA does with its NCM level; the
+  analytic rates take that of the `[reaction]` state ({doc}`theory/coulex`).
 - **Prolate or oblate:** the same experiment with the 2⁺ state's quadrupole moment at the rigid-rotor value,
   at zero and at its opposite; the yields per ring are compared with the counting uncertainties of the run.
 - **The fit** adjusts up to three matrix elements by Gauss–Newton least squares to measured counts; its
   uncertainties come from the curvature at the minimum.
-- **GOSIA** is not part of physim. The input file follows the published format so that GOSIA, run elsewhere, can
-  check these numbers or fit the matrix elements; it has not been checked against a run, since no GOSIA
-  installation exists on the development machine.
+- **GOSIA** is not part of physim. `gosia_input` writes an input for GOSIA 20110524, checked against its runs, that
+  integrates the γ yields over the target (OP,INTI, with the app's stopping powers) and each particle detector.
+  It writes one experiment per detector and per nucleus reaching it, and a detected recoil gets a negative angle.
+  GOSIA reads a negative partner Z as projectile excitation. `physim.external.gosia.integrated` reads the yields
+  and the integrated Rutherford back. GOSIA's Rutherford uses the inelastic kinematics, so a ratio built from it
+  divides by that, not by the elastic one. For ⁶²Ni on carbon the input reproduces an independent hand-written
+  GOSIA run within 0.1 % per ring. With `gamma="4pi"`, write `GOSIA_4PI_FORT9` as `fort.9` beside the input; its
+  yield ×4π is then the angle-integrated γ yield.
 
 In the app, **Solve with all orders** in the "Excitation and γ rays" tab (once a level scheme is looked up) shows
 the yields with all orders and with first order, the prolate–zero–oblate comparison per ring, and offers the
@@ -602,8 +681,9 @@ GOSIA input file.
 transition, the events and runs take this solution: each excitation starts in a level drawn from the populations
 the collision leaves at its angle, each γ ray has the angular distribution of its level's own orientation, and
 the excitation probability of the rates and of the event generator is the sum of the populations. A 4⁺ state,
-which only two steps reach, is then in the γ-ray spectra. `[reaction] order = "first"` gives first-order events
-instead. The table of angles is solved once per setup, all angles together (about 2 s for the six levels of
+which only two steps reach, is then in the γ-ray spectra. Through a thick target the orientation is that of each event's
+beam energy, while the level is drawn from the populations in the middle of the target. `[reaction] order = "first"`
+gives first-order events instead. The table of angles is solved once per setup, all angles together (about 2 s for the six levels of
 ⁶²Ni). {doc}`theory/coulex` has the numbers for the ⁶²Ni example and what is left out: every excitation keeps
 the kinematics of the `[reaction]` state. The analysis extracts B(E2) from such events to all orders (step 7
 under {ref}`Automatic analysis <automatic-analysis>` below).

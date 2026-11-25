@@ -32,6 +32,11 @@ from .quantity import Quantity
 
 #: Gauss–Legendre order used for the face integrals (per dimension, per segment).
 QUADRATURE_ORDER = 48
+#: The same for where in a segment the particles hit (:meth:`Geometry.segment_angles`).
+SEGMENT_ORDER = 12
+#: Recoils beyond this cos θ (under 1 % of the energy of a head-on one, they do not leave the target) weigh no more
+#: than those at it, so that 1/cos³θ stays finite at 90°.
+RECOIL_COS_FLOOR = 0.1
 
 
 def _q(x) -> Optional[Quantity]:
@@ -56,6 +61,52 @@ def angles(v) -> tuple:
     v = np.asarray(v, dtype=float)
     r = np.linalg.norm(v, axis=-1)
     return np.degrees(np.arccos(np.clip(v[..., 2] / r, -1, 1))), np.degrees(np.arctan2(v[..., 1], v[..., 0]))
+
+
+def ejectile_law(theta, mass_ratio: float = 0.0) -> np.ndarray:
+    """Rutherford's cross section per lab solid angle of the scattered beam at lab angle ``theta`` (radians), up to a
+    factor: 1/sin⁴(θ/2) for a heavy target (``mass_ratio`` = m_beam/m_target → 0); for any other,
+
+    dσ/dΩ ∝ (cos θ + s)² / (sin⁴θ s),  s = √(1 − x² sin²θ),
+
+    and for a beam heavier than the target (x > 1) the second orbit, (cos θ − s)², besides, and nothing beyond
+    arcsin(1/x). (Non-relativistic, elastic.)"""
+    t, x = np.asarray(theta, dtype=float), float(mass_ratio)
+    c, sin2 = np.cos(t), np.maximum(np.sin(t) ** 2, 1e-12)
+    s2 = 1.0 - x**2 * sin2
+    allowed = (s2 > 0) & ((x <= 1.0) | (c > 0))
+    s = np.sqrt(np.where(allowed, np.maximum(s2, 1e-12), 1.0))
+    # (c + s)²/sin⁴ = (1 − x²)²/(s − c)²: the second form does not lose its digits near 180°.
+    y = np.where(c >= 0, (c + s) ** 2 / sin2**2, (1 - x**2) ** 2 / np.where(c >= 0, 1.0, s - c) ** 2) / s
+    if x > 1.0:
+        y = y + (c - s) ** 2 / sin2**2 / s
+    return np.where(allowed, y, 0.0)
+
+
+def recoil_law(theta) -> np.ndarray:
+    """Rutherford's cross section per lab solid angle of the recoiling target nucleus at lab angle ``theta``
+    (radians), up to a factor: 1/cos³θ below 90°, whatever the masses. (A recoil at θ belongs to the CM angle
+    π − 2θ: 1/sin⁴(θ_cm/2) = 1/cos⁴θ, times dΩ_cm/dΩ = 4 cos θ.) Non-relativistic, elastic."""
+    c = np.cos(np.asarray(theta, dtype=float))
+    return np.where(c > 0, np.maximum(c, RECOIL_COS_FLOOR) ** -3.0, 0.0)
+
+
+def _ejectiles_within(theta, mass_ratio: float) -> np.ndarray:
+    """∫ :func:`ejectile_law` dΩ over the lab angles up to ``theta`` (radians), up to a factor and a constant, for a
+    beam heavier than the target: in the CM system it is −1/sin²(θ_cm/2) on each of the two orbits."""
+    a = np.arcsin(np.minimum(mass_ratio * np.sin(theta), 1.0))
+    first, second = theta + a, theta + math.pi - a
+    inside = theta < math.asin(1.0 / mass_ratio)
+    return np.where(inside, np.sin(second / 2) ** -2.0 - np.sin(np.maximum(first, 1e-6) / 2) ** -2.0, 0.0)
+
+
+def target_mass_ratio(experiment) -> float:
+    """m_beam / m_target of a setup, for the target layer's main nuclide (the one the reaction is on)."""
+    from . import data
+    from .rates import beam_ion, stack
+
+    target = max(stack(experiment)[0].nuclides.items(), key=lambda kv: kv[1])[0]
+    return data.nuclide(beam_ion(experiment)).nuclear_mass_mev / data.nuclide(target).nuclear_mass_mev
 
 
 @dataclass
@@ -256,16 +307,62 @@ class Geometry:
         W = np.outer(w, w) * (r1 - r0) / 2 * (a1 - a0) / 2 * R
         return (R * np.cos(A)).ravel(), (R * np.sin(A)).ravel(), W.ravel()
 
-    def segment_centre(self, segment: Optional[tuple] = None, weighted: bool = False) -> np.ndarray:
-        """The middle of a segment (or of the face), mm: what a Doppler correction knows of where a particle hit.
-        With ``weighted`` it is the mean point of the segment weighted by the solid angle and by Rutherford's
-        1/sin⁴(θ/2), nearer to where the particles of a steep distribution hit."""
+    def segment_angles(self, segment: tuple, particle: str = "ejectile", mass_ratio: float = 0.0) -> tuple:
+        """Where the particles that hit a segment went, as the detector knows it: (mean θ, mean φ, in degrees, and
+        how far φ is known, from 1 for a point down to 0 for a segment all round the beam axis).
+
+        The means are over the segment as seen from the target, weighted by the elastic cross section of the
+        ``particle`` in the laboratory: of the scattered beam ("ejectile", :func:`ejectile_law` with ``mass_ratio``
+        = m_beam/m_target) or of the target nucleus ("recoil", :func:`recoil_law`). θ is the mean of the polar
+        angle itself, not the angle of the mean point: on a sector of a ring around the beam that point lies
+        nearer to the axis than the ring does. φ is the direction of the mean of (cos φ, sin φ), the middle of such
+        a sector, and the third number is the length of that mean: sin(h)/h for a sector of half-width h."""
+        if particle not in ("ejectile", "recoil"):
+            raise ValueError(f'particle must be "ejectile" or "recoil", not {particle!r}')
+        steep = particle == "ejectile" and mass_ratio > 1.0  # up to the largest angle, where the law diverges
+        order = QUADRATURE_ORDER if steep else SEGMENT_ORDER
+        dirs, d_omega = self.directions(segment, order)
+        theta = np.arccos(np.clip(dirs[:, 2], -1.0, 1.0))
+        if particle == "recoil":
+            law = recoil_law(theta)
+        elif steep:  # the mean over the step between the points (Gauss's, narrower towards the segment's edges), which
+            # the edge at the largest angle needs: good to 0.015°
+            span = max(float(np.ptp(theta)), 1e-6)
+            z = (theta - theta.min()) / span
+            half = span * math.pi / (2 * order) * np.sqrt(np.maximum(z * (1.0 - z), 1.0 / order**2))
+            lo, hi = np.maximum(theta - half, 1e-6), theta + half
+            law = np.maximum(_ejectiles_within(hi, mass_ratio) - _ejectiles_within(lo, mass_ratio), 0.0) / (
+                np.cos(lo) - np.cos(hi))
+            law = np.where(theta < math.pi / 2, law, 0.0)
+        else:
+            law = ejectile_law(theta, mass_ratio)
+        w = d_omega * law
+        if not np.sum(w) > 0:  # no particle of this kind comes here by this law: those that do have another one
+            w = d_omega * (ejectile_law(theta) if particle == "ejectile" else 1.0)
+        if not np.sum(w) > 0:
+            w = np.ones(len(theta))
+        w = w / np.sum(w)
+        st = np.maximum(np.hypot(dirs[:, 0], dirs[:, 1]), 1e-12)
+        cx, cy = float(np.sum(w * dirs[:, 0] / st)), float(np.sum(w * dirs[:, 1] / st))
+        known = math.hypot(cx, cy)
+        mean = math.degrees(float(np.sum(w * theta)))
+        if known < 1e-9:  # all round the axis: any azimuth is as good
+            x, y, _ = self.segment_centre(segment)
+            return mean, math.degrees(math.atan2(y, x)), 0.0
+        return mean, math.degrees(math.atan2(cy, cx)), known
+
+    def segment_centre(self, segment: Optional[tuple] = None, weighted: bool = False, particle: str = "ejectile",
+                       mass_ratio: float = 0.0) -> np.ndarray:
+        """The middle of a segment (or of the face), mm. With ``weighted`` it is the point of the face at the mean
+        angles of the particles that hit the segment (:meth:`segment_angles`, for the scattered beam or the recoil),
+        nearer to where the particles of a steep distribution hit."""
         if weighted and segment is not None:
-            dirs, d_omega = self.directions(segment, 6)
-            theta = np.arccos(np.clip(dirs[:, 2], -1.0, 1.0))
-            w = d_omega / np.maximum(np.sin(theta / 2), 1e-3) ** 4
-            su, sv, _ = self._nodes(segment, 6)
-            return self.centre + float(np.average(su, weights=w)) * self.u + float(np.average(sv, weights=w)) * self.v
+            theta, phi, _ = self.segment_angles(segment, particle, mass_ratio)
+            d = direction(theta, phi)
+            along = float(d @ self.n)
+            if abs(along) < 1e-9:  # the face seen edge on
+                return self.segment_centre(segment)
+            return d * float(self.centre @ self.n) / along
         if segment is None:
             return self.centre.copy()
         if self.shape == "rectangle":
@@ -518,6 +615,29 @@ class Array:
 
     def __iter__(self):
         return iter(self.geometries)
+
+    def segment_angles(self, columns: dict, mass_ratio: float = 0.0, rows=None) -> tuple:
+        """:meth:`Geometry.segment_angles` of the segment each particle row hit, for the particle it is: three arrays,
+        θ and φ (degrees) and how far φ is known. ``columns`` are those of the particle events (``detector``,
+        ``segment_i``, ``segment_j``, ``recoil``), ``rows`` the indices wanted (all by default)."""
+        take = slice(None) if rows is None else rows
+        det, si, sj = (np.asarray(columns[k])[take].astype(np.int64) for k in ("detector", "segment_i", "segment_j"))
+        recoil = np.asarray(columns["recoil"])[take].astype(np.int64)
+        if not len(det):
+            return np.zeros(0), np.zeros(0), np.zeros(0)
+        # One number per (detector, segment, particle), and a table over those numbers: a pass over the rows marks
+        # those that occur, each is worked out once, and a second pass looks every row up. (Sorting the rows to find
+        # the distinct ones, as numpy.unique does, took 2 s for an hour of beam.)
+        ni, nj = int(si.max()) + 1, int(sj.max()) + 1
+        code = ((det * ni + si) * nj + sj) * 2 + recoil
+        hit = np.zeros(int(code.max()) + 1, dtype=bool)
+        hit[code] = True
+        table = np.zeros((3, len(hit)))
+        for n in np.flatnonzero(hit):
+            seg, r = divmod(int(n), 2)
+            d, i, j = seg // (ni * nj), (seg // nj) % ni, seg % nj
+            table[:, n] = self.geometries[d].segment_angles((i, j), "recoil" if r else "ejectile", mass_ratio)
+        return table[0][code], table[1][code], table[2][code]
 
     def response(self, name: str, ion: str) -> Response:
         i = [g.name for g in self.geometries].index(name)

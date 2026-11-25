@@ -17,7 +17,7 @@ from physim.nuclear.gamma_events import simulate_gammas
 from physim.nuclear.multistep import Multistep
 from physim.nuclear.orientation import Excitation
 from physim.nuclear.planner import Planner
-from physim.nuclear.rates import Rates, channels, excitation_probability, stack
+from physim.nuclear.rates import Rates, channels, depth_probability, excitation_probability, stack
 
 #: Levels of ⁶²Ni in the example's scheme: the first 2⁺, the second 0⁺ (2048.55 keV) and the 4⁺ (2336.46 keV).
 TWO, ZERO, FOUR = 1, 2, 4
@@ -65,7 +65,7 @@ def test_all_orders_reach_the_levels_first_order_cannot_and_first_order_is_a_swi
     assert cascade_excitation(exp) is cex  # solved once, shared by the events, the rates and the γ rays
     assert start_levels(cex) == [1, 2, 3, 4, 5] and unreached_levels(exp) == []
     back = cex.near(150.0)
-    assert back.direct[FOUR] == pytest.approx(5.8e-3, rel=0.05) and back.direct[ZERO] == pytest.approx(8.1e-3, rel=0.05)
+    assert back.direct[FOUR] == pytest.approx(5.7e-3, rel=0.05) and back.direct[ZERO] == pytest.approx(8.0e-3, rel=0.05)
     # The two-step excitation leaves the 4⁺ state oriented: its γ rays are not isotropic.
     assert abs(back.coefficients(FOUR, TWO)[(2, 0)]) > 0.1
 
@@ -90,7 +90,14 @@ def test_the_rates_and_the_generator_share_the_excitation_probability():
         assert float(p.probability(grid[60])) == pytest.approx(sum(states[60].direct.values()))
         config, used = generator_config(exp)
         entry = next(c for c, k in zip(config["channels"], config["channel_of"]) if used[k].excitation is not None)
-        assert np.allclose(entry["p_table"], p.probability(np.linspace(0.0, 180.0, 721)))
+        # The generator's table is P × v_i/v_f (Alder and Winther's Rutherford factor over the elastic one, which
+        # the generator weighs by) averaged over the depth of its (first) slice of the target, as the rates take P
+        # through the depth (rates.DepthProbability).
+        dp = depth_probability(exp, ch, layers)
+        probe = np.linspace(0.0, 180.0, 721)
+        assert np.allclose(entry["p_table"], dp.slices(dp.slice_count(), probe, ratio=True)[0][2])
+        plain = dp.slices(dp.slice_count(), probe)[0][2]
+        assert 1.0 < entry["p_table"][400] / plain[400] < 1.01  # 62Ni on 194Pt: v_i/v_f = 1.003
     # To all orders more is excited than in first order: the 2⁺ state is fed from the levels above it.
     all_orders, first = Rates(ni62().experiment), Rates(ni62(order="first").experiment)
     ratio = all_orders.rate("CD", what="excitations") / first.rate("CD", what="excitations")

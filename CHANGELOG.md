@@ -11,6 +11,73 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Results and comparison: every result is a row, and the nucleus is a level above the experiments. No number the
+  app computes has changed: the rows store the numbers the analyses already gave, and the conversions call the
+  functions the code already had (see `docs/results.md`). The one printed number that differs is in a text: the
+  record's "lifetime" explanation (below).
+  - The results ledger (`physim.nuclear.results`): one row per result, one value of one observable of one nucleus
+    by one method, with its uncertainty (one total, stat and sys, or plus and minus), the method, the evidence,
+    where it came from, what it depends on and which row it supersedes. The evidence is in two groups that are
+    never mixed: independent (measured, evaluated, theory, outside program) and projected (a simulated run analysed
+    back, which carries the value its simulation was given). Rows are appended to JSON-lines files and never
+    rewritten: `results.jsonl` in an experiment's folder, and `<nuclei home>/<nuclide>/points.jsonl`
+    (`$PHYSIM_NUCLEI`, or `nuclei` beside the experiments) for rows that belong to no experiment. A level has one
+    name (nuclide, Jπ and ordinal, anchored to the ENSDF level within 2 keV: "62Ni:2+1") and so has a transition
+    ("62Ni:2+1>0+1:E2").
+  - The registry of observables (`physim.nuclear.observables`): B(E2), τ, Q_s, B(M1), μ and level energies, each with
+    its convention (B(E2)↑ in e²fm⁴; Weisskopf units always ↓), the routes that reach it and whether each applies to
+    a nucleus (stable enough for a target or beam, τ in a plunger's or DSAM's range, a shell-model calculation that
+    fits this computer), what a value gives and what it is used for, with references. The comparison engine
+    (`physim.nuclear.compare`) sets the rows of one observable beside a reference: difference, pull and a verdict by
+    a fixed rule (|pull| < 2 agree, 2–3 tension, above 3 differ; no uncertainty, no verdict), rows that share a
+    source with the reference flagged, and projected rows apart, each closed against the value its simulation was
+    given, with "this setup reaches ±x %; the value is known to ±y %". Checks between observables: E(4⁺)/E(2⁺),
+    B(E2; 4→2)/B(E2; 2→0), the rotor's Q_s from B(E2) beside the measured one, a calculation over the evaluated
+    value.
+  - The planner writes the ledger. A Coulex analysis of a run, a lifetime analysis (τ is saved at last, with the
+    B(E2) that depends on it) and a fit of matrix elements to all orders each append projected rows to the
+    experiment's `results.jsonl`; a new analysis supersedes the row that stood and an identical one adds nothing.
+    Shell-model level energies, B(E2), B(M1), Q_s and μ are copied as theory rows into the nucleus's own ledger
+    whenever a result is read or applied, so cleaning the job cache cannot lose them. An experiment from before the
+    ledger is backfilled when it is opened. The last lifetime analysis is kept as `lifetime.json`
+    (`Planner.kept_lifetimes()`). A ledger that cannot be written never fails an analysis.
+  - The nucleus store (`physim.nuclear.nucleus`): ENSDF's adopted values as evaluated rows (`snapshot_evaluation`),
+    data points with their uncertainty, method and reference or "own measurement" (`add_data_point`; corrections
+    and retractions are new rows, nothing is deleted), data points read from a JSON or CSV file or from the
+    literature file of a nucleus (`import_points`, which says what was added, already there and refused), and the
+    nuclei and one nucleus as plain data. A fusion-evaporation experiment belongs to the residue of the channel its
+    setup marks as studied.
+  - The planner opens on the nuclei: each with its experiments, what is known and projected about it and what is
+    still open. A nucleus has a page of its own (`/?nucleus=62Ni`): its observables by evaluated, measured, theory and
+    projected; for one of them every value side by side with its method in words, the independent evidence against
+    the reference and the simulated runs apart; the plot; the routes, with "Plan it" where physim has the kind of
+    experiment; what the value gives, the checks and what it is used for; a form for data points and "Import points
+    from a file"; the history; and "Report for this nucleus", a report of the nucleus across its experiments
+    (`logbook.nucleus_html`). "Start from a kind of experiment" is the start page as it was.
+  - An experiment's screens show its results beside what is known. The rail names the nucleus the experiment
+    studies and links to its page, and shows τ for a lifetime experiment. Under a Coulex B(E2), a τ and the B(E2)
+    that follows from it, "Beside what is known" gives the comparison in short and links to the nucleus's page. A
+    lifetime analysis is shown again after the app is reopened. Fusion-evaporation and elastic-scattering
+    experiments lead to the report instead of to an analysis physim does not have.
+  - The report of an experiment leads with the results: the result with its statistical and systematic
+    uncertainties, method and runs; the result beside the other routes, the same rows and route states as the
+    nucleus page; the comparisons still to run; what limits it; and what it means. What the report held before
+    follows as appendices A to H. Every B(E2) carries ↑ or ↓ and Weisskopf units are always ↓; values and
+    uncertainties have matching decimals without exponent forms; a failing check in the models table comes with
+    its reason; a fusion-evaporation experiment is no longer titled "elastic scattering". One printed number
+    differs: the record's "lifetime" explanation takes B↑/B↓ from the spins instead of dividing by 5 (the same for
+    0⁺ → 2⁺; left out where the spins are not known).
+  - Seven MCP tools that need no open experiment: `list_nuclei`, `list_results`, `snapshot_evaluation`,
+    `add_data_point`, `retract_data_point`, `compare_results` and `import_data_points`. The three that read write
+    nothing; an experiment from before the ledger gets its rows when the server starts.
+  - Smaller things: the level-scheme table marks every B with ↑ or ↓ and gives Weisskopf units for the ↓ value;
+    "New experiment…" opens the kinds of experiment; an address that names an experiment that is not there shows
+    a sentence and the nuclei, not a server error; the DDCM curve of a lifetime analysis is drawn against the
+    shifted share it was fitted to; the two dialogs the start page replaced are removed.
+  - What would need a new formula (effective charges, B(E2) from E(2⁺), sum rules, the uncertainty of the checks)
+    is backlog 76. The planner page of the docs describes the app as it now is: the nuclei, the page of a nucleus,
+    the kinds, the lifetime and shell-model parts.
+- A reproduced Coulomb-excitation experiment in the validation (Allmond 2014 verification, fix wave 3, S6): Allmond et al., PRC 90, 034309 (2014), ⁶²Ni at 111.6 MeV on carbon, as the example `coulex_ni62_c_allmond` and the check `reproduction_allmond2014` (`physim.nuclear.coulex_reproduction`, `scripts/reproduce_allmond2014.py`; the paper's numbers, the GOSIA references and the bands in `tests/reference/nuclear/coulex/allmond2014.toml`). The thickness gives the measured ⁵⁸Ni/⁶⁰Ni losses; σ_C/σ_R per ring within 0.2% of GOSIA with nuclear masses and DIP off and 1.3% of GOSIA as run (outside its 1%: a known, explained miss, see below); closure; the paper's per-ring B(E2), rebuilt through GOSIA's ratio(M) (the paper gives no yields), recovered 1.2–1.3% low, inside its 4.1%; the Q_s and feeding sensitivities within 0.25 percentage points of GOSIA's.
 - Outside programs run out of sight (`physim.external`): GOSIA, SRIM's SR Module and TRIM, PACE4 and GEMINI++
   start on a hidden Windows desktop with no console window, so nothing shows or takes the focus, and in a job
   object that stops them and everything they started at the timeout or when physim exits. One runner holds this;
@@ -159,6 +226,301 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- A peak with another line of the nucleus in its window keeps its tails (closure of `coulex_ni62_pt194_clovers`, gate "all").
+  The example read B(E2) 6.5 % low. The 4⁺ → 2⁺ line of ⁶²Ni (1163.5 keV, 2.5 % of the 2⁺ → 0⁺ one) is 2σ from the peak the
+  clovers make, so the peak was fitted as a Gaussian on a straight line and lost 4.0 % of the two lines' full-energy counts
+  in its tails (B(E2) moves 1.43 times as much as the yield, since the excitation saturates). The tails are the add-back's: with
+  neither add-back nor shields the old fit closes, and so it nearly does with the 4⁺ line moved out of the window (eight
+  seeds, all detectors/CD: +0.07 ± 0.52/−0.56 ± 0.47 % and −0.48 ± 0.57/−1.02 ± 0.46 %); it takes both. The half-lives, the
+  gate (inelastic, with twice the error) and the target's thickness (0.02 mg/cm²) do not change the bias. The lines of the level scheme
+  in and beside the window are now in the fit, at the ratio that the scheme, the efficiency and the angular correlation give
+  (`Analysis._beside`, `fit_tails(lines=)`; `PeakFit.tails["lines"]`); those within ±3σ are in the area, as in the coupled
+  equations. The result hardly depends on the ratio (±35 % of it: 0.06 % of the area). And the coupled equations count such a
+  line with what the crystals see of it, not as if it had the peak's correlation: the events see the 4⁺ → 2⁺ line 0.825 ± 0.013
+  times as well as the 2⁺ → 0⁺ one (`gamma.correlation_table(transition=)`, which now also covers levels reached in several
+  steps, gives 0.82 in the CD), 0.5 % of the yield. Sixteen seeds of 200 000 reactions (1–16), B(E2) over the 884.1
+  put in: all detectors −6.48 ± 0.40 → +0.11 ± 0.50 %, CD −6.19 ± 0.33 → −0.14 ± 0.36 %, area over the 2⁺ → 0⁺ and 4⁺ → 2⁺
+  full-energy counts −4.00 ± 0.07 → +0.09 ± 0.06 % and −3.58 ± 0.05 → +0.07 ± 0.02 %. The particles excited per particle
+  (+0.06 ± 0.14 %) and efficiency × correlation of the 2⁺ → 0⁺ line (−0.06 ± 0.31 %) were right.
+  `coulex_ni62_pt194` (single crystals, σ 7.1 keV) closed and closes, all detectors −0.10 ± 0.62 → −0.33 ± 0.64 %, with an
+  area +0.87 ± 0.09 → +0.49 ± 0.09 % high. Misses, not explained or not better: that area; the clovers without add-back and
+  shields now read +1.26 ± 0.51/+0.92 ± 0.44 % (eight seeds); the two strip detectors alone (about 430 full-energy entries
+  per sample, too few to show the tails) have an area 1.2 ± 0.4 % low with clovers, and B(E2) scatters more from seed to
+  seed there than it did (7.5 and 8.8 → 10.2 and 10.7 %) and 1.8 ± 0.2 times as much as `Result.monte_carlo` says (5.9 %).
+  First order (`order="first"`) reads the larger area too.
+- `CoupledChannels.cross_sections` holds every excited level the collision populates, each with its own v_i/v_f, as it
+  said. It went over the levels a matrix element joins to the ground state, so those reached in two steps had no
+  "direct" cross section, no γ rays, and no part in the feeding of the levels below. ⁶²Ni in `coulex_ni62_pt194`
+  (233.8 MeV, mid-target): 0⁺₂ 0 → 9.18 mb, 4⁺₁ 0 → 18.21 mb, 0⁺₃ 0 → 0.017 mb; the 2⁺₁ with feeding 854.2 → 881.6 mb,
+  as its γ ray. Nothing else moves: the app's table of levels is first order's, and the rates, the events and
+  `Multistep.yields` take the populations themselves. `docs/theory/coulex.md` says which v_f each of them takes (each level's
+  own only in `cross_sections`; the reference level's in `Multistep.yields`, the `[reaction]` state's in the rates and
+  the events), where it gave the all-orders yields each level's own.
+- Coupled equations: each pair of levels has the orbit symmetrised between its own two speeds (Allmond 2014 verification,
+  second fix plan, wave 6, S9). `CoupledChannels` took the orbit of the ground state and the reference level (the first
+  2⁺) for the coupling of every pair; Alder and Winther, first order and GOSIA take the pair's own, K_λ,nm ∝
+  [(E_cm − E_n)(E_cm − E_m)]^((2λ−1)/4). The factor between the two is [(E_cm − E_n)(E_cm − E_m) / (E_cm(E_cm −
+  E_ref))]^((2λ−1)/4), so the old coupling was too strong for every pair with a level above the reference, and for its
+  diagonal elements: a reorientation effect by (E_cm/(E_cm − E*))^¾ (6 % for ⁶²Ni on carbon at 111.6 MeV, 5 % for ¹⁶O on ⁵⁸Ni at 30 MeV,
+  0.5 % for ⁶²Ni on ¹⁹⁴Pt at 237 MeV), and the levels reached in two steps by more (⁶²Ni on carbon at 100 MeV, against
+  GOSIA: 0⁺₂ +22 %, 2⁺₂ +13 %, 4⁺₁ +26 %). In the limit of weak coupling every level joined to the ground state is now
+  that of first order (a 2⁺ at 2.30 MeV was 12 %, a 3⁻ at 3.76 MeV 60 % too likely). Unchanged: a scheme of two levels
+  without a quadrupole moment (so σ_C/σ_R, B(E2) and the closure of `reproduction_allmond2014`), first order, setups
+  without a scheme, the geometry of the orbit and the Rutherford factor, and the time a solution takes.
+  - Blind check, the app's numbers stored before GOSIA 20110524.14 was run (nuclear masses, E1 polarisation off,
+    `tests/reference/nuclear/coulex/gosia_pairs.csv`): ⁶²Ni with Q_s = ±0.3 e b and its 0⁺₂, 2⁺₂, 4⁺₁ on carbon (100 MeV)
+    and on ¹⁹⁴Pt (200 MeV), and a rotor, ¹⁵²Sm on carbon (400 MeV): all 48 probabilities above 10⁻⁶ within 1 % (above
+    10⁻⁴) or 3 % of GOSIA's, the worst 0.46 %, GOSIA's non-relativistic E_cm (0.01 to 0.2 % with the same E_cm). 23 of
+    the 48 were outside with the old coupling. Also within 0.4 %: target excitation, and E1 and E3 elements.
+  - Against GOSIA on the Allmond setup: Q_s = ±0.1 e b moves σ_C/σ_R by +2.715/−2.663 % and +1.910/−1.883 % (rings 2
+    and 3; they were +2.874/−2.815 and +2.022/−1.992), GOSIA's being +2.712/−2.660 and +1.908/−1.882: within 0.12 % of
+    the change. Feeding from the higher states +1.161/+0.756 % (it was +1.405/+0.912; GOSIA +1.174/+0.769).
+  - `reproduction_allmond2014` judges the sensitivities within 2 % of GOSIA's change as well as 0.5 percentage points,
+    which had let the factors through (`[bands.sensitivity] rel`).
+  - Other numbers that move: `coulex_ni62_pt194` at 150° CM, first 2⁺ 0.1843 → 0.1836, 0⁺ 0.0081 → 0.0080, 4⁺ 0.0058 →
+    0.0057, any level 0.1999 → 0.1990; 2⁺ → 0⁺ rate in the CD 548 → 546 /s, the 0⁺ and 4⁺ lines −1.2 and −1.4 %. ¹⁶O
+    on ⁵⁸Ni: a fit of Q_s read 14.27 e fm² for a true 15 and now 15.00. The analysis' "matrix elements assumed" for
+    Q_s ± 0.1 e b: +2.71/−2.66 and +1.91/−1.88 % (was +2.87/−2.81, +2.02/−1.99). The step of the analysis from first order to all
+    orders is −5.3/−4.8 % in `coulex_ni62_pt194` (CD/all detectors; it was −5.7/−5.5) and −7.7/−7.0 % in
+    `coulex_ni62_pt194_clovers` (it was −8.6/−7.9): B(E2) read from given counts rises by 0.5 to 1.0 %. The 2⁺ state of ⁹⁸Ru in `coulex_ru98_plunger` with ENSDF's
+    scheme +0.2 %, its 4⁺ −3 %.
+- The γ rays of a level scheme have the orientation of each event's depth (Allmond 2014 verification, second fix plan,
+  16). In a target that the generator cuts into slices the events that follow a level scheme took the orientation of
+  the middle of the target, where those of a single state and the correlation table take that of each event's own beam
+  energy: for ⁶²Ni on 1.04 mg/cm² of carbon the table with the middle's is +0.16 % (inner ring) and −0.25 % (outer ring)
+  of the one with each depth's, which biased efficiency × correlation and B(E2). Each excitation now starts in the
+  density matrix at its own beam energy (`gamma.DepthOrientation.density`: the solutions at the energies of the depth,
+  interpolated with the weights the table uses; hermitian, of trace 1, and with the negative eigenvalues that the
+  interpolation makes close to 0° or far at the back removed) and goes down its cascade as before. Efficiency ×
+  correlation against the events, without drawing a γ ray (seeds 17301–17308; the events as they were in brackets):
+  −0.03 ± 0.02 (+0.14), +0.06 ± 0.02 (−0.18) and −0.05 ± 0.02 (−0.17) % for the inner ring, the outer ring and both.
+  160 samples (seeds 17001–17160), with the half-life: efficiency × correlation +0.20 ± 0.09, −0.02 ± 0.06,
+  −0.04 ± 0.05 %; B(E2) +0.15 ± 0.11, −0.06 ± 0.07, −0.09 ± 0.06 %; area −0.08 ± 0.03, −0.03 ± 0.01, −0.05 ± 0.01 %;
+  60 samples without it (17201–17260): B(E2) +0.04 ± 0.17, +0.33 ± 0.10, +0.14 ± 0.08 %. What is left of efficiency ×
+  correlation is not the orientation: the table's eight points across a ring (0.03 % in the outer ring), for both rings
+  together the particles the analysis averages over (those with a γ ray: +0.08 %), and with the half-life about 0.05 % in
+  the outer ring that is not explained (without it nothing is left, ±0.02 %). The closure of `reproduction_allmond2014`
+  is −0.41/−0.29/−0.42 % (it was +0.10/−0.61/−0.49 %), its stored run −0.34/−0.07/−0.16 % (it was +1.7/−0.3/+0.3 %).
+  Setups without a level scheme, targets of one slice (as every example with a scheme has), lifetime measurements, the other
+  nucleus's γ rays, isotropic emission, the correlation table and the Doppler correction are unchanged. Not changed:
+  the level an excitation starts in is drawn from the populations in the middle of the target.
+- The peak of a level that decays inside the target (Allmond 2014 verification, second fix plan, 15). With a half-life
+  in the level scheme some nuclei decay before they have left a thick target, faster than the Doppler correction takes
+  them, and leave a tail on one side of the peak that the wider bell of the fit does not follow: ⁶²Ni (2⁺, 1.442 ps) in
+  carbon lost 0.40 ± 0.05 % of its area in the inner ring. The peak is now a Gaussian with the spread that the setup
+  gives it (`gamma_events.doppler_spread`: the half-life, the depth, the segments, the crystals' faces and the add-back;
+  `Analysis._spread`, about 2 s per choice of rings), which puts 0.54 % of the peak at −20 to −14 keV where the events
+  have 0.54 %. Nothing but the Gaussian's width is fitted to the shape, and `PeakFit.tails["spread"]` keeps it. Sixty
+  samples (seeds 11001–11060), area against the strict full-energy counts: −0.10 ± 0.04, −0.05 ± 0.02, −0.07 ± 0.02 %
+  (inner ring, outer ring, both; the plan's limit is 0.1 %, which the inner ring just misses with −0.103). The budget has
+  the line "peak tails (simulated)" for it. Runs of few counts take the spread with the simulated shape. Setups without
+  a half-life, thin targets, lifetime measurements, the other nucleus's peak and the events are unchanged.
+  Over the same sixty samples efficiency × correlation was +0.42 ± 0.16, −0.29 ± 0.08, −0.16 ± 0.07 % off and B(E2)
+  +0.36 ± 0.19, −0.29 ± 0.10, −0.18 ± 0.09 %, from the orientation of the events (16, fixed above).
+- The Allmond 2014 reproduction says what it misses (Allmond 2014 verification, second fix plan, 9 and 13). The band
+  against GOSIA as run is the 1 % the verification's plan had fixed; the 2 % in the reference file had been written
+  after about 1.3 % was found, as had the 0.5 % against GOSIA with nuclear masses and DIP off (0.2 %), and the file says
+  so now. No band is raised. physim is +1.32 % (ring 2) and +1.16 % (ring 3) above GOSIA as run: the check
+  `reproduction_allmond2014` fails, as a known and explained miss (GOSIA's integer masses, E1 polarisation,
+  non-relativistic kinematics), worst 1.32 of its band (0.46 without the miss), and the tests assert its size
+  (±0.05 %). All orders are what is judged; first order is a second line. The closure is the mean of four seeds fixed
+  beforehand (1001–1004) instead of seed 11, to all orders, with its Monte Carlo and scatter errors, within a quarter of
+  the paper's statistical error + 3 Monte Carlo errors (it was 1 % + 3 of one seed): −0.25/−0.57/−0.48 % for
+  2.6/1.6/1.4 %. New: the closure sample as a stored run, and a run taken in the app, give B(E2) back ring by ring
+  (`coulex_reproduction.stored_run`). `Result.monte_carlo` against the scatter of 100 seeds: 1.08(9), 1.12(7), 1.06(7)
+  for ring 2, ring 3 and both, no significant difference, so it is unchanged.
+- The report's section on the Doppler correction says at what depth of the target it takes the reaction
+  (`gamma_events.reaction_depths`) instead of "the middle of the target", and that a segment stands for the mean
+  direction of its particles.
+- The analysis of a stored run averages the expected excitation over each segment (Allmond 2014 verification, second
+  fix plan, 2). A run knows only the segment a particle hit, and ⟨P⟩/B was read at the segment's mean angle: 0.6 and
+  1.2 % too large with one ring per detector (⁶²Ni on carbon, 14–28° and 28–44°). Now the cross sections of the
+  excitation and of every particle are each integrated over the segment, for each kind of particle, without the
+  directions in another detector's shadow and the particles below the threshold; a segment across the largest lab
+  angle of a double-valued particle is integrated in the CM system. Within 0.02 % of the cross sections integrated
+  over the ring, with seven rings and with one. Weighted simulations keep their particles' angles, bit for bit.
+- The analysis's uncertainty budget (fix 12): a "target thickness" term, the change of ⟨P⟩/B with the thickness changed
+  by its uncertainty (`Settings.thickness_unc`, a field of the Analysis step; −2.05/+2.10 % for ±1.3 % of the Allmond
+  target), and "matrix elements assumed", which was always 0: the change of the γ rays in the peak when the level
+  scheme's other matrix elements move by their uncertainties, from the coupled equations (Q_s ± 0.1 eb on ⁶²Ni:
+  +2.87/−2.81 % and +2.02/−1.99 %). An input without an uncertainty has no term, and the new `Result.budget_notes`,
+  the normalisation step, the record and the report say so. `coulex_ni62_pt194_clovers` (Q_s = 0.05 ± 0.12 eb from
+  ENSDF and four transitions) goes from 10 to 26 % systematic. Results kept by earlier versions load as they are.
+- A stored run's particle angles and the Doppler correction take the right angle of each segment (Allmond 2014
+  verification, second fix plan, 1). `Geometry.segment_centre(weighted=True)` averaged x and y over a sector, which
+  put the point 1.1–1.6 % nearer to the axis (a ring without sectors at 0° or 180°), and weighted recoils by the
+  scattered beam's 1/sin⁴(θ/2). The new `Geometry.segment_angles` averages the polar angle at the segment's middle
+  azimuth, weighted by the particle's own elastic law: 1/cos³θ for recoils (exact for any masses) and Rutherford's
+  law in the laboratory for the scattered beam, with the setup's masses, since 1/sin⁴(θ/2) holds for a heavy target
+  only (it was 0.4° off for ⁹⁸Ru scattered on ²⁴Mg into one ring). The stored angles of `coulex_ni62_c_allmond` were
+  0.39° and 0.37° too small (0.001° now); ring by ring the CD of `coulex_ni58` was 0.08° off. The kinematic lines of
+  the Data tab use the same angles, for each line's particle. The Doppler correction counts on a segment's azimuth
+  only as far as the segment fixes it.
+- The Doppler correction takes the speed the emitters have in a thick target (Allmond 2014 verification, second fix
+  plan, 14). It took two-body kinematics at the mid-target energy and let the emitter out from the middle; it takes
+  both at one depth now, the excitation-weighted mean depth of the forward model per particle detector and kind of
+  particle (`gamma_events.reaction_depths`). In `coulex_ni62_c_allmond` the speed was 8.0 % and 4.7 % too high (inner
+  and outer ring; 0.2 % and 0.1 % now), the corrected peak 1.35 and 0.77 keV too high (0.08 and 0.05 keV now) and
+  7.8 % and 3.8 % wider (rms). Thin targets, targets the generator keeps in one slice, lifetime measurements and the
+  correction for the nucleus the `[reaction]` does not name are unchanged, and so are the events.
+  - The tails of the fitted peak end: the wider component is a bell that ends (`analysis._biweight`), where a wider
+    Gaussian reached on into the background below the peak and took 0.2 % of the area from there once the speed was
+    right. Many counts, against the strict full-energy counts of 12 samples (seeds 401–412): −0.02 ± 0.10, +0.10 ±
+    0.07 and +0.04 ± 0.05 % (inner ring, outer ring, both); toys of 60, 140, 1400 and 5000 counts within 0.35 %,
+    none of 4000 ran away or failed.
+- The live counters of a run, its beam time and its sample of particles go together: `RunTaker.step` shows a chunk
+  only when all of it is stored. The beam time was shown first, and for 20–30 ms `run_progress()` had progress while
+  `run_sample()` had no particles, or columns of different lengths. The runs themselves are unchanged.
+- The same for a fusion run: `FusionRunTaker.step` shows a block's beam time, counters and events together, only when
+  all of it is stored. `progress()` had beam time with no residues or events while the first block was made, and
+  counters half added up. The runs themselves are unchanged.
+- The peak fit of the analysis at few and at many counts (Allmond 2014 verification, round 3, fixes 3 and 4).
+  `analysis.fit_peak` fits by Poisson likelihood with a line that is nowhere negative (least squares with the
+  variances 1/max(counts, 1) before; a weighted sample keeps its own variances), and `fit_tails` gives the area of the
+  fitted peak, the counts of the whole window less the background, where it divided the counts within ±3σ by the
+  share of two Gaussians there.
+  - A run of too few counts to fix the tails takes their share, offset and width, relative to the core, from a peak of
+    15 000 counts simulated with its own setup, gate, rings, Doppler correction and window, and a seed of its own
+    (`Analysis.simulated_peak`, kept with the analysis; about 10 s for nine clovers, once per choice of rings). The
+    counts fix the area, centre, core width and background. The step, a note and the record say so, and the budget has
+    the line "peak tails (simulated)". A closure test cannot test this assumption.
+  - A fit whose width or centre ends at its bound (twice the simulated peak's, where there is one), or that finds no
+    counts above the background, is `PeakFit.failed`: reported with the reason, without an area and a B(E2).
+  - ⁶²Ni on carbon, toys of 60, 140, 1400 and 5000 counts in the three ring choices: the area is within 0.4 % (it was
+    1 to 4 % low below 2000 counts, and 7 of 6000 toys of 60 counts ran away); many counts: +0.10, +0.09, +0.09 %
+    against the true counts (−0.11, −0.13, −0.14 %). A Gaussian peak of 1400 counts on 20 per bin: 0.0 % (+6 %).
+  - The target's misplacement in the budget refits with the same kind of tails, not with whatever the counts of each
+    shifted spectrum allow (3.5 % from the scatter of 68 counts, now 0.9 %).
+- The beam-energy systematic raises the energy at the entry of the target and slows the beam down from there; it
+  scaled the energy at every depth (fix 5): 5.2 % for 0.5 % on ⁶²Ni through 1 mg/cm² of carbon, as a setup with that
+  energy gives, where it said 4.3 %.
+- The "all orders" step names the feeding from the levels above only when the scheme has some (fix 8).
+- Detectors that only touch are no longer reported as overlapping (Allmond 2014 verification): two rings in one
+  plane whose radii meet, pads that share an edge, or detectors stacked face to face. Solids overlap when they reach
+  into each other by more than 0.05 mm (`scene.TOUCH_MM`, half the step a dragged detector's place is rounded to;
+  less for pieces thinner than 0.2 mm). The check is exact along every edge, where it took nine points of each, so
+  thin bars that cross are found too. The check for detectors in the beam is unchanged.
+- The γ rays of a thick target come from the emitter of their own depth (Allmond 2014 verification):
+  `gamma_events.simulate_gammas` takes the undetected emitter's two-body kinematics, and for a single state its
+  orientation, at each event's own beam energy where the generator cuts the target into slices. It took those of
+  the middle of the target for every event (emitter β 0.026 instead of 0.029 in the inner ring of
+  `coulex_ni62_c_allmond`). Targets of one slice and lifetime measurements are unchanged.
+- The peak area of the analysis keeps the tails of a Doppler-corrected peak. The depth of the target broadens the
+  peak, 2 % of it lies beyond ±3σ of the Gaussian that fits its core, and the straight line beside it takes the
+  tails for background: the area was 2–3 % low. `analysis.fit_tails` fits a core with a wider Gaussian on a
+  background that steps down across the peak (maximum likelihood) and divides the counts within ±3σ by the share
+  of that peak there. It is used where the tails improve the deviance by more than 25 and the nucleus has no other
+  line in the fit window; every other peak keeps its Gaussian. `PeakFit.tails` holds it, and the figures draw it.
+  - ⁶²Ni on carbon (rings 14–28°, 28–44°, both; twelve samples of 400 000 events): efficiency × correlation against
+    the γ rays detected per excitation 0.0 ± 0.4, 0.0 ± 0.2, +0.1 ± 0.2 %; B(E2) simulated then analysed −0.1 ± 0.4,
+    +0.1 ± 0.2, −0.1 ± 0.2 % (−1.6, −3.2, −2.7 % with the area of a Gaussian).
+- The particle–γ correlation table follows the beam through a thick target (Allmond 2014 verification):
+  `gamma.correlation_table` averages its kinematics and angular correlation over the depth as
+  `rates.depth_probability` averages the excitation, each depth at its own beam energy and weighted by the
+  Coulomb-excitation cross section there, with the emitting nucleus slowed down on its way out. It took the
+  kinematics of the middle of the target, with the emitter at its speed just after the reaction. A thin target (a
+  beam energy loss below 0.2 %) keeps its factors to 10⁻¹⁵, as do lifetime measurements and the other nucleus of
+  the collision; thicker targets move by up to 0.8 % (`coulex_ni58`, `coulex_ni62_pt194`) and 2.5 %
+  (`coulex_ni62_c_allmond`) in single crystals.
+  - ⁶²Ni on carbon (rings 14–28°, 28–44°, both; twelve samples of 400 000 events): efficiency × correlation against
+    the γ rays detected per excitation −0.3 ± 0.4, −0.2 ± 0.2, −0.1 ± 0.2 % (before −0.9, −1.1, −1.0 %); B(E2)
+    simulated then analysed +0.9 ± 0.4, −0.1 ± 0.2, +0.1 ± 0.2 % (before +1.5, +0.8, +0.9 %). The closure test
+    (`tests/python/test_nuclear_analysis_closure.py`) now allows the Monte Carlo error alone, not 1 % more, and
+    averages five samples of 400 000 events instead of taking one of 2 000 000 (3 GB of memory instead of 10).
+- The analysis reads B(E2) against the forward model (Allmond 2014 verification, fixes 1 analysis side, 2 and 7).
+  Simulate-then-analyse on 62Ni at 111.6 MeV on 1.04 mg/cm² of carbon read B(E2) 35 % high: ⟨P⟩/B took P at
+  the mid-target energy and at the CM angles of the elastic particles, while the forward model excites through
+  the depth and gives the excited carbon recoil its own CM angle and lab-to-CM Jacobian (4 % larger here).
+  - `Analysis._mean_probability` now takes the excitations expected per particle from the forward model's own
+    cross sections (`rates.reaction_at`, as `Rates` integrates them): at each particle's lab angle, the
+    Coulomb-excitation cross section over that of every particle reaching the angle, each integrated over the
+    depth of the target at the beam energy there and through its own kinematics, then averaged over the particles
+    in the rings. A change of the forward cross section (its Rutherford factor, say) reaches the analysis by
+    itself. With a level scheme, first order still uses the [reaction] state's first-order P inside the same
+    cross section, and the all-orders step scales the scheme's mid-target yields by the forward model's
+    excitations per particle over the solution's. The beam-energy systematic raises the beam energy at every
+    depth.
+  - Each crystal's full-energy efficiency is taken at the Doppler-shifted energy it sees the line at (the measured
+    over the corrected energy of the gated γ rays), not at the rest energy: +0.6 % in the efficiency here, where
+    most clovers stand backward of 90°.
+  - The inelastic particle gate warns (`Result.gate_warning`, also the first note and in the gate step) when the
+    elastic and inelastic groups overlap through the depth of the target for most of the excitations in the
+    rings, and says to use the gate "all"; it does not switch. `Result.gate` and `Result.gate_overlap` say which
+    gate was used and how much the groups overlap. The groups overlap in this sense in most shipped examples too
+    (the depth spread is wider than E*'s shift of the energy).
+  - Closure on the 62Ni on carbon setup with gate "all" (ring 14–28°, ring 28–44°, both): +1.9/+0.6/+0.9 % with
+    4 000 000 weighted events (Monte Carlo 0.4/0.25/0.2 %), +0.9/+0.0/+0.2 % with 2 000 000 and another seed;
+    before, +36/+35/+35 % on the wave-1 forward model (+9.7/+8.5/+8.8 % before wave 1). The residual of about
+    +0.5 to +1 % is 0.3 % in ⟨P⟩/B against the events' own excited share and 0.3–0.6 % in the angular-correlation
+    table, which takes the kinematics of the middle of the target (`gamma.correlation_table`).
+    `tests/python/test_nuclear_analysis_closure.py` checks it.
+- Coulomb excitation has one Rutherford convention (backlog 58): Alder and Winther's dσ = P (v_f/v_i)(a²/4)/
+  sin⁴(θ/2) with the symmetrised orbit, the elastic Rutherford cross section at the initial E_cm times v_i/v_f, as
+  in GOSIA. Before, the rates and the event generator used the elastic Rutherford cross section and
+  `Coulex.rutherford_cm` the symmetrised a²/4 without v_f/v_i (8.7 % apart for ⁶²Ni on carbon at mid-target).
+  - `Coulex.rutherford_cm` and `cross_section_cm` (and `total`, `cross_section_lab`), the rates
+    (`rates.rutherford_factor`), the generator's weights (`DepthProbability.slices(..., ratio=True)`), the Doppler
+    table, and the all-orders yields of `multistep` and `orientation` all use it.
+  - Ratios say which Rutherford they divide by: `Coulex.ratio_to_elastic` and the new `DepthProbability.ratio`
+    divide by the elastic one, as an experiment normalises to the elastic singles; `Coulex.elastic_rutherford_cm`
+    is that cross section. GOSIA's ratios divide by its own inelastic integrated Rutherford (11–16 % larger on the
+    ⁶²Ni rings).
+  - Allmond 2014 (⁶²Ni on carbon): the app's integrated Rutherford factor equals GOSIA's to 0.03 %; σ_C/σ_R per
+    ring is now +1.3 % and +1.2 % against GOSIA's 1.0080e-3 and 7.699e-4 (was −2.4 % and −2.6 %). The rest is
+    GOSIA's integer mass numbers and its E1 polarisation: rerun on the app's input with the nuclear masses and
+    DIP off, GOSIA agrees within 0.2 % for both the elastic and the inelastic ratio. `test_nuclear_thick_target`
+    tightens to that.
+  - The shipped examples' excitation rates rise by v_i/v_f: +3.4 % (`coulex_ni58`), +0.6 % (`coulex_ru98_plunger`),
+    +0.3 % (`coulex_ni62_pt194`, `_clovers`); the all-orders yields fall by v_f/v_i from the old symmetrised factor.
+- Thick-target Coulomb excitation: the excitation probability P(θ) is now integrated over the depth of the layer,
+  each depth at its own beam energy and weighted by the Rutherford cross section there, as the Rutherford factor
+  already was. Before, P was taken at the mid-layer energy alone, which for 62Ni at 111.6 MeV on 1.04 mg/cm² of
+  carbon (Allmond et al. 2014, a 38 % energy loss, P changing 150-fold) put σ_C/σ_R 21–23 % low.
+  - `rates.DepthProbability` (from `rates.depth_probability`) solves P at a few energies through the layer (up to
+    8 Chebyshev points, by the energy loss) and interpolates in ln P; a layer the beam loses under 0.2 % of its
+    energy in keeps the mid-layer P exactly. The rates take P at each depth point; the event generator cuts such a
+    layer into up to 16 slices, each with P averaged over it; the Doppler table weights each depth with its own P.
+    `DepthProbability.probability(theta_cm)` is the depth-averaged P at given CM angles, for an analysis.
+  - The 62Ni on carbon setup now gives 9.904e-4 (ring 14–28°) and 7.530e-4 (28–44°) in first order, and
+    9.835e-4 and 7.500e-4 to all orders: 2.4 % and 2.6 % below GOSIA (1.0080e-3, 7.699e-4). The remainder is the
+    Rutherford convention (backlog 58), left to its own fix. `coulex_ni58` (a 7 % energy loss) moves by +0.6 %,
+    `coulex_ru98_plunger` by −0.5 %, `coulex_ni62_pt194` by −0.01 %: the depth average itself, which a brute-force
+    average over the depth reproduces.
+- A single 0⁺ → 2⁺ transition with a diagonal matrix element (Q_s) in the beam's or target's `[levels]` is solved
+  with the coupled equations (to all orders, unless `[reaction] order = "first"`). Before, it fell back to the
+  first-order one-γ-ray chain and Q_s was ignored; now Q_s = ±0.1 eb moves the 62Ni ratios by +2.9/−2.8 % and
+  +2.0/−2.0 %, as GOSIA's +2.7/−2.7 % and +1.9/−1.9 %.
+- The GOSIA input writer (`Multistep.gosia_input`) is rewritten and checked against runs of GOSIA 20110524
+  (Allmond 2014 verification, fix 5).
+  - The sign of the partner Z was backwards for both roles. In GOSIA a negative partner Z means the projectile is
+    the investigated nucleus. GOSIA's source says so, and its runs print "PROJECTILE EXCITATION"; a comment in its
+    own CMLAB states the rule the other way round. Target excitation (¹⁶O on ⁵⁸Ni) used to stop in GOSIA with
+    "maximum scattering angle 14.06°".
+  - One experiment per particle detector and per nucleus that reaches it. A detected recoil gets a negative angle
+    (the beam's lab angle, from GOSIA's INVKIN), and OP,INTI's mesh is in recoil angles, not OP,INTG's
+    two-valued beam angles. Side detectors get IAX = 1 and the azimuth they cover at each angle.
+  - The yields are integrated over the target with OP,INTI, using the app's stopping powers for the beam. CONT
+    writes `SPL,1.`: the default single polynomial through the stopping table puts a thick target's Rutherford
+    17 % low. CONT also writes `DIP,3.8` and the blank line GOSIA needs after `END,`.
+  - OP,YIEL is written in GOSIA's real format. The γ detectors come from OP,GDET, in the same file, or from a 4π
+    detector (`gamma="4pi"` with `GOSIA_4PI_FORT9` as `fort.9`). The old OP,INTI lines of "measured yields"
+    are gone.
+  - `physim.external.gosia.integrated` reads the integrated Rutherford and yields back. Ratios built from them
+    divide by GOSIA's inelastic Rutherford, 11–16 % above the elastic one for ⁶²Ni on carbon.
+  - Checked against the outside-tools GOSIA run for ⁶²Ni on carbon (carbon recoils at 14–28° and 28–44°):
+    - γ yield over GOSIA's Rutherford: 9.070e-4 against 9.076e-4 (ring 2), 6.642e-4 against 6.647e-4 (ring 3);
+    - over the elastic Rutherford: 1.0077e-3 against 1.0080e-3, 7.696e-4 against 7.699e-4.
+- Three misleading outputs found while checking the app against Allmond et al. 2014 (⁶²Ni Coulomb excitation):
+  - The lifetime planner no longer names a method when the recoil does not fly forward out of the target (β = 0,
+    as for ⁶²Ni backscattered off ¹⁹⁴Pt in `coulex_ni62_pt194`): each level's method is "none", and the warning
+    says plainly that no Doppler-shift method (RDDS or DSAM) fits this geometry and why. Before, it named "rdds"
+    beside a β of zero.
+  - In DSAM mode (the setup's DSAM, or a recoil that stops in the target) the lifetime plan lists no plunger
+    distances, sensitive range or counts per distance, even for levels whose τ would suit a plunger.
+  - Shell model: an effective charge for a particle type with no valence particles in the chosen space (e_p for
+    ⁶²Ni in JUN45, ⁵⁶Ni core) is warned about, since it has no effect: `shellmodel_spaces.charge_warnings`, the
+    estimate's `warnings`, and `warnings` in the MCP tools `shell_model_options`, `estimate_shell_model`,
+    `run_shell_model` and `shell_model_results`.
 - `Planner.plan()` raised "the beam energy must be positive" when the beam stops in a thick backing (projectile
   Coulex took the beam energy at the middle of every layer). It now uses the middle of the part the beam crosses
   (`rates.layer_energy`), skips layers the beam never reaches, and reports where it stops (`beam_stops_in`).
@@ -292,6 +654,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
   marked stale by a change, the one on screen too.
 
 ### Changed
+- CI runs a test file only if something that it used changed since it last passed (`scripts/ci_tests.py`): each file runs in a
+  process of its own that records the functions, modules and data files it used (`scripts/ci_record.py`), and what passed is
+  kept, for main and for each pull request. A change of text (documents, comments, docstrings) runs no tests, and after a fix
+  run the test that failed and what else uses the code of the fix. The virtual environment and the built extension are cached.
+  Each entry of the list of slow tests is a part of its own, so that a long file is shared out over runners.
+  main runs everything unless only text changed.
+- CI on pull requests leaves out the slow tests (`.github/slow-tests.txt`, `pytest --quick`) except in the test files the change concerns, and Docs executes the notebooks there only if they change; main runs everything. Two tests that polled a run without a pause no longer starve it.
 - The planner app has a new look and layout ("control room").
   - The steps stand in a rail on the left, from the top down, with the experiment's name above them and
     **Physics** and the theme at its foot. There is no header any more. The step on screen has its number on the

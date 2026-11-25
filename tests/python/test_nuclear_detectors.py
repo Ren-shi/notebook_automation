@@ -229,3 +229,97 @@ def test_the_polar_range_of_a_face_is_kept_per_placement():
     segment = Geometry("S", "annular", [0, 0, -40.0], [0, 0, 1.0], inner_radius=9.0, outer_radius=41.0, rings=4,
                        sectors=4)
     assert segment.theta_range((1, 2)) == segment._theta_range((1, 2))
+
+
+# -- where in a segment the particles hit -----------------------------------------------------------------------
+
+
+def scattered(x, particle, th_min_cm, n, seed, tilt=None):
+    """Lab directions of elastically scattered particles, straight from Rutherford in the CM system (1/sin⁴(θ_cm/2)
+    from ``th_min_cm`` degrees up) and two-body kinematics at m_beam/m_target = ``x``; no lab formula."""
+    rng = np.random.default_rng(seed)
+    u = rng.uniform(1.0, 1 / math.sin(math.radians(th_min_cm) / 2) ** 2, n)
+    th = 2 * np.arcsin(1 / np.sqrt(u))
+    lab = np.arctan2(np.sin(th), np.cos(th) + x) if particle == "ejectile" else (math.pi - th) / 2
+    phi = rng.uniform(0, 2 * math.pi, n)
+    return np.c_[np.sin(lab) * np.cos(phi), np.sin(lab) * np.sin(phi), np.cos(lab)], np.degrees(lab)
+
+
+def annulus(rings, sectors, **more):
+    at = {"centre": [0, 0, 50], "normal": [0, 0, -1], "inner_radius": 12.0, "outer_radius": 48.0}
+    at.update(more)
+    return Geometry("A", "annular", at.pop("centre"), at.pop("normal"), rings=rings, sectors=sectors, **at)
+
+
+FACES = {
+    "ring": annulus(4, 10),
+    "ring without sectors": annulus(3, 1),
+    "tilted ring": annulus(3, 8, normal=[0.35, 0.1, -1]),
+    "ring off the axis": annulus(2, 6, centre=[70, 20, 60], normal=[-0.9, -0.3, -1], inner_radius=5, outer_radius=30),
+    "rectangle": Geometry("R", "rectangle", [60, 0, 60], [-1, 0, -1], width=50, height=50, strips_x=4, strips_y=4),
+    "disc": Geometry("D", "circle", [50, 0, 80], [-0.5, 0, -1], radius=25),
+}
+
+
+@pytest.mark.parametrize("face", FACES)
+@pytest.mark.parametrize("x, particle", [(0.02, "ejectile"), (0.3, "ejectile"), (0.02, "recoil"), (0.3, "recoil"),
+                                         (5.16, "recoil"), (1.3, "ejectile"), (4.08, "ejectile")])
+def test_segment_angles_are_the_mean_angles_of_the_particles_that_hit(face, x, particle):
+    """Every segment, against particles drawn in the CM system: light and heavy beams, scattered beam (up to the
+    largest angle of a beam heavier than its target) and recoils, on and off the axis."""
+    g = FACES[face]
+    # The draw starts at the CM angle of a beam particle at 10° (8.5° for a beam that is turned by 14° at most), or of
+    # a recoil at 70°: a segment beyond it would be compared with a cut distribution.
+    first = 8.5 if x > 3 else 10.0
+    lowest = first + math.degrees(math.asin(x * math.sin(math.radians(first)))) if particle == "ejectile" else 40.0
+    dirs, lab = scattered(x, particle, lowest, 700_000, 11)
+    ok, *_, i, j = g._intersect(dirs, (0.0, 0.0, 0.0), False)
+    phi = np.degrees(np.arctan2(dirs[:, 1], dirs[:, 0]))
+    checked = 0
+    for seg in g.segments:
+        m = ok & (i == seg[0]) & (j == seg[1])
+        lo, hi = g.theta_range(seg)
+        if m.sum() < 300 or (lo < first if particle == "ejectile" else hi > 70.0):
+            continue
+        th, ph, known = g.segment_angles(seg, particle, x)
+        err = np.std(lab[m]) / math.sqrt(m.sum())
+        assert th == pytest.approx(np.mean(lab[m]), abs=4 * err + 0.01), seg
+        c, s = np.mean(np.cos(np.radians(phi[m]))), np.mean(np.sin(np.radians(phi[m])))
+        assert known == pytest.approx(math.hypot(c, s), abs=4 / math.sqrt(m.sum())), seg
+        if known > 0.5:
+            off = (ph - math.degrees(math.atan2(s, c)) + 180) % 360 - 180
+            assert abs(off) < 4 * math.degrees(1 / math.sqrt(m.sum())) + 0.1, seg
+        checked += 1
+    largest = math.degrees(math.asin(1 / x)) if x > 1 and particle == "ejectile" else 180.0
+    if g.theta_range()[0] < largest - 10:
+        assert checked
+
+
+def test_the_segment_angle_does_not_depend_on_how_a_ring_is_cut():
+    """A ring around the beam has one mean θ, whatever its sectors (the point averaged over x and y came nearer to
+    the axis the wider the sector); how far the azimuth is known is sin(h)/h."""
+    for particle in ("ejectile", "recoil"):
+        whole = annulus(3, 1).segment_angles((1, 0), particle)
+        assert whole[2] == 0.0
+        for sectors in (2, 6, 10, 36):
+            g = annulus(3, sectors)
+            h = math.pi / sectors
+            for k in range(sectors):
+                th, ph, known = g.segment_angles((1, k), particle)
+                assert th == pytest.approx(whole[0], abs=1e-9)
+                assert known == pytest.approx(math.sin(h) / h, rel=1e-6)
+                middle = g.segment_centre((1, k))
+                off = (ph - math.degrees(math.atan2(middle[1], middle[0])) + 180) % 360 - 180
+                assert off == pytest.approx(0.0, abs=1e-6)
+
+
+def test_the_weighted_centre_is_the_point_of_the_face_at_the_mean_angles():
+    for g in FACES.values():
+        for seg in g.segments:
+            for particle in ("ejectile", "recoil"):
+                p = g.segment_centre(seg, weighted=True, particle=particle)
+                th, ph, _ = g.segment_angles(seg, particle)
+                assert (p - g.centre) @ g.n == pytest.approx(0.0, abs=1e-9)
+                assert p / np.linalg.norm(p) == pytest.approx(direction(th, ph), abs=1e-9)
+    with pytest.raises(ValueError):
+        FACES["ring"].segment_angles((0, 0), "projectile")

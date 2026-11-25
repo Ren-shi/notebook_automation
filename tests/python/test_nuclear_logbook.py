@@ -151,12 +151,15 @@ def test_the_app_download_is_the_one_report_with_the_runs_in_it(experiment):
 
 def test_the_report_is_one_document_with_every_section(experiment):
     """There were three pages (the beam-time report, the record of the experiment and the run record); they are
-    the sections of one."""
+    the sections of one: the results lead, numbered, and what the three pages held follows as lettered
+    appendices."""
     pytest.importorskip("matplotlib")
     p, result = experiment
     page = logbook.experiment_html(p, result, plan_events=5_000)
-    at = [page.index(f'<h2 id="{key}">{i}. ') for i, (key, _) in enumerate(logbook.SECTIONS, 1)]
-    assert at == sorted(at) and len(at) == 9
+    lead = [page.index(f'<h2 id="{key}">') for key, _ in logbook.RESULTS if f'<h2 id="{key}">' in page]
+    behind = [page.index(f'<h2 id="{key}">{chr(65 + i)}. ') for i, (key, _) in enumerate(logbook.APPENDICES)]
+    assert lead and page.index('<h2 id="result">1. ') == lead[0]
+    assert lead + behind == sorted(lead + behind) and len(behind) == 8
     # What each of the three held is in it: the plan's tables and figures, the runs, the numbers' explanations.
     for want in ("Detectors: coverage, cross sections, rates and beam time", 'alt="Kinematics"', "Expected peaks",
                  "Energy loss", 'alt="Spectra"', "Run 1: 152Eu source run", 'id="coincidences"',
@@ -177,6 +180,15 @@ def test_the_report_is_one_document_with_every_section(experiment):
     assert rows[1]["gammas"] <= rows[0]["gammas"] and rows[1]["in_peak"] <= rows[0]["in_peak"]
     png, caption = logbook.run_rings_png(p, p.run)
     assert png[:4] == b"\x89PNG" and "“CD rings 3-10”" in caption
+
+
+def test_the_report_says_at_what_depth_the_doppler_correction_takes_the_reaction():
+    """It said "the middle of the target"; the correction takes the mean depth of the excitations in a thick one."""
+    thick = logbook.doppler_html(Planner.example("coulex_ni62_c_allmond"))
+    assert "mean depth of the excitations" in thick and "0.276 to 0.28 of 1.04 mg/cm²" in thick
+    assert "in the middle of the target" not in thick
+    thin = logbook.doppler_html(Planner.example("coulex_ni62_pt194"))
+    assert "It is the middle of the target" in thin and "mean depth" not in thin
 
 
 def test_the_gamma_ray_spectra_reach_the_top_of_the_level_scheme(tmp_path):

@@ -146,15 +146,16 @@ class Gate:
 
 def kinematic_lines(experiment, detector: str) -> list:
     """The measured energy each group would have in each ring (or strip) of a particle detector: after the way
-    out of the middle of the target and the detector's dead layer, at the ring's centre. A list of {"label",
-    "group" ("elastic" or "excited"), "particle", "rings": [index], "theta": [degrees, the angle of each ring's
-    centre the line is evaluated at], "energy": [MeV]}.
+    out of the middle of the target and the detector's dead layer, at the mean angle of the particles of the line's
+    kind in the ring (:meth:`~physim.nuclear.detectors.Geometry.segment_angles`). A list of {"label", "group" ("elastic" or
+    "excited"), "particle", "rings": [index], "theta": [degrees, the angle in each ring the line is evaluated at],
+    "energy": [MeV]}.
 
-    The line is where a particle at the ring's centre lands, not the median of the ring's counts: across a ring
+    The line is where a particle at that angle lands, not the median of the ring's counts: across a ring
     the cross section changes, and where the energy falls steeply with the angle (¹⁶O on ¹²C at 30°, 0.65 MeV per
     degree over a 4° strip) the counts' median can sit a few hundred keV from the line."""
     from . import data
-    from .detectors import Array
+    from .detectors import Array, direction
     from .kinematics import TwoBody
     from .rates import beam_energy_at, beam_ion, exit_energy, stack
 
@@ -168,15 +169,22 @@ def kinematic_lines(experiment, detector: str) -> list:
     rings = sorted({seg[0] for seg in g.segments})
     # Each ring's direction: the segment of the ring whose angle to the beam is nearest the ring's mean (the
     # sectors of an annular ring all have the same angle; the strips along v of a rectangle do not).
-    centres = []
-    for k in rings:
-        segs = [seg for seg in g.segments if seg[0] == k]
-        cs = np.array([g.segment_centre(seg, weighted=True) for seg in segs])
-        cs = cs / np.linalg.norm(cs, axis=1, keepdims=True)
-        th = np.degrees(np.arccos(np.clip(cs[:, 2], -1, 1)))
-        centres.append(cs[int(np.argmin(np.abs(th - th.mean())))])
-    dirs = np.array(centres)
-    theta = np.degrees(np.arccos(np.clip(dirs[:, 2], -1, 1)))
+    beam_mass = data.nuclide(ion).nuclear_mass_mev
+    found: dict = {}
+
+    def ring_directions(particle: str, nuclide: str) -> tuple:
+        """(θ in degrees, unit directions) of each ring for one kind of particle, scattered on ``nuclide``."""
+        ratio = beam_mass / data.nuclide(nuclide).nuclear_mass_mev if particle == "ejectile" else 0.0
+        if (particle, ratio) not in found:
+            th, ph = [], []
+            for k in rings:
+                at = np.array([g.segment_angles(seg, particle, ratio)[:2] for seg in g.segments if seg[0] == k])
+                best = at[int(np.argmin(np.abs(at[:, 0] - at[:, 0].mean())))]
+                th.append(float(best[0]))
+                ph.append(float(best[1]))
+            found[particle, ratio] = np.array(th), np.array([direction(t, p) for t, p in zip(th, ph)])
+        return found[particle, ratio]
+
     kinds = [("elastic", TwoBody(ion, target, e_mid))]
     exc = experiment.excitation
     if exc is not None:
@@ -198,6 +206,7 @@ def kinematic_lines(experiment, detector: str) -> list:
             except ValueError:
                 continue
             for particle, species in (("ejectile", ion), ("recoil", nuc)):
+                theta, dirs = ring_directions(particle, nuc)
                 e = np.asarray(tb.at_lab(theta, particle)[0].energy, dtype=float)
                 ok = np.isfinite(e) & (e > 0)
                 if not ok.any():
@@ -218,6 +227,7 @@ def kinematic_lines(experiment, detector: str) -> list:
                                 "energy": [float(x) for x in dep[keep]]})
     for group, tb in kinds:
         for particle, species in (("ejectile", ion), ("recoil", target)):
+            theta, dirs = ring_directions(particle, target)
             e = np.asarray(tb.at_lab(theta, particle)[0].energy, dtype=float)
             ok = np.isfinite(e) & (e > 0)
             if not ok.any():

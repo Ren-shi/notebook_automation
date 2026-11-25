@@ -23,10 +23,12 @@ and excited the state emits its γ ray, which is followed to the crystals::
    :mod:`physim.nuclear.response` gives (after the absorbers), leaves its full energy or a Compton or escape
    deposit, and is recorded with the crystal's resolution; a threshold applies.
 
-**The Doppler correction** uses only what the detectors know: the centre of the segment the particle hit, the
-centre of the crystal, and two-body kinematics at the nominal beam energy. It is made twice: as if the emitter
-were the scattered beam, and as if it were the target recoil. The width that remains comes from the sizes of the
-segments and crystals.
+**The Doppler correction** uses only what the detectors know: the segment the particle hit (the mean angles there of
+the particles of its kind), the centre of the crystal, and two-body kinematics at one beam energy: that at the mean
+depth of the target at which the excitations seen in the detector happen (:func:`reaction_depths`; the middle of a
+thin target). It is made twice: as if the emitter were the scattered beam, and as if it were the target recoil. The
+width that remains comes from the sizes of the segments and crystals, and in a thick target from the depth of each
+event, which the detectors do not know.
 
 **Background** in the γ spectra: the Compton continua of the response; random coincidences, from the singles
 rates and the coincidence window (``[run] coincidence_window``); room-background lines (⁴⁰K and the thorium and
@@ -51,14 +53,15 @@ from typing import Optional
 import numpy as np
 
 from . import angular, data, transport
-from .detectors import Array
+from .detectors import Array, angles, target_mass_ratio
 from .events import Events, simulate
-from .gamma import cascade_excitation, excitation_of, excitation_order, other_excitation, start_levels
-from .kinematics import TwoBody
+from .gamma import (cascade_excitation, depth_orientation, excitation_of, excitation_order, other_excitation,
+                    start_levels, state_transition)
+from .kinematics import TwoBody, lab_points
 from .quantity import Quantity
-from .rates import (Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels, exit_energy, recoil_stack,
-                    stack, stopping, tilt_deg)
-from .response import FWHM_PER_SIGMA, Response, compton_edge
+from .rates import (DEPTH_AVERAGE_POINTS, Rates, _after, _exit_paths, _q, beam_energy_at, beam_ion, channels,
+                    depth_probability, exit_energy, reaction_at, recoil_stack, stack, stopping, tilt_deg)
+from .response import FWHM_PER_SIGMA, Response, compton_continuum, compton_edge
 
 #: Lines of the room background and their typical relative strengths (counts, not intensities): ⁴⁰K, the
 #: thorium series (²²⁸Ac, ²¹²Pb, ²⁰⁸Tl), the uranium series (²¹⁴Pb, ²¹⁴Bi) and annihilation. The shares are
@@ -351,11 +354,197 @@ class GammaEvents:
         return total * 2 * self.window_s * self.particle_rate.get(detector, 0.0)
 
 
+#: Points each way over a particle detector's face at which :func:`reaction_depths` takes the excitation.
+REACTION_DEPTH_ORDER = 12
+#: The γ rays drawn for the spread that the Doppler correction leaves (:func:`doppler_spread`), their seed, and the
+#: points each way over a particle detector's face that they are drawn from.
+SPREAD_RAYS = 300_000
+SPREAD_SEED = 2_718_281
+SPREAD_FACE_ORDER = 48
+
+
+def reaction_depths(experiment, layers: Optional[list] = None, array: Optional[Array] = None) -> Optional[dict]:
+    """The mean depth (mg/cm², along the normal) at which the ``[reaction]`` nucleus is excited in the collisions that
+    put a particle into each detector, as the setup gives it: {(detector index, whether the particle is the target
+    recoil): depth}. Each depth of the target counts with the Coulomb-excitation cross section (in the laboratory,
+    over the face of the detector) at the beam energy there, as the rates and the event generator have it
+    (:func:`~physim.nuclear.rates.reaction_at`: the excitation probability through the depth and Alder and Winther's
+    inelastic Rutherford factor). The deep half of a thick target hardly excites: ⁶²Ni that enters 1.04 mg/cm² of
+    carbon with 111.6 MeV is excited at 0.28 mg/cm² on average. A pair no particle can reach (by the kinematics'
+    first branch, which the Doppler correction takes) has the mean of all the others.
+
+    None where the correction takes the middle of the target: a lifetime measurement (its γ rays leave from wherever
+    the plunger or the backing has the emitter), a thin target and one the event generator keeps in one slice
+    (:meth:`~physim.nuclear.rates.DepthProbability.slice_count`)."""
+    through = _through_target(experiment, layers, array)
+    if through is None:
+        return None
+    zs, w, _, faces = through
+    weight = {key: w * (sigma @ d_omega) for key, (_, d_omega, _, sigma) in faces.items()}
+    total = sum(weight.values())
+    if not np.sum(total) > 0:
+        return None
+    return {key: float(np.average(zs, weights=each if each.sum() > 0 else total)) for key, each in weight.items()}
+
+
+def _through_target(experiment, layers: Optional[list] = None, array: Optional[Array] = None,
+                    order: int = REACTION_DEPTH_ORDER) -> Optional[tuple]:
+    """The excitations of the ``[reaction]`` nucleus through the target, for :func:`reaction_depths` (which says when
+    this is None) and :func:`doppler_spread`: (depths, the quadrature weight of each, the reaction at each, {(detector
+    index, whether the particle is the target recoil): (``order``² directions into the detector, the solid angle of
+    each, the CM angle of the scattered beam and the lab cross section, both depths × directions)})."""
+    if experiment.excitation is None or getattr(experiment, "lifetime", None) is not None:
+        return None
+    layers = layers or stack(experiment)
+    array = array or Array.from_experiment(experiment)
+    target = data.nuclide(max(layers[0].nuclides.items(), key=lambda kv: kv[1])[0]).name
+    channel = next((ch for ch in channels(layers, experiment)
+                    if ch.excitation is not None and ch.layer == 0 and ch.nuclide.name == target), None)
+    if channel is None:
+        return None
+    through = depth_probability(experiment, channel, layers)
+    if through.thin or through.slice_count() == 1:
+        return None
+    x, w = np.polynomial.legendre.leggauss(DEPTH_AVERAGE_POINTS)
+    zs = (x + 1) / 2 * through.reached
+    points, reacs = [], []
+    for i, e in enumerate(beam_energy_at(experiment, 0, zs, layers)):
+        try:
+            reacs.append(reaction_at(experiment, channel, float(e), layers))
+        except ValueError:  # below the excitation threshold
+            continue
+        points.append(i)
+    zs, w = zs[points], w[points]
+    faces = {}
+    for d, g in enumerate(array):
+        dirs, d_omega = g.directions(None, order)
+        for recoil in (False, True):
+            pt = lab_points([r.kinematics for r in reacs], angles(dirs)[0], "recoil" if recoil else "ejectile")[0]
+            theta_cm = np.nan_to_num(180.0 - pt.theta_cm if recoil else pt.theta_cm)
+            ok = theta_cm > 0
+            sigma = np.array([np.asarray(r.cross_section_cm(np.where(there, th, 90.0)))
+                              for r, there, th in zip(reacs, ok, theta_cm)])
+            faces[(d, recoil)] = (dirs, d_omega, theta_cm,
+                                  np.where(ok, sigma * np.nan_to_num(pt.jacobian, posinf=0.0), 0.0))
+    return zs, w, reacs, faces
+
+
+def doppler_spread(experiment, seen: dict, step: float, rings: Optional[list] = None) -> Optional[tuple]:
+    """The peak that the ``[reaction]`` state's γ ray makes in the Doppler-corrected spectrum of crystals of perfect
+    resolution, when its level has a half-life: (shifts, share of the full-energy counts with each), the shifts
+    relative to the γ ray's energy, in steps of ``step``. It follows from the setup alone.
+
+    The correction (:func:`doppler_correct`) takes an emitter that has left the target, made at one depth, seen from the
+    middle of a segment and of a crystal. A nucleus whose level lives about as long as it takes to get out of the target
+    decays inside, faster than that, and its γ ray ends beside the peak: of ⁶²Ni in its 2⁺ state (mean life 2.1 ps)
+    in 1.04 mg/cm² of carbon about one in eight does, up to 20 keV below 1173 keV. How far depends on the depth, which the speed outside
+    depends on too, so the two do not make two separate spreads, and the whole of it is drawn here:
+    :data:`SPREAD_RAYS` γ rays with a seed of their own, from excitations through the target and over the faces of the
+    particle detectors (as :func:`reaction_depths` has them), which slow down on their way out and decay after times
+    from the level's mean life (as the events have it, without the time that levels above it take), to points on the
+    faces of the crystals; where the add-back puts the γ ray down to the crystal beside, as often as the response says;
+    and corrected as the events are. Within a crystal, and around the beam in it, the γ rays are spread evenly.
+
+    ``seen``: the weight of each crystal for each particle detector ({name: array}); detectors that are not in it are
+    left out, and ``rings`` takes some rings or strips of them. None without a half-life, and where
+    :func:`reaction_depths` is None (a lifetime measurement, a thin target)."""
+    exc = experiment.excitation
+    if exc is None:
+        return None
+    lives = _mean_lives(experiment, cascade_excitation(experiment), np.array([state_transition(experiment)[0]]))
+    if lives is None or not lives[0] > 0:
+        return None
+    layers, array = stack(experiment), Array.from_experiment(experiment)
+    through = _through_target(experiment, layers, array, SPREAD_FACE_ORDER)
+    if through is None:
+        return None
+    zs, wq, reacs, faces = through
+    ex, recoil_emits = excitation_of(experiment), exc.excite == "target"
+    emitter = ex.scheme.nuclide
+    mass = data.nuclide(emitter).nuclear_mass_mev + exc.energy_mev
+    names = [g.name for g in array]
+    rng = np.random.default_rng(SPREAD_SEED)
+    n = SPREAD_RAYS
+
+    # The excitations: one row per depth and direction, drawn in proportion to their weights.
+    weight, rows = [], []
+    for (d, recoil), (dirs, d_omega, theta_cm, sigma) in faces.items():
+        if names[d] not in seen:
+            continue
+        _, _, _, _, _, i, j = array.geometries[d]._intersect(dirs, (0.0, 0.0, 0.0), False)
+        w = wq[:, None] * sigma * d_omega * float(np.sum(seen[names[d]]))
+        w = w if rings is None else np.where(np.isin(i, list(rings)), w, 0.0)
+        points = [r.kinematics.recoil_for(th) if recoil_emits else r.kinematics.at_cm(th)
+                  for r, th in zip(reacs, theta_cm)]
+        phi = angles(dirs)[1] + (180.0 if recoil != recoil_emits else 0.0)
+        many = np.ones_like(w)
+        weight.append(w.ravel())
+        rows.append([np.ravel(x) for x in (
+            d * many, recoil * many, i * many, j * many, zs[:, None] * many, phi * many,
+            np.array([np.asarray(p.theta_lab) for p in points]),
+            np.nan_to_num(np.array([np.asarray(p.energy) for p in points])))])
+    if not weight or not sum(float(w.sum()) for w in weight) > 0:
+        return None
+    upto = np.cumsum(np.concatenate(weight))
+    pick = np.searchsorted(upto, (np.arange(n) + rng.uniform(size=n)) / n * upto[-1])
+    d, recoil, i, j, z, phi, theta, energy = (np.concatenate(x)[np.minimum(pick, len(upto) - 1)] for x in zip(*rows))
+    d = d.astype(np.int64)
+    u = _directions(theta, phi)
+    energy = _slowed(experiment, layers, z, u, emitter, energy, rng.exponential(float(lives[0]), n), mass).energy
+    beta = np.sqrt(np.maximum(1 - 1 / (1 + np.maximum(energy, 0.0) / mass) ** 2, 0.0))
+
+    # The γ rays: a crystal, a point on its face, and the crystal that the add-back puts it down to.
+    crystals, _ = crystals_of(experiment)
+    centres, radii = np.array([c.centre for c in crystals]), np.array([c.radius for c in crystals])
+    normals = _unit(centres)
+    which = np.zeros(n, dtype=np.int64)
+    for k in np.unique(d):
+        m, up = d == k, np.cumsum(seen[names[k]])
+        which[m] = np.searchsorted(up, rng.uniform(0.0, up[-1], m.sum()))
+    e1 = _unit(np.cross(normals, np.where(np.abs(normals[:, 1:2]) < 0.9, [0.0, 1.0, 0.0], [1.0, 0.0, 0.0])))
+    e2 = np.cross(normals, e1)
+    rho, psi = radii[which] * np.sqrt(rng.uniform(size=n)), rng.uniform(0.0, 2 * math.pi, n)
+    lab = _unit(centres[which] + rho[:, None] * (np.cos(psi)[:, None] * e1[which] + np.sin(psi)[:, None] * e2[which]))
+    first, reached = _first_crystal(np.zeros((n, 3)), lab, centres, normals, radii)
+    cos_a = np.einsum("ij,ij->i", u, lab)
+    e_lab = exc.energy_mev * np.sqrt(1 - beta**2) / (1 - beta * cos_a)
+    throw = np.where(reached & (first == which), (1 - beta**2) / (1 - beta * cos_a) ** 2, 0.0)
+    moved = np.zeros(len(crystals))
+    beside = np.tile(np.arange(len(crystals)), (2, 1))
+    for k, c in enumerate(crystals):
+        members = [m for m, other in enumerate(crystals) if other.detector == c.detector]
+        if c.response.addback and len(members) == 4:
+            # The scattered photon's crystal has the larger deposit when the first one has less than half.
+            moved[k] = (1 - 1 / float(c.response.addback_factor(exc.energy_mev))) * float(compton_continuum(
+                exc.energy_mev, np.array([0.0, exc.energy_mev / 2]), c.response.crystal.multiple)[0])
+            beside[:, k] = members[(c.element + 1) % 4], members[(c.element - 1) % 4]
+    to = beside[(rng.uniform(size=n) < 0.5).astype(np.int64), which]
+    which = np.where(rng.uniform(size=n) < moved[which], to, which)
+    columns = {"detector": d, "segment_i": i.astype(np.int64), "segment_j": j.astype(np.int64),
+               "recoil": recoil.astype(bool)}
+    fixed = doppler_correct(experiment, columns, np.arange(n), which, e_lab)["recoil" if recoil_emits else "ejectile"]
+    ok = throw > 0
+    return to_steps(fixed[ok] / exc.energy_mev - 1, throw[ok], step)
+
+
+def to_steps(shifts, weights, step: float) -> tuple:
+    """The distribution of ``shifts`` with ``weights`` on multiples of ``step``, each shared by the two beside it (so that
+    the mean stays): (the multiples from the first to the last, the share of each)."""
+    at = np.asarray(shifts, dtype=float) / step
+    low = np.floor(at).astype(np.int64)
+    above, first = at - low, int(low.min())
+    size = int(low.max()) - first + 2
+    out = (np.bincount(low - first, weights=weights * (1 - above), minlength=size)
+           + np.bincount(low - first + 1, weights=weights * above, minlength=size))
+    return step * (first + np.arange(size)), out / out.sum()
+
+
 def _reconstruct(experiment, tb_ej, layers, particle_dirs, theta_lab, recoil_detected, emitter: str,
-                 e_mid: float) -> tuple:
+                 depth: Optional[float] = None) -> tuple:
     """What two-body kinematics says about the emitting nucleus from the detected particle's direction:
     (unit direction of the emitter, its speed β after leaving the target), for the assumed ``emitter``
-    ("ejectile" or "recoil")."""
+    ("ejectile" or "recoil") and a reaction at ``depth`` (mg/cm² along the normal; by default the middle of the
+    target)."""
     n = len(theta_lab)
     # The CM angle of the scattered beam on this event's orbit, from whichever particle was detected.
     th_cm = np.full(n, np.nan)
@@ -376,8 +565,8 @@ def _reconstruct(experiment, tb_ej, layers, particle_dirs, theta_lab, recoil_det
     dirs = _directions(np.asarray(point.theta_lab), phi)
     energy = np.nan_to_num(np.asarray(point.energy, dtype=float))
     ion = tb_ej.beam if emitter == "ejectile" else tb_ej.target
-    depth = np.full(n, layers[0].thickness / 2)
-    e_out = exit_energy(experiment, layers, 0, depth, ion.name, energy, dirs)
+    at = np.full(n, layers[0].thickness / 2 if depth is None else depth)
+    e_out = exit_energy(experiment, layers, 0, at, ion.name, energy, dirs)
     mass = data.nuclide(ion.name).nuclear_mass_mev + (tb_ej.excitation_mev if (emitter == "recoil")
                                                       == (tb_ej.excite == "recoil") else 0.0)
     gam = 1 + np.maximum(e_out, 0.0) / mass
@@ -420,6 +609,10 @@ class _Emitter:
     tb: TwoBody
     #: Seeds of the emission, the lifetimes and the add-back.
     seeds: tuple
+    #: The :class:`~physim.nuclear.gamma.DepthOrientation` through a target the generator cuts into slices: each
+    #: event then has the emitter's kinematics and the orientation the collision leaves of its own beam energy.
+    #: None: those of the middle of the target.
+    depth: object = None
 
 
 def _first_crystal(origin: np.ndarray, lab: np.ndarray, centres: np.ndarray, normals: np.ndarray,
@@ -493,7 +686,7 @@ def _distribution(a_kq: dict, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
     x, sn = np.cos(theta), np.sin(theta)
     phases: dict = {}
     legendre: dict = {}
-    total = np.zeros(len(theta))
+    total = np.zeros(np.shape(theta))
     for (k, q), v in a_kq.items():
         m = abs(q)
         if m not in phases:
@@ -523,22 +716,33 @@ def _deoriented_coefficients(a_kq: dict, g_k: Optional[dict], rows) -> dict:
     return {key: (v * g_k[key[0]][rows] if key[0] in g_k else v) for key, v in a_kq.items()}
 
 
+def _interpolated(table: tuple, theta_cm: np.ndarray) -> dict:
+    """The coefficients a_kq of a transition's ``table``
+    (:meth:`~physim.nuclear.orientation.Excitation.coefficient_table`) at each CM angle."""
+    grid, coeff, _ = table
+    return {key: np.interp(theta_cm, grid, v.real) + 1j * np.interp(theta_cm, grid, v.imag)
+            for key, v in coeff.items()}
+
+
 def _table_weights(tables: dict, initial: np.ndarray, final: np.ndarray, theta_cm: np.ndarray,
-                   g_k: Optional[dict] = None):
+                   g_k: Optional[dict] = None, depth=None, energy: Optional[np.ndarray] = None):
     """(4π W of each γ ray along directions of the orbit's frame, from its transition's coefficient table at its
     event's CM angle, each rank k scaled by the γ ray's G_k when deorientation is given; the largest value any table
-    reaches, which |G_k| ≤ 1 cannot raise): the distribution :func:`_aimed` aims with."""
-    largest = max(float(np.max(sum(np.abs(v) for v in coeff.values()))) for _, coeff, _ in tables.values())
+    reaches, which |G_k| ≤ 1 cannot raise): the distribution :func:`_aimed` aims with. With ``depth`` (a
+    :class:`~physim.nuclear.gamma.DepthOrientation`) the coefficients are those at each event's beam ``energy``
+    (MeV)."""
+    largest = (max(float(np.max(sum(np.abs(v) for v in coeff.values()))) for _, coeff, _ in tables.values())
+               if depth is None else max(depth.largest(*pair) for pair in tables))
 
     def weigh(sel: np.ndarray, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
         w = np.zeros(len(sel))
-        for (i_lev, f_lev), (grid, coeff, _) in tables.items():
+        for (i_lev, f_lev), table in tables.items():
             mine = (initial[sel] == i_lev) & (final[sel] == f_lev)
             if not mine.any():
                 continue
-            a_kq = {key: np.interp(theta_cm[sel][mine], grid, v.real) + 1j * np.interp(theta_cm[sel][mine], grid,
-                                                                                         v.imag)
-                    for key, v in coeff.items()}
+            th = theta_cm[sel][mine]
+            a_kq = (_interpolated(table, th) if depth is None
+                    else depth.coefficients(i_lev, f_lev, th, energy[sel][mine]))
             a_kq = _deoriented_coefficients(a_kq, g_k, sel[mine])
             w[mine] = _distribution(a_kq, theta[mine], phi[mine])
         return w
@@ -624,6 +828,22 @@ def _aimed(rng, weigh, largest: float, theta_cm: np.ndarray, phi_ej: np.ndarray,
     return idx[keep], k[keep], lab[keep]
 
 
+def _partner(experiment, c: dict, rows: np.ndarray, mass_mev: float) -> tuple:
+    """(lab angle in degrees, energy in MeV) of the nucleus of mass ``mass_mev`` (with its excitation energy) that
+    left the reaction opposite the detected particle of each row: what the beam's momentum at the reaction leaves
+    it. It is the two-body kinematics of each event's own beam energy."""
+    m_beam = data.nuclide(beam_ion(experiment)).nuclear_mass_mev
+    m_target = np.array([ch.nuclide.nuclear_mass_mev for ch in channels(stack(experiment), experiment)])
+    m_det = np.where(c["recoil"][rows], m_target[c["channel"][rows]], m_beam)
+    e_beam, e_det = c["beam_energy"][rows], c["energy"][rows]
+    p_beam = np.sqrt(e_beam * (e_beam + 2 * m_beam))
+    p_det = np.sqrt(e_det * (e_det + 2 * m_det))
+    th = np.radians(c["theta"][rows])
+    along, across = p_beam - p_det * np.cos(th), p_det * np.sin(th)
+    p2 = along**2 + across**2
+    return np.degrees(np.arctan2(across, along)), p2 / (np.sqrt(p2 + mass_mev**2) + mass_mev)
+
+
 def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em: _Emitter, rows: np.ndarray,
            base: np.ndarray, k_rep: int, plain: bool, first_cascade: int = 0, aimed: bool = True,
            distance_um: Optional[float] = None) -> dict:
@@ -653,9 +873,12 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
     e_em = np.where(is_emitter, c["energy"][rows], np.nan)
     other = ~is_emitter
     if other.any():
-        point = tb.recoil_for(theta_cm[other]) if excite_recoil else tb.at_cm(theta_cm[other], "ejectile")
-        th_em[other] = np.asarray(point.theta_lab)
-        e_em[other] = np.nan_to_num(np.asarray(point.energy, dtype=float))
+        if em.depth is not None:
+            th_em[other], e_em[other] = _partner(experiment, c, rows[other], m_emitter)
+        else:
+            point = tb.recoil_for(theta_cm[other]) if excite_recoil else tb.at_cm(theta_cm[other], "ejectile")
+            th_em[other] = np.asarray(point.theta_lab)
+            e_em[other] = np.nan_to_num(np.asarray(point.energy, dtype=float))
     ph_em = np.where(is_emitter, phi_det, phi_det + 180.0)
     dir_em = _directions(th_em, ph_em)
     e_out = exit_energy(experiment, layers, 0, c["depth"][rows], emitter, e_em, dir_em)
@@ -671,6 +894,7 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
     start = {k: np.repeat(v, k_rep, axis=0) for k, v in start.items()}
     n = len(rows)
 
+    e_beam = c["beam_energy"][rows] if em.depth is not None else None
     excited_rows = n // k_rep
     # -- the cascade: which levels each excitation passes through, and its γ rays (backlog item 71) -----------------
     cascade = np.arange(n)
@@ -733,13 +957,14 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
         origin[:, 2] = -origin[:, 0] * math.tan(tilt)
 
     # -- emission with the correlation, and which crystal ---------------------------------------------------------
-    # Each transition with its own orientation (with the feeding from above), at the event's CM angle.
+    # Each transition with its own orientation (with the feeding from above), at the event's CM angle (and, through
+    # a target in slices, its beam energy).
     pairs = [(1, 0)] if cex is None else sorted(set(zip(initial.tolist(), final.tolist())))
     flip = not excite_recoil
     if cex is not None and not cex.isotropic:
         # The γ rays of one cascade share their directions (the correlation between successive γ rays): each is
         # drawn from the state the γ rays before it left, and only the last of a cascade is aimed.
-        known, deferred = _correlated(cex, exc_theta, taken, first, rng, aimed, g_k)
+        known, deferred = _correlated(cex, exc_theta, taken, first, rng, aimed, g_k, em.depth, e_beam)
         last = np.flatnonzero(np.isnan(known[:, 0]))
         drawn = np.flatnonzero(~np.isnan(known[:, 0]))
         which_d, reached_d, lab_d = _from_rest(known[drawn], theta_cm[drawn], phi_ej[drawn], velocity[drawn],
@@ -769,7 +994,8 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
         tables = {pair: (em.single if cex is None else cex).coefficient_table(*pair) for pair in pairs}
         hit = None
         if aimed and n:
-            weigh, largest = _table_weights(tables, initial, final, theta_cm, g_k)
+            weigh, largest = _table_weights(tables, initial, final, theta_cm, g_k,
+                                            em.depth if cex is None else None, e_beam)
             hit = _aimed(rng, weigh, largest, theta_cm, phi_ej, velocity, beta, gam, origin, flip, centres,
                          normals, radii)
         if hit is not None:
@@ -783,8 +1009,9 @@ def _chain(experiment, ev: Events, layers: list, crystals: list, bare: list, em:
             local = np.zeros((n, 3))
             for pair in pairs:
                 m = (initial == pair[0]) & (final == pair[1]) if cex is not None else np.ones(n, dtype=bool)
-                local[m] = _rest_directions(tables[pair], theta_cm[m], rng,
-                                            None if g_k is None else {k: v[m] for k, v in g_k.items()})
+                a_kq = (_interpolated(tables[pair], theta_cm[m]) if em.depth is None or cex is not None
+                        else em.depth.coefficients(*pair, theta_cm[m], e_beam[m]))
+                local[m] = _rest_directions(a_kq, rng, None if g_k is None else {k: v[m] for k, v in g_k.items()})
             which, reached, lab = _from_rest(local, theta_cm, phi_ej, velocity, beta, gam, origin, flip, centres,
                                              normals, radii)
             nvel = _unit(velocity)
@@ -895,6 +1122,13 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     γ rays as the setup's own run up to the add-back and the rejections, for a comparison. ``rates`` is the
     setup's :class:`~physim.nuclear.rates.Rates`, if already computed (it sets the singles and the randoms).
 
+    **Through a thick target** (one the event generator cuts into slices, since the excitation probability changes
+    through it) the undetected emitter of each event has the two-body kinematics of the event's own beam energy,
+    and its γ rays the orientation the collision leaves at that energy: that of the single state, or of the level of
+    the scheme that the excitation starts in, which goes down its cascade. Which level of a scheme that is, is drawn
+    from the populations in the middle of the target, with the decays' branches from there on. A target of one slice
+    has the kinematics and the orientation of its middle, and so do the other nucleus and lifetime measurements.
+
     Only the γ rays that reach a crystal are drawn (a thinning that leaves their number and their directions
     as their distribution has them, at a small part of the work); ``aimed=False`` draws every direction over
     the whole sphere and keeps those that meet a crystal, the slow way to the same γ rays in distribution.
@@ -941,6 +1175,11 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
                     TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=e0,
                             excite="recoil" if exc.excite == "target" else "ejectile"),
                     (seed + 1_000_003, seed + 4_000_003, seed + 2_000_003))
+    # Through a target the generator cuts into slices (the excitation probability changes through it) each event has
+    # the kinematics and the orientation of its own beam energy; a thinner one those of its middle.
+    through = depth_orientation(experiment, cex)
+    if not through.thin and through.depth.slice_count() > 1:
+        main.depth = through
     rows = np.flatnonzero(np.isin(c["channel"], excited_channels))
     lifetime = getattr(experiment, "lifetime", None)
     chosen = ""
@@ -1397,14 +1636,11 @@ def _sum_cascades(cascade, which, deposited, measured, counted, keep, kind, ener
     return done
 
 
-def _rest_directions(table: tuple, theta_cm: np.ndarray, rng, g_k: Optional[dict] = None) -> np.ndarray:
-    """Unit vectors in the orbit's frame drawn from a transition's distribution W(θ, φ), its coefficients a_kq
-    (``table`` from :meth:`~physim.nuclear.orientation.Excitation.coefficient_table`) interpolated at each event's
-    CM angle (each rank k scaled by G_k, given per event, for deorientation); by acceptance against Σ |a_kq|."""
-    grid, coeff, _ = table
-    n = len(theta_cm)
-    a_kq = {key: np.interp(theta_cm, grid, v.real) + 1j * np.interp(theta_cm, grid, v.imag)
-            for key, v in coeff.items()}
+def _rest_directions(a_kq: dict, rng, g_k: Optional[dict] = None) -> np.ndarray:
+    """Unit vectors in the orbit's frame drawn from a transition's distribution W(θ, φ), with the coefficients
+    ``a_kq`` of each event (each rank k scaled by G_k, given per event, for deorientation); by acceptance against
+    Σ |a_kq|."""
+    n = len(next(iter(a_kq.values())))
     a_kq = _deoriented_coefficients(a_kq, g_k, slice(None))
     bound = sum(np.abs(v) for v in a_kq.values())  # W × 4π ≤ Σ |a_kq|, since |Y_kq| ≤ √((2k+1)/4π)
     local = np.zeros((n, 3))
@@ -1520,16 +1756,21 @@ def angular_allowed(ji: float, jf: float, lam: int) -> bool:
 
 
 def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng, aimed: bool,
-                g_k: Optional[dict] = None) -> tuple:
+                g_k: Optional[dict] = None, depth=None, energy: Optional[np.ndarray] = None) -> tuple:
     """The directions of the γ rays of each cascade, with the correlation between them (backlog item 71): each
-    excitation starts in the density matrix the collision leaves its first level in, at its CM angle; each γ ray
-    is drawn from the current state and leaves the next level oriented by its direction
+    excitation starts in the density matrix the collision leaves its first level in, at its CM angle (with ``depth``, a
+    :class:`~physim.nuclear.gamma.DepthOrientation`, also at its beam ``energy`` in MeV; else that of ``cex``); each
+    γ ray is drawn from the current state and leaves the next level oriented by its direction
     (:class:`~physim.nuclear.correlation.Emission`); a converted transition feeds as an unobserved one.
 
     Returns (directions in the orbit's frame, one row per γ ray in the order of :func:`_cascade_steps`, NaN for
     the last γ ray of each cascade when ``aimed``; and for those, [(their γ-ray indices, emission, density
     matrices)] to aim them with)."""
     from .correlation import unobserved
+
+    def started(lev: int, excitations: np.ndarray) -> "_Lazy":
+        """The states the collision leaves the level ``lev`` of the ``excitations`` in."""
+        return _Lazy(cex, lev, theta_cm[excitations], depth, None if depth is None else energy[excitations])
 
     def deoriented(rho, gammas: np.ndarray):
         """The emitting states of the γ rays ``gammas`` with deorientation (G_k at each one's time in vacuum); the
@@ -1562,14 +1803,14 @@ def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng,
         for (lev, f_lev) in sorted(set(zip(ini[alone].tolist(), fin[alone].tolist()))):
             k = np.flatnonzero(alone & (ini == lev) & (fin == f_lev))
             deferred.append((gamma_of[k], _emission_of(cex, lev, f_lev),
-                             deoriented(_Lazy(cex.density_table(lev), theta_cm[src[k]]), gamma_of[k])))
+                             deoriented(started(lev, src[k]), gamma_of[k])))
     # The state of every other excitation still decaying: {level: (excitations, ascending; density matrices)}.
     state = {}
     need = np.zeros(len(first), dtype=bool)
     need[src[(rank == 0) & ~(alone if aimed else np.zeros(len(src), dtype=bool))]] = True
     for lev in np.unique(first):
         exc = np.flatnonzero((first == lev) & need)
-        state[int(lev)] = (exc, _interp_density(cex.density_table(int(lev)), theta_cm[exc]))
+        state[int(lev)] = (exc, started(int(lev), exc)[:])
 
     def commit(nxt: dict) -> None:
         """Excitations whose cascade has ended leave the state; the rest move to the level they reached."""
@@ -1640,17 +1881,20 @@ def _correlated(cex, theta_cm: np.ndarray, taken: tuple, first: np.ndarray, rng,
 
 
 class _Lazy:
-    """Density matrices of a :meth:`~physim.nuclear.orientation.Excitation.density_table` at CM angles, worked
+    """Density matrices that the collision leaves a ``level`` in at CM angles, those of the solution ``cex`` or with
+    ``depth`` (a :class:`~physim.nuclear.gamma.DepthOrientation`) those at each one's beam ``energy`` (MeV), worked
     out only for the rows asked for (``lazy[rows]``)."""
 
-    def __init__(self, table: tuple, theta_cm: np.ndarray):
-        self.table, self.theta_cm = table, theta_cm
+    def __init__(self, cex, level: int, theta_cm: np.ndarray, depth=None, energy: Optional[np.ndarray] = None):
+        self.cex, self.level, self.theta_cm, self.depth, self.energy = cex, level, theta_cm, depth, energy
 
     def __len__(self) -> int:
         return len(self.theta_cm)
 
     def __getitem__(self, rows) -> np.ndarray:
-        return _interp_density(self.table, self.theta_cm[rows])
+        if self.depth is not None:
+            return self.depth.density(self.level, self.theta_cm[rows], self.energy[rows])
+        return _interp_density(self.cex.density_table(self.level), self.theta_cm[rows])
 
 
 def _deferred_weights(deferred: list, last: np.ndarray, n: int) -> tuple:
@@ -1753,40 +1997,53 @@ def _cascade_steps(cex, theta_cm: np.ndarray, rng, steps: bool = False) -> tuple
 
 
 def doppler_correct(experiment, columns: dict, rows: np.ndarray, crystal: np.ndarray, measured: np.ndarray) -> dict:
-    """The Doppler correction an experimentalist makes with the geometry of ``experiment``: from the centre of
-    the segment each particle row hit (``columns`` of the particle events, ``rows`` their indices), the centre of
-    the crystal (``crystal`` indices) and two-body kinematics at the nominal beam energy. Returns
-    {"ejectile": corrected energies, "recoil": ...}.
+    """The Doppler correction an experimentalist makes with the geometry of ``experiment``: from the segment each
+    particle row hit (``columns`` of the particle events, ``rows`` their indices), the centre of the crystal
+    (``crystal`` indices) and two-body kinematics. Returns {"ejectile": corrected energies, "recoil": ...}.
+
+    A segment gives the mean angles of the particles of the row's kind (scattered beam or recoil) that hit it
+    (:meth:`~physim.nuclear.detectors.Geometry.segment_angles`), and the cosine between the emitter and the γ ray is
+    the mean over the azimuths the segment spans: one that goes all round the beam knows θ but no φ, and only the
+    motion along the beam is corrected for.
+
+    The kinematics and the emitter's way out of the target are those of one depth of the reaction. For the nucleus
+    the ``[reaction]`` excites it is the mean depth of the excitations that go with a particle of the row's kind in its
+    detector, with the beam energy there (:func:`reaction_depths`); the middle of the target in a thin one and in a
+    lifetime measurement. The other nucleus of the collision is corrected for at the middle of the target, where its
+    excitation probability is taken at every depth (:func:`other_rows`).
 
     Given an experiment whose target sits elsewhere than the one that made the events, this is the correction with
     a misplaced target: the peaks shift and broaden, ring by ring."""
     layers = stack(experiment)
     exc = experiment.excitation
     ex = excitation_of(experiment)
-    tb = TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=exc.energy_mev,
-                 excite="recoil" if exc.excite == "target" else "ejectile")
+    emitter = "recoil" if exc.excite == "target" else "ejectile"
+    tb = TwoBody(ex.beam, ex.target, ex.beam_energy, excitation_mev=exc.energy_mev, excite=emitter)
     array = Array.from_experiment(experiment)
+    depths = reaction_depths(experiment, layers, array)
     centres = []
     for gd in experiment.gamma_detectors:
         centres += [np.array(c, dtype=float) for _, c, _ in gd.elements()]
     normals = _unit(np.array(centres))
-    seg_centre = np.zeros((len(rows), 3))
-    cache: dict = {}
-    for i, g in enumerate(array.geometries):
-        m = columns["detector"][rows] == i
-        for j in np.flatnonzero(m):
-            key = (i, int(columns["segment_i"][rows[j]]), int(columns["segment_j"][rows[j]]))
-            if key not in cache:  # one segment's centre serves every hit in it
-                cache[key] = g.segment_centre(key[1:], weighted=True)
-            seg_centre[j] = cache[key]
-    p_dir = _unit(seg_centre)
-    theta_lab_p = np.degrees(np.arccos(np.clip(p_dir[:, 2], -1, 1)))
+    theta_lab_p, phi_p, phi_known = array.segment_angles(columns, target_mass_ratio(experiment), rows)
+    p_dir = _directions(theta_lab_p, phi_p)
     crystal_dir = normals[crystal]
+    recoil = np.asarray(columns["recoil"])[rows]
     out = {}
     for assumed in ("ejectile", "recoil"):
-        d_em, b_em = _reconstruct(experiment, tb, layers, p_dir, theta_lab_p, columns["recoil"][rows], assumed,
-                                  ex.beam_energy)
-        cos_a = np.einsum("ij,ij->i", crystal_dir, d_em)
+        if assumed == emitter and depths is not None:
+            detector = np.asarray(columns["detector"])[rows]
+            d_em, b_em = np.zeros((len(recoil), 3)), np.zeros(len(recoil))
+            for (d, kind), depth in depths.items():
+                m = (detector == d) & (recoil == kind)
+                if m.any():
+                    energy = float(beam_energy_at(experiment, 0, [depth], layers)[0])
+                    tb_at = TwoBody(ex.beam, ex.target, energy, excitation_mev=exc.energy_mev, excite=emitter)
+                    d_em[m], b_em[m] = _reconstruct(experiment, tb_at, layers, p_dir[m], theta_lab_p[m], recoil[m],
+                                                    assumed, depth)
+        else:
+            d_em, b_em = _reconstruct(experiment, tb, layers, p_dir, theta_lab_p, recoil, assumed)
+        cos_a = phi_known * np.einsum("ij,ij->i", crystal_dir[:, :2], d_em[:, :2]) + crystal_dir[:, 2] * d_em[:, 2]
         out[assumed] = measured * (1 - b_em * cos_a) / np.sqrt(1 - b_em**2)
     return out
 
@@ -1890,5 +2147,4 @@ def _deposit(r: Response, energy: np.ndarray, rng) -> tuple:
 
 
 __all__ = ["Crystal", "GAMMA_COLUMNS", "GammaEvents", "ROOM_LINES", "backgrounds", "crystals_of", "doppler_correct",
-           "other_lines", "other_rows", "spectrum_top",
-           "recorrect", "simulate_gammas"]
+           "doppler_spread", "other_lines", "other_rows", "reaction_depths", "recorrect", "simulate_gammas", "spectrum_top"]

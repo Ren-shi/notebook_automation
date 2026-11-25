@@ -7,6 +7,7 @@ import pytest
 from physim.nuclear import Experiment
 from physim.nuclear.analysis import Analysis, Settings
 from physim.nuclear.gamma_events import simulate_gammas
+from physim.nuclear.logbook import number
 from physim.nuclear.planner import Planner
 from physim.nuclear.record import LEFT_OUT, analysis_explanations, explanations, provenance, record_html
 
@@ -36,7 +37,8 @@ def test_every_explanation_recomputes_to_its_value(ni):
             if isinstance(v, (int, float)) and math.isfinite(v) and v != 0:
                 assert any(f"{v:.{d}g}" in x.substituted for d in (3, 4, 6)) or f"{v:.1f}" in x.substituted \
                     or f"{v:.2f}" in x.substituted or f"{v:.3f}" in x.substituted or f"{v:.4f}" in x.substituted \
-                    or str(v) in x.substituted, (x.key, name, v, x.substituted)
+                    or str(v) in x.substituted or any(number(v, d) in x.substituted for d in (3, 4, 6)), \
+                    (x.key, name, v, x.substituted)
 
 
 def test_the_numbers_are_those_of_the_calculation(ni):
@@ -85,6 +87,7 @@ def test_the_record_holds_the_same_content_as_the_app_view(ni):
         assert f'id="{x.key}"' in page
     for line in LEFT_OUT:
         assert line[:40] in page
+    assert "Target thickness: no uncertainty given" in page and "Matrix elements assumed: the setup has no" in page
     # The app shows the body of the same page; the planner method gives it with the last analysis.
     body = page.split("<body>", 1)[1].rsplit("</body>", 1)[0]
     assert "Every number, explained" in body
