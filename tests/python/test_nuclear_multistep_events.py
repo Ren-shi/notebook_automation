@@ -219,12 +219,13 @@ def test_the_plans_angular_correlation_is_the_level_schemes():
         assert plan[("DSSD-L", g)] == pytest.approx(plan[("DSSD-R", g)], rel=1e-3)
     # The 2⁺ state alone, in first order, is more sharply aligned than the collision leaves it to all orders: it
     # sends fewer γ rays to 90° (where the pattern has its minimum) and more to 45° and 135°. The plan took its
-    # factor from the state alone: 14% too few γ rays at 90° with the CD, 3% too many at 45° and 135°.
+    # factor from the state alone: 9% too few γ rays at 90° with the CD, 2.5% too many at 45° and 135° (14% and 3%
+    # before the nuclei were deoriented in vacuum, which fills the minimum).
     alone = factors(_correlation_rows(exp, None, 8, 6))
-    assert plan[("CD", "Ge90")] / alone[("CD", "Ge90")] == pytest.approx(1.144, abs=0.02)
-    assert plan[("DSSD-L", "Ge90")] / alone[("DSSD-L", "Ge90")] == pytest.approx(1.20, abs=0.03)
+    assert plan[("CD", "Ge90")] / alone[("CD", "Ge90")] == pytest.approx(1.091, abs=0.02)
+    assert plan[("DSSD-L", "Ge90")] / alone[("DSSD-L", "Ge90")] == pytest.approx(1.089, abs=0.03)
     for g in ("Ge45", "Ge135"):
-        assert plan[("CD", g)] / alone[("CD", g)] == pytest.approx(0.970, abs=0.005)
+        assert plan[("CD", g)] / alone[("CD", g)] == pytest.approx(0.975, abs=0.005)
     # With the scheme in first order the two are the same (the second 2⁺ state feeds the first a little).
     first = factors(correlation_table(ni62(order="first").experiment))
     assert all(first[k] == pytest.approx(alone[k], rel=0.01) for k in plan)

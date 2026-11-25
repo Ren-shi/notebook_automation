@@ -470,7 +470,9 @@ def test_gosia_cont_options_and_the_blank_line_after_end():
     text = Multistep(exp, ni62_scheme(), "beam").gosia_input(gamma="4pi")
     lines = text.splitlines()
     cont = lines[lines.index("CONT"):lines.index("OP,YIEL")]
-    assert cont == ["CONT", "ACC,7.", "DIP,3.8", "SPL,1.", "END,", ""]      # splines; GOSIA needs the blank line
+    # Splines; the deorientation of the setup; GOSIA needs the blank line.
+    assert cont == ["CONT", "ACC,7.", "DIP,3.8", "SPL,1.", "VAC,", "2 0.02", "3 0.0345", "4 3.5", "5 0.4516129", "6 6e-06",
+                    "7 0.6", "0 0", "END,", ""]
 
 
 def test_gosia_recoil_detection_in_inverse_kinematics():

@@ -203,8 +203,8 @@ def test_an_oriented_cascade_gives_each_line_the_distribution_of_its_level():
 def test_the_table_of_another_transition_is_not_that_of_the_first():
     """The correlation factors of the 4⁺ → 2⁺ line of ⁶²Ni on ¹⁹⁴Pt, a level the coupled equations reach in several steps:
     they are not 1, which the table gives where it finds no excitation. With the particle in the annular detector the events
-    have 1.195 ± 0.021 of the full-energy counts that isotropic emission would have (four samples, seeds 101–104, all
-    clovers); the table's is 1.18."""
+    have 1.149 ± 0.031 of the full-energy counts that isotropic emission would have (four samples, seeds 101–104, all
+    clovers); the table's is 1.17 (1.195 ± 0.021 and 1.18 before the nuclei were deoriented in vacuum)."""
     from physim.nuclear import Experiment
     from physim.nuclear.gamma import correlation_table
 
@@ -218,7 +218,7 @@ def test_the_table_of_another_transition_is_not_that_of_the_first():
         return np.mean([v for (d, _), v in table.items() if d == det])
 
     first, line = of((1, 0)), of((4, 1))
-    assert mean(line, "CD") == pytest.approx(1.195, abs=3 * 0.021 + 0.01)
-    assert first[("CD", "Clover1")] == pytest.approx(1.409, rel=0.01)
+    assert mean(line, "CD") == pytest.approx(1.149, abs=3 * 0.021 + 0.01)
+    assert first[("CD", "Clover1")] == pytest.approx(1.333, rel=0.01)
     assert correlation_table(exp)[0]["factor"] == correlation_table(exp, transition=(1, 0))[0]["factor"]
     assert abs(mean(line, "CD") - mean(first, "CD")) > 0.1
