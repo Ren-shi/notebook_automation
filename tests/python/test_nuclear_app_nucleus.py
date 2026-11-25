@@ -136,10 +136,11 @@ def test_the_nuclei_screen_the_page_of_a_nucleus_and_the_comparison(lab):
         [row] = [e for e in user.find(kind=ui.element).elements if "ps-nt-click" in e.classes]
         UserInteraction(user, {row}, None).click()  # a row of the card opens the experiment
         _press(user, "⁶²Ni →")
-        # One nucleus: its head, readouts, observables and experiments, and no comparison.
+        # One nucleus: its head, cards, experiments, what is still open and all observables, and no comparison.
         await user.should_see("1 data point", retries=100)
         texts = _texts(user)
-        assert "Z = 28, N = 34" in texts and "Still open" in texts and "1 with this nucleus" in texts
+        assert "Z = 28 · N = 34 · 3.63 % of natural Ni" in texts and "Still open" in texts
+        assert "Your experiments on ⁶²Ni" in texts and "All observables" in texts
         assert "Given to the simulation" not in texts and "Add the point" not in texts
         # A row of its observables opens the comparison: the two groups apart, each with its own comparison and the
         # method in words.
@@ -168,10 +169,93 @@ def test_the_nuclei_screen_the_page_of_a_nucleus_and_the_comparison(lab):
         await user.should_see("Routes to τ(2⁺₁) in ⁶²Ni", retries=100)
         assert (st["view"], st["observable"]) == ("observable", "tau")
         _press(user, "← ⁶²Ni")
-        await user.should_see("Z = 28, N = 34", retries=100)
+        await user.should_see("Z = 28 · N = 34", retries=100)
         assert st["view"] == "nucleus"
 
     assert _on_screen(scenario) == [str(lab.coulex.path)]
+
+
+def _levels_of_62ni() -> None:
+    """The evaluation's energies of three levels, two of them 35 keV apart."""
+    results.add_points([results.Row("62Ni", "E_level", f"62Ni:{level}", energy, "keV", "evaluation", "evaluated",
+                                    total=0.1, origin=results.reference("ENSDF", 2025, where="NDS 204, 1 (2025)",
+                                                                        evaluation=nucleus.ENSDF))
+                        for level, energy in (("2+1", 1172.91), ("2+2", 2301.85), ("4+1", 2336.46))])
+
+
+def test_the_landing_view_of_a_nucleus(lab):
+    from nicegui import ui
+    from nicegui.testing import UserInteraction
+
+    _levels_of_62ni()
+
+    async def scenario(user, st):
+        await user.should_see("The nucleus you are studying", retries=100)
+        texts = _texts(user)
+        # The head: the nucleus, its element, Z and N with what the data say of it, the counts and the evaluation.
+        assert "Nickel-62" in texts and "Z = 28 · N = 34 · 3.63 % of natural Ni" in texts
+        assert ("1 experiment, 1 analysed run and 1 data point. The evaluation is ENSDF adopted, NDS 204, 1 (2025): "
+                "4 values, taken ") in texts
+        for action in ("New experiment for ⁶²Ni", "Add a data point", "Import points from a file",
+                       "Report for this nucleus"):
+            assert action in texts
+        # The lowest levels: Jπ and energy of each, the transition with its value, the ratio and the way to all.
+        for words in ("0⁺₁", "2⁺₁", "2⁺₂", "4⁺₁", "1172.9 keV", "2301.8 keV", "2336.5 keV",
+                      "E2 · B(E2) 884 ± 13 e²fm⁴↑", "E(4⁺₁)/E(2⁺₁) = 1.99"):
+            assert words in texts
+        [link] = [e for e in user.find(kind=ui.link).elements if str(e.text).endswith("evaluated values")]
+        assert (link.text, link.props["href"]) == ("All 4 evaluated values", "#ps-all-observables")
+        # The large card: the value, the strip of every value (the measured one in tension, the run hollow), the
+        # counts in the data's words and what is still open.
+        assert "884 ± 13" in texts and "e²fm⁴↑ · known to ±1.5 %" in texts
+        dots = [e for e in user.find(kind=ui.element).elements if "ps-l-dot" in e.classes]
+        assert sorted(c for d in dots for c in d.classes if c.startswith("ps-l-dot-")) == [
+            "ps-l-dot-projected", "ps-l-dot-tension"]
+        tips = [str(t.text) for t in user.find(kind=ui.tooltip).elements]
+        assert "Doe et al. 2014: 980 ± 37 e²fm⁴↑ · measured, in tension" in tips
+        assert "1 measured" in texts and " · 1 in tension" in texts
+        assert "Still open: Coulex fitted to all orders, RDDS (decay curve, DDCM), DSAM (line shape)" in texts
+        # Still open: each route with physim's test of it, and "Plan it".
+        await user.should_see("Plan it for ⁶²Ni →", retries=100)
+        texts = _texts(user)
+        assert "Coulex fitted to all orders" in texts and any(
+            t.startswith("1 published value by this method for B(E2; 0⁺₁ → 2⁺₁)↑, none of yours. Physim's test: "
+                         "62Ni (3.63 % of natural Ni) can be the target or the beam.") for t in texts.split("\n"))
+        # All observables, at the bottom: the link of the levels card opens the values of the evaluation alone.
+        [more] = user.find(kind=ui.expansion).elements
+        assert more.text == "3 more hold the evaluation only" and not more.value
+        UserInteraction(user, {link}, None)._dispatch_click(link)
+        assert more.value
+        # The unit switch applies to the cards.
+        [switch] = [t for t in user.find(kind=ui.toggle).elements if "e2b2" in t.options]
+        switch.value = "e2b2"
+        await user.should_see("0.0884 ± 0.0013", retries=100)
+        assert "e²b²↑ · known to ±1.5 %" in _texts(user)
+        # A card opens its comparison with the literature.
+        _press(user, "Compare with the literature →")
+        await user.should_see("Given to the simulation", retries=100)
+        assert (st["view"], st["observable"]) == ("observable", "B(E2)")
+
+    _on_screen(scenario, view="nucleus", nucleus="62Ni")
+
+
+def test_a_nucleus_without_any_row(lab):
+    async def scenario(user, st):
+        await user.should_see("No value of ²⁰⁸Pb is here yet. Add a data point below", retries=100)
+        texts = _texts(user)
+        assert "Nickel" not in texts and "Lead-208" in texts and "Add the point" in texts
+        assert "There is no local copy of ENSDF (scripts/fetch_ensdf.py), so its adopted values cannot be taken." \
+            in texts  # why the levels card has no level
+
+    _on_screen(scenario, view="nucleus", nucleus="208Pb")
+
+
+def test_labels_of_close_levels_are_moved_apart():
+    # 62Ni: 2048.6, 2301.8 and 2336.5 keV within 300 keV, drawn in 174 px over 12 px.
+    placed = tn.label_places([12.0, 99.4, 164.6, 183.4, 186.0], 16, 8, 192)
+    assert placed[:2] == [12.0, 99.4] and placed[-1] <= 192
+    assert all(b - a >= 16 for a, b in zip(placed, placed[1:]))
+    assert tn.label_places([10.0, 100.0], 16, 8, 192) == [10.0, 100.0]  # room enough: at their lines
 
 
 def test_a_data_point_through_the_form(lab):
@@ -344,14 +428,14 @@ def test_the_frame_of_the_start_views(lab, monkeypatch):
         from nicegui import ui
 
         await user.should_see("Opening the nucleus you were on…")  # nothing else until the browser answered
-        await user.should_see("Z = 28, N = 34", retries=100)  # the nucleus it remembers
+        await user.should_see("Z = 28 · N = 34", retries=100)  # the nucleus it remembers
         assert _rail(user) is False and "Given to the simulation" not in _texts(user)
         for retry in range(100):
             if "⁹⁸Ru" in _texts(user):
                 break
             await asyncio.sleep(0.05)
         _press(user, "⁹⁸Ru")  # the switcher
-        await user.should_see("Z = 44, N = 54", retries=100)
+        await user.should_see("Z = 44 · N = 54", retries=100)
         _press(user, "All nuclei")
         await user.should_see("What are you studying?", retries=100)
         assert _rail(user) is False
@@ -377,8 +461,8 @@ def test_the_frame_of_the_start_views(lab, monkeypatch):
 
 
 @pytest.mark.parametrize("address, seen, unseen", [
-    ({}, "Z = 28, N = 34", "Given to the simulation"),
-    ({"observable": "B(E2)", "key": KEY}, "Given to the simulation", "Z = 28, N = 34")])
+    ({}, "Z = 28 · N = 34", "Given to the simulation"),
+    ({"observable": "B(E2)", "key": KEY}, "Given to the simulation", "Z = 28 · N = 34")])
 def test_an_address_of_a_nucleus_and_of_an_observable(lab, monkeypatch, address, seen, unseen):
     async def scenario(user):
         await user.should_see(seen, retries=100)

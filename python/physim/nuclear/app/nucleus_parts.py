@@ -126,6 +126,41 @@ def cell_text(cell: dict, display: Optional[str] = None) -> str:
     return shown(cell["value"], cell["plus"], cell["minus"], unit, cell["direction"], factor)
 
 
+def value_parts(cell: dict, display: Optional[str] = None) -> tuple:
+    """(number, unit) of a :func:`physim.nuclear.nucleus.cell` as the page writes them apart, in the unit the page
+    shows: ("884 ± 13", "e²fm⁴↑"). The same words as :func:`cell_text`."""
+    factor, unit = display_factor(cell["observable"], display)
+    if cell.get("problem"):  # not in the canonical convention: as given
+        factor, unit = 1.0, cell["unit"]
+
+    def scaled(x):
+        return None if x is None else x * factor
+
+    arrow = "↓" if unit == observables.WEISSKOPF else observables.DIRECTIONS.get(cell["direction"], "")
+    return nucleus.value_text(cell["value"] * factor, scaled(cell["plus"]), scaled(cell["minus"])), \
+        unit_text(unit) + arrow
+
+
+def standing(row: dict) -> Optional[dict]:
+    """The value a row of the observables table stands for: the evaluated one, else the best independent one
+    (measured, from an outside program, theory, in that order), as a cell; None without any."""
+    return row["evaluated"] or next((row[k]["best"] for k in ("measured", "outside_program", "theory")
+                                     if row[k] is not None), None)
+
+
+def range_text(summary: Optional[dict], display: Optional[str] = None, word: str = "measured") -> str:
+    """How many values of one kind of evidence a row holds and their range, in the unit the page shows: "16
+    measured, 1.313 to 2.975 ps"; for one value its method ("1 measured · Moment measurement")."""
+    if summary is None:
+        return f"No {word} value"
+    best = summary["best"]
+    if summary["count"] == 1:
+        return f"1 {word} · {method_words(best)}"
+    factor, unit = display_factor(best["observable"], display)
+    return (f"{summary['count']} {word}, {summary['min'] * factor:.4g} to {summary['max'] * factor:.4g} "
+            f"{unit_text(unit)}")
+
+
 def as_given(cell: dict) -> str:
     """The row's own value, unit and direction, when that is not the convention the page shows: "12.13 W.u.↓"."""
     given = cell.get("as_given") or {}
@@ -306,6 +341,54 @@ def load(nuclide: str, observable: Optional[str] = None, key: Optional[str] = No
     view = nucleus.view(name, rows=rows)
     return {"nuclide": name, "view": view, "notes": notes, "rows": rows,
             "observable": load_observable(name, view, observable, key, reference, notes, rows) if compare else None}
+
+
+def load_landing(nuclide: str, first: bool = True) -> dict:
+    """What the landing view of a nucleus shows, read once: :func:`load` without an observable, and with it
+    "levels" (:func:`physim.nuclear.nucleus.lowest_levels`), "stability" (the words of
+    :func:`~physim.nuclear.nucleus.stability`: "stable, 3.63 % of natural Ni") and "element" ("Nickel-62", or ""
+    when the table of elements has no name for it). The routes still open are read apart (:func:`open_routes`):
+    their tests take longer."""
+    from .. import data
+
+    held = load(nuclide, first=first, compare=False)
+    name, view = held["nuclide"], held["view"]
+    try:
+        element = f"{data.element(view['z']).name}-{view['a']}"
+    except (KeyError, ValueError, IndexError, AttributeError):
+        element = ""
+    try:
+        stable = nucleus.stability(name)["words"]
+    except (KeyError, ValueError, OSError):
+        stable = ""
+    return {**held, "levels": nucleus.lowest_levels(name, rows=held["rows"]), "stability": stable,
+            "element": element}
+
+
+def open_routes(nuclide: str, view: dict, rows: list) -> list:
+    """The routes physim can plan for the nucleus and that no run or measurement of one's own has taken yet, one
+    per method, from the routes of the view's headline rows (:func:`physim.nuclear.nucleus.routes`, with physim's
+    tests). Each {"method", "label", "kind", "kind_label", "note", "applies", "reason", "independent", "own"} as
+    the route of the first row that has it says ("for": that row's label), and "gives": the rows it gives, each
+    {"observable", "key", "label"}. ``rows`` are the nucleus's rows as :func:`load` read them."""
+    name = results.nuclide_name(nuclide)
+    now, via = nucleus.with_converted(name, results.current([r for r in rows if r.nuclide == name]))
+    found: dict = {}
+    for t in view["table"]:
+        if not t["headline"] or not t["open"]:
+            continue
+        gives = {"observable": t["observable"], "key": t["key"], "label": t["label"]}
+        for r in nucleus.routes(name, t["observable"], t["key"], results.select(now, t["observable"], t["key"]),
+                                via, every=now):
+            if not r["open"]:
+                continue
+            if r["method"] in found:
+                found[r["method"]]["gives"].append(gives)
+                continue
+            found[r["method"]] = {**{k: r[k] for k in ("method", "label", "kind", "kind_label", "note", "applies",
+                                                       "reason", "independent", "own")},
+                                  "for": t["label"], "gives": [gives]}
+    return list(found.values())
 
 
 def load_observable(name: str, view: dict, observable: Optional[str] = None, key: Optional[str] = None,
@@ -587,12 +670,12 @@ def latest_text(x: dict, display: Optional[str] = None) -> tuple:
             f"{label_text(latest['label'])} · {EVIDENCE[latest['evidence']].lower()} · {method_words(latest)}")
 
 
-def experiments_table(ctx, experiments: list, display: Optional[str] = None) -> None:
+def experiments_table(ctx, experiments: list, display: Optional[str] = None, opener: bool = False) -> None:
     """The experiments of a nucleus: name, kind, runs and the latest result or "not analysed". A row opens the
-    experiment, as the list of experiments always did."""
+    experiment, as the list of experiments always did; with ``opener`` each row ends in "Open →" to say so."""
     ui = ctx.ui
     names = [x["name"] for x in experiments]
-    with table_head(ui, ("Experiment", "Kind", "Runs", "Latest result"), numeric=(2, 3)):
+    with table_head(ui, ("Experiment", "Kind", "Runs", "Latest result") + (("",) if opener else ()), numeric=(2, 3)):
         for x in experiments:
             row = ui.element("tr").classes("ps-nt-click")
             row.on("click", lambda path=x["path"]: open_experiment(ctx, path))
@@ -605,6 +688,8 @@ def experiments_table(ctx, experiments: list, display: Optional[str] = None) -> 
                 td(ui, f"{x['runs']} run{'s' * (x['runs'] != 1)}", classes="ps-nt-num")
                 text, sub = latest_text(x, display)
                 td(ui, text, sub, classes="ps-nt-num", colour="" if x.get("latest") else "ps-muted")
+                if opener:
+                    td(ui, "Open →", classes="ps-nt-open").props(f'aria-label="Open {x["name"].replace(chr(34), "")}"')
 
 
 def summary_text(summary: Optional[dict], display: Optional[str] = None) -> tuple:
