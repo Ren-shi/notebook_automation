@@ -214,7 +214,8 @@ class SetupTools:
         "45 deg", "100 mm", "24 h"), a number for counts (rings = 16), or null to remove an optional field.
         Examples: ("beam", "energy", "32 MeV"); ("target", "material", "208Pb"); ("reaction", "type", "coulex");
         ("reaction", "type", "fusion-evaporation"); ("reaction channel 2", "cross_section", "450 mb");
-        ("detector CD", "distance", "35 mm"). Returns ok (whether the setup is valid) and the summary."""
+        ("detector CD", "distance", "35 mm"); ("reaction", "e1_polarisation", 0) for Coulomb excitation without the
+        E1 polarisation correction (GOSIA's d, 0.0038 when not set). Returns ok (whether the setup is valid) and the summary."""
         p = self.session.require()
         return _changed(p, p.set(_section(p, section), field, value))
 

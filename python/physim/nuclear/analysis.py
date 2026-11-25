@@ -67,7 +67,7 @@ import numpy as np
 
 from . import data
 from .coulex import Coulex
-from .gamma import correlation_table, emitters, transition_lines
+from .gamma import correlation_table, e1_polarisation, emitters, transition_lines
 from .gamma_events import doppler_spread, to_steps
 from .kinematics import TwoBody, lab_points
 from .levels import weisskopf_unit
@@ -2327,7 +2327,7 @@ class Analysis:
             scheme.set_matrix_element(sol.ground, level, "E2", math.copysign(size, old.value if old else 1.0),
                                       source="user")
             cc = CoupledChannels(sol.beam, sol.target, sol.beam_energy, scheme, excite=sol.excite,
-                                 tolerance=EVENT_TOLERANCE)
+                                 tolerance=EVENT_TOLERANCE, e1_polarisation=sol.e1_polarisation)
             grid = np.arange(max(2.0, 2.0 * math.floor(lo / 2.0)), min(180.0, 2.0 * math.ceil(hi / 2.0)) + 1e-9, 2.0)
             if len(grid) < 2:
                 grid = np.array([max(grid[0] - 2.0, 2.0), grid[0]]) if grid[0] > 2.0 else np.array([2.0, 4.0])
@@ -2498,7 +2498,8 @@ class Analysis:
         ion = beam_ion(self.experiment)
         target = data.nuclide(max(self._layers[0].nuclides.items(), key=lambda kv: kv[1])[0]).name
         other = "projectile" if exc.excite == "target" else "target"
-        cx = Coulex(ion, target, self._e_mid, excite=other, energy=energy, multipolarity="E2", b_up=b_val)
+        cx = Coulex(ion, target, self._e_mid, excite=other, energy=energy, multipolarity="E2", b_up=b_val,
+                    e1_polarisation=e1_polarisation(self.experiment))
         elastic_rows = self._elastic_rows(s)
         th = self.events.columns["theta_cm"][elastic_rows]
         p = float(np.average(np.asarray(cx.probability(th)), weights=self.events.columns["weight"][elastic_rows]))
@@ -2675,7 +2676,8 @@ class Analysis:
                 tables = []
                 for e in energies:
                     cc = CoupledChannels(beam_ion(exp), channel.nuclide.name, float(e), changed, excite=exc.excite,
-                                         ground=ground, tolerance=EVENT_TOLERANCE)
+                                         ground=ground, tolerance=EVENT_TOLERANCE,
+                                         e1_polarisation=e1_polarisation(exp))
                     tables.append([cc._populated(float(t), cc._densities(a))
                                    for t, a in zip(grid, cc.solve_many(grid))])
                 yields.append({(i, f): np.array([[st.gamma_yield(i, f) for st in states] for states in tables])

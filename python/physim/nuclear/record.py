@@ -164,7 +164,9 @@ def explanations(planner, detector: Optional[str] = None, gamma_detector: Option
             f"responds. At ξ = {cx.xi:.2f} the collision is {'fast enough' if cx.xi < 1 else 'slow'} compared with "
             "the state's period; the closer the approach (larger θ), the larger P.",
             "First-order perturbation theory on the classical Rutherford orbit (Alder and Winther); one state "
-            "from a 0⁺ ground state; no second step and no reorientation.",
+            "from a 0⁺ ground state; no second step and no reorientation."
+            + (f" The orbit integrals I have the E1 polarisation correction (d = {cx.e1_polarisation:g}, as GOSIA has "
+               "it), 1 − z a/r along the orbit." if lam == 2 and cx.e1_polarisation else ""),
             f"{DOCS}physics-register/coulomb-excitation.html",
             {"pref": pref, "b_up": cx.b_up, "two_lam_plus_one": 2 * lam + 1, "amp2": amp2},
             lambda pref, b_up, two_lam_plus_one, amp2: pref * b_up / two_lam_plus_one * amp2))
@@ -441,6 +443,11 @@ def provenance(experiment) -> list:
 
         rows.append((f"State at {1e3 * exc.energy_mev:g} keV, B({exc.multipolarity}↑)", exc.b_up,
                      reaction_b_source(experiment)))
+        if exc.multipolarity == "E2" or experiment.levels:
+            from .gamma import e1_polarisation
+
+            rows.append(("E1 polarisation, GOSIA's parameter d", f"{e1_polarisation(experiment):g}",
+                         "GOSIA's default" if exc.e1_polarisation is None else "user"))
     for role, scheme in experiment.levels.items():
         for i, lev in enumerate(scheme.levels):
             rows.append((f"{role}: level {i} {lev.label} energy", f"{lev.energy.value:g} keV", lev.energy.source))
@@ -461,8 +468,11 @@ LEFT_OUT = (
     "levels are populated, and oriented, as the coupled equations give them to all orders. The analysis extracts "
     "B(E2) with first-order theory in either case.",
     "With a level scheme: every excitation has the kinematics of the [reaction] state, whichever level it reached; "
-    "elastic scattering is not reduced by the excitation probability; the E1 polarisation and the excitation of "
-    "both nuclei in one collision are not in the coupled equations.",
+    "elastic scattering is not reduced by the excitation probability; the excitation of both nuclei in one collision "
+    "is not in the coupled equations.",
+    "The E1 polarisation (the virtual excitation of the giant dipole resonance) is GOSIA's correction to the E2 "
+    "couplings, with one parameter for every nucleus and every pair of levels, not the resonance of the nucleus at "
+    "hand.",
     "Deorientation; and lifetimes only where the level scheme gives a half-life (the nucleus then slows down along "
     "its path and decays on the way, with its orientation unchanged; no angular straggling).",
     "Cascades: followed through the level scheme when the setup has one (one γ ray per excitation otherwise), "

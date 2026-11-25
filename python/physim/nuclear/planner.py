@@ -365,7 +365,7 @@ class Planner:
         out = []
         current = self.experiment.to_dict()
         for s in self.folder.runs():
-            r = _runs.RunData(Path(s["_folder"]), s, _runs.Experiment.load(Path(s["_folder"]) / "setup.toml").to_dict())
+            r = _runs.RunData(Path(s["_folder"]), s, _runs.taken_setup(s["_folder"], s.get("kind")).to_dict())
             s = dict(s, describe=r.describe(), stale=bool(r.changes(current)), label=s["_label"],
                      one_nucleus=r.one_nucleus)
             out.append(s)
@@ -2159,19 +2159,26 @@ class Planner:
 
     def _keep(self, name: str, what: dict, folder) -> None:
         """Write a result beside the data it belongs to (the experiment's folder or a run's), with the setup it
-        was computed for, so that the reports find it later."""
+        was computed for and the E1 polarisation of its collisions, so that the reports find it later."""
         import json
+
+        from .gamma import e1_polarisation
 
         if folder is None:
             return
         try:
             (Path(folder) / name).write_text(json.dumps(
-                {"setup": self.experiment.to_dict(), "result": what}, default=_runs._json_default), encoding="utf-8")
+                {"setup": self.experiment.to_dict(), "e1_polarisation": e1_polarisation(self.experiment),
+                 "result": what}, default=_runs._json_default), encoding="utf-8")
         except (OSError, TypeError, ValueError):
             pass
 
     def _kept(self, name: str, folder, same_setup: bool = True) -> Optional[dict]:
+        """What :meth:`_keep` wrote, or None. With ``same_setup``, only when it was computed for the current setup's
+        physics; a result without an E1 polarisation beside it is from before there was one, and has none."""
         import json
+
+        from .gamma import e1_polarisation
 
         if folder is None or not (Path(folder) / name).is_file():
             return None
@@ -2179,6 +2186,8 @@ class Planner:
             d = json.loads((Path(folder) / name).read_text(encoding="utf-8"))
             if same_setup and _runs.physics_changes(d["setup"], json.loads(json.dumps(
                     self.experiment.to_dict(), default=_runs._json_default))):
+                return None
+            if same_setup and d.get("e1_polarisation", 0.0) != e1_polarisation(self.experiment):
                 return None
             return d["result"]
         except (OSError, ValueError, KeyError, TypeError):
@@ -2260,7 +2269,8 @@ class Planner:
         if "gamma" not in self._cache:
             self._cache["gamma"] = doppler_table(self.experiment) if self.experiment.gamma_detectors else []
         return {"available": True, "state": {"excite": exc.excite, "energy_kev": exc.energy_mev * 1e3,
-                                             "multipolarity": exc.multipolarity, "b_up_e2fm": exc.b_up_e2fm},
+                                             "multipolarity": exc.multipolarity, "b_up_e2fm": exc.b_up_e2fm,
+                                             "e1_polarisation": cx.e1_polarisation},
                 "xi": cx.xi, "eta": cx.eta, "safe_distance_fm": cx.safe_distance, "max_safe_angle": cx.max_safe_angle(),
                 "total_mb": cx.total(), "theta_cm": th, "probability": cx.probability(th),
                 "rates": rates, "particles": self._particle_energies(ch), "doppler": self._cache["gamma"],
@@ -2283,6 +2293,7 @@ class Planner:
         cross section for exciting it directly and with feeding from above, and for each transition the cross
         section of its γ ray, integrated over all scattering angles at the mid-target energy.
         ``{"available": False}`` without a level scheme."""
+        from .gamma import e1_polarisation
         from .orientation import Excitation
 
         exp = self.experiment
@@ -2301,7 +2312,8 @@ class Planner:
                 target = scheme.nuclide
             try:
                 ex = Excitation(beam_ion(exp), target, e_mid, scheme,
-                                excite="target" if role == "target" else "projectile")
+                                excite="target" if role == "target" else "projectile",
+                                e1_polarisation=e1_polarisation(exp))
             except ValueError as e:
                 return {"available": False, "reason": str(e)}
             cs = ex.cross_sections()

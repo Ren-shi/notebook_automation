@@ -31,12 +31,25 @@ don't depend on it, as they are in units of a pair's own a. :mod:`physim.nuclear
 Rutherford factor for every level, as GOSIA does with its NCM level; :meth:`CoupledChannels.cross_sections` takes each
 level's own v_f.
 
+**The E1 polarisation correction** (``e1_polarisation``, GOSIA's parameter d). The virtual excitation of the giant
+dipole resonance acts on the low-lying levels like an E2 interaction that falls off one power of r faster than the
+direct one and opposes it (:mod:`physim.nuclear.coulex`). As in GOSIA, every E2 coupling, of the transitions and of the
+diagonal elements alike, is multiplied by
+
+    1 − z a/r = 1 − z / (ε cosh w + 1),   z = d E_cm A / Z²,
+
+with A and Z of the excited nucleus; E1 and E3 are unchanged. z is one number for every pair of levels, and a is the
+pair's own (GOSIA's convention too: :func:`physim.nuclear.coulex.polarisation_strength`). The factor is smallest at the
+closest approach, 1 − z/(ε + 1), and so weakens the excitation more at backward angles than at forward ones, as a change
+of the quadrupole moment does: an analysis that leaves it out reads another moment. The class leaves it out unless given
+a d; the solutions of a setup have GOSIA's default, d = 0.0038, unless ``[reaction] e1_polarisation`` says otherwise.
+
 The equations are integrated by a fourth-order Runge–Kutta scheme in w, with steps that follow the fastest phase,
 from where the coupling is negligible on the way in to where it is on the way out. The probabilities of all
 levels sum to one at every step (the coupling is Hermitian).
 
-Not included: the E1 polarisation correction (virtual excitation of the giant dipole resonance), deorientation,
-lifetimes, mutual excitation of both nuclei, and nuclear interference above the safe energy.
+Not included: deorientation, lifetimes, mutual excitation of both nuclei, and nuclear interference above the safe
+energy.
 """
 
 from __future__ import annotations
@@ -66,12 +79,13 @@ class CoupledChannels(Excitation):
     :attr:`a`, :attr:`beta` and :attr:`cx` are (the first level with a matrix element to the ground state if
     None); the couplings have the orbit of each pair of levels and don't depend on it. ``tolerance`` sets the step of
     the integration (the relative accuracy of the probabilities, roughly); ``max_levels`` caps the scheme (the lowest
-    levels are kept)."""
+    levels are kept); ``e1_polarisation`` is GOSIA's parameter d of the E1 polarisation correction (0, the default here,
+    leaves it out; see the module's notes)."""
 
     def __init__(self, beam: str, target: str, beam_energy, scheme, excite: str = "target", ground: int = 0,
                  isotropic: bool = False, reference: Optional[int] = None, tolerance: float = 1e-5,
-                 max_levels: int = 30):
-        super().__init__(beam, target, beam_energy, scheme, excite, ground, isotropic)
+                 max_levels: int = 30, e1_polarisation: float = 0.0):
+        super().__init__(beam, target, beam_energy, scheme, excite, ground, isotropic, e1_polarisation)
         self.tolerance = tolerance
         levels = scheme.levels
         keep = [n for n in range(len(levels)) if levels[n].spin is not None]
@@ -92,6 +106,8 @@ class CoupledChannels(Excitation):
         self.cx = cx
         self.a, self.beta, self.k = cx.a, cx.beta, cx.k
         self.z_exciting = cx.z_exciting
+        #: z of the E1 polarisation correction on the E2 couplings (0: none).
+        self.polarisation = cx.polarisation
         mu = cx.mu
         e_cm = cx.e_cm
         self._beta_level = {}
@@ -107,6 +123,8 @@ class CoupledChannels(Excitation):
         self._level_slices = {n: [i for i, (k, _) in enumerate(self.basis) if k == n] for n in self.included}
         self._couplings = self._build_couplings()
         self._mats = np.array([mat for _, _, mat in self._couplings]) if self._couplings else np.zeros((0, 1, 1))
+        #: z of the E1 polarisation for each coupling matrix: it acts on the E2 ones.
+        self._pol = np.array([self.polarisation if lam == 2 else 0.0 for lam, _, _ in self._couplings])
         n = len(self.basis)
         #: ξ of each basis state, k/(ħc β_n): ξ_nm = ξ_n − ξ_m.
         self.xi_state = np.array([self.k / HBARC_MEV_FM / self._beta_level[ni] for ni, _ in self.basis])
@@ -171,17 +189,21 @@ class CoupledChannels(Excitation):
         e_iphi = ((ch + eps) + 1j * math.sqrt(max(eps * eps - 1.0, 0.0)) * sh) / r
         phase = np.exp(1j * self.xi[None, :, :] * (eps * sh + w)[:, None, None])
         f = np.zeros((len(w), len(self.basis), len(self.basis)), dtype=complex)
-        for lam, mu, mat in self._couplings:
-            f += (e_iphi ** (-mu) / r**lam)[:, None, None] * mat[None, :, :]
+        for (lam, mu, mat), z in zip(self._couplings, self._pol):
+            c = e_iphi ** (-mu) / r**lam
+            f += (c * (1.0 - z / r) if z else c)[:, None, None] * mat[None, :, :]
         return f * phase
 
     def _operator(self, w: float, eps: float) -> tuple:
-        """(c, p) at one w: the coefficient c_λμ(w) = e^{−iμφ} / r^λ of each coupling matrix, and the phases
-        p_n = exp(i ξ_n (ε sinh w + w)) of the basis states, so that F a = p ⊙ Σ c_λμ mat_λμ (p̄ ⊙ a)."""
+        """(c, p) at one w: the coefficient c_λμ(w) = e^{−iμφ} / r^λ of each coupling matrix (times 1 − z/r for E2, with
+        the E1 polarisation), and the phases p_n = exp(i ξ_n (ε sinh w + w)) of the basis states, so that
+        F a = p ⊙ Σ c_λμ mat_λμ (p̄ ⊙ a)."""
         ch, sh = math.cosh(w), math.sinh(w)
         r = eps * ch + 1.0
         e_iphi = ((ch + eps) + 1j * math.sqrt(max(eps * eps - 1.0, 0.0)) * sh) / r
         c = np.array([e_iphi ** (-mu) / r**lam for lam, mu, _ in self._couplings])
+        if self.polarisation:
+            c = c * (1.0 - self._pol / r)
         p = np.exp(1j * self.xi_state * (eps * sh + w))
         return c, p
 
@@ -276,6 +298,8 @@ class CoupledChannels(Excitation):
             r = eps * ch + 1.0
             e_iphi = ((ch + eps) + 1j * root * sh) / r
             c = e_iphi[:, None] ** (-mu[None, :]) / r[:, None] ** lam[None, :]
+            if self.polarisation:
+                c = c * (1.0 - self._pol[None, :] / r[:, None])
             return c, np.exp(1j * self.xi_state[None, :] * (eps * sh + w)[:, None])
 
         def apply(op, a):

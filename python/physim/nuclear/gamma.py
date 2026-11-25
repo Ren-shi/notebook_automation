@@ -170,13 +170,14 @@ def excitation_of(experiment, isotropic=None, energy=None):
         energy = beam_energy_at(experiment, 0, [lay.thickness / 2], layers)[0]
     e_mid = round(float(energy), 9)
     flat = (exc.emission == "isotropic") if isotropic is None else isotropic
-    return _excitation(beam, target, e_mid, exc.excite, exc.energy_mev, exc.multipolarity, exc.b_up_e2fm, flat)
+    return _excitation(beam, target, e_mid, exc.excite, exc.energy_mev, exc.multipolarity, exc.b_up_e2fm, flat,
+                       e1_polarisation(experiment))
 
 
 #: Accuracy of the coupled equations' probabilities in the events (relative, roughly; see
 #: :class:`~physim.nuclear.coupled.CoupledChannels`): far below what any run's statistics show.
 EVENT_TOLERANCE = 1e-4
-#: The solutions kept (one per beam, partner nucleus, energy, level scheme and order), and how many.
+#: The solutions kept (one per beam, partner nucleus, energy, level scheme, order and E1 polarisation), and how many.
 _SOLVED: OrderedDict = OrderedDict()
 _SOLVED_MOST = 48
 _SOLVING = threading.Lock()
@@ -186,6 +187,17 @@ def excitation_order(experiment) -> str:
     """ "all" or "first": how the events populate the levels of a level scheme (``[reaction] order``)."""
     exc = experiment.excitation
     return (getattr(exc, "order", None) or "all") if exc is not None else "all"
+
+
+def e1_polarisation(experiment) -> float:
+    """GOSIA's parameter d of the E1 polarisation correction in the setup's collisions: its ``[reaction]
+    e1_polarisation``, or GOSIA's default, 0.0038 (:data:`~physim.nuclear.coulex.GOSIA_DIPOLE_POLARISATION`), when the
+    setup does not set it (a setup that is not a Coulomb excitation cannot); 0 when it leaves the correction out."""
+    from .coulex import GOSIA_DIPOLE_POLARISATION
+
+    exc = experiment.excitation
+    d = getattr(exc, "e1_polarisation", None) if exc is not None else None
+    return GOSIA_DIPOLE_POLARISATION if d is None else float(d)
 
 
 def other_role(experiment) -> str:
@@ -295,7 +307,8 @@ def cascade_excitation(experiment, isotropic=None, order=None, channel=None, nuc
     It is the coupled equations' solution to all orders (:class:`~physim.nuclear.coupled.CoupledChannels`: the
     levels reached in two steps, the reorientation, and the orientation of every level), or with ``order``
     "first" (the setup's ``[reaction] order`` if None) first-order theory
-    (:class:`~physim.nuclear.orientation.Excitation`: each level in one step from the ground state).
+    (:class:`~physim.nuclear.orientation.Excitation`: each level in one step from the ground state). Either has the
+    E1 polarisation correction of the setup (:func:`e1_polarisation`).
 
     ``channel`` (a :class:`~physim.nuclear.rates.Channel` with an excitation) picks the nucleus the excited one
     scatters on and the layer; by default the target's main nuclide. The solution is at beam energy ``energy``
@@ -332,18 +345,20 @@ def cascade_excitation(experiment, isotropic=None, order=None, channel=None, nuc
     if order not in ("all", "first"):
         raise ValueError("order must be 'all' or 'first'")
     beam = beam_ion(experiment)
-    key = (beam, target, e_mid, excite, bool(flat), order, json.dumps(scheme.to_dict(), sort_keys=True,
-                                                                     default=str))
+    polarisation = e1_polarisation(experiment)
+    key = (beam, target, e_mid, excite, bool(flat), order, polarisation,
+           json.dumps(scheme.to_dict(), sort_keys=True, default=str))
     with _SOLVING:  # one thread solves; the others then find the solution
         if key in _SOLVED:
             _SOLVED.move_to_end(key)
             return _SOLVED[key]
         try:
             if order == "first":
-                ex = Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=flat)
+                ex = Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=flat,
+                                e1_polarisation=polarisation)
             else:
                 ex = CoupledChannels(beam, target, e_mid, scheme, excite=excite, isotropic=flat,
-                                     tolerance=EVENT_TOLERANCE)
+                                     tolerance=EVENT_TOLERANCE, e1_polarisation=polarisation)
         except ValueError:
             ex = None
         # The [reaction] nucleus keeps its one-γ-ray chain for a single transition, unless a static moment asks
@@ -396,11 +411,11 @@ def unreached_levels(experiment) -> list:
 
 @lru_cache(maxsize=64)
 def _excitation(beam: str, target: str, e_mid: float, excite: str, e_star: float, multipolarity: str,
-                b_up: float, isotropic: bool):
+                b_up: float, isotropic: bool, polarisation: float):
     from .orientation import Excitation, simple_scheme
 
     scheme = simple_scheme(target if excite == "target" else beam, e_star, multipolarity, b_up)
-    return Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=isotropic)
+    return Excitation(beam, target, e_mid, scheme, excite=excite, isotropic=isotropic, e1_polarisation=polarisation)
 
 
 class _LevelPopulation:
@@ -633,7 +648,7 @@ def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucle
         transition = tuple(asked)
     solution = ex if ex is not None else excitation_of(experiment)
     # Kept with the solution, by the detectors and by the target the beam slows down in (the solution is that of
-    # its middle): the plan asks again at every change of anything else.
+    # its middle, with the setup's E1 polarisation): the plan asks again at every change of anything else.
     scheme = experiment.levels.get("target" if experiment.excitation.excite == "target" else "beam")
     key = repr((order, crystal_points, transition, experiment.detectors, experiment.gamma_detectors,
                 experiment.chamber if hasattr(experiment, "chamber") else None, experiment.beam.energy_mev,
@@ -811,6 +826,6 @@ def _correlation_rows(experiment, solution, order: int, crystal_points: int, tra
 
 
 __all__ = ["DepthOrientation", "cascade_excitation", "correlation_table", "depth_orientation",
-           "doppler_energy", "doppler_table", "emitters",
+           "doppler_energy", "doppler_table", "e1_polarisation", "emitters",
            "excitation_of", "excitation_order", "has_static_moment", "level_names", "other_excitation", "other_role",
            "start_levels", "state_transition", "transition_lines", "unreached_levels"]

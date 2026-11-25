@@ -15,6 +15,19 @@ multipolarity λ (from a 0⁺ ground state) is first-order perturbation theory a
     c.xi                              # adiabaticity ξ: excitation is suppressed when ξ ≳ 1
     c.safe(120.0)                     # Cline's safe-distance criterion at that angle
 
+**The E1 polarisation correction** (``e1_polarisation``, GOSIA's parameter d). During the collision the field of the
+other nucleus also excites the giant dipole resonance, virtually. This second-order E1 process acts on the low-lying
+states like an extra E2 interaction, proportional to the E2 matrix elements, falling off one power of r faster than the
+direct one and opposing it. GOSIA's form (manual eq. 3.27–3.28 after Alder and Winther, *Electromagnetic Excitation*,
+appendix J; the subroutines LOAD, SNAKE and QE of gosia_20110524.14.f) multiplies every E2 collision function by
+
+    1 − z a/r = 1 − z / (ε cosh w + 1),   z = d E_cm A / Z²
+
+along the orbit, with A and Z of the excited nucleus and E_cm in MeV (:func:`polarisation_strength`). In the orbit
+integrals that is I_μ(λ = 2) − z I_μ(λ = 3) (:func:`polarised_integrals`). E1 and E3 have none. The class leaves the
+correction out unless given a d; a setup has it on, with d = 0.0038 (:data:`GOSIA_DIPOLE_POLARISATION`), unless its
+``[reaction] e1_polarisation`` says otherwise.
+
 Units: angles in degrees (CM unless a name says lab), energies MeV, lengths fm, B(Eλ) in e² fm^(2λ).
 """
 
@@ -38,6 +51,11 @@ SAFE_MARGIN_FM = 5.0
 
 #: Units of B(Eλ↑) and their value in e² fm^(2λ), by λ.
 B_UNITS = {1: {"e2fm2": 1.0, "e2b": 100.0}, 2: {"e2fm4": 1.0, "e2b2": 1e4}, 3: {"e2fm6": 1.0, "e2b3": 1e6}}
+
+#: GOSIA's E1 polarisation parameter d when its input does not set it with ``DIP,`` (since version 20110524.11; Phys.
+#: Rev. C 91, 064602 (2015); before, and in GOSIA's manual, 0.005): the default of a setup's ``[reaction]
+#: e1_polarisation``. The classes here leave the correction out unless given a d.
+GOSIA_DIPOLE_POLARISATION = 0.0038
 
 ArrayLike = Union[float, np.ndarray]
 
@@ -161,12 +179,41 @@ def orbit_integrals(lam: int, epsilon: float, xi: float, tol: float = 1e-9) -> n
     return out
 
 
+def polarisation_strength(d: Optional[float], e_cm: float, nucleus) -> float:
+    """z of the E1 polarisation correction, the factor 1 − z a/r on the E2 collision functions: d E_cm A / Z² of the
+    excited nucleus (``nucleus``, with ``A`` and ``Z``), ``e_cm`` the collision's E_cm in MeV. 0 without a d.
+
+    GOSIA's subroutine LOAD has two branches: for target excitation d E_p A₂ / (Z₂² (1 + A₁/A₂)) (manual eq. 3.28), for
+    projectile excitation the same with the excited nucleus's A and Z and the other's A in E_cm; both are this. E_cm is
+    the one the collision has everywhere else in physim (from the nuclear masses, relativistic) and A the mass number,
+    which the formula's A stands for (the A^(5/3) of the dipole polarisability). GOSIA takes the masses its input gives,
+    for both, and non-relativistic kinematics: 0.1 to 0.3 % of z, thousandths of a percent of a probability.
+
+    GOSIA has one z for every pair of levels and so has physim, with the pair's own a. Strictly z a is what does not
+    depend on the pair, which would make z smaller by √(E_n E_m)/E_cm for a pair at lower energies (a few % of z)."""
+    if not d:
+        return 0.0
+    return float(d) * float(e_cm) * float(nucleus.A) / float(nucleus.Z) ** 2
+
+
+def polarised_integrals(lam: int, epsilon: float, xi: float, z: float = 0.0) -> np.ndarray:
+    """The orbit integrals of :func:`orbit_integrals` with the E1 polarisation correction of strength ``z``. For λ = 2
+    they are ∫ e^{iξ(ε sinh w + w)} e^{iμφ} (1 − z/(ε cosh w + 1)) / (ε cosh w + 1)² dw = I_μ(2) − z I_μ(3), for
+    μ = −2…2; the other multipoles (and z = 0) have the integrals unchanged."""
+    out = orbit_integrals(lam, epsilon, xi)
+    if lam != 2 or not z:
+        return out
+    return out - z * orbit_integrals(3, epsilon, xi)[1:6]
+
+
 class Coulex:
     """First-order Coulomb excitation of one state, of the target or of the projectile.
 
     ``energy`` is E* (MeV or text), ``multipolarity`` "E1", "E2" or "E3" (from a 0⁺ ground state), ``b_up``
     B(Eλ↑) in e² fm^(2λ) or text with a unit (``"0.0695 e2b2"``). The orbit is symmetrised between the initial and
     final velocities (Alder and Winther): a = Z₁Z₂e²/(μ v_i v_f), ξ = (Z₁Z₂e²/ħ)(1/v_f − 1/v_i).
+    ``e1_polarisation`` is GOSIA's parameter d of the E1 polarisation correction (the module's notes), which changes E2
+    excitation only; 0, the default here, leaves it out.
 
     The cross section is dσ/dΩ = P(θ) (v_f/v_i) (a²/4) / sin⁴(θ/2) (Alder, Bohr, Huus, Mottelson and Winther,
     Rev. Mod. Phys. 28, 432 (1956), section II A; Alder and Winther, *Electromagnetic Excitation* (1975), ch. II;
@@ -175,7 +222,7 @@ class Coulex:
     """
 
     def __init__(self, beam: str, target: str, beam_energy, *, excite: str = "target", energy=None,
-                 multipolarity: str = "E2", b_up=None, r0: float = 1.25):
+                 multipolarity: str = "E2", b_up=None, r0: float = 1.25, e1_polarisation: float = 0.0):
         if excite not in ("target", "projectile"):
             raise ValueError("excite must be 'target' or 'projectile'")
         if multipolarity not in ("E1", "E2", "E3"):
@@ -208,6 +255,10 @@ class Coulex:
         self.xi = self.k / HBARC_MEV_FM * (1 / self.beta_f - 1 / self.beta_i)
         #: Sommerfeld parameter (symmetrised): the semiclassical picture needs η ≫ 1.
         self.eta = self.k / (HBARC_MEV_FM * self.beta)
+        #: GOSIA's d of the E1 polarisation correction (0: left out) and the z it gives.
+        self.e1_polarisation = float(e1_polarisation or 0.0)
+        self.polarisation = polarisation_strength(self.e1_polarisation, self.e_cm,
+                                                  self.target if excite == "target" else self.beam)
 
     # -- excitation probability -------------------------------------------------------------------------------
 
@@ -216,7 +267,7 @@ class Coulex:
         s = math.sin(math.radians(theta_cm) / 2)
         if s <= 0:
             return 0.0
-        integrals = orbit_integrals(lam, 1 / s, self.xi)
+        integrals = polarised_integrals(lam, 1 / s, self.xi, self.polarisation)
         ys = np.array([ylm_equator(lam, mu) for mu in range(-lam, lam + 1)])
         # P = (4π Z e² / (ħc (2λ+1)))² · B/(2λ+1) · Σ_μ |Y_λμ(π/2,0) I_μ / (β a^λ)|²
         pref = (4 * math.pi * self.z_exciting * E2_MEV_FM / (HBARC_MEV_FM * (2 * lam + 1))) ** 2
@@ -373,4 +424,5 @@ class Coulex:
         return f"Coulex({who} {self.e_star:g} MeV E{self.lam}, {self.kinematics.label})"
 
 
-__all__ = ["B_UNITS", "Coulex", "HBARC_MEV_FM", "orbit_integrals", "parse_b", "ylm_equator"]
+__all__ = ["B_UNITS", "Coulex", "GOSIA_DIPOLE_POLARISATION", "HBARC_MEV_FM", "orbit_integrals", "parse_b",
+           "polarisation_strength", "polarised_integrals", "ylm_equator"]

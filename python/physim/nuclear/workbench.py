@@ -47,7 +47,8 @@ TARGET_MORE = [("position", "Position along the beam", "0 mm"), ("tilt", "Tilt",
                ("density", "Density", "19.3 g/cm3"),
                ("contaminants", "Contaminants", "C 10 ug/cm2, O 3 ug/cm2")]
 BACKING_FIELDS = [("material", "Backing material", "C"), ("thickness", "Backing thickness", "20 ug/cm2")]
-REACTION_FIELDS = [("energy", "State energy", "1.454 MeV"), ("b_up", "B(Eλ↑)", "0.0695 e2b2 or 695 e2fm4")]
+REACTION_FIELDS = [("energy", "State energy", "1.454 MeV"), ("b_up", "B(Eλ↑)", "0.0695 e2b2 or 695 e2fm4"),
+                   ("e1_polarisation", "E1 polarisation (GOSIA's d)", "0.0038")]
 REACTION_TYPES = {"elastic": "Elastic (Rutherford) scattering", "coulex": "Coulomb excitation",
                   "fusion-evaporation": "Fusion-evaporation (residues from a channel table)"}
 #: The fusion-evaporation reaction's own fields, and those of each exit channel (backlog item 75).

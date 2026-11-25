@@ -664,7 +664,7 @@ def _foil_coulex(experiment, beam: str, mat, e_in: float, e_out: float) -> dict:
     particle, the cross sections integrated over the foil from ``e_in`` down to ``e_out`` or half of ``e_in``
     (trapezoids at :data:`STOPPER_ENERGY_STEPS`). Isotopes without level data are listed in ``missing``."""
     from . import data
-    from .gamma import level_names
+    from .gamma import e1_polarisation, level_names
     from .orientation import Excitation
     from .rates import stopping
 
@@ -690,8 +690,9 @@ def _foil_coulex(experiment, beam: str, mat, e_in: float, e_out: float) -> dict:
         sigma = []
         try:
             for e in energies:
-                sigma.append(_gamma_cross_sections(Excitation(beam, nuc, e, scheme, excite="target"),
-                                                   STOPPER_ANGLE_STEP))
+                sigma.append(_gamma_cross_sections(
+                    Excitation(beam, nuc, e, scheme, excite="target", e1_polarisation=e1_polarisation(experiment)),
+                    STOPPER_ANGLE_STEP))
         except Exception as ex:  # noqa: BLE001 - said, not guessed
             missing.append({"nuclide": nuc, "why": f"its Coulomb excitation could not be worked out ({ex})"})
             continue
