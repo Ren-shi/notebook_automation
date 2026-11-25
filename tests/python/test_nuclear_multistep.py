@@ -159,7 +159,9 @@ def test_all_orders_agree_with_gosia():
     first = {float(r["theta_cm_deg"]): float(r["probability"])
              for r in validation.read_reference(ref / "coulex_gosia.csv")[1]}
     real = simple_scheme("58Ni", "1.454 MeV", "E2", "0.0695 e2b2")
-    cc, ex = CoupledChannels(*NI, real, tolerance=1e-7), Excitation(*NI, real)
+    # GOSIA's DIP was at its default: the E1 polarisation is on, with d = 0.0038.
+    cc = CoupledChannels(*NI, real, tolerance=1e-7, e1_polarisation=0.0038)
+    ex = Excitation(*NI, real, e1_polarisation=0.0038)
     for r in rows:
         theta, gosia = float(r["theta_cm_deg"]), float(r["probability"])
         ours = cc.probability(1, theta)

@@ -19,6 +19,7 @@ from physim.nuclear.coupled import CoupledChannels
 from physim.nuclear.gamma import (cascade_excitation, e1_polarisation, excitation_of, other_excitation,
                                   state_transition)
 from physim.nuclear.gamma_events import simulate_gammas
+from physim.nuclear.levels import Level, LevelScheme, Value
 from physim.nuclear.multistep import Multistep
 from physim.nuclear.orientation import Excitation, simple_scheme
 from physim.nuclear.planner import Planner
@@ -161,6 +162,63 @@ def test_the_reorientation_is_weakened_less_than_the_excitation():
     cc = {d: CoupledChannels(*NI62, scheme, excite="projectile", e1_polarisation=d) for d in (0.0, D)}
     ratio = {d: c.probabilities(160.0)[1] / c.probabilities(60.0)[1] for d, c in cc.items()}
     assert -0.02 < ratio[D] / ratio[0.0] - 1 < -0.01
+
+
+# -- GOSIA ----------------------------------------------------------------------------------------------------------
+
+NI62_LEVELS = ((0, 0.0), (2, 1172.91), (0, 2048.55), (2, 2301.85), (4, 2336.46))
+#: The schemes of coulex/gosia_e1.csv (its header has them): levels (spin, keV), E2 elements (e b).
+GOSIA_SCHEMES = {
+    **{k: ("62Ni", NI62_LEVELS, {(0, 1): 0.29734, (0, 3): 0.062153, (1, 2): 0.280565, (1, 3): 0.307817,
+                                 (1, 4): 0.524889, (1, 1): q / 0.757938})
+       for k, q in (("a_plus", 0.3), ("a_minus", -0.3), ("b_plus", 0.3), ("b_minus", -0.3), ("d_target", 0.3))},
+    "c_rotor": ("152Sm", ((0, 0.0), (2, 121.78), (4, 366.48)),
+                {(0, 1): 1.86, (1, 2): 2.9826402, (1, 1): -2.2231278, (2, 2): -2.8438284}),
+    "f_pt": ("194Pt", ((0, 0.0), (2, 328.473), (4, 811.288)),
+             {(0, 1): 1.284984, (1, 2): 2.260456, (1, 1): 0.633301, (2, 2): 0.663046}),
+    "g_ti": ("48Ti", ((0, 0.0), (2, 983.54)), {(0, 1): 0.27, (1, 1): -0.2})}
+
+
+def test_it_is_gosias_in_blind_runs():
+    """Blind GOSIA runs (tests/reference/nuclear/coulex/gosia_e1.csv, the app's numbers stored before them) with DIP off,
+    3.8 (its default) and 20: ⁶²Ni on ¹²C (either nucleus the beam) and ¹⁹⁴Pt, a rotor, ¹⁹⁴Pt and ⁴⁸Ti on ²⁰⁸Pb. Each
+    excited level's probability at 3.8 within 1 % above 1e-4 and 3 % above 1e-6; what the correction changes, 0.2 % to
+    46 %, within 2 % of GOSIA's change."""
+    from physim.nuclear import validation
+
+    ref = validation.reference_dir()
+    path = ref / "coulex" / "gosia_e1.csv" if ref else None
+    if path is None or not path.exists():
+        pytest.skip("no GOSIA reference")
+    cases: dict = {}
+    for r in validation.read_reference(path)[1]:
+        key = (r["case"], r["beam"], r["target"], float(r["beam_energy_mev"]), r["excite"])
+        cases.setdefault(key, {})[float(r["dip"]), float(r["theta_cm_deg"]), int(r["level"])] = float(r["probability"])
+    assert len(cases) == 8
+    judged = [0, 0]
+    for (case, beam, target, energy, excite), gosia in cases.items():
+        nuclide, levels, elements = GOSIA_SCHEMES[case]
+        s = LevelScheme(nuclide)
+        s.levels = [Level(Value(e, source="user"), float(j), 1) for j, e in levels]
+        for (a, b), value in elements.items():
+            s.set_matrix_element(a, b, "E2", 100 * value)
+        thetas = sorted({t for _, t, _ in gosia})
+        ours = {}
+        for dip in (0.001, 3.8, 20.0):
+            cc = CoupledChannels(beam, target, energy, s, excite=excite,
+                                 e1_polarisation=0.0 if dip == 0.001 else dip / 1000)
+            for t, a in zip(thetas, cc.solve_many(thetas)):
+                for n in cc.included:
+                    ours[dip, t, n] = float(np.sum(np.abs(a[cc._level_slices[n], :]) ** 2) / a.shape[1])
+        for (dip, t, n), want in gosia.items():
+            if dip == 3.8 and n and want > 1e-6:
+                assert ours[dip, t, n] == pytest.approx(want, rel=0.01 if want > 1e-4 else 0.03), (case, t, n)
+                judged[0] += 1
+            change = want / gosia[0.001, t, n] - 1
+            if dip != 0.001 and abs(change) > 0.002 and gosia[0.001, t, n] > 1e-6:
+                assert ours[dip, t, n] / ours[0.001, t, n] - 1 == pytest.approx(change, rel=0.02), (case, dip, t, n)
+                judged[1] += 1
+    assert judged == [47, 112]
 
 
 # -- the setup ------------------------------------------------------------------------------------------------------

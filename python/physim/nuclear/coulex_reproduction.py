@@ -31,12 +31,13 @@ reference file; :func:`run`)::
    (42.7(8) and 42.1(8) MeV at 1.8 MeV/u) within their errors, and 42.4(8) MeV for ⁶²Ni (SRIM and LISE++ ATIMA,
    each tuned the same way, give 42.39 and 42.42 MeV).
 2. *physim against GOSIA*: σ_C/σ_R(elastic) per ring, integrated over the target, at <0⁺‖E2‖2⁺> = 0.29734 e b,
-   Q = 0. Against GOSIA as the outside tools ran it (integer mass numbers, DIP 3.8) the band is the 1 % that the
-   verification's plan fixed beforehand, and **physim misses it**, by +1.3 % (ring 2) and +1.2 % (ring 3): GOSIA's
-   integer masses (about 0.6 %), its E1 polarisation (about 0.5 %) and its non-relativistic kinematics (0.24 %)
-   explain all but about 0.1 %. The miss is reported as a miss, so the whole check fails; it counts as the *known*
-   one while its size stays what the reference file records (±0.05 %). Against GOSIA run with the nuclear masses
-   and without E1 polarisation, within 0.5 %.
+   Q = 0. Against GOSIA as the outside tools ran it (integer mass numbers, DIP 3.8: the E1 polarisation with d =
+   0.0038, which physim has too by default) the band is the 1 % that the verification's plan fixed beforehand. Until
+   physim had the E1 polarisation (2026-11-25) it missed that band by a known amount, +1.3 % (ring 2) and +1.2 % (ring
+   3), and the whole check failed; with it the numbers are inside, +0.8 % and +0.7 %: GOSIA's integer masses (about
+   0.6 %) and its non-relativistic kinematics (0.24 %). The reference file keeps the record of the miss. Against GOSIA
+   run with the nuclear masses and without E1 polarisation, physim without it too: within 0.5 %. GOSIA run with the
+   nuclear masses and the E1 polarisation is shown as a second line, not judged.
 3. *Closure*: the example with the 0⁺, 2⁺ scheme, simulated and analysed (gate "all") with the seeds of the
    reference file, chosen before they were run: the mean B(E2) per ring and for both rings within a quarter of the
    paper's statistical error + 3 Monte Carlo errors of the mean. The scatter of the seeds is reported beside it. The
@@ -52,9 +53,9 @@ reference file; :func:`run`)::
    the ring (0.1 %), and B(E2) back.
 
 Results are dicts of plain numbers: ``checks`` (one dict per check with its values, bands and ``passed``),
-``passed`` (every number inside its band: False, for the miss of check 2), ``known_misses`` and
-``only_known_misses``, ``worst`` (the largest deviation in units of its band, the misses included), ``worst_other``
-(the same without the known misses) and ``detail`` (a sentence).
+``passed`` (every number inside its band), ``known_misses`` and ``only_known_misses`` (a miss of check 2 that the
+reference file records as known; none is, since 2026-11-25), ``worst`` (the largest deviation in units of its band, the
+misses included), ``worst_other`` (the same without the known misses) and ``detail`` (a sentence).
 """
 
 from __future__ import annotations
@@ -133,16 +134,19 @@ def _ensdf_levels(me_eb: float) -> dict:
     return beam
 
 
-def setup(me_eb: Optional[float] = None, q_eb: Optional[float] = None, levels: Optional[str] = None):
+def setup(me_eb: Optional[float] = None, q_eb: Optional[float] = None, levels: Optional[str] = None,
+          e1_polarisation: Optional[float] = None):
     """The example, optionally with <0⁺‖E2‖2⁺> = ``me_eb`` (e b; B(E2↑) = M² in the [reaction]) and a level scheme
     for the beam: ``levels`` "two" (0⁺, 2⁺ with Q_s = ``q_eb``, 0 if not given; all orders) or "ensdf" (up to the
-    4⁺₁, Q_s = 0)."""
+    4⁺₁, Q_s = 0). ``e1_polarisation`` is the setup's (0.0038 when None, as in GOSIA as run)."""
     from .experiment import Experiment
 
     d = Experiment.example(EXAMPLE).to_dict()
     if me_eb is None:
         me_eb = math.sqrt(Experiment.example(EXAMPLE).excitation.b_up_e2fm) / 100.0
     d["reaction"]["b_up"] = f"{(100 * me_eb) ** 2:.10g} e2fm4"
+    if e1_polarisation is not None:
+        d["reaction"]["e1_polarisation"] = e1_polarisation
     if levels == "two":
         d["levels"] = {"beam": _two_levels(me_eb, q_eb or 0.0)}
     elif levels == "ensdf":
@@ -209,31 +213,42 @@ def check_thickness(refd: dict) -> dict:
     return {"thickness_mg_cm2": float(thick), "material": material, "rows": rows, "passed": ok, "worst": worst}
 
 
-def check_gosia(refd: dict, base: dict, first: Optional[dict] = None) -> dict:
-    """The ratios against GOSIA's. Those of ``base`` (all orders) are judged; ``first`` (first order) is the second
-    line, under ``second_line``. A row outside its band has ``known_miss`` when the reference file records the miss
-    and its size is still the recorded one."""
+def check_gosia(refd: dict, base: dict, off: dict, first: Optional[dict] = None,
+                first_off: Optional[dict] = None) -> dict:
+    """The ratios against GOSIA's: ``base`` (E1 polarisation on, as in GOSIA as run) and ``off`` (without, as in the
+    matched run), both to all orders. ``first`` and ``first_off`` (first order) are the second line, under
+    ``second_line``, with ``base`` against GOSIA's run with nuclear masses and the E1 polarisation. A row outside its
+    band has ``known_miss`` when the reference file records a miss (``known_miss`` of its bands) and its size is still
+    the recorded one."""
     g = refd["gosia"]
     bands = refd["bands"]["gosia"]
-    miss = bands["known_miss"]
+    miss = bands.get("known_miss")
+    masses = g["app_input"]["nuclear_masses"]
     rows, second, worst, ok = [], [], 0.0, True
-    for setting, band in (("as_run", bands["as_run_rel"]), ("matched", bands["matched_rel"])):
+    for setting, band, ours, theirs in (("as_run", bands["as_run_rel"], base, first),
+                                        ("matched", bands["matched_rel"], off, first_off)):
         for r in RINGS:
             want = g[setting][REF_RING[r]]["ratio_elastic"]
-            dev = base[r] / want - 1
+            dev = ours[r] / want - 1
             passed = abs(dev) <= band
-            known = (not passed and setting == "as_run"
+            known = (not passed and miss is not None and setting == "as_run"
                      and abs(dev - miss[REF_RING[r]]) <= miss["size_abs"])
-            rows.append({"setting": setting, "ring": r, "order": "all", "physim": base[r], "gosia": want,
+            rows.append({"setting": setting, "ring": r, "order": "all", "physim": ours[r], "gosia": want,
                          "deviation": dev, "band": band, "passed": passed, "known_miss": known,
-                         # What GOSIA's own runs with nuclear masses and DIP off change, and what is then left.
-                         "explained": g["matched"][REF_RING[r]]["ratio_elastic"] / want - 1})
+                         # What GOSIA's own run with the nuclear masses changes, and what is then left.
+                         "explained": masses[REF_RING[r]] / want - 1 if setting == "as_run" else 0.0})
             worst, ok = max(worst, abs(dev) / band), ok and passed
-            if first is not None:
-                dev = first[r] / want - 1
-                second.append({"setting": setting, "ring": r, "order": "first", "physim": first[r], "gosia": want,
+            if theirs is not None:
+                dev = theirs[r] / want - 1
+                second.append({"setting": setting, "ring": r, "order": "first", "physim": theirs[r], "gosia": want,
                                "deviation": dev, "band": band, "inside": abs(dev) <= band})
-    return {"rows": rows, "second_line": second, "passed": ok, "worst": worst, "why_missed": miss["why"]}
+    for r in RINGS:
+        want, band = masses[REF_RING[r]], bands["matched_rel"]
+        dev = base[r] / want - 1
+        second.append({"setting": "nuclear_masses", "ring": r, "order": "all", "physim": base[r], "gosia": want,
+                       "deviation": dev, "band": band, "inside": abs(dev) <= band})
+    return {"rows": rows, "second_line": second, "passed": ok, "worst": worst,
+            "why_missed": miss["why"] if miss is not None else ""}
 
 
 def _closure_band(refd: dict, row: str) -> float:
@@ -443,19 +458,22 @@ def run(ref=None, events: Optional[int] = None, seeds=None) -> Optional[dict]:
     first = {m: ratios(setup(me_eb=m)) for m in points}
     base = scan[me0] if me0 in scan else ratios(setup(me_eb=me0, levels="two"))
     base_first = first[me0] if me0 in first else ratios(setup(me_eb=me0))
+    off = ratios(setup(me_eb=me0, levels="two", e1_polarisation=0.0))
+    first_off = ratios(setup(me_eb=me0, e1_polarisation=0.0))
     q = refd["gosia"]["sensitivity"]["q_eb"]
     q_plus = ratios(setup(me_eb=me0, q_eb=q, levels="two"))
     q_minus = ratios(setup(me_eb=me0, q_eb=-q, levels="two"))
     kept: dict = {}
     checks = {
         "thickness": check_thickness(refd),
-        "gosia": check_gosia(refd, base, base_first),
+        "gosia": check_gosia(refd, base, off, base_first, first_off),
         "closure": check_closure(refd, events, seeds, kept),
         "paper": check_paper(refd, scan, first),
         "sensitivities": check_sensitivities(refd, base, q_plus, q_minus, feeding_effect()),
         "stored": check_stored(refd, kept),
     }
-    out = {"checks": checks, "ratios_q0": base, "ratios_first_order": base_first, "scan": scan, **outcome(checks)}
+    out = {"checks": checks, "ratios_q0": base, "ratios_first_order": base_first, "ratios_without_e1": off,
+           "scan": scan, **outcome(checks)}
     out["detail"] = summary(out)
     _CACHE[key] = out
     return out
@@ -495,7 +513,8 @@ def summary(r: dict) -> str:
     c = r["checks"]
     th = {x["ion"]: x for x in c["thickness"]["rows"]}
     g = {(x["setting"], x["ring"]): x for x in c["gosia"]["rows"]}
-    g1 = {(x["setting"], x["ring"]): x for x in c["gosia"]["second_line"]}
+    g1 = {(x["setting"], x["ring"]): x for x in c["gosia"]["second_line"] if x["order"] == "first"}
+    gm = {(x["setting"], x["ring"]): x for x in c["gosia"]["second_line"] if x["order"] == "all"}
     cl = {x["rings"]: x for x in c["closure"]["rows"]}
     pa = {x["ring"]: x for x in c["paper"]["rows"]}
     p1 = c["paper"]["second_line"]
@@ -519,9 +538,10 @@ def summary(r: dict) -> str:
         f"1 thickness ({ok('thickness')}): losses 58Ni {th['58Ni']['loss_mev']:.2f}, 60Ni {th['60Ni']['loss_mev']:.2f},"
         f" 62Ni {th['62Ni']['loss_mev']:.2f} MeV (42.7(8), 42.1(8), 42.4(8)); "
         f"2 GOSIA ({ok('gosia')}): ring 2/3 {pair(g, 'deviation', 'as_run')} % [{pair(g1, 'deviation', 'as_run')} %] "
-        f"against GOSIA as run (1 %), of which {pair(g, 'explained', 'as_run')} % is GOSIA's integer masses and E1 "
-        f"polarisation; {pair(g, 'deviation', 'matched')} % [{pair(g1, 'deviation', 'matched')} %] with those off "
-        f"(0.5 %), mostly GOSIA's non-relativistic kinematics (0.24 %); "
+        f"against GOSIA as run, E1 polarisation in both (1 %), of which {pair(g, 'explained', 'as_run')} % is GOSIA's "
+        f"integer masses (its run with nuclear masses: {pair(gm, 'deviation', 'nuclear_masses')} %, not judged); "
+        f"{pair(g, 'deviation', 'matched')} % [{pair(g1, 'deviation', 'matched')} %] with nuclear masses and the E1 "
+        f"polarisation off in both (0.5 %), mostly GOSIA's non-relativistic kinematics (0.24 %); "
         f"3 closure ({ok('closure')}): mean of {len(c['closure']['seeds'])} seeds {three(cl, 'deviation')} % "
         f"[{three(cl, 'first_order')} %] for ring 2/ring 3/both (MC error {three(cl, 'monte_carlo', '')} %, scatter "
         f"error {three(cl, 'scatter', '')} %, bands {three(cl, 'band', '')} %); "
@@ -559,14 +579,16 @@ def table(r: dict) -> str:
         line("1 thickness", f"{x['ion']} loss at {x['entry_mev']:.1f} MeV", f"{x['loss_mev']:.2f} MeV",
              f"{x['reference_mev']:.1f} MeV", f"{x['loss_mev'] - x['reference_mev']:+.2f} MeV",
              f"+-{x['band_mev']:.1f} MeV", x["passed"])
-    names = {"matched": "nuclear masses, DIP off", "as_run": "as run (A=62/12, DIP 3.8)"}
+    names = {"matched": "nuclear masses, DIP off", "as_run": "as run (A=62/12, DIP 3.8)",
+             "nuclear_masses": "nuclear masses, DIP 3.8"}
     for x in c["gosia"]["rows"]:
         line("2 GOSIA", f"{x['ring']} R_el vs {names[x['setting']]}", f"{x['physim']:.4e}", f"{x['gosia']:.4e}",
              f"{100 * x['deviation']:+.2f} %", f"+-{100 * x['band']:.1f} %",
              "MISS (known, explained)" if x["known_miss"] else x["passed"])
     for x in c["gosia"]["second_line"]:
-        line("2 " + second, f"{x['ring']} R_el vs {names[x['setting']]}", f"{x['physim']:.4e}", f"{x['gosia']:.4e}",
-             f"{100 * x['deviation']:+.2f} %", "(reported)", "inside the band" if x["inside"] else "outside the band")
+        line("2 " + (second if x["order"] == "first" else "(reported)"), f"{x['ring']} R_el vs {names[x['setting']]}",
+             f"{x['physim']:.4e}", f"{x['gosia']:.4e}", f"{100 * x['deviation']:+.2f} %", "(reported)",
+             "inside the band" if x["inside"] else "outside the band")
     n = len(c["closure"]["seeds"])
     for x in c["closure"]["rows"]:
         line("3 closure", f"B(E2) {x['rings']}, {n} seeds (MC {100 * x['monte_carlo']:.2f}, "
@@ -597,7 +619,7 @@ def table(r: dict) -> str:
     for x in (x for x in c["stored"]["rows"] if x["what"] == "B(E2)"):
         line("6 " + second, f"B(E2) {x['rings']}, the same run", f"{(1 + x['first_order']) * x['reference']:.1f}",
              f"{x['reference']:.1f}", f"{100 * x['first_order']:+.2f} %", "(reported)", "")
-    if r["known_misses"]:
+    if r["known_misses"]:  # one the reference file records, while its size stays
         lines.append("")
         lines.append("The known miss: " + c["gosia"]["why_missed"])
     return "\n".join(line.rstrip() for line in lines)

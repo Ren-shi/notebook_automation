@@ -31,7 +31,12 @@ SEEDS = (21, 22, 23, 24, 25)
 
 def allmond_setup() -> Experiment:
     """The 62Ni on natural-carbon setup of the Allmond 2014 verification (13C left out): carbon recoils in two
-    full-azimuth rings at 14–28° and 28–44°, nine clovers at 21.75 cm sized to 2.24 % at 1173 keV."""
+    full-azimuth rings at 14–28° and 28–44°, nine clovers at 21.75 cm sized to 2.24 % at 1173 keV.
+
+    Without the E1 polarisation: the samples are those that the numbers below are of. (With it, 0.5 % fewer excitations,
+    the samples of the same seeds are others. Of all that is tested here one number then leaves its band, the fitted
+    area in ring 3, +0.28 ± 0.03 % in these five; over 21 samples, 21–25 and 301–316, it is +0.13 ± 0.04 % with and +0.07 ±
+    0.04 % without. The closure with it is test_nuclear_allmond2014 and test_nuclear_polarisation.)"""
     ring = {"shape": "annular", "theta": "0 deg", "distance": "50 mm", "rings": 7, "thickness": "1000 um",
             "dead_layer": "0.5 um", "resolution": "500 keV", "threshold": "1 MeV"}
     clover = {"model": "clover", "distance": "217.5 mm", "crystals": 4, "crystal_diameter": "54.5131 mm",
@@ -42,7 +47,7 @@ def allmond_setup() -> Experiment:
         "schema": "physim.experiment/1",
         "title": "62Ni on natC (Allmond 2014)",
         "reaction": {"type": "coulex", "excite": "projectile", "energy": "1172.91 keV", "multipolarity": "E2",
-                     "b_up": f"{B_UP} e2fm4"},
+                     "b_up": f"{B_UP} e2fm4", "e1_polarisation": 0},
         "beam": {"nuclide": "62Ni", "energy": "111.6 MeV", "current": "5 ppA", "charge_state": 10},
         "target": {"material": "12C", "thickness": "1.03741 mg/cm2"},
         "run": {"beam_time": "24 h", "counts_wanted": 1000},

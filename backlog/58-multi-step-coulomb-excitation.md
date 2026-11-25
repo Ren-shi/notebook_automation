@@ -34,8 +34,9 @@ GOSIA installation outside the repository.**
 >   - **GOSIA:** the three reference cases, the 1% comparison and the recovery of matrix elements from the
 >     simulated yields need GOSIA on the machine, which needs a Fortran compiler. Nothing of GOSIA is in the
 >     repository. The input-file writer follows the manual's format and has not been checked against a run.
->   - The E1 polarisation correction is not included (the formula was not at hand with enough confidence to
->     put a wrong one in).
+>   - ~~The E1 polarisation correction is not included (the formula was not at hand with enough confidence to
+>     put a wrong one in).~~ **Done (2026-11-25):** GOSIA's, checked against GOSIA's source and in blind runs
+>     (`docs/theory/coulex.md`; `[reaction] e1_polarisation`, on by default with d = 0.0038).
 >   - γ–γ coincidences from cascades: the yields of every transition are there; the angular correlation of two
 >     γ rays is not.
 >   - ~~The analytic rates (`Rates`) still use first order with the elastic Rutherford factor; the multistep
@@ -48,7 +49,7 @@ GOSIA installation outside the repository.**
 >     elastic one (what an experiment normalises to); GOSIA's own ratios divide by its inelastic one. For ⁶²Ni on
 >     carbon the app's integrated factor equals GOSIA's printed integrated Rutherford to 0.03 %, and the app
 >     agrees with GOSIA run on its own input within 0.2 % per ring once GOSIA has the nuclear masses (it uses the
->     mass numbers, −0.6 % here) and DIP off (the E1 polarisation, −0.5 %, still not in the app). Against the
+>     mass numbers, −0.6 % here) and DIP off (the E1 polarisation, −0.5 %, not in the app then; it is since 2026-11-25). Against the
 >     published-setup GOSIA numbers (mass numbers, DIP 3.8) the app is +1.3 % (ring 2) and +1.2 % (ring 3).
 >     The shipped examples moved by +3.4 % (`coulex_ni58`), +0.6 % (`coulex_ru98_plunger`) and +0.3 % (the two
 >     `coulex_ni62_pt194`) in the rates; the multistep yields by the inverse, v_f/v_i.

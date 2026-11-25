@@ -868,18 +868,19 @@ def coulex_closed_form(ref):
 
 
 @check("Coulomb excitation, first-order semiclassical", "tool", "GOSIA 20110524.14, first order (matrix element ÷10, "
-       "weak coupling), ¹⁶O + ⁵⁸Ni at 30 MeV, five CM angles (coulex_gosia.csv)", "2% in P(θ)")
+       "weak coupling), E1 polarisation at its default (d = 0.0038) in both, ¹⁶O + ⁵⁸Ni at 30 MeV, five CM angles "
+       "(coulex_gosia.csv)", "2% in P(θ)")
 def coulex_vs_gosia(ref):
     path = _file(ref, "coulex_gosia.csv")
     if path is None:
         return None, math.nan, 0, "coulex_gosia.csv not found", {}
-    from .coulex import Coulex
+    from .coulex import GOSIA_DIPOLE_POLARISATION, Coulex
 
     rows = read_reference(path)[1]
     ours, theirs, xs = [], [], []
     for r in rows:
         c = Coulex(r["beam"], r["target"], float(r["beam_energy_mev"]), energy=float(r["state_mev"]),
-                   b_up=f"{r['b_e2_e2b2']} e2b2")
+                   b_up=f"{r['b_e2_e2b2']} e2b2", e1_polarisation=GOSIA_DIPOLE_POLARISATION)
         ours.append(c.probability(float(r["theta_cm_deg"]), exact=True))
         theirs.append(float(r["probability"]))
         xs.append(float(r["theta_cm_deg"]))
@@ -892,18 +893,19 @@ def coulex_vs_gosia(ref):
 @check("Coulomb excitation, first-order semiclassical", "literature", "Reproduced experiment: Allmond et al., Phys. "
        "Rev. C 90, 034309 (2014), ⁶²Ni at 111.6 MeV on 1 mg/cm² carbon, carbon recoils in two rings (14–28°, "
        "28–44°): the example coulex_ni62_c_allmond against the paper's energy losses, GOSIA 20110524.14 (nuclear "
-       "masses and DIP off; and as run, integer masses, DIP 3.8), its own simulated runs (closure over several "
+       "masses and the E1 polarisation off in both; and as run, integer masses, DIP 3.8 and d = 0.0038), its own simulated runs (closure over several "
        "seeds, and one as a stored run) and the paper's per-ring <0⁺‖E2‖2⁺> rebuilt into ratios through GOSIA's "
        "ratio(M) (the paper gives no yields: this tests that physim extracts the same B(E2) from the same data as "
        "GOSIA did); all orders judged, first order shown beside it (physim.nuclear.coulex_reproduction; "
        "coulex/allmond2014.toml)",
        "⁵⁸Ni, ⁶⁰Ni losses within their 0.8 MeV, ⁶²Ni 42.4(8) MeV; σ_C/σ_R per ring within 1% of GOSIA as run "
-       "(missed: a known, explained +1.3/+1.2%) and 0.5% of GOSIA with nuclear masses and DIP off; closure and the "
+       "(missed by +1.3/+1.2% before physim had the E1 polarisation) and 0.5% of GOSIA with nuclear masses and DIP off; "
+       "closure and the "
        "stored run within a quarter of the paper's statistical error + 3 σ; B(E2) per ring within the paper's 4.1%; "
        "Q_s = ±0.1 e b and ENSDF feeding as in GOSIA within 0.5 percentage points and 2% of its change")
 def reproduction_allmond2014(ref):
-    """Fails, for a known and explained miss of one band (GOSIA as run); ``worst`` is the largest deviation in units
-    of its band, the miss included, and the detail says what it is without it."""
+    """``worst`` is the largest deviation in units of its band. (Until physim had the E1 polarisation the check failed,
+    for a known and explained miss of one band, GOSIA as run.)"""
     from . import coulex_reproduction as cr
 
     r = cr.run(ref)

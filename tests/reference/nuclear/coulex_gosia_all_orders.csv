@@ -1,7 +1,8 @@
 # tool: GOSIA 20110524.14 (N. Warr's release of 11 Nov 2026), OP,STAR, built with gfortran 16.2.0 (WinLibs, -O2 -std=legacy)
 # produced by: Claude for Ren-shi, run on this machine, 2026-11-14
 # settings: input coulex_gosia.inp as it is: <2+||E2||0+> = 0.263629 e b (B(E2) = 0.0695 e2b2), Q(2+) = 0, CONT ACC,8.,
-#   DIP default 0.0038 (no effect with Q = 0). GOSIA solves the coupled equations to all orders; physim's counterpart
+#   DIP default 0.0038 (the E1 polarisation is on, and acts on the transition too: until 2026-11-25 this said it had no
+#   effect with Q = 0, wrong; physim is compared with d = 0.0038). GOSIA solves the coupled equations to all orders; physim's counterpart
 #   is physim.nuclear.coupled.CoupledChannels. Masses are GOSIA's integer A (16, 58); kinematics non-relativistic.
 #   Giving GOSIA the exact nuclear masses (15.990528 u, 57.920026 u) changes the probabilities by -0.02% to -0.08%.
 beam,target,beam_energy_mev,state_mev,b_e2_e2b2,theta_cm_deg,probability

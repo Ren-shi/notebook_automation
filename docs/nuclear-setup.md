@@ -101,6 +101,7 @@ distance **d** from the target. θ = 0° is straight downstream and θ = 180° s
 | `multipolarity` | no | `"E2"` (default), `"E1"` or `"E3"`: the transition from the 0⁺ ground state. |
 | `emission` | no | `"correlated"` (default): the γ rays follow the particle–γ angular correlation. `"isotropic"`: they leave evenly in all directions. |
 | `order` | no | With a level scheme of the excited nucleus (`[levels]`): `"all"` (default) populates its levels in the simulated events as the coupled equations give them, to all orders (a 4⁺ state reached through the 2⁺, the reorientation); `"first"` keeps first-order theory, each level in one step from the ground state. Without a level scheme the events are first order. |
+| `e1_polarisation` | no | The E1 polarisation correction, as GOSIA has it: GOSIA's parameter d, a number from 0 to 0.05. Left out it is `0.0038`, GOSIA's own default; `0` leaves the correction out. Every E2 coupling is weakened by 1 − z a/r along the orbit, z = d E_cm A/Z² of the excited nucleus ({doc}`theory/coulex`): with the default, 3.8% fewer 2⁺ excitations of ⁶²Ni in the `coulex_ni62_pt194` example, 0.6% in `coulex_ni58`. GOSIA's input `DIP,` is 1000 d. |
 | `b_up` | for `coulex` | B(Eλ↑), the reduced transition probability up, with its unit: `"0.0695 e2b2"` or `"695 e2fm4"` for E2 (`e2b`/`e2fm2` for E1, `e2b3`/`e2fm6` for E3). Take it from ENSDF; physim does not look it up. |
 
 A Coulomb-excitation setup:
@@ -644,6 +645,12 @@ cc.cross_sections()               # mb, over all angles: every populated level, 
   GOSIA ({doc}`theory/coulex`); with weak coupling the solution is first order exactly, for every level.
 - **Matrix elements** enter with their signs, from the level scheme; a diagonal E2 element is the quadrupole
   moment's, through `quadrupole_factor`.
+- **E1 polarisation:** `CoupledChannels(..., e1_polarisation=0.0038)` (and the same argument of first-order
+  `Excitation` and `Coulex`) multiplies every E2 coupling, diagonal ones included, by GOSIA's factor 1 − z a/r, z = d E_cm
+  A/Z² of the excited nucleus. The classes leave it out unless given a d; a setup has it, with GOSIA's default d = 0.0038,
+  unless its `[reaction] e1_polarisation` says otherwise, and then the events, the plan's rates, the angular
+  correlation, `Multistep` and the analysis have the same. A stored run keeps the d its events were made with
+  ({doc}`theory/coulex`).
 - **Speed:** a Runge–Kutta integration whose steps follow the fastest phase. 25 levels (265 substates) take
   about 0.4 s per angle; a grid of 45 angles and 2 energies for an experiment about 40 s.
 
@@ -673,7 +680,8 @@ ms.gosia_input()                    # a GOSIA input that integrates the same yie
   GOSIA reads a negative partner Z as projectile excitation. `physim.external.gosia.integrated` reads the yields
   and the integrated Rutherford back. GOSIA's Rutherford uses the inelastic kinematics, so a ratio built from it
   divides by that, not by the elastic one. For ⁶²Ni on carbon the input reproduces an independent hand-written
-  GOSIA run within 0.1 % per ring. With `gamma="4pi"`, write `GOSIA_4PI_FORT9` as `fort.9` beside the input; its
+  GOSIA run within 0.1 % per ring. Its `DIP,` line is the setup's E1 polarisation (1000 d; 0.001 for none, as GOSIA
+  takes 0 as its default), or `dipole`. With `gamma="4pi"`, write `GOSIA_4PI_FORT9` as `fort.9` beside the input; its
   yield ×4π is then the angle-integrated γ yield.
 
 In the app, **Solve with all orders** in the "Excitation and γ rays" tab (once a level scheme is looked up) shows
@@ -691,8 +699,8 @@ gives first-order events instead. The table of angles is solved once per setup, 
 the kinematics of the `[reaction]` state. The analysis extracts B(E2) from such events to all orders (step 7
 under {ref}`Automatic analysis <automatic-analysis>` below).
 
-Not included: the E1 polarisation correction, deorientation, lifetimes, mutual excitation of both nuclei, and
-nuclear interference above the safe energy.
+Not included: deorientation, lifetimes, mutual excitation of both nuclei, and nuclear interference above the safe
+energy.
 
 ## Tracks of simulated events
 
