@@ -311,10 +311,8 @@ def test_a_nucleus_that_stays_in_matter_is_not_deoriented():
     raw["reaction"]["deorientation"] = "none"
     off = Experiment.from_dict(raw)
     a, b = simulate_gammas(on, 20_000, seed=4), simulate_gammas(off, 20_000, seed=4)
-    stay = a["vacuum_ps"] == 0
-    assert stay.any() and not b["vacuum_ps"].any()
-    if stay.all():
-        assert all(np.array_equal(a.columns[k], b.columns[k]) for k in a.columns)
+    assert len(a) and not a["vacuum_ps"].any() and a["stopped"].any()
+    assert all(np.array_equal(a.columns[k], b.columns[k]) for k in a.columns)
 
 
 # -- stored runs ----------------------------------------------------------------------------------------------------
