@@ -551,7 +551,11 @@ The steps, each adjustable through `Settings`:
      without a B(E2).
 5. **Yield:** the area over the full-energy-peak efficiency (each crystal's at the Doppler-shifted energy it sees
    the line at, read from the measured over the corrected energies), the γ-ray branch and the angular-correlation
-   factor.
+   factor. With particle detectors of different factors c the factor is the mean over the excitations in the gate, not
+   over the particles seen with a γ ray, which detectors with a large c have more of: Σw / Σ(w/c) over the γ rays of the
+   line that were seen, at any energy, each with its weight w standing for w/c excitations. The share of the excitations
+   that the inelastic gate keeps is counted the same way. c is the detector's: within it, a gate on rings or on energy
+   keeps it.
 6. **Normalisation:** `"rutherford"`, to the particles counted in the same rings (beam current and target
    thickness cancel); or `"target"`, to a transition of the other nucleus of the collision whose strength is
    known. The excitations expected per particle, ⟨P⟩/B, come from the forward model's own cross sections (those
