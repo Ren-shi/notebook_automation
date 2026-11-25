@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from physim.nuclear import deorientation as deo
-from physim.nuclear import lifetimes
+from physim.nuclear import lifetimes, validation
 from physim.nuclear.angular import wigner_6j
 from physim.nuclear.deorientation import DEFAULTS, Parameters, TwoState, atomic_spin, charge_states, hard_core
 from physim.nuclear.gamma_events import _attenuate
@@ -210,3 +210,33 @@ def test_density_matrices_stay_positive():
                         out = _attenuate(rho, {k: np.full(len(rho), v[i]) for k, v in g.items()})
                         assert np.linalg.eigvalsh(out).min() > least, (nuclide, spin, beta, t[i])
                         assert np.trace(out, axis1=1, axis2=2) == pytest.approx(1.0)
+
+
+# -- GOSIA ------------------------------------------------------------------------------------------------------------
+
+
+def test_it_is_gosias_in_blind_runs():
+    """Blind GOSIA runs (tests/reference/nuclear/coulex/gosia_gk.csv, the app's numbers stored before them): G_2, G_4
+    and G_6 of 13 levels of ⁶²Ni, ¹⁹⁴Pt, ¹⁵²Sm, ⁴⁸Ti and ⁹⁸Ru at v/c of 0.02, 0.05 and 0.08, with GOSIA's parameters
+    and with others, within 0.002 and half the last printed digit (largest difference 0.0006)."""
+    ref = validation.reference_dir()
+    path = ref / "coulex" / "gosia_gk.csv" if ref else None
+    if path is None or not path.exists():
+        pytest.skip("no GOSIA reference")
+    judged, beyond = 0, 0
+    for r in validation.read_reference(path)[1]:
+        par = Parameters(width_per_ps=float(r["gamma_per_ps"]), rate_per_ps=float(r["lambda_per_ps"]),
+                         correlation_ps=float(r["tau_c_ps"]), g_factor=float(r["g"]) if r["g"] else None,
+                         field_tesla=float(r["k_1e8t"]) * 1e8, field_power=float(r["x"]))
+        assert (par == DEFAULTS) == (r["vac"] == "default")
+        spin = float(r["spin"])
+        tau, beta = float(r["tau_ps"]), float(r["beta"])
+        assert tau == pytest.approx(float(r["tau_ps_gosia"]), rel=3e-4) and beta == pytest.approx(
+            float(r["beta_gosia"]), abs=1e-6)
+        own = TwoState(r["nuclide"], spin, par).average(tau, beta)
+        for k, g in TwoState(r["nuclide"], spin, par, ranks=(2, 4, 6)).average(tau, beta).items():
+            assert abs(g - float(r[f"g{k}"])) <= 0.002 + 0.00005, (r["nuclide"], r["level"], r["beta"], r["vac"], k)
+            # What GOSIA prints for a rank above 2I acts on nothing: the app has no such coefficient.
+            assert own.get(k) == (g if k <= 2 * spin else None)
+            judged, beyond = judged + (k <= 2 * spin), beyond + (k > 2 * spin)
+    assert (judged, beyond) == (174, 60)
