@@ -573,9 +573,11 @@ def fit_tails(counts: np.ndarray, edges: np.ndarray, fit: PeakFit, half_width: f
     With a ``spread`` (:meth:`Analysis._spread`: shifts in MeV, and the share of the peak with each) the peak is that
     spread with the Gaussian core about every step of it, and there is no wider component. The setup gives it when nuclei
     decay inside the target: they put a tail on one side of the peak, up to 20 keV long, that a wider bell about the
-    core does not follow (0.4 % of the area was lost). The core's width is then what the counts ask for besides the
-    spread: the detectors' resolution, or more. Nothing else of the shape is fitted, and it is worth fitting when it is
-    better than the Gaussian without the spread by more than ``worth``.
+    core does not follow (0.4 % of the area was lost). Through a thin target the spread is what the segments, the
+    crystals and the add-back leave, a flat top that no sum of bells has. The core's width is then what the counts ask
+    for besides the spread: the detectors' resolution, or more. Nothing else of the shape is fitted, and it is worth
+    fitting when it is better than the Gaussian without the spread by more than ``worth`` (which may be negative: a
+    weighted sample has the spread unless the Gaussian is clearly better, :meth:`Analysis._peak`).
 
     ``lines``: the other lines of the same nucleus in and near the window, as dicts with the "shift" from the peak (MeV),
     the "ratio" of their counts to the peak's, the "transition" and whether they are "counted" (:meth:`Analysis._beside`).
@@ -1742,8 +1744,8 @@ class Analysis:
                          "simulation of this setup, and the line \"peak tails (simulated)\" of the budget is what "
                          "that may be wrong by.")
         if fit.tails is not None and "spread" in fit.tails and not fit.tails["simulated"]:
-            notes.append("Some nuclei decay inside the target, faster than the Doppler correction takes them: the spread "
-                         "of the peak comes from the half-life and the geometry of this setup, and the line "
+            notes.append("The spread of the peak, with the nuclei that decay inside the target, faster than the Doppler "
+                         "correction takes them, comes from the half-life and the geometry of this setup, and the line "
                          "\"peak tails (simulated)\" of the budget is what that may be wrong by.")
         fits = [fit] + ([PeakFit.of(other["fit"])] if s.normalisation == "target" and other is not None
                         and not s.reference else [])
@@ -1989,8 +1991,11 @@ class Analysis:
         """The fit of the peak at ``energy`` (MeV) of one nucleus's corrected spectrum, ``sigma`` a first idea of its
         width. A Gaussian first; with its tails where the counts show them (:func:`fit_tails`); in a run whose counts
         cannot, with those of the simulated peak of the same setup (:meth:`simulated_peak`), and as the Gaussian where
-        that one shows none either. Other lines of the nucleus in the window are in the fit (:meth:`_beside`); where no
-        level scheme says how strong they are, the peak is the Gaussian. A fit that ends at a bound is
+        that one shows none either. A weighted sample takes the spread that the setup gives (:meth:`_spread`) however
+        few its counts are, unless the Gaussian fits better by more than :data:`TAILS_WORTH`: left to the counts, two
+        in three samples of some 400 entries lost the tails of their peak, and 3 % of its area. Other lines of the
+        nucleus in the window are in the fit (:meth:`_beside`); where no level scheme says how strong they are, the
+        peak is the Gaussian. A fit that ends at a bound is
         :attr:`PeakFit.failed`, with no area. ``like``: a fit of the same peak whose kind of tails (its own, the
         simulated ones, none) this one is to have too."""
         top = 0.03 * energy  # no Doppler residue is wider than a few percent
@@ -2007,9 +2012,13 @@ class Analysis:
         simulated = like is not None and like.tails["simulated"]
         alone = fit  # the best there is without a simulated peak
         if not fit.failed and not simulated:
+            spread = self._spread(s) if nucleus == 0 and (like is None or "spread" in like.tails) else None
+            worth = -math.inf if like is not None else TAILS_WORTH
+            from_setup = -TAILS_WORTH if like is None and self.taken is None else worth
             own = fit_tails(counts, edges, fit, s.fit_half_width, variance=variance,
-                            worth=TAILS_WORTH if like is None else -math.inf,
-                            spread=self._spread(s) if nucleus == 0 else None, lines=lines)
+                            worth=worth if spread is None else from_setup, spread=spread, lines=lines)
+            if spread is not None and "spread" not in (own.tails or {}):  # not the setup's shape: what the counts show
+                own = fit_tails(counts, edges, fit, s.fit_half_width, variance=variance, worth=worth, lines=lines)
             # A run whose counts do not show the tails takes those of the simulated peak; a sample, and a run that has
             # no simulated one, is the Gaussian with the lines beside it, if there are any.
             bare = own.tails is not None and own.tails["share"] == 0 and "spread" not in own.tails
@@ -2046,8 +2055,9 @@ class Analysis:
 
     def _spread(self, s: Settings) -> Optional[tuple]:
         """The spread of the corrected peak of the ``[reaction]`` nucleus in the gate's detectors and rings that the
-        setup gives, when its level has a half-life (:func:`~physim.nuclear.gamma_events.doppler_spread`, with the
-        efficiency and the correlation factor of each crystal): (shifts in MeV, the share of the peak with each), or
+        setup gives, when its level has a half-life, through a thick target and a thin one
+        (:func:`~physim.nuclear.gamma_events.doppler_spread`, with the efficiency and the correlation factor of each
+        crystal): (shifts in MeV, the share of the peak with each), or
         None. Kept."""
         mine = "recoil" if self.experiment.excitation.excite == "target" else "projectile"
         if s.correction not in ("emitter", mine):
@@ -2413,15 +2423,24 @@ class Analysis:
         return {"b": b, "text": text, "lines": lines, "gain": gain}
 
     def _monte_carlo_uncertainty(self, s: Settings, keep: np.ndarray, fit: PeakFit) -> float:
-        """The relative uncertainty of the result that comes from the finite Monte Carlo sample: the weights of
-        the γ rays in the peak window, and of the particles it is normalised to."""
+        """The relative uncertainty of the result that comes from the finite Monte Carlo sample: the error of the peak's
+        area for the entries the sample has, and the weights of the particles it is normalised to. The area's is the
+        fit's own (the background under the peak and the shape are in it), which is that of the counts in the beam time,
+        for entries that each stand for some counts. Several γ rays may come from one excited particle (the copies that
+        :func:`~physim.nuclear.gamma_events.simulate_gammas` lets it emit), and those come or stay away together: an
+        entry is all that one particle has in the peak."""
         g = self.gammas
         exc = self.experiment.excitation
         which = s.correction if s.correction != "emitter" else ("recoil" if exc.excite == "target" else "projectile")
         x = g[{"projectile": "corrected_projectile", "recoil": "corrected_recoil"}[which]]
         inside = keep & (np.abs(x - fit.centroid) < 3 * fit.sigma)
         w = g["weight"][inside]
-        peak = math.sqrt(float(np.sum(w**2))) / float(np.sum(w)) if w.sum() > 0 else float("inf")
+        if w.sum() > 0 and fit.area > 0:
+            each = np.bincount(np.unique(g["particle"][inside], return_inverse=True)[1], weights=w)
+            entry = g.events.beam_time_s * g.live_fraction * float(np.sum(each**2)) / float(np.sum(w))
+            peak = math.sqrt(entry) * fit.area_unc / fit.area  # an entry (a particle's γ rays) stands for so many counts
+        else:
+            peak = float("inf")
         el = self.events.columns["weight"][self._elastic_rows(s)]
         elastic = math.sqrt(float(np.sum(el**2))) / float(np.sum(el)) if el.sum() > 0 else 0.0
         return math.hypot(peak, elastic)

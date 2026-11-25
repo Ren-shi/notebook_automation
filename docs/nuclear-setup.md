@@ -517,7 +517,10 @@ The steps, each adjustable through `Settings`:
      (`gamma_events.doppler_spread`): the depth, the decay time, the place in the segment and on the crystal's face,
      and the add-back's crystal, from the setup alone, with no more to fit than the Gaussian's width. Runs of few
      counts take this spread with the simulated shape. The budget has the line "peak tails (simulated)" for it too.
-     Thin targets, lifetime measurements, the other nucleus's peak and setups without a half-life are fitted as above.
+     Through a thin target hardly any nucleus decays inside, and the spread is the flat top and the tails that the
+     segments, the crystals' faces and the add-back leave. A spectrum of weighted events takes the spread however few
+     its counts are, unless the Gaussian fits better by more than 25 in the deviance. Lifetime measurements, the other
+     nucleus's peak and setups without a half-life are fitted as above.
    - **Few counts.** A run whose counts cannot fix the tails takes the share, the offset and the width of the wider
      bell, relative to the core, from a peak of 15 000 counts simulated with the same setup, rings, crystals,
      gate, Doppler correction and fit window, and with a seed of its own (`Analysis.simulated_peak`). The run's

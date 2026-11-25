@@ -215,6 +215,23 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The peak's shape from the setup also through thin targets, and the Monte Carlo error by particle (what the next entry left
+  unexplained).
+  - `gamma_events.doppler_spread` is no longer None for a target that is thin or one slice (`reaction_depths` still is, so
+    the Doppler correction is unchanged), and a weighted sample takes the spread however few its counts are, unless the
+    Gaussian fits better by more than `TAILS_WORTH`. The strip detectors of `coulex_ni62_pt194_clovers` (some 430 entries)
+    lost the add-back's tails in two samples of three: area −1.87 ± 0.23 % with a scatter of 2.3 %, now +0.11 ± 0.07 and 0.70 % (96
+    samples each, seeds 2001–2048 before and 4001–4048 now). All detectors +0.11 ± 0.03 %, the CD +0.16 ± 0.02 % (they were −0.02 ± 0.04 and −0.04 ± 0.03 on
+    other seeds, so the CD is further off than it was and above the plan's 0.1 %); single crystals +0.17 ± 0.09 (all),
+    +0.29 ± 0.10 (CD) and +0.16 ± 0.18 % (strips; 24 seeds, 4101–4124). The 0.1 to 0.3 % that is left
+    is not explained. A run takes the spread in a thin target too, where its counts show it, and the simulated peak has it.
+    Setups without a half-life are unchanged, as is a thick target's area and B(E2) (the reproduction's closure samples, 1001–1004, to the last digit printed).
+  - `Result.monte_carlo` is the fit's own error for as many entries as the sample has, an entry being what one particle has in
+    the peak, where it was that of the weights of the γ rays, which come several to a particle. Scatter over the printed error, strips:
+    0.93 ± 0.07 (it was 1.26 ± 0.09 before both changes), CD 1.02 ± 0.11, all detectors 0.81 ± 0.08; single crystals 0.97 to 1.05.
+    It is 8 to 11 % larger than by γ ray, 0.75, 1.46 and 0.88 % where 0.69, 1.35 and 0.80 were printed for the reproduction's closure (so its
+    limits, which count three Monte Carlo errors, are that much wider; all pass with the old ones too). `coulex_ni58`, which no spread
+    changes, is −2.0 ± 0.9 % and scatters by 1.3 ± 0.2 of the new error (1.4 of the old) over 24 seeds (4201–4224), not looked into.
 - A peak with another line of the nucleus in its window keeps its tails (closure of `coulex_ni62_pt194_clovers`, gate "all").
   The example read B(E2) 6.5 % low. The 4⁺ → 2⁺ line of ⁶²Ni (1163.5 keV, 2.5 % of the 2⁺ → 0⁺ one) is 2σ from the peak the
   clovers make, so the peak was fitted as a Gaussian on a straight line and lost 4.0 % of the two lines' full-energy counts

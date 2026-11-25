@@ -251,8 +251,8 @@ def analysis_explanations(planner, result) -> list:
         "The γ rays of the transition that the detectors recorded in full, after the Doppler correction put them "
         "in one peak, over the continuum of other γ rays and the chance coincidences.",
         ("A Gaussian peak on a straight-line background" if result.fit.tails is None else
-         "A Gaussian with the spread that the half-life and the geometry of the setup leave of the Doppler shift (nuclei "
-         "that decay inside the target are faster than the correction takes them), on a background that steps down "
+         "A Gaussian with the spread that the half-life and the geometry of the setup leave of the Doppler shift (with the "
+         "nuclei that decay inside the target, faster than the correction takes them), on a background that steps down "
          "across the peak, counted over the whole fit window" if "spread" in result.fit.tails else
          "A Gaussian peak with wider tails that end, on a background that steps down across it, counted over "
          "the whole fit window" + (" (the counts are too few to fix the tails: their share and shape are those of a "

@@ -19,7 +19,7 @@ from physim.nuclear import Experiment
 from physim.nuclear import analysis as analysis_module
 from physim.nuclear.analysis import GATE_OVERLAP_WARN, Analysis, PeakFit, Settings
 from physim.nuclear.coulex_reproduction import setup as reproduction_setup
-from physim.nuclear.gamma_events import doppler_spread, simulate_gammas
+from physim.nuclear.gamma_events import doppler_spread, reaction_depths, simulate_gammas
 
 B_UP = 884.105  # e²fm⁴, ENSDF
 #: Events and seeds of the weighted samples. They are averaged: five samples of 400 000 know what one of 2 000 000
@@ -181,10 +181,15 @@ def test_the_spread_of_the_peak_follows_the_half_life():
     assert -0.6 < float((y * q).sum()) < -0.3
     z, r = spread_of("1 fs")
     assert float((z * r).sum()) < -4
-    # A lifetime measurement and a thin target have none.
+    # Through a thin target hardly any decays inside: what is left is as far above as below, and it ends.
     thin = with_half_life("1.442 ps").to_dict()
     thin["target"]["thickness"] = "0.01 mg/cm2"
-    assert doppler_spread(Experiment.from_dict(thin), {"Ring2": np.ones(36)}, 1e-4) is None
+    thin = Experiment.from_dict(thin)
+    assert reaction_depths(thin) is None
+    x, p = doppler_spread(thin, {"Ring2": np.ones(36)}, 1e-4)
+    x = 1172.91 * x
+    assert p.sum() == pytest.approx(1) and abs(float((x * p).sum())) < 0.2
+    assert float(p[(x > -20) & (x < -7)].sum()) == pytest.approx(float(p[(x > 7) & (x < 20)].sum()), abs=0.005)
 
 
 @pytest.fixture(scope="module")
@@ -598,6 +603,42 @@ def test_a_peak_with_another_line_in_its_window_keeps_its_area(blended, det, sca
         dev.append(r.area / counted - 1)
     err = scatter / math.sqrt(len(dev))
     assert abs(np.mean(dev)) < 0.001 + 3 * err, (det, dev)
+
+
+def test_the_strip_detectors_keep_their_area_with_few_entries(blended):
+    """About 430 full-energy entries a sample, too few to show the tails that the add-back gives the peak: the fit has
+    the setup's shape (the target is one slice) however few they are. Of 96 samples the area is +0.11 ± 0.07 % off and
+    scatters by 0.70 %; with the tails only where the counts showed them it was −1.87 ± 0.23 and 2.3 %."""
+    dev = []
+    for det in ("DSSD-L", "DSSD-R"):
+        s = replace(every_particle(det), subtract_randoms=False)
+        for a in blended[1]:
+            g = a.gammas
+            r = a.run(s)
+            assert "spread" in r.fit.tails and not r.fit.tails["simulated"]
+            true = (a._gate(s)[0] & a._own & (np.abs(g["deposited"] - g["energy_lab"]) < 1e-6)
+                    & (((g["initial"] == 1) & (g["final"] == 0)) | ((g["initial"] == 4) & (g["final"] == 1))))
+            dev.append(r.area / (float(g["weight"][true].sum()) * g.events.beam_time_s * g.live_fraction) - 1)
+    assert abs(np.mean(dev)) < 0.001 + 3 * 0.0064 / math.sqrt(len(dev)) and np.std(dev, ddof=1) < 0.014, dev
+
+
+def test_the_monte_carlo_error_counts_particles_and_the_fit(blended):
+    """γ rays of one particle are one entry: each given twice, with half the weight, they tell no more. (By γ ray the
+    error fell by √2.) The error is the fit's for that many entries, so it is above that of the peak's counts."""
+    exp, samples = blended
+    a, s = samples[0], replace(every_particle("DSSD-L"), subtract_randoms=False)
+    fit = a.run(s).fit
+    once = a._monte_carlo_uncertainty(s, a._gate(s)[0], fit)
+    g = a.gammas
+    twice = {k: np.repeat(np.asarray(v), 2) for k, v in g.columns.items()}
+    twice["weight"] = twice["weight"] / 2
+    b = Analysis(exp, replace(g, columns=twice))
+    assert b._monte_carlo_uncertainty(s, b._gate(s)[0], fit) == pytest.approx(once, rel=1e-9)
+    inside = a._gate(s)[0] & (np.abs(g["corrected_projectile"] - fit.centroid) < 3 * fit.sigma)
+    w, p = g["weight"][inside], g["particle"][inside]
+    by_gamma = math.sqrt(float((w**2).sum())) / float(w.sum())
+    by_particle = math.sqrt(sum(float(w[p == q].sum()) ** 2 for q in np.unique(p))) / float(w.sum())
+    assert by_gamma < by_particle < once < 1.5 * by_particle
 
 
 @pytest.mark.parametrize("det", ["CD", None])

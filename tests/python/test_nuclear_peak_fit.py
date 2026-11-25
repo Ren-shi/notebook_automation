@@ -12,7 +12,7 @@ from dataclasses import asdict
 import numpy as np
 import pytest
 
-from physim.nuclear.analysis import SHAPE_REACH, PeakFit, _biweight, fit_peak, fit_tails, tail_shape
+from physim.nuclear.analysis import SHAPE_REACH, TAILS_WORTH, PeakFit, _biweight, fit_peak, fit_tails, tail_shape
 
 E0, EDGES = 1.1729, np.arange(1.10, 1.25, 0.0002)
 X = 1e3 * (EDGES[:-1] + EDGES[1:]) / 2 - 1e3 * E0  # keV from the transition
@@ -235,6 +235,20 @@ def test_the_spread_of_the_setup_gives_the_whole_peak(one_sided):
     assert fit_tails(counts, EDGES, gauss_fit(counts), spread=None) == plain
     few = np.random.default_rng(5).poisson(60 * gaussian(2.9) + 0.02).astype(float)
     assert fit_tails(few, EDGES, gauss_fit(few), spread=one_sided).tails is None
+
+
+def test_few_counts_take_the_spread_unless_the_gaussian_is_clearly_better(one_sided):
+    """With a negative worth, as a weighted sample has it: too few counts to show the spread take it all the same and
+    keep the area (their Gaussian loses the tail), and many counts that are no peak of that shape do not."""
+    rng = np.random.default_rng(8)
+    few = [rng.poisson(spread_peak(140, one_sided)).astype(float) for _ in range(60)]
+    toys = [fit_tails(c, EDGES, gauss_fit(c), spread=one_sided, worth=-TAILS_WORTH) for c in few]
+    assert all("spread" in f.tails for f in toys)
+    area = np.array([f.area for f in toys]) / 140
+    assert abs(area.mean() - 1) < 3 * area.std(ddof=1) / math.sqrt(len(area))
+    assert sum(fit_tails(c, EDGES, gauss_fit(c), spread=one_sided).tails is None for c in few) > 30
+    wide = rng.poisson(100_000 * gaussian(2.9) + 2.0).astype(float)
+    assert fit_tails(wide, EDGES, gauss_fit(wide), spread=one_sided, worth=-TAILS_WORTH).tails is None
 
 
 def test_few_counts_take_the_spread_with_the_shape(one_sided):
