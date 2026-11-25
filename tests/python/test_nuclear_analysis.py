@@ -161,6 +161,7 @@ def test_b_e2_agrees_with_the_input_with_the_target_normalisation(projectile):
         assert abs(r.pull) < 2.5, (r.normalisation, r.b_e2fm4, r.statistical, r.systematic)
         # What the response gives below the peak for a count in it has its line in the budget.
         assert 0.02 < r.budget["detector response below the peak"] < 0.06
+        assert any("Compton edge" in n for n in r.notes)
     assert both[0].budget["reference B(E2)"] == pytest.approx(0.03)
     assert any("reference peak" in n for n in both[0].notes)
     # The two normalisations agree with each other more closely than with the truth: the same peak area.

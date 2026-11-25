@@ -1856,6 +1856,10 @@ class Analysis:
             notes.append("The spread of the peak, with the nuclei that decay inside the target, faster than the Doppler "
                          "correction takes them, comes from the half-life and the geometry of this setup, and the line "
                          "\"peak tails (simulated)\" of the budget is what that may be wrong by.")
+        if fit.below is not None:
+            notes.append("The fit window reaches the line's own Compton edge, so the counts that the detectors' response "
+                         "gives below the peak for each one in it are part of the background, and the line \"detector "
+                         "response below the peak\" of the budget is what that may be wrong by.")
         fits = [fit] + ([PeakFit.of(other["fit"])] if s.normalisation == "target" and other is not None
                         and not s.reference else [])
         budget, budget_notes = self._budget(s, keep, b, p_per_b, eff, corr, ref_unc, fits)
