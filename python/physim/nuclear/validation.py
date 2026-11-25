@@ -893,8 +893,8 @@ def coulex_vs_gosia(ref):
 @check("Coulomb excitation, first-order semiclassical", "literature", "Reproduced experiment: Allmond et al., Phys. "
        "Rev. C 90, 034309 (2014), ⁶²Ni at 111.6 MeV on 1 mg/cm² carbon, carbon recoils in two rings (14–28°, "
        "28–44°): the example coulex_ni62_c_allmond against the paper's energy losses, GOSIA 20110524.14 (nuclear "
-       "masses and the E1 polarisation off in both; and as run, integer masses, DIP 3.8 and d = 0.0038), its own simulated runs (closure over several "
-       "seeds, and one as a stored run) and the paper's per-ring <0⁺‖E2‖2⁺> rebuilt into ratios through GOSIA's "
+       "masses and the E1 polarisation off in both; and as run, integer masses, DIP 3.8 and d = 0.0038), its own "
+       "simulated runs (closure over several seeds, and one as a stored run) and the paper's per-ring <0⁺‖E2‖2⁺> rebuilt into ratios through GOSIA's "
        "ratio(M) (the paper gives no yields: this tests that physim extracts the same B(E2) from the same data as "
        "GOSIA did); all orders judged, first order shown beside it (physim.nuclear.coulex_reproduction; "
        "coulex/allmond2014.toml)",

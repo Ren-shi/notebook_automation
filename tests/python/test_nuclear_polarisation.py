@@ -392,3 +392,13 @@ def test_a_kept_result_from_before_the_correction_is_not_shown_as_the_setups(tmp
     p.set("reaction", "e1_polarisation", 0.0)
     path.write_text(json.dumps(dict(kept, setup=p.experiment.to_dict())), encoding="utf-8")
     assert p._kept("multistep.json", p.experiment_folder) == {"x": 1}
+    # A setup without a Coulomb excitation keeps what it had (a lifetime analysis after fusion-evaporation).
+    q = Planner.example("fusion_cr50_plunger")
+    q.create_experiment(root=tmp_path)
+    assert q.experiment.excitation is None
+    q._keep("lifetime.json", {"x": 2}, q.experiment_folder)
+    path = q.experiment_folder / "lifetime.json"
+    kept = json.loads(path.read_text(encoding="utf-8"))
+    del kept["e1_polarisation"]
+    path.write_text(json.dumps(kept), encoding="utf-8")
+    assert q.kept_lifetimes() == {"x": 2}

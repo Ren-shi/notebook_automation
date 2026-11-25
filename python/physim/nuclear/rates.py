@@ -228,8 +228,8 @@ def layer_energy(experiment, layer: int, layers: Optional[list] = None) -> float
 def coulex_for(experiment, channel: Channel, layers: Optional[list] = None, energy: Optional[float] = None):
     """The :class:`~physim.nuclear.coulex.Coulex` of a channel, at beam energy ``energy`` (MeV), by default the
     energy in the middle of its layer (of the part of it the beam crosses, when the beam stops inside:
-    :func:`layer_energy`), with the setup's E1 polarisation correction. Raises ValueError when the beam stops before the layer, or (from
-    :class:`~physim.nuclear.coulex.Coulex`) when the energy is below the excitation threshold."""
+    :func:`layer_energy`), with the setup's E1 polarisation correction. Raises ValueError when the beam stops before
+    the layer, or (from :class:`~physim.nuclear.coulex.Coulex`) when the energy is below the excitation threshold."""
     from .gamma import e1_polarisation
 
     layers = layers or stack(experiment)

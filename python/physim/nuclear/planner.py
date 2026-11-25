@@ -2181,7 +2181,8 @@ class Planner:
 
     def _kept(self, name: str, folder, same_setup: bool = True) -> Optional[dict]:
         """What :meth:`_keep` wrote, or None. With ``same_setup``, only when it was computed for the current setup's
-        physics; a result without an E1 polarisation beside it is from before there was one, and has none."""
+        physics; a Coulomb excitation's result without an E1 polarisation beside it is from before there was one, and
+        has none."""
         import json
 
         from .gamma import e1_polarisation
@@ -2193,7 +2194,8 @@ class Planner:
             if same_setup and _runs.physics_changes(d["setup"], json.loads(json.dumps(
                     self.experiment.to_dict(), default=_runs._json_default))):
                 return None
-            if same_setup and d.get("e1_polarisation", 0.0) != e1_polarisation(self.experiment):
+            if (same_setup and self.experiment.excitation is not None
+                    and d.get("e1_polarisation", 0.0) != e1_polarisation(self.experiment)):
                 return None
             return d["result"]
         except (OSError, ValueError, KeyError, TypeError):
