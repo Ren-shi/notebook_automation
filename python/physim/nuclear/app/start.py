@@ -1,5 +1,9 @@
-"""The start page: the nuclei first, each with its experiments, what is known about it and what is still open
-(:func:`nuclei_page`, from :func:`physim.nuclear.nucleus.nuclei`); a nucleus opens its own page (:mod:`.tab_nucleus`).
+"""The start views, shown in place of an experiment's steps and without the rail: the page of one nucleus
+(:mod:`.tab_nucleus`), the comparison of one of its observables (:mod:`.tab_compare`), the nuclei, each with its
+experiments, what is known about it and what is still open (:func:`nuclei_page`, from
+:func:`physim.nuclear.nucleus.nuclei`), the kinds of experiment (:func:`kinds_page`) and the Physics reference
+(:func:`physics_head`; the page shows the reference itself under it). Above each of them stands the same bar
+(:func:`top_bar`). The app opens on a nucleus (:func:`opening`).
 
 "Start from a kind of experiment" is the start page as it was (:func:`kinds_page`): the kind of experiment
 (:data:`physim.nuclear.workbench.KINDS`), then its beam, target and detectors, or an experiment already made.
@@ -11,9 +15,33 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Optional
 
 from .. import workbench as wb
-from . import tab_nucleus as tn
+from . import nucleus_parts as parts
+from . import tab_compare, tab_nucleus
+
+
+#: How many nuclei the switcher of the bar shows: the most recently changed ones, the others are in "All nuclei".
+SWITCHER = 5
+
+#: The bar above the start views: over the whole width of the page, wrapping in a narrow window.
+TOP_STYLE = """
+.ps-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 24px;
+  background: var(--ps-sunk); border-bottom: 1px solid var(--ps-line);
+  margin: calc(-1 * var(--nicegui-default-padding, 1rem)); margin-bottom: 8px;
+  width: calc(100% + 2 * var(--nicegui-default-padding, 1rem)); }
+.ps-top-part { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.ps-top-btn { border: 1px solid var(--ps-line); background: var(--ps-surface); color: var(--ps-ink);
+  min-height: 38px; padding: 0 12px; }
+.ps-top-btn.ps-top-dashed { border-style: dashed; background: transparent; color: var(--ps-muted); }
+.ps-top-btn.ps-top-on { background: var(--ps-fill); border-color: var(--ps-fill); color: var(--ps-on-fill);
+  font-weight: 600; }
+.ps-top-nuclide { font-size: 16px; }
+.ps-top-back { max-width: 340px; }
+.ps-top-back .q-btn__content { flex-wrap: nowrap; }
+.ps-top-back .q-btn__content .block { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+"""
 
 
 def experiment_kind(path: str) -> str:
@@ -69,20 +97,173 @@ def anything_yet() -> bool:
     return home.is_dir() and any((p / results.POINTS_FILE).is_file() for p in home.iterdir())
 
 
+def last_changed(n: dict, modified: dict) -> float:
+    """When a nucleus of :func:`physim.nuclear.nucleus.nuclei` last changed: its data points or an experiment that
+    studies it (``modified``: when each experiment changed, by its path)."""
+    from .. import results
+
+    points = results.nucleus_folder(n["nuclide"]) / results.POINTS_FILE
+    return max([points.stat().st_mtime if points.is_file() else 0.0]
+               + [modified.get(x["path"]) or 0.0 for x in n["experiments"] if x["role"] != "partner"])
+
+
+def switched_between(found: dict) -> list:
+    """The nuclides the bar's switcher offers, from :func:`.nucleus_parts.load_nuclei`: the nuclei that get a card
+    (:func:`is_card`), the :data:`SWITCHER` most recently changed ones, in the order of the nuclei screen."""
+    cards = [n for n in found["nuclei"] if is_card(n)]
+    recent = sorted(cards, key=lambda n: -last_changed(n, found["modified"]))[:SWITCHER]
+    return [n["nuclide"] for n in cards if n in recent]
+
+
+def opening(remembered: Optional[str] = None) -> dict:
+    """What the app opens on when its address names nothing, as ``state["start"]`` takes it: {"view", "nucleus"}.
+    The nucleus opened last (``remembered``, by the browser); if there is none, or it is not here any more, the one
+    studied by the most recently changed experiment; without an experiment that studies one, the most recently
+    changed nucleus that holds data points; otherwise the nuclei, or with nothing at all the kinds of experiment
+    (:func:`anything_yet`). Reads the experiments and the ledgers: for a worker thread."""
+    from .. import results
+
+    found = parts.load_nuclei(fill=False)
+    try:
+        name = results.nuclide_name(str(remembered)) if remembered else None
+    except (ValueError, KeyError, TypeError, IndexError):
+        name = None
+    if name is None or name not in [n["nuclide"] for n in found["nuclei"]]:
+        studied = {x["path"]: n["nuclide"] for n in found["nuclei"] for x in n["experiments"]
+                   if x["role"] == "studied"}
+        cards = [n for n in found["nuclei"] if is_card(n)]
+        if studied:
+            name = studied[max(studied, key=lambda path: found["modified"].get(path) or 0.0)]
+        elif cards:
+            name = max(cards, key=lambda n: last_changed(n, found["modified"]))["nuclide"]
+        else:
+            name = None
+    if name is not None:
+        return {"view": "nucleus", "nucleus": name}
+    return {"view": "nuclei" if anything_yet() else "kinds"}
+
+
 def render(ctx) -> None:
-    """The start page, into the current container: the nuclei (:func:`nuclei_page`), one nucleus
-    (:func:`.tab_nucleus.render`) or the kinds of experiment (:func:`kinds_page`), as ``ctx.state["start"]["view"]``
-    says. ``ctx`` gives ``ui``, ``create_experiment``, ``open_experiment``, ``open_example``, ``import_setup``,
-    ``refresh_start``, ``close_start`` (None when no experiment is open) and ``state``."""
+    """The start view that ``ctx.state["start"]["view"]`` names, into the current container: one nucleus
+    ("nucleus", :func:`.tab_nucleus.render`), one observable of it ("observable", :func:`.tab_compare.render`), the
+    nuclei ("nuclei"), the kinds of experiment ("kinds"), the head of the Physics reference ("physics"), or the
+    waiting line until it is known what the app opens on ("opening").
+
+    ``ctx`` gives ``ui``, ``state``, ``create_experiment``, ``open_experiment``, ``open_example``, ``import_setup``,
+    ``refresh_start`` (show the start page, built again), ``close_start`` (the experiment's steps in its place),
+    ``experiment_name`` (the name of the open experiment, None when none is open), ``remember_nucleus`` (in the
+    browser, for the next opening), ``open_physics`` and ``theme_switch`` (builds a Light/Dark switch)."""
     st = ctx.state.setdefault("start", {"kind": None})
     if st.get("view") is None:
         st["view"] = "nuclei" if anything_yet() else "kinds"
-    if st["view"] == "nucleus" and st.get("nucleus"):
-        tn.render(ctx)
+    if st["view"] in ("nucleus", "observable") and st.get("nucleus"):
+        ctx.remember_nucleus(st["nucleus"])
+        (tab_nucleus if st["view"] == "nucleus" else tab_compare).render(ctx)
+    elif st["view"] == "opening":
+        parts.waiting(ctx.ui, "Opening the nucleus you were on…")
+    elif st["view"] == "physics":
+        physics_head(ctx)
     elif st["view"] == "kinds":
         kinds_page(ctx)
     else:
         nuclei_page(ctx)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The bar above every start view, and the Physics reference as one
+
+
+def top_bar(ctx):
+    """The bar above the start views, into the current container: the switcher of the nuclei, the way back to the
+    open experiment, the Physics reference and the theme. Returns the function that brings it up to date with the
+    view shown (and reads the nuclei again, on a worker thread)."""
+    ui = ctx.ui
+    held: dict = {"nuclei": []}
+    with ui.element("header").classes("ps-top") as bar:
+        ui.label("physim").classes("ps-wordmark")
+        switcher = ui.element("nav").classes("ps-top-part").props('aria-label="Nuclei"')
+        with ui.button("Another nucleus", icon="add", color=None).props("flat no-caps").classes(
+                "ps-top-btn ps-top-dashed"):
+            with ui.menu() as menu, ui.row().classes("items-center gap-2 p-2"):
+                other = ui.input("Another nucleus", placeholder="58Ni").props("dense outlined autofocus").style(
+                    "width: 160px")
+                ui.button("Open its page", icon="arrow_forward", on_click=lambda: another()).props(
+                    "flat no-caps dense").tooltip("The page of any nucleus: ENSDF's adopted values, ready for its "
+                                                  "first data point or experiment")
+        ui.element("span").style("flex: 1 1 auto")
+        right = ui.element("div").classes("ps-top-part")
+        ctx.theme_switch()
+
+    def another() -> None:
+        menu.close()
+        name, other.value = other.value, ""
+        parts.open_nucleus(ctx, name)
+
+    other.on("keydown.enter", another)
+
+    def build() -> None:
+        st = ctx.state["start"]
+        view = st.get("view")
+        here = st.get("nucleus") if view in ("nucleus", "observable") else None
+        switcher.clear()
+        with switcher:
+            for name in held["nuclei"] + ([here] if here and here not in held["nuclei"] else []):
+                button = ui.button(parts.nuclide_text(name), color=None,
+                                   on_click=lambda name=name: parts.open_nucleus(ctx, name)).props("flat no-caps")
+                button.classes("ps-top-btn ps-top-nuclide" + (" ps-top-on" if name == here else ""))
+                if name == here:
+                    button.props('aria-current="page"')
+            ui.button("All nuclei", color=None, on_click=lambda: parts.open_nuclei(ctx)).props(
+                "flat no-caps").classes("ps-top-btn" + (" ps-top-on" if view == "nuclei" else "")).tooltip(
+                "Every nucleus with its experiments, what is known about it and what is still open")
+        right.clear()
+        with right:
+            name = ctx.experiment_name()
+            if name is not None:
+                ui.button(f"Back to {name}", icon="arrow_back", color=None, on_click=lambda: parts.close(ctx)).props(
+                    "flat no-caps").classes("ps-top-btn ps-top-back").tooltip("The steps of the open experiment")
+            ui.button("Physics", icon="menu_book", color=None, on_click=ctx.open_physics).props(
+                "flat no-caps").classes("ps-top-btn" + (" ps-top-on" if view == "physics" else "")).tooltip(
+                "The physics behind the numbers, and where each part is validated")
+
+    async def read() -> None:
+        from nicegui import run
+
+        try:
+            found = await run.io_bound(lambda: switched_between(parts.load_nuclei(fill=False)))
+        except Exception:  # noqa: BLE001 -- the nuclei screen says what is wrong; the bar keeps what it has
+            return
+        if found is not None and not switcher.is_deleted and found != held["nuclei"]:
+            held["nuclei"] = found
+            build()
+
+    def refresh() -> None:
+        build()
+        with bar:  # what asked for it may be gone with the view it was on
+            parts.later(ui, read)
+
+    return refresh
+
+
+def physics_head(ctx) -> None:
+    """The head of the Physics reference as a start view: the way back to where one was, and whose numbers the
+    reference shows."""
+    ui = ctx.ui
+    st = ctx.state["start"]
+    nucleus = parts.nuclide_text(st.get("nucleus") or "")
+    back = {"nucleus": nucleus, "observable": f"the comparison for {nucleus}",
+            "kinds": "the kinds of experiment"}.get(st.get("before_physics"), "All nuclei")
+
+    def go_back() -> None:
+        st["view"] = st.get("before_physics") or "nuclei"
+        parts.show_from_top(ctx)
+
+    with ui.row().classes("w-full items-center gap-3"):
+        ui.button(f"← {back}", on_click=go_back).props("flat no-caps dense").classes("ps-accent")
+        name = ctx.experiment_name()
+        ui.label("Physics").classes("text-xl font-semibold")
+        ui.label(f"with the numbers of {name}" if name is not None else
+                 "with the numbers of a first example: no experiment is open").classes("text-sm ps-muted")
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -99,10 +280,10 @@ def is_card(n: dict) -> bool:
 def nuclei_page(ctx) -> None:
     """The nuclei: one card per nucleus that is studied or has rows, with what is known and projected, what is
     still open and its experiments; the partner-only nuclei in a line; the experiments tied to no nucleus in the
-    table they always had. Read on a worker thread (:func:`.tab_nucleus.load_nuclei`), which also makes the rows
+    table they always had. Read on a worker thread (:func:`.nucleus_parts.load_nuclei`), which also makes the rows
     of experiments from before the ledger."""
     ui = ctx.ui
-    tn.add_style(ctx)
+    parts.add_style(ctx)
     note = ctx.state["start"].pop("note", None)  # said once: why the address's experiment was not opened
     with ui.column().classes("w-full gap-3").style("max-width: 1100px; margin: 0 auto"):
         if note:
@@ -114,26 +295,24 @@ def nuclei_page(ctx) -> None:
                          "nucleus to compare the routes to an observable and to see which experiments are still "
                          "worth planning.").classes("text-sm ps-muted").style("max-width: 78ch")
             ui.space()
-            if ctx.close_start is not None:
-                ui.button("Back to the experiment", icon="arrow_back", on_click=lambda: tn.close(ctx)).props(
-                    "flat no-caps").classes("ps-muted")
-            ui.button("Start from a kind of experiment", on_click=lambda: tn.plan(ctx, None)).props(
+            ui.button("Start from a kind of experiment", on_click=lambda: parts.plan(ctx, None)).props(
                 "outline no-caps")
         with ui.row().classes("w-full items-center gap-2"):
             other = ui.input("Another nucleus", placeholder="58Ni").props("dense outlined").style("width: 180px")
-            other.on("keydown.enter", lambda: tn.open_nucleus(ctx, other.value))
-            ui.button("Open its page", icon="arrow_forward", on_click=lambda: tn.open_nucleus(ctx, other.value)).props(
+            other.on("keydown.enter", lambda: parts.open_nucleus(ctx, other.value))
+            ui.button("Open its page", icon="arrow_forward",
+                      on_click=lambda: parts.open_nucleus(ctx, other.value)).props(
                 "flat no-caps dense").tooltip("The page of any nucleus: ENSDF's adopted values, ready for its first "
                                               "data point or experiment")
         body = ui.column().classes("w-full gap-3")
     with body:
-        tn.waiting(ui, "Reading the nuclei and their experiments…")
+        parts.waiting(ui, "Reading the nuclei and their experiments…")
 
     async def fill() -> None:
         from nicegui import run
 
         try:
-            found = await run.io_bound(tn.load_nuclei)
+            found = await run.io_bound(parts.load_nuclei)
         except Exception as err:  # noqa: BLE001 -- say why, and keep the experiments reachable
             found = {"error": str(err)}
         if found is None or body.is_deleted:
@@ -147,7 +326,7 @@ def nuclei_page(ctx) -> None:
                 return
             _nuclei(ctx, found)
 
-    tn.later(ui, fill)
+    parts.later(ui, fill)
 
 
 def _nuclei(ctx, found: dict) -> None:
@@ -159,11 +338,11 @@ def _nuclei(ctx, found: dict) -> None:
         ui.label("No nucleus yet. Open the page of a nucleus above, or start from a kind of experiment."
                  ).classes("text-sm ps-note p-3 w-full")
     for n in cards:
-        name, title = n["nuclide"], tn.nuclide_text(n["nuclide"])
+        name, title = n["nuclide"], parts.nuclide_text(n["nuclide"])
         studied = [x for x in n["experiments"] if x["role"] != "partner"]
         with ui.element("div").classes("ps-panel"):
             with ui.element("div").classes("ps-nuc-head"):
-                ui.button(f"{title} →", on_click=lambda name=name: tn.open_nucleus(ctx, name)).props(
+                ui.button(f"{title} →", on_click=lambda name=name: parts.open_nucleus(ctx, name)).props(
                     "flat no-caps dense").classes("text-lg font-semibold ps-open").tooltip(
                     "Everything known and projected about it, by method")
                 evaluation = n["evaluation"]
@@ -176,7 +355,7 @@ def _nuclei(ctx, found: dict) -> None:
                 ))).classes("text-sm ps-muted")
                 ui.space()
                 ui.button(f"New experiment for {title}", icon="add",
-                          on_click=lambda name=name: tn.plan(ctx, name)).props("flat no-caps dense")
+                          on_click=lambda name=name: parts.plan(ctx, name)).props("flat no-caps dense")
             with ui.element("div").classes("ps-nuc-body"):
                 with ui.element("div"):
                     ui.label("WHAT IS KNOWN AND PROJECTED").classes("ps-nuc-h")
@@ -184,21 +363,21 @@ def _nuclei(ctx, found: dict) -> None:
                         ui.label("The evaluation, on its page." if evaluation["taken"] else "Nothing yet.").classes(
                             "text-sm ps-muted")
                     with ui.element("div").classes("ps-kv"):
-                        for t in n["table"][:tn.HEADLINES]:
-                            row = ui.label(tn.label_text(t["label"])).style("cursor: pointer")
-                            row.on("click", lambda name=name, t=t: tn.open_nucleus(
+                        for t in n["table"][:parts.HEADLINES]:
+                            row = ui.label(parts.label_text(t["label"])).style("cursor: pointer")
+                            row.on("click", lambda name=name, t=t: parts.open_nucleus(
                                 ctx, name, t["observable"], t["key"]))
-                            ui.label(tn.known_lines(t, display)).classes("ps-num")
-                    if len(n["table"]) > tn.HEADLINES:
-                        ui.label(f"… and {len(n['table']) - tn.HEADLINES} more on its page.").classes(
+                            ui.label(parts.known_lines(t, display)).classes("ps-num")
+                    if len(n["table"]) > parts.HEADLINES:
+                        ui.label(f"… and {len(n['table']) - parts.HEADLINES} more on its page.").classes(
                             "text-xs ps-muted")
                     ui.label("STILL OPEN").classes("ps-nuc-h").style("margin-top: 10px")
-                    ui.label(" · ".join(tn.label_text(o["text"]) for o in n["open"]) or "nothing").classes(
+                    ui.label(" · ".join(parts.label_text(o["text"]) for o in n["open"]) or "nothing").classes(
                         "text-sm " + ("ps-open" if n["open"] else "ps-muted")).style("line-height: 1.6")
                 with ui.element("div"):
                     ui.label("EXPERIMENTS").classes("ps-nuc-h")
                     if n["experiments"]:
-                        tn.experiments_table(ctx, n["experiments"], display)
+                        parts.experiments_table(ctx, n["experiments"], display)
                     else:
                         ui.label("No experiment yet: data points only.").classes("text-sm ps-muted")
     if partners:
@@ -208,9 +387,9 @@ def _nuclei(ctx, found: dict) -> None:
                 "text-sm ps-muted")
             for n in partners:
                 count = len(n["experiments"])
-                ui.button(f"{tn.nuclide_text(n['nuclide'])} · " + (
+                ui.button(f"{parts.nuclide_text(n['nuclide'])} · " + (
                     f"in {count} experiment{'s' * (count != 1)}" if count else "the evaluation only"),
-                          on_click=lambda name=n["nuclide"]: tn.open_nucleus(ctx, name)).props(
+                          on_click=lambda name=n["nuclide"]: parts.open_nucleus(ctx, name)).props(
                     "flat no-caps dense").classes("text-sm")
     if found["unassigned"]:
         modified = found.get("modified", {})
@@ -239,17 +418,14 @@ def kinds_page(ctx) -> None:
                          "plan computes and which spectra you see. The beam, target and detectors can change "
                          "afterwards.").classes("text-sm ps-muted").style("max-width: 70ch")
             ui.space()
-            if ctx.close_start is not None:
-                ui.button("Back to the experiment", icon="arrow_back", on_click=lambda: tn.close(ctx)).props(
-                    "flat no-caps").classes("ps-muted")
             ui.button("The nuclei", icon="arrow_back", on_click=lambda: leave(None)).props("outline no-caps").tooltip(
                 "The nuclei, each with its experiments and what is known about it")
         if nuclide:
             with ui.row().classes("w-full items-center gap-2 ps-note").style("padding: 6px 12px"):
-                ui.label(f"An experiment for {tn.nuclide_text(nuclide)}: pick its kind. Where the form has a field "
+                ui.label(f"An experiment for {parts.nuclide_text(nuclide)}: pick its kind. Where the form has a field "
                          f"for the nucleus that is excited, {nuclide} is filled in.").classes("text-sm")
                 ui.space()
-                ui.button(f"Back to {tn.nuclide_text(nuclide)}", on_click=lambda: leave(nuclide)).props(
+                ui.button(f"Back to {parts.nuclide_text(nuclide)}", on_click=lambda: leave(nuclide)).props(
                     "flat no-caps dense")
         with ui.element("div").classes("w-full").style(
                 "display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px"):
@@ -288,7 +464,7 @@ def kinds_page(ctx) -> None:
     def leave(to) -> None:
         st.update(kind=None, for_nucleus=None)
         st.pop("values", None)
-        tn.open_nucleus(ctx, to) if to else tn.open_nuclei(ctx)
+        parts.open_nucleus(ctx, to) if to else parts.open_nuclei(ctx)
 
 
 def filled_for(k, nuclide) -> dict:
@@ -431,4 +607,4 @@ def experiments_table(ctx, found=None, title: str = "Or open an experiment") -> 
             "w-full")
         table.add_slot("body-cell-name", '<q-td :props="props" style="cursor: pointer"><span class="ps-accent">'
                                          '{{ props.value }}</span></q-td>')
-        table.on("rowClick", lambda e: tn.open_experiment(ctx, e.args[1]["path"]))
+        table.on("rowClick", lambda e: parts.open_experiment(ctx, e.args[1]["path"]))

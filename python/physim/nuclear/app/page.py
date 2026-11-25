@@ -1,10 +1,13 @@
 """The planner page: the rail on the left (the experiment, the steps, the Physics reference and the theme), the
-stages, and the setup panel on the right of the Setup step, assembled for one browser client."""
+stages, and the setup panel on the right of the Setup step, or in place of them a start view (a nucleus, one of its
+observables, the nuclei, the kinds of experiment, Physics) under its bar and without the rail (:mod:`.start`),
+assembled for one browser client."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import math
 import threading
 from typing import Optional
@@ -44,17 +47,21 @@ KIND_STYLE = """
 .ps-kind-chip { display: inline-block; font-family: var(--ps-mono); font-size: 11px; color: var(--ps-muted);
   border: 1px solid var(--ps-line); border-radius: 4px; padding: 1px 7px; margin-left: 6px;
   background: var(--ps-surface); }
-.ps-steps-off { opacity: 0.45; pointer-events: none; }
 """
 
-#: The nucleus above the experiment's name in the rail, and a result beside what is known (the short comparison
-#: under a result, with its link to the nucleus's page).
+#: The way back to the nucleus above the experiment's name in the rail, and a result beside what is known (the
+#: short comparison under a result, with its link to the comparison with the literature).
 NUCLEUS_STYLE = """
-.ps-nucleus { display: flex; align-items: baseline; gap: 6px; padding-left: 6px; font-size: 12px;
+.ps-back { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px;
+  padding: 0 10px; border: 1px solid var(--ps-line); border-radius: 6px; background: var(--ps-surface);
   color: var(--ps-muted); }
-.ps-nucleus a, a.ps-nucleus-link { color: var(--ps-data); text-decoration: none; font-weight: 600; }
-.ps-nucleus a { font-size: 15px; }
-.ps-nucleus a:hover, a.ps-nucleus-link:hover { text-decoration: underline; }
+.ps-back:hover { border-color: var(--ps-muted); }
+.ps-back a { font-size: 16px; font-weight: 600; color: var(--ps-accent); text-decoration: none; }
+.ps-back-arrow { color: var(--ps-accent); font-weight: 600; }
+.ps-back a::after { content: ""; position: absolute; inset: 0; }
+.ps-back > .q-btn { position: absolute; inset: 0; color: var(--ps-accent); font-weight: 600; }
+a.ps-nucleus-link { color: var(--ps-data); text-decoration: none; font-weight: 600; }
+a.ps-nucleus-link:hover { text-decoration: underline; }
 a.ps-nucleus-link { display: inline-block; font-size: 13px; margin-top: 8px; }
 .ps-beside { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 14px; font-size: 13px;
   line-height: 1.45; }
@@ -195,10 +202,11 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     """Build the planner page for the current client (call inside a NiceGUI page function).
 
     It opens ``experiment`` (a folder), or a new setup from ``template`` (:data:`physim.nuclear.workbench.TEMPLATES`)
-    or ``example``, or else the most recent experiment; with no experiment yet it offers the start page (the
-    nuclei, or the kinds of experiment) first. An ``experiment`` that names no experiment folder is said in a
-    sentence above the nuclei screen (:func:`missing_experiment`). ``theme`` is "light" or "dark"; ``None`` takes
-    the one this browser used last, the system's setting the first time."""
+    or ``example``; ``nucleus`` opens the page of that nucleus instead, with ``observable`` and ``key`` the comparison
+    of that observable. With none of them the page opens on a nucleus (:func:`.start.opening`: the one this browser
+    showed last), with the most recent experiment behind it. An ``experiment`` that names no experiment folder is
+    said in a sentence above the nuclei screen (:func:`missing_experiment`). ``theme`` is "light" or "dark"; ``None``
+    takes the one this browser used last, the system's setting the first time."""
     from types import SimpleNamespace
 
     from nicegui import Client, background_tasks, run, ui
@@ -212,7 +220,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     from . import panel as _panel
     from . import start as _start
     from . import tab_analysis, tab_data, tab_fusion, tab_lifetimes, tab_physics, tab_plan, tab_report, tab_run
-    from . import tab_nucleus as _tab_nucleus
+    from . import nucleus_parts as _parts
     from . import tab_setup
     from . import tab_shellmodel
 
@@ -221,6 +229,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         experiment = None
     first, offer_list = _starting_planner(example, template, experiment)
     state = {"planner": first, "events": events, "theme": theme or "light", "open": None, "stage": "setup",
+             # Whether an experiment is open (a first template's setup is none), so a start view leads back to it.
+             "experiment_open": not offer_list,
              "export": None, "journal": "physical_review", "width": "single", "format": "pdf",
              # Whether the setup's numbers are there (the panel and the step bar show them); a page built whole
              # (``prebuild``) computes them as it is built.
@@ -668,6 +678,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     def use(planner: Planner) -> None:
         lost = len(pending())
         state["planner"] = planner
+        state["experiment_open"] = True
         if lost:
             ui.notify(f"{lost} change{'s' * (lost != 1)} of the setup you left had not been applied, and "
                       f"{'were' if lost != 1 else 'was'} dropped.", type="warning", multi_line=True,
@@ -1949,9 +1960,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         """The scene on the whole screen: the setup panel, the status strip, the tabs and the panels beside and
         below the scene are hidden, and the scene fills the window; off brings them back."""
         scene_state["full"] = on
-        nav = state.get("nav")
-        if nav is not None:
-            (nav.hide if on else nav.show)()
+        show_rail()
         for el in (state.get("strip_box"), footer_boxes.get("setup"),
                    *scene_state.get("extras", [])):
             if el is not None:
@@ -3029,7 +3038,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             await build_stage(key)
 
     def go_to(key: str) -> None:
-        """Show a stage, as choosing it in the step bar does."""
+        """Show a stage, as choosing it in the step bar does (the steps come back first from a start view)."""
+        if state.get("start_shown") and key != "physics":
+            show_start(False)
         if state.get("tabs") is not None and state["stage"] != key:
             state["tabs"].set_value(key)
 
@@ -3451,31 +3462,70 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             waiting(state["stage"])
         sync_steps()
 
+    #: The Light/Dark switches on the page (in the rail and in the bar of the start views): they stay in step.
+    theme_switches: list = []
+
+    def theme_switch() -> None:
+        theme_switches.append(ui.toggle({"light": "Light", "dark": "Dark"}, value=state["theme"],
+                                        on_change=lambda e: set_theme(e.value)).props("dense no-caps unelevated"))
+
     def set_theme(name: str) -> None:
         if name == state["theme"]:
             return
         state["theme"] = name
         dark.value = name == "dark"
+        for switch in theme_switches:
+            switch.value = name
         ui.run_javascript(f"try {{ localStorage.setItem('physim-planner-theme', '{name}') }} catch (e) {{}}")
         refresh_results()  # the figures are drawn in the theme's colours
 
     async def restore_choices() -> None:
         """The theme this browser used last (the system's light or dark setting the first time), unless the
-        address gives it (?theme=...)."""
+        address gives it (?theme=...); and the nucleus it showed last, which the page opens on when its address
+        names nothing (:func:`open_remembered`)."""
         try:
-            saved_theme, system_dark, auto = await ui.run_javascript(
-                "(() => { let t = null, a = null; try { t = localStorage.getItem('physim-planner-theme'); "
-                "a = localStorage.getItem('physim-planner-auto-apply') } catch (e) {} "
-                "return [t, window.matchMedia('(prefers-color-scheme: dark)').matches, a] })()", timeout=3)
+            saved_theme, system_dark, auto, nucleus_shown = await ui.run_javascript(
+                "(() => { let t = null, a = null, n = null; try { t = localStorage.getItem('physim-planner-theme'); "
+                "a = localStorage.getItem('physim-planner-auto-apply'); "
+                "n = localStorage.getItem('physim-planner-nucleus') } catch (e) {} "
+                "return [t, window.matchMedia('(prefers-color-scheme: dark)').matches, a, n] })()", timeout=3)
         except Exception:  # noqa: BLE001 -- no answer from the browser: keep the defaults
+            if not gone():
+                await open_remembered(None)
             return
         if auto == "on" and not state["auto_apply"]:
             state["auto_apply"] = True
             pending_bar.refresh()
         if theme is None:
             wanted = saved_theme if saved_theme in THEMES else ("dark" if system_dark else "light")
-            if wanted != state["theme"]:
-                theme_toggle.value = wanted
+            set_theme(wanted)
+        await open_remembered(nucleus_shown)
+
+    async def open_remembered(nuclide: Optional[str]) -> None:
+        """A page that opened without an address, once the browser answered: the nucleus it opens on
+        (:func:`.start.opening`). Until then the waiting line stands there. Where the user went meanwhile is left
+        alone."""
+        st = state["start"]
+
+        def waits() -> Optional[str]:
+            """What of the start page waits for the answer: the view shown, or the way back from Physics."""
+            if st.get("view") == "opening":
+                return "view"
+            return "before_physics" if st.get("view") == "physics" and st.get("before_physics") == "opening" else None
+
+        if waits() is None:
+            return
+        try:
+            found = await run.io_bound(_start.opening, nuclide)
+        except Exception:  # noqa: BLE001 -- the nuclei screen says what cannot be read
+            found = {"view": "nuclei"}
+        if found is None or gone():
+            return
+        where = waits()
+        if where is not None:
+            st.update(nucleus=found.get("nucleus"))
+            st[where] = found["view"]
+            show_start(True)
 
     ctx = SimpleNamespace(
         ui=ui, P=P, state=state, edit=edit, section=section, help_icon=help_icon, bind=bind,
@@ -3503,19 +3553,23 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
 
     @ui.refreshable
     def experiment_button() -> None:
-        """At the top of the rail: the nucleus the experiment studies (a link to its page; nothing for an
-        experiment that studies none), the experiment's name, with what is done to an experiment as its menu,
-        and under it the beam and the target."""
+        """At the top of the rail: the way back to the nucleus the experiment studies (to the nuclei, for an
+        experiment that studies none), the experiment's name, with what is done to an experiment as its menu, and
+        under it the beam and the target."""
         p = P()
         d = p.draft
         with ui.column().classes("w-full gap-1"):
             nucleus = wb.studied(p.experiment)
-            if nucleus is not None:
-                with ui.element("div").classes("ps-nucleus"):
-                    ui.link(nucleus["label"], _tab_nucleus.url(nucleus["nuclide"])).tooltip(
+            with ui.element("div").classes("ps-back"):
+                if nucleus is not None:
+                    ui.label("←").classes("ps-back-arrow")
+                    ui.link(nucleus["label"], _parts.url(nucleus["nuclide"])).tooltip(
                         f"The nucleus this experiment studies: every result for {nucleus['label']}, by every "
                         "route and across its experiments")
-                    ui.label("▸ this experiment")
+                    ui.label("the nucleus")
+                else:
+                    ui.button("← All nuclei", color=None, on_click=lambda: open_start("nuclei")).props(
+                        "flat no-caps align=left").tooltip("This experiment studies no nucleus")
             with ui.button(p.name, color=None).props("flat no-caps icon-right=expand_more").classes(
                     "w-full ps-experiment"):
                 with ui.menu():
@@ -3538,10 +3592,11 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
     ui.add_css(STEP_STYLE)
     ui.add_css(KIND_STYLE)
     ui.add_css(NUCLEUS_STYLE)
+    ui.add_css(_start.TOP_STYLE)
     ui.add_css(record_css(".ps-record"))
     dark = ui.dark_mode(state["theme"] == "dark")
-    # The rail on the left: the experiment, the steps (built by main_area), and at its foot the Physics reference
-    # and the theme.
+    # The rail on the left: the way back to the nucleus, the experiment, the steps (built by main_area), and at its
+    # foot the Physics reference and the theme. It belongs to an experiment: a start view has the bar instead.
     with ui.left_drawer(value=True).classes("ps-nav").props("width=232 bordered behavior=desktop") as nav:
         with ui.column().classes("w-full gap-3 ps-nav-col"):
             with ui.row().classes("w-full items-center gap-2 no-wrap"):
@@ -3555,9 +3610,7 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                 ui.button("Physics", icon="menu_book", color=None, on_click=lambda: go_to("physics")).props(
                     "flat no-caps dense").classes("ps-muted").tooltip(
                     "The physics behind the numbers, and where each part is validated")
-                theme_toggle = ui.toggle({"light": "Light", "dark": "Dark"}, value=state["theme"],
-                                         on_change=lambda e: set_theme(e.value)).props("dense no-caps unelevated")
-    state["nav"] = nav
+                theme_switch()
     with ui.dialog() as upload_dialog, ui.card():
         ui.label("Import a setup file (.toml) as this experiment's setup")
         ui.upload(auto_upload=True, on_upload=import_file).props("accept=.toml max-files=1")
@@ -3585,6 +3638,8 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
                     "Apply what was changed and close (Ctrl+Enter applies without closing)")
                 ui.button("Cancel", color=None, on_click=cancel_editing).props("flat no-caps").classes(
                     "ps-muted").tooltip("Close without the changes made here")
+    top_box = ui.element("div").classes("w-full")
+    top_box.set_visibility(False)
     start_box = ui.column().classes("w-full gap-2")
     start_box.set_visibility(False)
     with ui.column().classes("w-full gap-2") as work_box:
@@ -3593,45 +3648,104 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
         state["strip_box"] = strip_box
         main_area()
 
-    def refresh_start() -> None:
-        start_box.clear()
-        with start_box:
-            _start.render(start_ctx)
+    def show_rail() -> None:
+        """The rail, for the steps of an experiment: not on a start view, nor beside the scene on the whole screen."""
+        nav.set_value(not state.get("start_shown") and not scene_state["full"])
 
     def show_start(on: bool) -> None:
-        """The start page in place of the steps (``on``), or the steps again."""
+        """A start view with its bar in place of the rail and the steps (``on``: built again, as
+        ``state["start"]["view"]`` says), or the steps again. The Physics reference as a start view is its stage,
+        under a head of its own."""
+        physics = on and state["start"].get("view") == "physics"
         state["start_shown"] = on
+        show_rail()
+        top_box.set_visibility(on)
         start_box.set_visibility(on)
-        work_box.set_visibility(not on)
-        box = state.get("steps_box")
-        if box is not None:
-            box.classes(add="ps-steps-off") if on else box.classes(remove="ps-steps-off")
+        work_box.set_visibility(physics or not on)
+        stage_for_physics(physics)
         if on:
-            refresh_start()
+            start_box.clear()
+            with start_box:
+                _start.render(start_ctx)
+            refresh_bar()
+
+    def stage_for_physics(on: bool) -> None:
+        """The Physics stage while Physics is a start view; the step the experiment was on again after it."""
+        if on and state.get("step_left") is None:
+            state["step_left"], key = state["stage"], "physics"
+        elif not on and state.get("step_left") is not None:
+            key = state.pop("step_left")
+        else:
+            return
+        if state["stage"] != key:
+            state["tabs"].set_value(key)
+            state["stage"] = key
+
+    def open_physics() -> None:
+        """The Physics reference as a start view, with the way back to the view it was opened from."""
+        st = state["start"]
+        if st.get("view") != "physics":
+            st.update(before_physics=st.get("view"), view="physics")
+            _parts.show_from_top(start_ctx)
+
+    def remember_nucleus(nuclide: str) -> None:
+        """Keep in the browser which nucleus was shown last, for the next time the app is opened."""
+        try:
+            name = _results.nuclide_name(nuclide)
+        except (ValueError, KeyError, TypeError, IndexError):
+            return
+        client.run_javascript(
+            f"try {{ localStorage.setItem('physim-planner-nucleus', {json.dumps(name)}) }} catch (e) {{}}")
+
+    def follow(address: str) -> None:
+        """A link of the page to a nucleus or to an observable of it: opened in place, so the experiment one comes
+        from stays open behind it."""
+        named = _parts.named_in(address)
+        if named is not None:
+            _parts.open_nucleus(start_ctx, *named)
 
     def open_start(view: str) -> None:
         """The start page on the nuclei ("nuclei": open an experiment from its nucleus) or on the kinds of
         experiment ("kinds": a new experiment, no nucleus filled in)."""
-        st = state.setdefault("start", {"kind": None})
+        st = state["start"]
         st.update(view=view, kind=None, for_nucleus=None)
         st.pop("values", None)
         show_start(True)
 
     start_ctx = SimpleNamespace(ui=ui, state=state, create_experiment=create_experiment,
                                 open_experiment=open_experiment, open_example=open_example,
-                                import_setup=lambda: upload_dialog.open(), refresh_start=refresh_start,
-                                close_start=None if offer_list else (lambda: show_start(False)))
-    if nucleus:  # /?nucleus=62Ni: the page of that nucleus (app/tab_nucleus.py), on a row of its table if named
-        state["start"] = {"kind": None, "view": "nucleus", "nucleus": nucleus, "observable": observable, "key": key}
+                                import_setup=lambda: upload_dialog.open(), refresh_start=lambda: show_start(True),
+                                close_start=lambda: show_start(False),
+                                experiment_name=lambda: P().name if state["experiment_open"] else None,
+                                remember_nucleus=remember_nucleus, open_physics=open_physics,
+                                theme_switch=theme_switch)
+    state["start"] = {"kind": None}
+    if nucleus:  # /?nucleus=62Ni: the page of that nucleus; with an observable, its comparison
+        try:
+            nucleus = _results.nuclide_name(nucleus)
+        except (ValueError, KeyError, TypeError, IndexError):
+            pass  # no nuclide: its page says so
+        state["start"].update(view="observable" if observable else "nucleus", nucleus=nucleus,
+                              observable=observable, key=key)
     elif not_there:  # ?experiment= names no experiment: the sentence, above the nuclei
-        state["start"] = {"kind": None, "view": "nuclei", "note": not_there}
-    if nucleus or not (example or template or experiment):  # the nuclei are the first screen
+        state["start"].update(view="nuclei", note=not_there)
+    elif not (example or template or experiment):  # what the browser showed last (open_remembered), if anything
+        state["start"].update(view="opening" if _start.anything_yet() else "kinds")
+    with top_box:
+        refresh_bar = _start.top_bar(start_ctx)
+    if state["start"].get("view"):
         show_start(True)
     if not prebuild:
         refresh_results()  # the numbers on the worker, then the panel, the strip and the stages
     # Ctrl+Enter applies the changes from anywhere on the page, a field being typed in included (its own Enter
     # reaches the server first and puts its text in the draft).
     ui.on("physim_apply", lambda: apply_changes())
+    # A link of the page to a nucleus is followed in place (the address is there for a new tab or window).
+    ui.on("physim_nucleus", lambda e: follow(e.args))
+    ui.add_head_html("<script>document.addEventListener('click', (e) => { const a = e.target.closest("
+                     "'a[href^=\"/?nucleus=\"]'); if (!a || a.target === '_blank' || e.button || e.ctrlKey || "
+                     "e.metaKey || e.shiftKey || e.altKey) return; e.preventDefault(); "
+                     "emitEvent('physim_nucleus', a.getAttribute('href')); });</script>")
     ui.add_head_html("<script>document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && "
                      "(e.ctrlKey || e.metaKey) && !e.repeat) emitEvent('physim_apply'); });</script>")
     ui.timer(0.2, restore_choices, once=True)
