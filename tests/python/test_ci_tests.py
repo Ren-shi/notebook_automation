@@ -187,7 +187,10 @@ def repo(tmp_path, ci):
             self.edit(path, old, new)
             git("commit", "-a", "-q", "-m", "x")
 
+        # No bytecode: a .pyc knows the size and the second of its source, so that after an edit that keeps the size in the
+        # same second the code before the edit would run.
         env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PHYSIM_CI_RECORD")}
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
 
         def call(self, *args):
             return subprocess.run([sys.executable, "scripts/ci_tests.py", *args], cwd=tmp_path, capture_output=True,
