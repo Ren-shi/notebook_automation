@@ -9,11 +9,12 @@ yields, so it tests whether physim extracts the same B(E2) from the same data as
 import copy
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from physim.nuclear import Experiment
+from physim.nuclear import Experiment, multistep
 from physim.nuclear import coulex_reproduction as cr
 
 REFERENCE = Path(__file__).resolve().parents[2] / "tests" / "reference" / "nuclear"
@@ -144,6 +145,56 @@ def test_the_comparisons_catch_what_they_should(refd):
         assert scaled["worst"] == pytest.approx(abs(factor - 1) / 0.02, rel=1e-6)
 
 
+@pytest.fixture
+def quick_feeding(monkeypatch):
+    """The feeding without the rates of each scheme (the slow part), of which the yields take only the number of target
+    atoms (any number here: it cancels in the ratio)."""
+    carbon = SimpleNamespace(excitation=None, nuclide=SimpleNamespace(name="12C"), atoms_per_cm2=5e19)
+    monkeypatch.setattr(multistep, "Rates", lambda exp: SimpleNamespace(channels=[carbon]))
+    return cr.feeding_effect
+
+
+def test_the_schemes_of_the_feeding_have_no_conversion(quick_feeding, monkeypatch):
+    """The feeding compares two schemes without internal conversion, as GOSIA's input. α in one of them only takes the
+    factor 1 + α off its γ rays, so off the feeding α (1 + feeding): for ENSDF's α of 2⁺ → 0⁺ 1.5 % (ring 2) and 2.2 %
+    (ring 3) of the feeding, the difference from GOSIA that stood there unexplained. The same in both moves nothing."""
+    schemes = {name: cr.setup(levels=name).levels["beam"] for name in ("two", "ensdf")}
+    assert all(t.conversion is None for s in schemes.values() for t in s.transitions)
+    first = Experiment.example(cr.ENSDF_SCHEME_EXAMPLE).levels["beam"].transitions[0]
+    alpha = first.conversion.value
+    assert (first.initial, first.final) == (1, 0) and alpha == pytest.approx(1.72e-4)
+
+    def with_conversion(make):
+        def made(*args):
+            beam = make(*args)
+            beam["transition"][0]["conversion"] = alpha
+            return beam
+        return made
+
+    coarse = {"angle_step": 8.0, "energies": 2}  # the shift is the same on every grid
+    two, ensdf = cr._two_levels, cr._ensdf_levels
+    plain = quick_feeding(**coarse)
+    for conversion_in, factor in (("ensdf", 1 / (1 + alpha)), ("two", 1 + alpha), ("both", 1.0)):
+        monkeypatch.setattr(cr, "_two_levels", two if conversion_in == "ensdf" else with_conversion(two))
+        monkeypatch.setattr(cr, "_ensdf_levels", ensdf if conversion_in == "two" else with_conversion(ensdf))
+        got = quick_feeding(**coarse)
+        for ring, share in (("Ring2", 0.015), ("Ring3", 0.0225)):
+            assert (1 + got[ring]) / (1 + plain[ring]) - 1 == pytest.approx(factor - 1, abs=1e-10)
+            if conversion_in == "ensdf":
+                assert got[ring] / plain[ring] - 1 == pytest.approx(-share, abs=5e-4)
+
+
+@needs_reference
+def test_the_feeding_is_gosias_within_its_band(quick_feeding, refd):
+    """Both rings within 2 % of GOSIA's, on half of the check's angles and beam energies (the check's own grid, +0.12
+    and +0.27 %, is in the reproduction's tests)."""
+    got = quick_feeding(angle_step=4.0, energies=3)
+    s, rel = refd["gosia"]["sensitivity"], refd["bands"]["sensitivity"]["rel"]
+    dev = {r: got[r] / s[cr.REF_RING[r]]["feeding"] - 1 for r in cr.RINGS}
+    assert all(abs(x) < rel for x in dev.values()), dev
+    assert [dev[r] for r in cr.RINGS] == pytest.approx([0.0032, 0.0041], abs=1e-3)
+
+
 def checks_with(rows) -> dict:
     """Checks as :func:`cr.outcome` takes them, the GOSIA rows given as (deviation, band, known)."""
     gosia = [{"setting": "as_run", "ring": r, "deviation": dev, "band": band, "passed": abs(dev) <= band,
@@ -227,10 +278,12 @@ def test_the_other_parts_of_the_reproduction(reproduced):
     sens = {(x["what"], x["ring"]): x for x in c["sensitivities"]["rows"]}
     assert all(sens["q_plus", ring]["physim_percent"] > 0 > sens["q_minus", ring]["physim_percent"] for ring in cr.RINGS)
     # Each change is GOSIA's to 2 %: the reorientation to 0.1 % of it, the feeding (GOSIA's has an M1 element, integer
-    # masses and its own stopping) to 2 %: −1.4 % (ring 2) and −1.98 % (ring 3), right at the band (the reference
-    # file says so).
+    # masses and its own stopping) to 0.12 % (ring 2) and 0.27 % (ring 3). With ENSDF's internal conversion in one of
+    # the two schemes the feeding was 1.5 % and 2.2 % of it lower.
     for (what, ring), x in sens.items():
         assert abs(x["difference_rel"]) < (0.02 if what == "feeding" else 0.01), (what, ring, x)
+    for ring, dev in (("Ring2", 0.0012), ("Ring3", 0.0027)):
+        assert sens["feeding", ring]["difference_rel"] == pytest.approx(dev, abs=1e-3)
     closure = c["closure"]
     assert len(closure["seeds"]) == 4 and all(len(x["each"]) == 4 and x["scatter"] > 0 for x in closure["rows"])
     assert all(x["monte_carlo"] < 0.008 for x in closure["rows"])
