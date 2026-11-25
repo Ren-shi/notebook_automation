@@ -388,9 +388,10 @@ def reaction_depths(experiment, layers: Optional[list] = None, array: Optional[A
 
 
 def _through_target(experiment, layers: Optional[list] = None, array: Optional[Array] = None,
-                    order: int = REACTION_DEPTH_ORDER) -> Optional[tuple]:
+                    order: int = REACTION_DEPTH_ORDER, thin: bool = False) -> Optional[tuple]:
     """The excitations of the ``[reaction]`` nucleus through the target, for :func:`reaction_depths` (which says when
-    this is None) and :func:`doppler_spread`: (depths, the quadrature weight of each, the reaction at each, {(detector
+    this is None) and :func:`doppler_spread` (``thin``: also through a target that is thin or one slice):
+    (depths, the quadrature weight of each, the reaction at each, {(detector
     index, whether the particle is the target recoil): (``order``² directions into the detector, the solid angle of
     each, the CM angle of the scattered beam and the lab cross section, both depths × directions)})."""
     if experiment.excitation is None or getattr(experiment, "lifetime", None) is not None:
@@ -403,7 +404,7 @@ def _through_target(experiment, layers: Optional[list] = None, array: Optional[A
     if channel is None:
         return None
     through = depth_probability(experiment, channel, layers)
-    if through.thin or through.slice_count() == 1:
+    if not thin and (through.thin or through.slice_count() == 1):
         return None
     x, w = np.polynomial.legendre.leggauss(DEPTH_AVERAGE_POINTS)
     zs = (x + 1) / 2 * through.reached
@@ -446,8 +447,9 @@ def doppler_spread(experiment, seen: dict, step: float, rings: Optional[list] = 
     and corrected as the events are. Within a crystal, and around the beam in it, the γ rays are spread evenly.
 
     ``seen``: the weight of each crystal for each particle detector ({name: array}); detectors that are not in it are
-    left out, and ``rings`` takes some rings or strips of them. None without a half-life, and where
-    :func:`reaction_depths` is None (a lifetime measurement, a thin target)."""
+    left out, and ``rings`` takes some rings or strips of them. In a thin target hardly any nucleus decays inside, and
+    the spread is what the segments, the faces of the crystals and the add-back leave: a flat top and tails that end,
+    as no Gaussian has. None without a half-life, and for a lifetime measurement."""
     exc = experiment.excitation
     if exc is None:
         return None
@@ -455,7 +457,7 @@ def doppler_spread(experiment, seen: dict, step: float, rings: Optional[list] = 
     if lives is None or not lives[0] > 0:
         return None
     layers, array = stack(experiment), Array.from_experiment(experiment)
-    through = _through_target(experiment, layers, array, SPREAD_FACE_ORDER)
+    through = _through_target(experiment, layers, array, SPREAD_FACE_ORDER, thin=True)
     if through is None:
         return None
     zs, wq, reacs, faces = through
