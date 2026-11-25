@@ -28,6 +28,18 @@
         "doi": "",
         "source_opened": "",
         "notes": ""
+      },
+      {
+        "value": 0.089,
+        "unc": 0.0025,
+        "unit": "e2b2",
+        "value_e2b2": 0.089,
+        "method": "EVALUATION: Raman, Nestor, Tikkanen 2001 adopted",
+        "facility_or_code": "ORNL",
+        "reference": "S. Raman, C. W. Nestor Jr., P. Tikkanen, At. Data Nucl. Data Tables 78, 1 (2001)",
+        "doi": "10.1006/adnd.2001.0858",
+        "source_opened": "",
+        "notes": ""
       }
     ],
     "BE2_down": [

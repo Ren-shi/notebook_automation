@@ -52,7 +52,8 @@ and run by hand, so each file records exactly how it was produced, so that anyon
   a rerun (same seed), and the validation notebook *Reproduced experiment* draws it.
 - `literature_ni62_cut.json` is no code's output: a cut-down copy, in the same shape, of the literature file of
   the ⁶²Ni paper verification (published B(E2), τ, Q_s and μ of the 2⁺₁ state with their uncertainties, methods
-  in words and references), for the tests of `nucleus.import_points` (`test_nuclear_nucleus_report.py`).
+  in words and references; ENSDF's values and one other evaluation among them), for the tests of
+  `nucleus.import_points` (`test_nuclear_nucleus.py`, `test_nuclear_nucleus_report.py`).
 - `neutron_carbon_endf.csv` is an evaluated library, not a code run: neutron cross sections of natural carbon (total, elastic, non-elastic), ¹²C(n,α) and H-1 from ENDF/B-VIII.0 at 0.5–20 MeV, pointwise and averaged over ±2.5 % and ±10 % of the energy, written by `scripts/endf_neutron_reference.py <folder with the ENDF-6 files>`. The same script writes physim's carbon table (`--toml`). Read by the check `carbon_vs_endf` and by `test_nuclear_neutrons.py`.
 - `gemini_<beam>_<target>_<E>MeV.csv` are GEMINI++ runs (shipped with LISE++) for the same fusion-evaporation
   systems as the PACE4 files: residue cross sections as rows, E*, σ_fus, multiplicities and mean

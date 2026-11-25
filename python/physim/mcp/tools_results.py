@@ -62,6 +62,9 @@ def table_line(t: dict) -> str:
     parts = []
     if t["evaluated"] is not None:
         parts.append(f"evaluated {t['evaluated']['text']}")
+    if t["other_evaluations"] is not None:
+        n = t["other_evaluations"]["count"]
+        parts.append(f"{n} other evaluation" + ("s" if n != 1 else ""))
     for name, words in (("measured", "measured"), ("outside_program", "from an outside program"),
                         ("theory", "from theory")):
         s = t[name]
@@ -138,7 +141,8 @@ def comparison_view(v: dict) -> dict:
                                                 f"{compare.VERDICTS[e.verdict].lower()}")
                 else:
                     row["against_reference"] = ((apart if e.ratio is None else f"× {e.ratio:.3g}")
-                                                + " (no uncertainty: not judged)")
+                                                + (" (another evaluation, an average of measurements: not judged)"
+                                                   if compare.averages(e.row) else " (no uncertainty: not judged)"))
                 if e.independent_of_reference is False:
                     row["not_independent_of_reference"] = True
             rows.append(row)
@@ -279,7 +283,11 @@ class ResultTools:
         total), stat and sys, or plus and minus; a measured point needs one. method is "coulex-yield", "coulex-fit", "rdds", "dsam", "nrf", "inelastic-neutron",
         "electron-scattering", "inelastic-scattering", "transfer", "moment" (a static moment measured: laser
         spectroscopy, transient field, NMR) or "other" ("shell-model" for theory). evidence is "measured"
-        (default), "outside program" (GOSIA and the like) or "theory". Say where it is from: reference {"authors",
+        (default), "outside program" (GOSIA and the like), "theory" or "evaluated" (another evaluation than ENSDF's,
+        with the method "evaluation": it averages measurements, so it is listed as not independent of them and is
+        not judged; ENSDF's comes in with snapshot_evaluation). A value the results hold already (the same source,
+        level or transition and method, and the same value in any unit) is refused, with the row that holds it; to
+        change that row, correct it. Say where it is from: reference {"authors",
         "year", "doi", "where" in the paper} or own_measurement {"date": "2027-06-14", "note"}, one of the two.
         detail is a free line beside the method. corrects is the id of the data point this one replaces (give the whole point
         again): the old row is kept and superseded. Everything wrong is said at once."""
@@ -339,8 +347,11 @@ class ResultTools:
         {plus, minus}), unit, method in words and reference as printed: the words become a method (GOSIA or
         reorientation: coulex-fit; other Coulomb excitation: coulex-yield; DSAM: dsam; (n,n'gamma): inelastic-
         neutron; NRF: nrf; (e,e'): electron-scattering; transient field: moment; shell model: theory) and are kept
-        in the row's detail; each value is stored as the paper gives it (a lifetime stays tau). An evaluation (ENSDF
-        adopted, a table of averages) is refused: ENSDF's comes in with snapshot_evaluation."""
+        in the row's detail; each value is stored as the paper gives it (a lifetime stays tau). ENSDF's adopted
+        values are refused: they come in with snapshot_evaluation. Another evaluation (Raman, Pritychenko, a table
+        of averages) is taken as an evaluated row that is not independent of the measurements it averages: it is
+        compared without a verdict and never counts as a measurement. A value the results hold already in another
+        unit or with another detail is listed under already_there."""
         found = _nucleus.import_points(path, nucleus, self.home)
 
         def listed(entries: list, extra) -> list:

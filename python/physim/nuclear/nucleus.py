@@ -13,6 +13,7 @@ plain data (dicts and lists) that a screen, the report and the MCP tools can all
     nucleus.nuclei()                                  # the nuclei, their experiments and what is still open
     nucleus.view("62Ni")                              # one nucleus: its experiments and its observables as rows
     nucleus.observable_view("62Ni", "B(E2)", "2+1 > 0+1")   # the comparison, the routes, what the value gives
+    nucleus.lowest_levels("62Ni")                     # the ground state and the next levels, from the evaluation
 
 **The evaluation as rows** (:func:`evaluation`, :func:`snapshot_evaluation`). The adopted values of the local
 ENSDF copy become ``evaluated`` rows: level energies, mean lives, quadrupole moments and B(E2) values, each with
@@ -26,7 +27,11 @@ as one says it ("2+1", "2+ at 1173 keV", "2+1 > 0+1"; :func:`level`, :func:`tran
 and :class:`PointProblem` says all that is wrong at once. A point is never changed: a correction is a new row that
 supersedes it (:func:`correct_data_point`), and so is a retraction (:func:`retract_data_point`).
 :func:`import_points` takes the points of a file (JSON or CSV with the fields of a data point, or a literature
-file of the paper verifications) and says what was added, what the ledger held already and what was refused.
+file of the paper verifications) and says what was added, what the ledger held already and what was refused. A
+value counts once: a point that repeats another in a different unit or detail (:func:`repeats`) is there already,
+and :func:`retract_duplicates` withdraws the repeats of a ledger from before that rule. Another evaluation than
+ENSDF's comes in as an evaluated row that is marked as not independent of the measurements
+(:func:`physim.nuclear.compare.averages`): it is compared and not judged, and never becomes the reference by itself.
 
 **The views** (:func:`nuclei`, :func:`view`, :func:`observable_view`). The evidence stays in its two groups:
 independent (measured, evaluated, theory, outside program) and projected (a simulated run analysed back, compared
@@ -35,7 +40,8 @@ comparison of :mod:`physim.nuclear.compare`, the routes of the registry (:mod:`p
 marked done, projected (simulated runs only), in physim or later and tested for this nucleus (:func:`applies`),
 the registry's conversions applied to the reference value, the checks against other observables and the
 calculations (:func:`checks`: plain ratios of independent rows, and the rotor reading), what a value is used for,
-and the history.
+and the history; and the same comparison ready to draw (:func:`drawing`): the values grouped by the family of their
+method, with their places on one axis, the counts by verdict and what stands out.
 
 **No formula of its own.** Every number here comes from a function that existed before: the level scheme's own
 derivation (:class:`~physim.nuclear.levels.LevelScheme`), :func:`physim.nuclear.lifetimes.level_taus`, and the
@@ -68,14 +74,15 @@ _log = logging.getLogger(__name__)
 #: The name the evaluation's rows carry in their origin (``origin["evaluation"]``).
 ENSDF = "ENSDF"
 
-#: The evidence a data point can be: independent evidence that someone brings in. The evaluation comes from the
-#: snapshot and projected rows from the analysis of a simulated run.
-POINT_EVIDENCE = ("measured", "outside program", "theory")
+#: The evidence a data point can be: independent evidence that someone brings in. "evaluated" is another evaluation
+#: than ENSDF's, whose values come from the snapshot; projected rows come from the analysis of a simulated run.
+POINT_EVIDENCE = ("measured", "outside program", "theory", "evaluated")
 #: The methods each evidence of a data point allows (a key of :data:`physim.nuclear.results.METHODS`).
 POINT_METHODS = {
     "measured": tuple(m for m in METHODS if m not in ("shell-model", "evaluation", "converted")),
     "outside program": tuple(m for m in METHODS if m not in ("evaluation", "converted")),
     "theory": ("shell-model", "other"),
+    "evaluated": ("evaluation",),
 }
 
 #: What a route of the registry can be for a nucleus: an independent row by that method holds now; only
@@ -437,7 +444,8 @@ class PointProblem(ValueError):
 
 
 class PointThere(PointProblem):
-    """A data point that the ledger holds already, word for word: ``row`` is the row that holds it."""
+    """A data point that the ledger holds already, word for word or in another unit or detail (:func:`repeats`):
+    ``row`` is the row that holds it."""
 
     def __init__(self, problems: list, row: Row):
         super().__init__(problems)
@@ -505,6 +513,15 @@ def _direction(direction, o, problems: list) -> Optional[str]:
     return direction
 
 
+def _is_ensdf(origin: dict, detail: str = "") -> bool:
+    """Whether an evaluated point is ENSDF's own value: its reference is ENSDF or Nuclear Data Sheets, or the words
+    of its method say that the value is ENSDF's ("EVALUATION: ENSDF 2025 adopted", "adopted (from ENSDF, ...)")."""
+    said = f"{origin.get('authors') or ''} {origin.get('where') or ''}"
+    method = str(detail or "").split(";")[0]
+    return bool(re.search(r"\bENSDF\b|\bNucl(?:\.|ear) Data Sheets\b|\bNDS \d", said)
+                or re.search(r"^(?:EVALUATION[^:]*:\s*)?ENSDF\b|\bfrom ENSDF\b", method))
+
+
 #: The arguments of :func:`add_data_point` that hold the uncertainty, in its three forms.
 _UNCERTAINTY = ("uncertainty", "stat", "sys", "plus", "minus")
 
@@ -547,7 +564,71 @@ def _data_point(name: str, row_id: str, home) -> Row:
 def is_data_point(row: Row) -> bool:
     """Whether a row is a data point someone brought in: a published value or an own measurement."""
     return (row.evidence in POINT_EVIDENCE and not row.retracted and not is_evaluation(row)
+            and (row.evidence != "evaluated" or _compare.averages(row))
             and row.origin.get("kind") in ("reference", "own measurement"))
+
+
+#: How far apart two values may be, relative to the larger, to count as one value given twice: the rounding of a
+#: conversion (0.0906 e²b² and 906 e²fm⁴; W.u. to three digits).
+SAME_VALUE = 0.005
+
+_NSR = re.compile(r"(?<![\w.])(\d{4}[A-Z][A-Za-z][A-Za-z0-9]{2})(?!\w)")
+_INITIALS = re.compile(r"(?:[A-Z]\.?-?)+")
+
+
+def _doi(origin: dict) -> str:
+    text = str(origin.get("doi") or "").strip().lower()
+    return re.sub(r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)", "", text)
+
+
+def _nsr(origin: dict) -> tuple:
+    """The NSR key numbers a reference names ("2014Al20"), in its authors and in where."""
+    return tuple(_NSR.findall(f"{origin.get('authors') or ''} {origin.get('where') or ''}"))
+
+
+def _surname(origin: dict) -> str:
+    """The first author's surname, without accents and in lower case: "J. M. Allmond et al." and "Allmond, J. M."
+    are "allmond"."""
+    import unicodedata
+
+    first = re.split(r"\bet al\b|\band\b|[,;&]", str(origin.get("authors") or ""))[0]
+    names = [w for w in first.split() if not _INITIALS.fullmatch(w)]
+    plain = unicodedata.normalize("NFKD", names[-1]) if names else ""
+    return "".join(c for c in plain if not unicodedata.combining(c)).casefold()
+
+
+def same_source(a: Row, b: Row) -> bool:
+    """Whether two rows are from the same publication: the same DOI if both have one, else the same NSR key number
+    if both name one, else the same first author (by the surname) and year. Only rows with a reference have one."""
+    if not all(r.origin.get("kind") == "reference" for r in (a, b)):
+        return False
+    if _doi(a.origin) and _doi(b.origin):
+        return _doi(a.origin) == _doi(b.origin)
+    if _nsr(a.origin) and _nsr(b.origin):
+        return bool(set(_nsr(a.origin)) & set(_nsr(b.origin)))
+    return (bool(_surname(a.origin)) and _surname(a.origin) == _surname(b.origin)
+            and a.origin.get("year") == b.origin.get("year"))
+
+
+def _same_value(a: Row, b: Row) -> bool:
+    """Whether two rows of one observable have the same value once both are in its canonical convention
+    (:func:`physim.nuclear.compare.canonical`), to :data:`SAME_VALUE`. Rows that cannot be brought there are
+    compared as given, if in the same unit and direction."""
+    try:
+        x, y = _compare.canonical(a).value, _compare.canonical(b).value
+    except (ValueError, TypeError):
+        if (a.unit, a.direction) != (b.unit, b.direction):
+            return False
+        x, y = a.value, b.value
+    return abs(x - y) <= SAME_VALUE * max(abs(x), abs(y))
+
+
+def repeats(a: Row, b: Row) -> bool:
+    """Whether two data points are one published value, entered twice: the same nuclide, observable, level or
+    transition, method and evidence, from the same publication (:func:`same_source`), with the same value after the
+    conversion of its unit. The uncertainty, the detail and where in the paper may be said differently."""
+    return (all(getattr(a, n) == getattr(b, n) for n in ("nuclide", "observable", "key", "method", "evidence"))
+            and is_data_point(a) and is_data_point(b) and same_source(a, b) and _same_value(a, b))
 
 
 def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str] = None, *,
@@ -566,15 +647,18 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
     - the uncertainty, absolute and in the same unit, in one form: one total (``uncertainty``), statistical and
       systematic (``stat``, ``sys``), or ``plus`` and ``minus``. A measured point needs one, above 0.
     - ``method``: a key of :data:`physim.nuclear.results.METHODS` that fits the evidence (:data:`POINT_METHODS`).
-    - ``evidence``: "measured" (a published value or one's own), "outside program" (GOSIA and the like) or
-      "theory".
+    - ``evidence``: "measured" (a published value or one's own), "outside program" (GOSIA and the like), "theory",
+      or "evaluated" for another evaluation than ENSDF's (with the method "evaluation" and a reference). ENSDF's
+      own comes in by :func:`snapshot_evaluation`. Another evaluation averages measurements, so its row is marked
+      as not independent of them (:func:`physim.nuclear.compare.averages`).
     - where it is from: ``reference`` = {authors, year, doi, where in the paper}, or ``own`` = {date, note} for
       an own measurement. One of the two.
     - ``detail``: a free line beside the method ("thin target, GOSIA").
     - ``corrects``: the id of the data point this one replaces. The old row is kept and superseded.
 
-    Raises :class:`PointProblem` with everything that is wrong. A point that is in the ledger already, word for
-    word, is refused too.
+    Raises :class:`PointProblem` with everything that is wrong. A point that is in the ledger already is refused
+    too (:class:`PointThere`, with the row): one that says the same word for word, and one that gives the same value
+    from the same publication by the same method in another unit or detail (:func:`repeats`).
     """
     problems: list = []
     name = o = old = None
@@ -623,8 +707,7 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
         except (TypeError, ValueError):
             problems.append(f"the uncertainty '{label_}' must be a number that is not negative, got {x!r}")
     if evidence not in POINT_EVIDENCE:
-        why = {"evaluated": ": the evaluation is taken from ENSDF (snapshot_evaluation)",
-               PROJECTED: ": a projected row comes from the analysis of a simulated run, in its experiment"}
+        why = {PROJECTED: ": a projected row comes from the analysis of a simulated run, in its experiment"}
         problems.append(f"a data point is {', '.join(POINT_EVIDENCE[:-1])} or {POINT_EVIDENCE[-1]}, not "
                         f"'{evidence}'{why.get(evidence, '')}")
     elif evidence == "measured" and not any(forms):
@@ -637,7 +720,7 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
         problems.append(f"'{method}' is not a method: the method is one of "
                         + method_choices(evidence if evidence in POINT_METHODS else "measured"))
     elif evidence in POINT_METHODS and method not in POINT_METHODS[evidence]:
-        problems.append(f"'{method}' ({METHODS[method]}) is not a method of a {evidence} point; use one of "
+        problems.append(f"'{method}' ({METHODS[method]}) is not a method of a point that is {evidence}; use one of "
                         f"{', '.join(POINT_METHODS[evidence])}")
     if (reference is None) == (own is None):
         problems.append("say where the point is from: a reference {authors, year, doi, where} or an own "
@@ -645,6 +728,14 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
         origin = None
     else:
         origin = _reference(reference, problems) if reference is not None else _own(own, problems)
+    if evidence == "evaluated":
+        if own is not None:
+            problems.append("an evaluation is a published one: give its reference, not an own measurement")
+        elif origin is not None and _is_ensdf(origin, detail):
+            problems.append("ENSDF's adopted values come in with the snapshot of the evaluation "
+                            "(snapshot_evaluation), not as a data point")
+        elif origin is not None:
+            origin = {**origin, "not_independent_of": _compare.MEASUREMENTS}
     if corrects is not None and name is not None:
         try:
             old = _data_point(name, corrects, home)
@@ -662,6 +753,13 @@ def add_data_point(nuclide: str, observable: str, key, value, unit: Optional[str
     twin = next((r for r in held if _same(r, row)), None)
     if twin is not None:
         raise PointThere([f"this point is in the ledger of {name} already (row {twin.id})"], twin)
+    # A correction may come near the point it corrects (that one goes), and near what that one repeated before.
+    twin = next((r for r in held if repeats(r, row) and (old is None or not (r.id == old.id or repeats(r, old)))),
+                None)
+    if twin is not None:
+        raise PointThere([f"this value is in the ledger of {name} already: {cell(twin)['text']}, {source(twin)} (row "
+                          f"{twin.id}), from the same source by the same method, in another unit or detail. A value "
+                          f"counts once: correct that row if it should say more"], twin)
     if not results.add_point(row, home):  # the same words in the same second as a row since replaced or withdrawn
         raise PointProblem([f"a row that says exactly this was written this very second (row {row.id}, replaced "
                             f"or withdrawn since); add the point again in a moment"])
@@ -708,6 +806,46 @@ def retract_data_point(nuclide: str, row_id: str, reason: str, home: Union[str, 
     row = _data_point(name, row_id, home).revised(retracted=str(reason).strip())
     results.add_point(row, home)
     return row
+
+
+def retract_duplicates(nuclide: Optional[str] = None, home: Union[str, Path, None] = None) -> list:
+    """Withdraw the data points that repeat an earlier one (:func:`repeats`): the same published value entered twice,
+    in another unit or detail, before :func:`add_data_point` noticed that. Of each pair the one that came in later
+    goes (a corrected point counts from when it first came in), by a retraction that names the row it repeats;
+    nothing is deleted. Of one nucleus, or of every nucleus with a ledger of its own. Returns the retractions' rows
+    (``supersedes`` is the point withdrawn, ``retracted`` the note); a second call finds nothing and writes nothing.
+    """
+    if nuclide is not None:
+        names = [results.nuclide_name(nuclide)]
+    else:
+        names = _ledgers(home)
+    out = []
+    for name in names:
+        rows = results.read(results.nucleus_folder(name, home) / results.POINTS_FILE)
+        came_in = {r.id: results.history(rows, r)[-1].created for r in rows}
+        kept: list = []
+        for row in sorted((r for r in results.current(rows) if is_data_point(r)), key=lambda r: came_in[r.id]):
+            first = next((r for r in kept if repeats(r, row)), None)
+            if first is None:
+                kept.append(row)
+                continue
+            out.append(retract_data_point(name, row.id, (
+                f"repeats row {first.id} ({cell(first)['text']}, {source(first)}): the same value from the same "
+                f"source by the same method, entered twice; a value counts once"), home))
+    return out
+
+
+def _ledgers(home: Union[str, Path, None]) -> list:
+    """The nuclei that have a ledger of their own in the nuclei home."""
+    base = Path(home).expanduser() if home is not None else results.nuclei_home()
+    out = []
+    for p in sorted(base.iterdir()) if base.is_dir() else []:
+        if (p / results.POINTS_FILE).is_file():
+            try:
+                out.append(results.nuclide_name(p.name))
+            except (ValueError, KeyError):
+                continue
+    return out
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1018,8 +1156,9 @@ def import_points(path: Union[str, Path], nuclide: Optional[str] = None,
 
     - "added": [{"where", "what", "row"}]: the point's place in the file, it in a few words and its new
       :class:`~physim.nuclear.results.Row`;
-    - "already": [{"where", "what", "id"}]: points the ledger holds word for word, with the id of that row.
-      Importing the same file twice adds nothing the second time;
+    - "already": [{"where", "what", "id"}]: points the ledger holds, word for word or as the same value from the same
+      source in another unit or detail (:func:`repeats`), with the id of that row. Importing the same file twice
+      adds nothing the second time;
     - "refused": [{"where", "what", "reasons"}]: what is wrong with each, all of it (:class:`PointProblem`).
 
     ``nuclide`` is the nucleus the points are of: a point that names another one is refused, and a point that
@@ -1050,9 +1189,10 @@ def import_points(path: Union[str, Path], nuclide: Optional[str] = None,
       state unless the words name the transition. The method in words becomes a key of
       :data:`~physim.nuclear.results.METHODS` (:func:`method_of`) and the words are kept in the row's detail,
       with the facility or code and the file's notes on the value ("superseded by ..."). Each value is stored as
-      the paper gives it: a lifetime stays a τ row in ps, a B in W.u. stays the ↓ value in W.u.; the views convert on reading. An evaluation (ENSDF's adopted values, a
-      table of averages) is refused: ENSDF's comes in by :func:`snapshot_evaluation`, and another would count
-      the measurements it averages a second time. A quantity without a value is refused with that reason.
+      the paper gives it: a lifetime stays a τ row in ps, a B in W.u. stays the ↓ value in W.u.; the views convert on
+      reading. ENSDF's adopted values are refused: they come in by :func:`snapshot_evaluation`. Another evaluation
+      (Raman, Pritychenko, a table of averages) becomes an evaluated row that is not independent of the measurements
+      it averages. A quantity without a value is refused with that reason.
 
     Raises ``ValueError`` for a file that is none of these shapes, and ``OSError`` for one that cannot be read.
     """
@@ -1084,12 +1224,6 @@ def import_points(path: Union[str, Path], nuclide: Optional[str] = None,
             continue
         if want is not None and of != want:
             refused.append({"where": where, "what": what, "reasons": [f"the point is of {of}, not of {want}"]})
-            continue
-        if args.get("evidence") == "evaluated":
-            refused.append({"where": where, "what": what, "reasons": [
-                "an evaluation, not a measurement: ENSDF's adopted values come in with the snapshot of the "
-                "evaluation, and another evaluation (an average of measurements) would count the measurements it "
-                "averages a second time"]})
             continue
         try:
             row = add_data_point(of, args.pop("observable", None), args.pop("key", None), args.pop("value", None),
@@ -1360,14 +1494,14 @@ def _standing(rows: list, observable: str, key: str, evidence: tuple = ("evaluat
     projected row (a simulated run tests nothing) and, unless ``evidence`` names it, never a calculation."""
     found = [r for r in results.select(rows, observable, key) if r.evidence in evidence and not r.retracted]
     for kind in evidence:
-        mine = [r for r in found if r.evidence == kind]
+        mine = [r for r in found if r.evidence == kind and not _compare.averages(r)]
         if not mine:
             continue
         if kind == "evaluated":
             return max(mine, key=lambda r: r.created)
         judged = [r for r in mine if r.relative is not None]
         return min(judged, key=lambda r: r.relative) if judged else mine[-1]
-    return None
+    return max(found, key=lambda r: r.created) if found else None  # nothing but another evaluation
 
 
 def _lifetime_test(level_key: LevelKey, method: str, rows: Optional[list], via: Optional[dict]) -> tuple:
@@ -1692,7 +1826,7 @@ def gives(nuclide: str, row: Row) -> list:
 # Checks between observables
 
 
-_UNIT_WORDS = {"e2fm4": "e²fm⁴", "efm2": "e fm²", "mu_N2": "μ_N²", "mu_N": "μ_N"}
+_UNIT_WORDS = {"e2fm4": "e²fm⁴", "e2b2": "e²b²", "efm2": "e fm²", "eb": "e b", "mu_N2": "μ_N²", "mu_N": "μ_N"}
 
 
 def _said(row: Row, via: Optional[dict] = None) -> str:
@@ -1868,6 +2002,393 @@ def _signed(x: float) -> str:
 
 
 # ---------------------------------------------------------------------------------------------------------------
+# One observable, ready to draw
+
+
+#: The families of methods that values are grouped by, with their labels.
+FAMILIES = {"evaluation": "Evaluation", "coulex": "Coulomb excitation", "electron-scattering": "Electron scattering",
+            "lifetime": "From the lifetime", "other": "Other methods", "outside program": "Outside program",
+            "theory": "Theory", "projected": "Projected"}
+#: The family of each method of a measured value; every other one is in "other".
+_FAMILY_OF = {"coulex-yield": "coulex", "coulex-fit": "coulex", "electron-scattering": "electron-scattering",
+              "rdds": "lifetime", "dsam": "lifetime", "nrf": "lifetime", "inelastic-neutron": "lifetime"}
+#: The units a screen offers for each observable, of the registry's; the canonical one first.
+DISPLAY_UNITS = {"B(E2)": ("e2fm4", "e2b2", observables.WEISSKOPF), "tau": ("ps", "fs"), "Qs": ("efm2", "eb"),
+                 "B(M1)": ("mu_N2", observables.WEISSKOPF), "mu": ("mu_N",), "E_level": ("keV", "MeV")}
+#: What the closure of a simulated run is called: it tests the analysis on its own input, not the physics.
+_CLOSURE_WORDS = {"agree": "closes", "tension": "closes poorly", "differ": "does not close"}
+#: The most marks an axis carries, and the share of it left free beyond the outermost value on each side.
+_TICKS, _MARGIN = 6, 0.04
+
+
+def _raised(text: str) -> str:
+    """A label with its parities raised: "2+₁" → "2⁺₁", "τ(2+₁)" → "τ(2⁺₁)"."""
+    return re.sub(r"(?<=[\d)])([+-])(?=[₀-₉ )]|$)", lambda m: "⁺" if m.group(1) == "+" else "⁻", str(text))
+
+
+def _percent(x: Optional[float]) -> str:
+    return "" if x is None or not math.isfinite(x) else f"±{x:.1f} %" if x >= 0.095 else f"±{x:.2g} %"
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def _source_row(row: Row, via: Optional[dict], by_id: dict) -> Row:
+    """The row a value came from: for a converted one the row it was made from, else the row itself."""
+    made_from = (via or {}).get(row.id)
+    if made_from is None and row.method == "converted":
+        made_from = next((by_id[i] for i in row.depends_on if i in by_id), None)
+    return row if made_from is None else made_from
+
+
+def family(row: Row, via: Optional[dict] = None, by_id: Optional[dict] = None) -> str:
+    """The family (a key of :data:`FAMILIES`) of a value, by the method of the row it came from: a B(E2) converted
+    from a τ is "lifetime" whatever gave the τ, and a τ converted from a Coulex B(E2) is "coulex". ``via`` maps a
+    converted row's id to its source (:func:`with_converted`) and ``by_id`` the ledger's rows."""
+    kinds = {PROJECTED: "projected", "evaluated": "evaluation", "theory": "theory",
+             "outside program": "outside program"}
+    if row.evidence in kinds:
+        return kinds[row.evidence]
+    made_from = _source_row(row, via, by_id or {})
+    if made_from.observable == "tau" and row.observable != "tau":
+        return "lifetime"
+    return _FAMILY_OF.get(made_from.method, "other")
+
+
+def year_of(row: Row) -> Optional[int]:
+    """The year a value is from: of the publication, of one's own measurement, or of the calculation or analysis
+    (when its row was made)."""
+    o = row.origin
+    said = o.get("year") if o.get("kind") == "reference" else o.get("date") if o.get("kind") == "own measurement" \
+        else row.created
+    m = re.match(r"\d{4}", str(said or ""))
+    return int(m.group(0)) if m else None
+
+
+def _ticks(low: float, high: float) -> list:
+    """The marks of an axis from ``low`` to ``high``: [{"value", "text", "x"}], at round numbers (1, 2 or 5 times a
+    power of ten), at most :data:`_TICKS` of them; "x" is the place along the axis, 0 to 1."""
+    span = high - low
+    power = math.floor(math.log10(span)) - 1
+    for exponent, size in ((e, s) for e in range(power, power + 3) for s in (1, 2, 5)):
+        step = size * 10.0 ** exponent
+        first, last = math.ceil(low / step - 1e-9), math.floor(high / step + 1e-9)
+        if last - first < _TICKS:
+            return [{"value": n * step, "text": f"{n * step:.{max(0, -exponent)}f}".replace("-", "−"),
+                     "x": min(1.0, max(0.0, (n * step - low) / span))} for n in range(first, last + 1)]
+    return []
+
+
+def _units(name: str, observable: str, key: str, low: float, high: float) -> list:
+    """The units a screen can show the observable in, the canonical one first: [{"unit", "label", "direction",
+    "factor" (what a canonical value is multiplied by), "ticks" (:func:`_ticks` of the same axis in this unit)}]."""
+    o = observables.get(observable)
+    out = []
+    for unit in DISPLAY_UNITS.get(observable, (o.unit,)):
+        factor, direction = 1.0, o.direction
+        if unit == observables.WEISSKOPF:
+            try:
+                t = TransitionKey.parse(key)
+                ratio = observables.b_up_over_down(_spin(t.final), _spin(t.initial), t.multipolarity)
+                factor = observables.weisskopf(1.0 / ratio, name, t.multipolarity)
+            except (ValueError, TypeError):
+                continue
+            direction = observables.DOWN
+        elif unit != o.unit:
+            factor = 1.0 / o.units[unit]
+        out.append({"unit": unit, "label": _unit_words(unit) + observables.DIRECTIONS.get(direction, ""),
+                    "direction": direction, "factor": factor, "ticks": _ticks(low * factor, high * factor)})
+    return out
+
+
+def _unit_words(unit: str) -> str:
+    return _UNIT_WORDS.get(unit, unit)
+
+
+def _judged_words(entry, reference) -> str:
+    """The verdict on an independent value as a screen says it, or why there is none."""
+    if entry.is_reference:
+        return "reference"
+    if reference is None:
+        return "no reference"
+    if entry.verdict is not None:
+        return _compare.VERDICTS[entry.verdict].lower()
+    if _compare.averages(entry.row) or (entry.evidence == "evaluated" and _compare.averages(reference.row)):
+        return "not judged: not independent"
+    return "not judged: no uncertainty" if entry.plus is None else "not judged"
+
+
+def _made_from_words(row: Row) -> str:
+    """The row a converted value was made from: "from τ = 2.01 ± 0.12 ps", "from B(E2)↓ = 15.5 W.u."."""
+    return (f"from {observables.get(row.observable).label}{observables.DIRECTIONS.get(row.direction, '')} = "
+            f"{value_text(row.value, row.unc('plus'), row.unc('minus'))} {_unit_words(row.unit)}")
+
+
+def _item(entry, cell_: dict, made_from: Row, kind: str, comparison) -> dict:
+    """One value of a comparison (an :class:`~physim.nuclear.compare.Entry` or
+    :class:`~physim.nuclear.compare.Projection`) as a line of the table, without its place on the axis."""
+    row, via, given = entry.row, cell_["via"], cell_["as_given"]
+    projected = kind == "projected"
+    plus, minus = (entry.total, entry.total) if projected else (entry.plus, entry.minus)
+    made = re.match(r"from .*? (?=with )", row.detail) if via is not None else None
+    reference, best = comparison.reference, comparison.best_measured
+    out = {
+        "id": entry.id, "evidence": row.evidence, "family": kind, "family_label": FAMILIES[kind],
+        "year": year_of(made_from), "source": cell_["source"], "where": str(made_from.origin.get("where") or ""),
+        "method": METHODS[made_from.method], "method_key": made_from.method,
+        "made_from": "" if via is None else _made_from_words(made_from),
+        "detail": made_from.detail, "conversion": row.detail[made.end():] if made else "",
+        "given_as": (f"{given['value']:.6g} {_unit_words(given['unit'])}"
+                     + observables.DIRECTIONS.get(given["direction"], "")
+                     if cell_["converted"] and via is None else ""),
+        "value": entry.value, "plus": plus, "minus": minus, "low": entry.value - (minus or 0.0),
+        "high": entry.value + (plus or 0.0), "text": value_text(entry.value, plus, minus),
+        "is_data_point": is_data_point(row), "is_best": best is not None and best.id == entry.id,
+        "is_reference": False, "difference": None, "difference_percent": None, "difference_text": "—",
+        "ratio": None, "pull": None, "pull_text": "—", "verdict": None, "independent_of_reference": None,
+        "truth": None, "closure": None, "reach_percent": None, "stat": None, "sys": None, "stat_sys_text": "",
+        "experiment": made_from.origin.get("experiment"), "run": made_from.origin.get("run")}
+    if projected:
+        parts = [f"± {_rounded(x)} ({n})" for x, n in ((entry.stat, "stat"), (entry.sys, "sys")) if x is not None]
+        out.update(truth=entry.truth, closure=entry.closure, reach_percent=entry.reach_percent, stat=entry.stat,
+                   sys=entry.sys, stat_sys_text=" ".join(parts), verdict=entry.closure_verdict,
+                   pull_text="—" if entry.closure is None else f"{entry.closure:+.2f}σ".replace("-", "−"),
+                   known_text=f"reaches {_percent(entry.reach_percent)}" if entry.reach_percent is not None
+                   else "no uncertainty",
+                   verdict_text=_CLOSURE_WORDS.get(entry.closure_verdict, "no uncertainty"))
+        return out
+    if entry.difference_percent is not None:
+        out["difference_text"] = f"{entry.difference_percent:+.1f} %".replace("-", "−")
+    elif entry.difference is not None:
+        out["difference_text"] = f"{entry.difference:+.3g} {_unit_words(comparison.unit)}".replace("-", "−")
+    if entry.pull is not None:
+        out["pull_text"] = f"{entry.pull:+.2f}".replace("-", "−")
+    elif entry.ratio is not None:
+        out["pull_text"] = f"× {entry.ratio:.2f}".replace("-", "−")
+    out.update(is_reference=entry.is_reference, difference=entry.difference,
+               difference_percent=entry.difference_percent, ratio=entry.ratio, pull=entry.pull,
+               verdict=entry.verdict, independent_of_reference=entry.independent_of_reference,
+               known_text=_percent(entry.uncertainty_percent) or "no uncertainty",
+               verdict_text=_judged_words(entry, reference))
+    return out
+
+
+def _rounded(x: float) -> str:
+    """An uncertainty with two significant digits, as :func:`value_text` writes it."""
+    return "0" if x <= 0 else f"{x:.{max(0, 1 - math.floor(math.log10(x)))}f}"
+
+
+def _counts(items: list, comparison) -> dict:
+    """The counts of the summary (:func:`observable_view` says what each is)."""
+    measured = [i for i in items if i["evidence"] == "measured"]
+    theory = [i for i in items if i["evidence"] == "theory" and not i["is_reference"]]
+    projected = [i for i in items if i["evidence"] == PROJECTED]
+    verdicts = {v: sum(i["verdict"] == v for i in measured) for v in _compare.VERDICTS}
+    reference = sum(i["is_reference"] for i in measured)
+    by_verdict = {**verdicts, "not_judged": len(measured) - reference - sum(verdicts.values())}
+    words = {"agree": ("agrees", "agree"), "tension": ("in tension", "in tension"), "differ": ("differs", "differ"),
+             "not_judged": ("not judged", "not judged")}
+    parts = [{"verdict": v, "count": n, "text": f"{n} {words[v][n != 1]}"} for v, n in by_verdict.items() if n]
+    sides = [i["difference"] for i in theory if i["difference"] is not None]
+    side = ("above" if all(d > 0 for d in sides) else "below" if all(d < 0 for d in sides) else "") if sides else ""
+    ratios = sorted(i["ratio"] for i in theory if i["ratio"] is not None)
+    ratio_texts = [f"× {r:.2f}".replace("-", "−") for r in ratios]
+    reaching = [i for i in projected if i["reach_percent"] is not None]
+    best = min(reaching, key=lambda i: i["reach_percent"]) if reaching else None
+    close = {v: sum(i["verdict"] == v for i in projected) for v in _CLOSURE_WORDS}
+    best_measured = next((i for i in items if i["is_best"]), None)
+    said = ""
+    if best is not None:
+        share = (f", of which {_percent(100 * best['sys'] / abs(best['value']))[1:]} is systematic"
+                 if best["sys"] and best["value"] else "")
+        ref = comparison.reference
+        known = (f"the value is known to {_percent(ref.uncertainty_percent)} (the reference)"
+                 if ref is not None and ref.uncertainty_percent is not None
+                 else "there is no reference with an uncertainty to set it beside")
+        said = (f"This setup reaches {_percent(best['reach_percent'])}{share}; {known}"
+                + (f", and to {_percent(comparison.best_measured.uncertainty_percent)} by the best single measurement"
+                   if best_measured is not None else "") + ".")
+    n = len(projected)
+    closing = ("" if not n else projected[0]["verdict_text"] if n == 1 else
+               "both close" if n == 2 == close["agree"] else "all close" if n == close["agree"] else
+               f"{close['agree']} of {n} close")
+    return {
+        "measured": {"count": len(measured), **by_verdict, "reference": reference, "parts": parts,
+                     "text": " · ".join(p["text"] for p in parts)},
+        "evaluations": sum(i["family"] == "evaluation" and not i["is_reference"] for i in items),
+        "outside_program": sum(i["evidence"] == "outside program" for i in items),
+        "theory": {"count": len(theory), "ratios": ratios, "side": side,
+                   "judged": sum(i["verdict"] is not None for i in theory),
+                   "text": " · ".join(ratio_texts) + (f" · {side}" if side else "")},
+        "best_measured": None if best_measured is None else
+        {k: best_measured[k] for k in ("id", "source", "method", "made_from", "text", "known_text")},
+        "projected": {"count": n, "close": close["agree"], "tension": close["tension"], "differ": close["differ"],
+                      "reach_percent": None if best is None else best["reach_percent"],
+                      "best": None if best is None else best["id"],
+                      "reach_text": "" if best is None else best["known_text"], "closing_text": closing,
+                      "text": said}}
+
+
+def _stands_out(items: list, counts: dict, every: list, unit: str) -> list:
+    """What stands out among the values, from the verdicts and the ledger alone (no note is searched for words):
+    [{"kind", "title", "text", "note", "ids"}]."""
+    out = []
+    for kind, title, says in (("differ", "differs", "it differs from the reference"),
+                              ("tension", "is in tension", "it is in tension with the reference")):
+        for i in sorted((i for i in items if i["evidence"] == "measured" and i["verdict"] == kind),
+                        key=lambda i: -abs(i["pull"])):
+            how = f"{i['method']}, {i['made_from']}" if i["made_from"] else i["method"]
+            out.append({"kind": kind, "title": f"{i['source']} {title}",
+                        "text": f"{i['source']}, {how}: {i['text']} {unit}, a pull of {i['pull_text']}: {says}.",
+                        "note": i["detail"], "ids": [i["id"]]})
+    later = {r.supersedes: r for r in every if r.supersedes}
+    rows = {r.id: r for r in every}
+    for i in items:
+        gone = [x for x in (i["id"], *(rows[i["id"]].depends_on if i["id"] in rows else ())) if x in later]
+        if not gone:
+            continue
+        after = later[gone[0]]
+        what = (f"withdrawn ({after.retracted})" if after.retracted else
+                f"replaced by {value_text(after.value, after.unc('plus'), after.unc('minus'))} "
+                f"{_unit_words(after.unit)} ({source(after)})")
+        out.append({"kind": "superseded", "title": f"{i['source']} is superseded", "text": (
+            f"{i['source']}, {i['method']}: {i['text']} {unit} " + (
+                f"was {what} and is still listed." if gone[0] == i["id"] else
+                f"was made from a value that was {what}, and is still listed.")), "note": "", "ids": [i["id"]]})
+    theory = counts["theory"]
+    if theory["side"]:
+        mine = [i for i in items if i["evidence"] == "theory" and i["difference"] is not None]
+        n = len(mine)
+        who = "The theory value lies" if n == 1 else "Both theory values lie" if n == 2 else f"All {n} theory values lie"
+        ratios = [f"× {r:.2f}".replace("-", "−") for r in theory["ratios"]]
+        said = ", ".join(ratios[:-1]) + (" and " if len(ratios) > 1 else "") + (ratios[-1] if ratios else "")
+        out.append({"kind": "theory", "title": f"{who} {theory['side']} the reference",
+                    "text": f"{who} {theory['side']} the reference" + (f": {said} of it" if said else "")
+                    + ("; without an uncertainty " + ("it is" if n == 1 else "they are") + " not judged"
+                       if not theory["judged"] else "") + ".", "note": "", "ids": [i["id"] for i in mine]})
+    return out
+
+
+def _groups(items: list, comparison, key: str) -> list:
+    """The values in their groups, in the order of the table; a group without a value is left out."""
+    made = {"tau": "τ", "B(E2)": "B(E2)"}
+    listed = []
+
+    def add(id_: str, title: str, mine: list, note: str) -> None:
+        if not mine:
+            return
+        mine = sorted(mine, key=lambda i: (i["year"] is None, -(i["year"] or 0)))  # the newest first
+        how = {i["conversion"] for i in mine}
+        listed.append({"id": id_, "label": title, "family": mine[0]["family"], "note": note, "count": len(mine),
+                       "conversion": how.pop() if len(how) == 1 else "", "entries": mine})
+
+    def note_of(mine: list) -> str:
+        text = _plural(len(mine), "value")
+        converted = [i for i in mine if i["made_from"]]
+        if not converted:
+            return text
+        whole = len(converted) == len(mine)
+        parent = made["B(E2)" if comparison.observable == "tau" else "tau"]
+        if len(mine) == 1:
+            return f"{text}, converted from the {parent} it reports"
+        return f"{text}, " + (f"each converted from the {parent} it reports" if whole else
+                              f"{len(converted)} of them converted from the {parent} reported")
+
+    reference = [i for i in items if i["is_reference"]]
+    rest = [i for i in items if not i["is_reference"]]
+    add("reference", "Evaluated" if reference and reference[0]["family"] == "evaluation" else "The reference", reference,
+        "the reference every independent value is compared with")
+    others = [i for i in rest if i["family"] == "evaluation"]
+    add("evaluation", "Other evaluations", others,
+        f"{_plural(len(others), 'value')}; each averages measurements, so it is not independent of the values below and "
+        f"is not judged" if all(i["verdict"] is None for i in others) else _plural(len(others), "value"))
+    for fam in ("coulex", "electron-scattering", "lifetime", "other"):
+        mine = [i for i in rest if i["family"] == fam]
+        title = FAMILIES[fam][0].lower() + FAMILIES[fam][1:] if fam != "coulex" else FAMILIES[fam]
+        if fam == "lifetime" and comparison.observable == "tau":
+            title = "lifetime"
+        elif fam == "lifetime" and observables.get(comparison.observable).belongs_to == "transition":
+            title += f" {_raised(label('tau', TransitionKey.parse(key).initial))}"
+        add(fam, f"Measured · {title}", mine, note_of(mine))
+    mine = [i for i in rest if i["family"] == "outside program"]
+    add("outside program", "Outside program", mine, _plural(len(mine), "value"))
+    mine = [i for i in rest if i["family"] == "theory"]
+    add("theory", "Theory", mine, _plural(len(mine), "value") + (
+        " without an uncertainty: a ratio and no verdict" if all(i["plus"] is None for i in mine) else ""))
+    mine = [i for i in rest if i["family"] == "projected"]
+    truths = {f"{i['truth']:.6g}" for i in mine}
+    add("projected", "Projected · simulated runs, analysed back", mine, _plural(len(mine), "run") + "; " + (
+        "each" if len(mine) != 1 else "it") + " is closed against the value given to its simulation"
+        + (f" ({truths.pop()})" if len(truths) == 1 else "") + ", never against the reference")
+    return listed
+
+
+def drawing(nuclide: str, observable: str, key: str, comparison, cells: dict, via: Optional[dict] = None,
+            every: Optional[list] = None) -> dict:
+    """One comparison (:class:`physim.nuclear.compare.Comparison`, or None) as a screen draws it: {"groups", "counts",
+    "stands_out", "axis", "units", "orders"}, all plain data (:func:`observable_view` says what each holds).
+    ``cells`` are its rows as :func:`cell`, by id, ``via`` what each converted row was made from and ``every`` the
+    nucleus's rows, superseded ones among them. Nothing is worked out here but places on an axis: each number is the
+    comparison's."""
+    name = results.nuclide_name(nuclide)
+    if comparison is None:
+        return {"groups": [], "counts": _counts([], None), "stands_out": [], "axis": None, "units": [],
+                "orders": {"method": [], "year": [], "pull": []}}
+    o = observables.get(observable)
+    by_id = {r.id: r for r in every or ()}
+    items = []
+    for entry in (*comparison.entries, *comparison.projected):
+        made_from = _source_row(entry.row, via, by_id)
+        items.append(_item(entry, cells[entry.id], made_from, family(entry.row, via, by_id), comparison))
+    ref = comparison.reference
+    low, high = min(i["low"] for i in items), max(i["high"] for i in items)
+    margin = _MARGIN * (high - low) or 0.1 * abs(low) or 1.0
+    # A value that cannot be negative has no axis below 0, unless an uncertainty reaches there.
+    low, high = (max(0.0, low - margin) if low >= 0 else low - margin), high + margin
+    span = high - low
+
+    def at(value: float) -> float:
+        return (value - low) / span
+
+    units = _units(name, observable, key, low, high)
+    for i in items:
+        i.update(x=at(i["value"]), x_low=at(i["low"]), x_high=at(i["high"]),
+                 x_truth=None if i["truth"] is None else at(i["truth"]),
+                 texts={u["unit"]: value_text(i["value"] * u["factor"], *(
+                     None if w is None else w * u["factor"] for w in (i["plus"], i["minus"]))) for u in units})
+    band = None
+    if ref is not None:
+        mine = next(i for i in items if i["is_reference"])
+        band = {k: mine[k] for k in ("value", "low", "high", "x", "x_low", "x_high")}
+    axis = {"low": low, "high": high, "unit": o.unit, "label": units[0]["label"], "ticks": units[0]["ticks"],
+            "band": band}
+    counts = _counts(items, comparison)
+    groups = _groups(items, comparison, key)
+    listed = [i for g in groups for i in g["entries"]]
+    independent = [i for i in listed if i["family"] != "projected" and not i["is_reference"]]
+    ends = ([i["id"] for i in listed if i["is_reference"]], [i["id"] for i in listed if i["family"] == "projected"])
+
+    def ordered(by) -> list:  # the reference first and the projected runs last, whatever the order
+        return ends[0] + [i["id"] for i in sorted(independent, key=by)] + ends[1]
+
+    return {"groups": groups, "counts": counts,
+            "stands_out": _stands_out(items, counts, every or [], units[0]["label"]), "axis": axis, "units": units,
+            "orders": {"method": [i["id"] for i in listed],
+                       "year": ordered(lambda i: (i["year"] is None, -(i["year"] or 0))),
+                       "pull": ordered(lambda i: (i["pull"] is None, -abs(i["pull"] or 0.0)))}}
+
+
+def _strip(drawn: dict) -> Optional[dict]:
+    """The dot strip of a card, from a :func:`drawing`: {"axis", "dots"}, the dots in the order of the groups."""
+    if drawn["axis"] is None:
+        return None
+    return {"axis": drawn["axis"], "dots": [
+        {k: i[k] for k in ("id", "evidence", "family", "verdict", "is_reference", "source", "text", "value", "low",
+                           "high", "x", "x_low", "x_high")} for g in drawn["groups"] for i in g["entries"]]}
+
+
+# ---------------------------------------------------------------------------------------------------------------
 # The views: the nuclei, one nucleus, one observable
 
 
@@ -1958,13 +2479,19 @@ def table(nuclide: str, rows: list, extra: tuple = ()) -> list:
     experiment studies before any run is analysed). Each row of the table is a dict:
 
     - "observable", "key", "label" ("B(E2; 0+₁ → 2+₁)↑"), "unit" (the canonical one) and "rows" (how many hold);
-    - "evaluated": the newest evaluated row as a :func:`cell`, or None;
+    - "evaluated": the newest row of the evaluation as a :func:`cell`, or None;
+    - "other_evaluations": the other evaluations (:func:`physim.nuclear.compare.averages`), as the next ones;
     - "measured", "outside_program", "theory", "projected": None, or {"count", "min", "max", "best", "newest"}
       with the best and the newest as cells; for the projected rows the best one's "uncertainty_percent" is the
       precision the setup reaches;
     - "open": the methods of the routes physim has an experiment for and that no row of one's own (a run or an
       own measurement) has taken yet;
-    - "headline": whether there is more than the evaluation (or nothing at all yet): what a short list shows.
+    - "headline": whether there is more than the evaluation (or nothing at all yet): what a short list shows;
+    - "counts" and "strip", for a headline row (None for the others, and where the values cannot be compared): the
+      counts of :func:`observable_view`, and what a card's strip of dots needs: {"axis" (as there, with the
+      reference band and the ticks), "dots": [{"id", "evidence", "family", "verdict", "is_reference", "source",
+      "text", "value", "low", "high", "x", "x_low", "x_high"}]}, in the order of the groups. The strip is None where
+      there is no value yet.
 
     The independent evidence and the projected rows are in separate entries and are never merged. Headline rows
     come first, then B(E2), τ, Q_s and energies, each by level energy.
@@ -1989,19 +2516,35 @@ def table(nuclide: str, rows: list, extra: tuple = ()) -> list:
     for (observable, key), group in groups.items():
         cells = [cell(r, via) for r in group]
         kinds = {ev: [c for c in cells if c["evidence"] == ev] for ev in results.EVIDENCE}
-        evaluated = _summary(kinds["evaluated"])
+        other = {r.id for r in group if _compare.averages(r)}
+        evaluated = _summary([c for c in kinds["evaluated"] if c["id"] not in other])
+        headline = _is_headline(group)
+        counts = strip = None
+        if headline:
+            try:
+                drawn = drawing(name, observable, key, _compare.compare(group) if group else None,
+                                {c["id"]: c for c in cells}, via, rows)
+                counts, strip = drawn["counts"], _strip(drawn)
+            except ValueError as e:  # a B↓ between unknown spins cannot be compared
+                _log.debug("no strip for %s of %s: %s", observable, key, e)
         out.append({
             "observable": observable, "key": key, "label": label(observable, key),
             "unit": observables.get(observable).unit, "rows": len(group),
             "evaluated": None if evaluated is None else evaluated["newest"],
+            "other_evaluations": _summary([c for c in kinds["evaluated"] if c["id"] in other]),
             "measured": _summary(kinds["measured"]),
             "outside_program": _summary(kinds["outside program"]), "theory": _summary(kinds["theory"]),
             "projected": _summary(kinds[PROJECTED]),
             "open": [r["method"] for r in routes(name, observable, key, group, via, tests=False)
                      if r["open"]],
-            "headline": not group or any(c["evidence"] != "evaluated" for c in cells)})
+            "headline": headline, "counts": counts, "strip": strip})
     return sorted(out, key=lambda t: (not t["headline"], order.index(t["observable"]),
                                       energy(t["observable"], t["key"]), t["key"]))
+
+
+def _is_headline(group: list) -> bool:
+    """Whether the rows of one observable hold more than the evaluation, or nothing yet."""
+    return not group or any(r.evidence != "evaluated" or _compare.averages(r) for r in group)
 
 
 def _entry(name: str, experiments: list, home, full: bool, rows: Optional[list] = None) -> dict:
@@ -2052,14 +2595,7 @@ def _entry(name: str, experiments: list, home, full: bool, rows: Optional[list] 
 def _names(experiments: list, home) -> list:
     """The nuclei that have an experiment, a row of one, or a ledger of their own, lightest first."""
     found = {x for e in experiments for x in (e["studied"], e["partner"]) if x}
-    found |= {r.nuclide for e in experiments for r in e["ledger"]}
-    base = Path(home).expanduser() if home is not None else results.nuclei_home()
-    for p in sorted(base.iterdir()) if base.is_dir() else []:
-        if (p / results.POINTS_FILE).is_file():
-            try:
-                found.add(results.nuclide_name(p.name))
-            except (ValueError, KeyError):
-                continue
+    found |= {r.nuclide for e in experiments for r in e["ledger"]} | set(_ledgers(home))
     return sorted(found, key=parse_nuclide)
 
 
@@ -2094,8 +2630,9 @@ def nuclei(root: Union[str, Path, None] = None, home: Union[str, Path, None] = N
 def view(nuclide: str, root: Union[str, Path, None] = None, home: Union[str, Path, None] = None,
          rows: Optional[list] = None) -> dict:
     """One nucleus: the same dict as one entry of :func:`nuclei`, with every row of the :func:`table` (the
-    evaluation's many level energies included; "headline" marks the rows that have more than the evaluation). A
-    nucleus without experiments or rows comes back empty, ready for its first data point.
+    evaluation's many level energies included; "headline" marks the rows that have more than the evaluation, and
+    those have "counts" and "strip", which is what a card of the landing page draws). A nucleus without experiments
+    or rows comes back empty, ready for its first data point.
 
     ``rows`` are the nucleus's rows, superseded ones among them, where the caller has read them already
     (:func:`physim.nuclear.results.of_nuclide`): a screen that shows the view and an :func:`observable_view` reads
@@ -2117,6 +2654,79 @@ def holding(nuclide: str, observable: Optional[str] = None, key=None, root: Unio
     found = sorted(results.select(rows, observable, key),
                    key=lambda r: (order.index(r.observable), r.key, evidence.index(r.evidence), r.created))
     return [cell(r, via) for r in found]
+
+
+def lowest_levels(nuclide: str, count: int = 5, home: Union[str, Path, None] = None,
+                  root: Union[str, Path, None] = None, rows: Optional[list] = None) -> dict:
+    """The ground state and the next levels by energy, from the evaluation's rows of the nucleus, ``count`` in all.
+
+    ``rows`` are the nucleus's rows where the caller has them, as :func:`view` takes them. Returns a dict:
+
+    - "nuclide", "reference" (the evaluation, as :func:`source` says it) and "evaluated" (how many values of it
+      hold);
+    - "levels", the lowest first, each {"key", "label" ("2+₁"), "jpi" ("2⁺₁", as it is written), "ground",
+      "energy", "plus", "minus", "unit" (keV), "text" ("1172.910 ± 0.030 keV"; "0" for the ground state), "short"
+      ("1172.9 keV"), "observables"}. The observables are those of the nucleus's :func:`table` that belong to the level, each
+      {"observable", "key", "label", "role" ("level": τ, Q_s or μ of the level; "from" and "to": a transition that
+      starts or ends on it), "other" (the transition's other level as {"key", "jpi"}, else None), "headline" (as in
+      the table), "value" (the evaluated value, else the best measured one, as a :func:`cell`, or None)};
+    - "ratio": the check E(4⁺₁)/E(2⁺₁) of :func:`checks`, or None;
+    - "reason": why there are no levels ("levels" is then empty), else "".
+    """
+    name = results.nuclide_name(nuclide)
+    every = results.of_nuclide(name, root, home) if rows is None else [r for r in rows if r.nuclide == name]
+    now, via = with_converted(name, results.current(every))
+    taken = [r for r in now if is_evaluation(r)]
+    out = {"nuclide": name, "reference": source(taken[-1]) if taken else None, "evaluated": len(taken),
+           "levels": [], "ratio": None, "reason": ""}
+    energies = sorted(results.select(taken, "E_level"), key=lambda r: _compare.canonical(r).value)
+    if not energies:
+        out["reason"] = (f"ENSDF's adopted values of {name} hold no level above the ground state." if taken else
+                         "There is no local copy of ENSDF (scripts/fetch_ensdf.py), so its adopted values cannot be "
+                         "taken." if not ensdf.available() else
+                         f"The local ENSDF copy has no adopted levels for {name}." if adopted_scheme(name) is None
+                         else "The adopted values of ENSDF are not taken yet.")
+        return out
+    ground = results.level_key(name, 0.0)
+    z, a = parse_nuclide(name)
+    if not ground.anchored and z % 2 == 0 and a % 2 == 0:
+        ground = LevelKey(name, 0, 1, 1, 0.0, True)  # no local copy now: the rows' keys were anchored to one
+    groups: dict = {}
+    for r in now:
+        if r.observable != "E_level":
+            groups.setdefault((r.observable, r.key), []).append(r)
+    order = list(observables.OBSERVABLES)
+
+    def of_level(key: LevelKey) -> list:
+        found = []
+        for (observable, k), group in groups.items():
+            role, other = "level", None
+            if observables.get(observable).belongs_to == "transition":
+                t = TransitionKey.parse(k)
+                if key.text not in (t.initial.text, t.final.text):
+                    continue
+                role, end = ("from", t.final) if t.initial.text == key.text else ("to", t.initial)
+                other = {"key": end.text, "jpi": _raised(level_label(end))}
+            elif k != key.text:
+                continue
+            held = _standing(group, observable, k)
+            found.append({"observable": observable, "key": k, "label": label(observable, k), "role": role,
+                          "other": other, "headline": _is_headline(group),
+                          "value": None if held is None else cell(held, via)})
+        return sorted(found, key=lambda x: (not x["headline"], x["role"] == "to", order.index(x["observable"]),
+                                            x["key"]))
+
+    def entry(key: LevelKey, c: Optional[dict]) -> dict:
+        return {"key": key.text, "label": level_label(key), "jpi": _raised(level_label(key)), "ground": c is None,
+                "energy": 0.0 if c is None else c["value"], "plus": None if c is None else c["plus"],
+                "minus": None if c is None else c["minus"], "unit": "keV", "text": "0" if c is None else c["text"],
+                "short": "0" if c is None else f"{c['value']:.1f} keV", "observables": of_level(key)}
+
+    out["levels"] = [entry(ground, None)] + [entry(LevelKey.parse(r.key), cell(r)) for r in energies[:max(0, count - 1)]]
+    if z % 2 == 0 and a % 2 == 0:
+        out["ratio"] = next((c for c in checks(name, "E_level", f"{name}:2+1", now, via)
+                             if c["label"] == "E(4⁺₁)/E(2⁺₁)"), None)
+    return out
 
 
 def history(rows: list, observable: Optional[str] = None, key=None) -> list:
@@ -2165,6 +2775,42 @@ def observable_view(nuclide: str, observable: str, key, reference: Optional[str]
     - "checks": :func:`checks` against other observables and the calculations ([] when there is none to make);
     - "used_for": what the registry says a value of the observable is used for, [{"text", "reference"}];
     - "history": :func:`history` of the rows of the ledgers (converted values are not in it: their sources are).
+
+    And what a screen draws it from, as plain data (:func:`drawing`), every number being the comparison's:
+
+    - "groups": the values in their groups, in the order of the table and without the empty ones: "reference",
+      "evaluation" (the other evaluations), the measured values by family ("coulex", "electron-scattering",
+      "lifetime", "other"), "outside program", "theory", "projected". Each is {"id", "label", "family", "note",
+      "count", "conversion" (what its converted values were converted with, where that is one thing), "entries"},
+      and each entry a dict of one value:
+
+      - what it is: "id", "evidence", "family" and "family_label" (:data:`FAMILIES`), "year", "source", "where",
+        "method" and "method_key" (of the row it came from), "made_from" ("from τ = 2.01 ± 0.12 ps", or ""),
+        "detail" (that row's own line), "conversion", "given_as" ("12.13 W.u.↓", or ""), "is_data_point" (it can be
+        corrected and withdrawn), "is_best", "is_reference", "experiment" and "run" (of a simulated run);
+      - its value in the canonical unit: "value", "plus", "minus", "low", "high", "text" ("906 ± 37"), "texts" (the
+        same by unit of "units"), "known_text" ("±4.1 %", "no uncertainty", "reaches ±7.1 %"); its place on the
+        axis, 0 to 1: "x", "x_low", "x_high", "x_truth";
+      - against the reference: "difference", "difference_percent", "difference_text", "ratio", "pull", "pull_text"
+        ("+0.56", or the ratio "× 1.28" without a pull), "verdict", "verdict_text" ("agree", "reference", "not
+        judged: no uncertainty", "not judged: not independent"), "independent_of_reference"; for a simulated run,
+        whose verdict is its closure's ("closes"), "truth", "closure" (its "pull_text" is the closure, "+0.53σ"),
+        "reach_percent", "stat", "sys", "stat_sys_text" ("± 12 (stat) ± 64 (sys)");
+    - "counts": {"measured": {"count", "agree", "tension", "differ", "not_judged", "reference" (how many are the
+      reference), "parts" ([{"verdict", "count", "text"}]), "text" ("15 agree · 1 differs")}, "evaluations" (how
+      many besides the reference), "outside_program", "theory": {"count", "ratios", "side" ("above" or "below" the
+      reference when all are, else ""), "judged", "text"}, "best_measured": {"id", "source", "method", "made_from",
+      "text", "known_text"} or None, "projected": {"count", "close", "tension", "differ", "reach_percent", "best"
+      (its id), "reach_text", "closing_text" ("both close"), "text" (what the runs say, in a sentence)}};
+    - "stands_out": [{"kind" ("differ", "tension", "superseded", "theory"), "title", "text", "note" (the row's own
+      line of detail, or ""), "ids"}]: the measured values that differ or are in tension, the values that the ledger
+      marks as superseded, or that were made from one it does, and that are still listed, and the theory values when
+      they all lie on one side of the reference;
+    - "axis": {"low", "high", "unit", "label", "ticks" ([{"value", "text", "x"}]), "band" (the reference:
+      {"value", "low", "high", "x", "x_low", "x_high"}, or None)}, or None without a value;
+    - "units": [{"unit", "label", "direction", "factor", "ticks"}]: the units to switch between, the canonical first;
+    - "orders": {"method", "year", "pull"}: the ids in each order (the newest, the largest pull first), the
+      reference first and the simulated runs last in each.
     """
     name = results.nuclide_name(nuclide)
     o = observables.get(observable)
@@ -2184,19 +2830,22 @@ def observable_view(nuclide: str, observable: str, key, reference: Optional[str]
             reference = fits[0]
         comparison = _compare.compare(group, reference)
     ref = comparison.reference.row if comparison is not None and comparison.reference is not None else None
+    cells = {r.id: cell(r, via) for r in group}
     return {"nuclide": name, "observable": observable, "key": key, "label": label(observable, key), "unit": o.unit,
-            "convention": o.convention, "comparison": comparison, "cells": {r.id: cell(r, via) for r in group},
+            "convention": o.convention, "comparison": comparison, "cells": cells,
             "reference": None if ref is None else cell(ref, via),
             "routes": routes(name, observable, key, group, via, now, reference=ref.id if ref is not None else None),
             "gives": gives(name, ref) if ref is not None else [],
             "checks": checks(name, observable, key, now, via, ref), "used_for": [u.to_dict() for u in o.used_for],
-            "history": history(every, observable, key)}
+            "history": history(every, observable, key),
+            **drawing(name, observable, key, comparison, cells, via, every)}
 
 
-__all__ = ["DONE", "ENSDF", "IN_PHYSIM", "LATER", "NO_EXPERIMENT", "ONLY_PROJECTED", "POINT_COLUMNS",
-           "POINT_EVIDENCE", "POINT_FIELDS", "POINT_METHODS", "PointProblem", "PointThere", "add_data_point",
-           "adopted_scheme", "applies", "cell", "checks", "correct_data_point", "decay", "evaluation", "gives",
-           "history", "holding", "import_points", "is_data_point", "is_evaluation", "key_of", "label", "level",
-           "level_label", "method_choices", "method_of", "nuclei", "observable_view", "partner_nuclide",
-           "read_points", "retract_data_point", "routes", "snapshot_evaluation", "source", "stability", "table",
-           "transition", "value_text", "view", "with_converted"]
+__all__ = ["DISPLAY_UNITS", "DONE", "ENSDF", "FAMILIES", "IN_PHYSIM", "LATER", "NO_EXPERIMENT", "ONLY_PROJECTED",
+           "POINT_COLUMNS", "POINT_EVIDENCE", "POINT_FIELDS", "POINT_METHODS", "PointProblem", "PointThere",
+           "SAME_VALUE", "add_data_point", "adopted_scheme", "applies", "cell", "checks", "correct_data_point",
+           "decay", "drawing", "evaluation", "family", "gives", "history", "holding", "import_points",
+           "is_data_point", "is_evaluation", "key_of", "label", "level", "level_label", "lowest_levels",
+           "method_choices", "method_of", "nuclei", "observable_view", "partner_nuclide", "read_points", "repeats",
+           "retract_data_point", "retract_duplicates", "routes", "same_source", "snapshot_evaluation", "source",
+           "stability", "table", "transition", "value_text", "view", "with_converted", "year_of"]
