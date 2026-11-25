@@ -674,8 +674,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
 - The planner app opens on a nucleus, and the comparison with the literature is a screen of its own. No number has
   changed: everything shown was already in the ledger, the registry or the comparison (see `docs/planner-app.md`).
   - The app opens on the page of the nucleus this browser showed last; otherwise on the nucleus of the most recently
-    changed experiment (or the nuclei); with nothing at all, on the kinds of experiment. The page of a nucleus, the comparison, the
-    nuclei, the kinds and Physics have a bar at the top instead of the rail: a button per nucleus, **All nuclei**,
+    changed experiment (or the nuclei); with nothing at all, on the kinds of experiment. The page of a nucleus, the
+    comparison, the nuclei, the kinds and Physics have a bar at the top instead of the rail: a button per nucleus,
+    **All nuclei**,
     **Another nucleus**, **Back to** *the open experiment*, **Physics** and the theme. The rail with the six steps is
     there only while an experiment is open, and **← ⁶²Ni the nucleus** at its top leads back to the nucleus.
   - The page of a nucleus (`/?nucleus=62Ni`) is an overview: the nucleus with its counts and actions, its lowest
