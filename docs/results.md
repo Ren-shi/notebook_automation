@@ -4,7 +4,8 @@ physim keeps every result as a row: one value of one observable of one nucleus, 
 uncertainty and where it came from. The rows of a nucleus are read together, across its experiments, so that a
 value is always seen beside what else is known about it. This page says what a row holds, where the rows are, how
 they are compared, and what was left out on purpose. The screens that show them are described in
-{doc}`planner-app`: the nuclei, the page of a nucleus, and *Beside what is known* on an experiment's Analysis step.
+{doc}`planner-app`: the page of a nucleus, the comparison with the literature, the nuclei, and *Beside what is known*
+on an experiment's Analysis step.
 
 No number physim computes was changed to make this: the rows store the numbers the analyses already gave, and the
 conversions call the functions the code already had.
@@ -28,7 +29,7 @@ A row holds:
   | RDDS (decay curve, DDCM) | a plunger |
   | DSAM (line shape) | line shapes in a backed target |
   | Shell model | a calculation |
-  | Evaluation | ENSDF's adopted values |
+  | Evaluation | ENSDF's adopted values, and other evaluations (tables of averages such as Raman et al.'s) |
   | Converted from another row | a B(E2) from a τ, or the other way |
   | NRF, (n,n′γ), Electron scattering, Inelastic scattering, Transfer reaction, Moment measurement, Other | for values from the literature or your own data points: physim has no analysis that gives them |
 
@@ -44,8 +45,9 @@ A row holds:
 
 Rows are in two groups, which are never mixed.
 
-- **Independent:** *measured* (a published value, or your own), *evaluated* (ENSDF's adopted values), *theory* (the
-  shell model) and *outside program* (GOSIA and the like on the same inputs).
+- **Independent:** *measured* (a published value, or your own), *evaluated* (ENSDF's adopted values, and other
+  evaluations: see [Other evaluations](#other-evaluations)), *theory* (the shell model) and *outside program* (GOSIA
+  and the like on the same inputs).
 - **Projected:** a simulated run analysed back.
 
 A projected value comes from a run that physim simulated with a value it was given, then analysed as a real run
@@ -79,7 +81,8 @@ What writes rows:
 | Fit the matrix elements to a run's yields (all orders) | B(E2)↑ and Q_s, projected | the experiment's `results.jsonl` |
 | Read or apply a shell-model result | level energies, B(E2)↑, B(M1)↑, Q_s and μ, theory | the nucleus's `points.jsonl` |
 | Open the page of a nucleus the first time | ENSDF's adopted level energies, τ, Q_s, μ, B(E2) and B(M1), evaluated | the nucleus's `points.jsonl` |
-| Add, correct or retract a data point | measured, outside program or theory | the nucleus's `points.jsonl` |
+| Add, correct or retract a data point | measured, outside program, theory or evaluated | the nucleus's `points.jsonl` |
+| Start the app (when it first reads the nuclei) | a retraction of each data point that repeats an earlier one | the nucleus's `points.jsonl` |
 
 An experiment from before the results existed gets its rows from its kept analyses when it is opened, or when the
 nuclei are listed. A result that cannot be written is logged and never stops the analysis.
@@ -92,6 +95,38 @@ superseded and withdrawn rows stay in the history.
 
 ENSDF values without an uncertainty (limits, approximate values) are left out of the evaluated rows. A B(E2) is
 derived from an ENSDF half-life only for a level whose γ rays the reader could all place.
+
+### A value counts once
+
+A published value entered twice (typed in by hand, then imported in another unit, for example) would count twice in
+the comparison. So two data points are taken as the same value when they have the same nucleus, observable, level or
+transition, method and evidence, come from the same publication, and give the same value to 0.5 % once both are in
+the observable's convention. The same publication is the same DOI if both name one, else the same NSR key if both
+name one, else the same first author (by the surname) and year. The uncertainty, the detail and where in the paper
+may be written differently. Your own measurements, which have no publication, count as the same only when they are
+the same word for word.
+
+- **The form** does not add such a point: it says the value is in the ledger already, with the row that holds it,
+  and that you can correct that row if it should say more.
+- **An import** lists such a point under *Already there*, with the row.
+- **Repeats already in a ledger** (from before this rule) are withdrawn when the app starts and first reads the
+  nuclei: of each pair the one that came in later gets a retraction with a note that names the row it repeats
+  (*repeats row …: the same value from the same source by the same method, entered twice; a value counts once*).
+  Nothing is deleted: both rows stay in the history. With nothing left to withdraw, nothing is written.
+
+### Other evaluations
+
+Besides ENSDF's adopted values, the literature has other evaluations: tables that average the measurements, such as
+Raman et al. (2001) and Pritychenko et al. (2012, 2016). An import or the form takes them in as *evaluated* rows
+with the method *Evaluation*, marked as averages of measurements (`"not_independent_of": "measurements"` in the
+row's origin). Such an average may hold the very measurements it is set beside, so:
+
+- it is shown in a group of its own, *Other evaluations*, with its difference from the reference and its ratio, but
+  no pull and no verdict (*not judged: not independent*);
+- it is never the reference unless you pick it. If you do, the measured values are pulled against it and marked ◦
+  (not independent of the reference), and the other evaluations are again not judged;
+- ENSDF's own adopted values still come from the snapshot of the evaluation: a file's ENSDF value, also one that
+  another paper quotes, is refused.
 
 ## Names of levels and transitions
 
@@ -139,8 +174,9 @@ experiments.
 
 ## Comparison
 
-The rows of one observable of one level or transition are compared with a **reference**: the evaluated value,
-unless you pick another row. A projected row cannot be the reference.
+The rows of one observable of one level or transition are compared with a **reference**: ENSDF's evaluated value,
+unless you pick another row (another evaluation is never the reference by itself). A projected row cannot be the
+reference.
 
 Each independent row gets:
 
@@ -158,7 +194,8 @@ Each independent row gets:
 - **no uncertainty, no verdict:** a row without an uncertainty (a calculation, for example) gets its ratio to the
   reference and is not judged;
 - a mark (◦) when it is **not independent of the reference**, because the two share a source: their agreement is
-  no test.
+  no test;
+- **another evaluation** gets its difference and ratio and no verdict (see [Other evaluations](#other-evaluations)).
 
 Each projected row gets its **closure**: its value minus the value its simulation was given, over its own total
 uncertainty, judged by the same rule (*closes*, *closes poorly*, *does not close*). Beside it stand the precision
@@ -262,6 +299,41 @@ nucleus.import_points("points.csv")                     # many points from a fil
 `results.of_experiment(folder)` and `results.of_nuclide("62Ni")` read the rows; `results.current(rows)` drops the
 superseded ones; `compare.compare(rows)` compares them.
 
+What the two screens of a nucleus draw is plain data, so a script reads the same numbers and words:
+
+```python
+nucleus.lowest_levels("62Ni")          # the ground state and the next four levels of the evaluation
+view = nucleus.observable_view("62Ni", "B(E2)", "2+1 > 0+1")
+[(g["label"], g["count"]) for g in view["groups"]]   # [('Evaluated', 1), ('Other evaluations', 4), ...]
+view["counts"]["measured"]["text"]                   # '15 agree · 1 differs'
+[s["title"] for s in view["stands_out"]]             # ['NSR 1972Li28 1972 differs', ...]
+nucleus.retract_duplicates("62Ni")     # withdraw the repeated data points of a ledger (a list of retractions)
+```
+
+- `lowest_levels(nuclide, count=5)`: `levels`, the lowest first, each with its J^π, energy (with the text and a short
+  text) and the observables that belong to it (a transition says whether it starts or ends on the level); `ratio`,
+  the check E(4⁺₁)/E(2⁺₁); `reference` and `evaluated` (the evaluation and how many of its values hold); and
+  `reason`, why there are no levels (no local ENSDF copy, for example).
+- `observable_view(...)` has, besides the comparison, the routes, what the value gives and the history:
+  - `groups`: the values in the groups of the comparison screen (the reference, other evaluations, Coulomb
+    excitation, electron scattering, from the lifetime, other measured, outside program, theory, projected), each
+    with its label, note, count and the conversion its values went through; each entry with its source, method,
+    year, value as text in every unit the screen offers (`texts`), its place on the axis (`x`, from 0 to 1), its
+    difference, pull and verdict in words (`verdict_text`), and for a simulated run its closure;
+  - `counts`: how many measured values agree, are in tension, differ or are not judged (with a sentence), how many
+    other evaluations and values of outside programs, the theory ratios and on which side of the reference they lie,
+    the best single measurement, and what the simulated runs reach (with the sentence of *What the projected runs
+    say*);
+  - `stands_out`: the findings of *What stands out*, each with its kind (`differ`, `tension`, `superseded`,
+    `theory`), title, sentence, the row's note and the ids of the rows;
+  - `axis` (with its ticks and the reference's band), `units` (each with its ticks) and `orders` (the ids by method,
+    year and pull).
+- In `nucleus.view(...)["table"]` and `nucleus.nuclei()`, each row that holds more than the evaluation also has
+  `counts` (as above), `strip` (the axis, the units and every value's place: the strip of a card) and
+  `other_evaluations` (as `measured`, for the other evaluations).
+- `repeats(a, b)` says whether two rows are one value entered twice and `same_source(a, b)` whether they are from the
+  same publication; `compare.averages(row)` whether a row is another evaluation.
+
 ## From an LLM, through the MCP server
 
 The MCP server (`physim mcp`; see {doc}`shell-model` for adding it to Claude Code) has seven tools for the results.
@@ -276,6 +348,11 @@ They act on a nucleus and need no open experiment.
 | `retract_data_point(nucleus, row, reason)` | withdraws a data point; nothing is deleted |
 | `compare_results(nucleus, observable, key, reference?)` | every result for one observable of one level or transition: the independent ones against the reference with difference, pull and verdict; the projected ones apart with their closure and precision; the routes with their state and whether they apply; what the value gives; the checks; what it is used for |
 | `import_data_points(path, nucleus)` | reads data points from a JSON or CSV file, or from the literature file of a nucleus; says what was added, what was already there (a file imported twice adds nothing) and what was refused, with each reason. `nucleus` is optional: the nucleus the points must be of |
+
+`compare_results` lists another evaluation among the independent values with its difference and *not judged*, and
+`import_data_points` takes other evaluations and lists repeats under what was already there, as the page does. The
+groups, counts and *What stands out* of the comparison screen are in the Python functions above; the tools do not
+list them.
 
 Quantities follow the same conventions as on the page: B(E2) in e2fm4 (or e2b2, or W.u., which is always down), τ
 in ps, Q_s in efm2, B(M1) in mu_N2, μ in mu_N, E in keV.

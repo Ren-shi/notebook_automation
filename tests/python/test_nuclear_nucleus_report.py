@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from physim.nuclear import Experiment, ensdf, logbook, nucleus, results
+from physim.nuclear import Experiment, ensdf, logbook, nucleus, results, shellmodel_spaces
 from physim.nuclear.runs import ExperimentFolder
 
 KEY = "62Ni:2+1>0+1:E2"
@@ -109,7 +109,10 @@ def test_points_from_json_and_csv_files(lab):
 # -- the route that holds the reference -----------------------------------------------------------------------------
 
 
-def test_the_route_of_the_reference_is_flagged(lab):
+def test_the_route_of_the_reference_is_flagged(lab, monkeypatch):
+    # The shell-model route names the memory free when it is tested: pinned, so that the views read below say the
+    # same however much memory other programs take meanwhile.
+    monkeypatch.setattr(shellmodel_spaces, "available_memory_bytes", lambda: 16 * 1024**3)
     results.add_points([results.Row("62Ni", "B(E2)", KEY, 884.1, "e2fm4", "evaluation", "evaluated",
                                     direction="up", total=13.1, origin=ENSDF_ORIGIN)])
     view = nucleus.observable_view("62Ni", "B(E2)", KEY)

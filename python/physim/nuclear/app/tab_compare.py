@@ -68,7 +68,7 @@ body.body--dark .ps-cmp { --ps-m1: #5CC8F0; --ps-m2: #E28BC0; --ps-m3: #F0D060; 
 .ps-cmp .q-btn.ps-cmp-tab { min-height: 44px; padding: 0 16px; border-radius: 0; font-family: var(--ps-mono);
   font-weight: 400; color: var(--ps-muted) !important; border-bottom: 2px solid transparent; }
 .ps-cmp .q-btn.ps-cmp-tab-on { color: var(--ps-ink) !important; font-weight: 600; border-bottom-color: var(--ps-fill); }
-.ps-cmp-more { margin-left: 8px; min-width: 240px; padding: 4px 0; }
+.ps-cmp-more { margin-left: 8px; min-width: 300px; padding: 4px 0; }
 .ps-cmp-tiles { display: flex; flex-wrap: wrap; gap: 1px; background: var(--ps-line); border: 1px solid var(--ps-line);
   border-radius: 8px; overflow: hidden; }
 .ps-cmp-tile { flex: 1 1 190px; background: var(--ps-surface); padding: 14px 18px; min-width: 0; }

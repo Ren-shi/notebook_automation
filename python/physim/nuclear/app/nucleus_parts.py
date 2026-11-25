@@ -740,11 +740,11 @@ def known_lines(row: dict, display: Optional[str] = None) -> str:
 # Parts with a form or a file: the import, the report, the data point
 
 
-def import_button(ctx, name: str, reload) -> None:
-    """"Import points from a file": a window that takes a JSON or CSV file of data points (or a literature file
-    of the paper verifications), adds them through :func:`import_file` and shows the three lists: added, already
-    there, refused with the reasons. The page reads again when the window closes after an import that added
-    something."""
+def import_button(ctx, name: str, reload, label: str = "Import points from a file") -> None:
+    """"Import points from a file" (or ``label``): a window that takes a JSON or CSV file of data points (or a
+    literature file of the paper verifications), adds them through :func:`import_file` and shows the three lists:
+    added, already there, refused with the reasons. The page reads again when the window closes after an import
+    that added something."""
     ui = ctx.ui
     st = ctx.state["start"]
 
@@ -802,13 +802,13 @@ def import_button(ctx, name: str, reload) -> None:
             "accept=.json,.csv max-files=1 flat bordered").classes("w-full")
         with ui.column().classes("w-full gap-0").style("max-height: 55vh; overflow-y: auto"):
             lists()
-    ui.button("Import points from a file", icon="upload_file", on_click=dialog.open).props("outline no-caps")
+    ui.button(label, icon="upload_file", on_click=dialog.open).props("outline no-caps")
 
 
-def report_button(ctx, name: str) -> None:
-    """"Report for this nucleus": the report of the nucleus across its experiments
-    (:func:`physim.nuclear.logbook.nucleus_html`), saved as HTML or as PDF, as the Report step of an experiment
-    offers its report. Building it writes nothing."""
+def report_button(ctx, name: str, label: str = "Report for this nucleus") -> None:
+    """"Report for this nucleus" (or ``label``): the report of the nucleus across its experiments
+    (:func:`physim.nuclear.logbook.nucleus_html`), saved as HTML or as PDF from its menu, as the Report step of an
+    experiment offers its report. Building it writes nothing."""
     ui = ctx.ui
     made: dict = {}
 
@@ -842,7 +842,7 @@ def report_button(ctx, name: str) -> None:
             return
         ui.download.content(data, f"{name}-nucleus-report.pdf")
 
-    with ui.button("Report for this nucleus", icon="description").props("outline no-caps").tooltip(
+    with ui.button(label, icon="description").props("outline no-caps").tooltip(
             "Every result of this nucleus across its experiments, results first: as HTML or PDF"):
         with ui.menu():
             ui.menu_item("Save as HTML", on_click=save_html)
@@ -850,7 +850,9 @@ def report_button(ctx, name: str) -> None:
 
 
 def scroll_to_point_form(ui) -> None:
-    """Show the form of a data point that is on the page."""
+    """Scroll to the form of a data point where it stands on the page itself: on the landing page of a nucleus
+    that has no row yet, beside its experiments. Everywhere else the form is in the window of the comparison
+    screen, which :func:`open_observable` opens with ``to_point_form``."""
     ui.run_javascript(
         "document.querySelector('.ps-point-form')?.scrollIntoView({behavior: 'smooth', block: 'start'})")
 

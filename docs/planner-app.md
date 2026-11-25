@@ -48,7 +48,8 @@ server that others reach from their own machines.
    press Ctrl+C in it) to stop.
 
 **If you already use Python:** `pip install "physim-engine[app,root]"`, then `physim app` (or `python -m physim app`).
-`physim app --example oxygen_on_lead_array` opens an example instead of the nuclei; `--port` picks another port.
+`physim app --example oxygen_on_lead_array` opens an example, with its steps, instead of a nucleus; `--port` picks
+another port.
 
 `physim app --window` opens the planner in its own window instead of a browser tab (`pip install
 "physim-engine[app,window]"` adds pywebview, 5 MB; without it the browser opens and the command says so).
@@ -56,11 +57,217 @@ server that others reach from their own machines.
 `physim app` listens only on this computer (127.0.0.1). `--host 0.0.0.0` serves the local network too, for
 example to show the planner on a lab PC; anyone on that network can then open it.
 
-## The nuclei: the first screen
+## How the planner opens
 
-The planner opens on the nuclei, under the title **What are you studying?** Each nucleus holds its experiments and
-everything known about it, by method. The most recent experiment is open behind this screen: **Back to the
-experiment** returns to it.
+The planner opens on the page of a nucleus: the one this browser showed last. If it remembers none (or that
+nucleus is not there any more), it opens on the nucleus that the most recently changed experiment studies; if no
+experiment studies a nucleus, on the most recently changed nucleus that holds data points. Otherwise it opens on the
+nuclei, and the very first time, with no experiment and no nucleus yet, on the kinds of experiment (see
+[Starting an experiment](#starting-an-experiment)). Until the browser has said which nucleus it showed last (three
+seconds at most), the page says *Opening the nucleus you were on…*.
+
+The most recent experiment is open behind the page of the nucleus; the bar at the top leads back to it. An address
+always wins over what the browser remembers:
+
+- `/?nucleus=62Ni` opens the page of that nucleus;
+- `/?nucleus=62Ni&observable=B(E2)&key=…` opens the comparison of one of its observables with the literature (the
+  address the page itself writes for it; links from an experiment's Analysis step have this form);
+- `?theme=dark` (or `light`) sets the theme for one visit.
+
+A link to a nucleus inside the planner (from the rail, or from *Beside what is known* on the Analysis step) opens it
+in place, so the experiment you came from stays open behind it. Ctrl+click and a new tab still use the address.
+
+## The bar at the top
+
+The page of a nucleus, the comparison, the nuclei, the kinds of experiment and Physics have no rail with steps: a bar
+runs across the top instead. From the left:
+
+- **physim**, the wordmark;
+- a button for each nucleus that has a card on the nuclei screen (at most the five most recently changed, and the
+  nucleus on screen, which is marked), each opening its page;
+- **All nuclei**, the nuclei screen (below);
+- **Another nucleus**, a field that opens the page of any nucleus, also one with no experiment yet (it starts with
+  ENSDF's adopted values). Write it as `58Ni` or `Ni-58`, then press Enter or **Open its page**;
+- **Back to** *the experiment's name*, when an experiment is open: its steps, as you left them;
+- **Physics**, the reference behind the numbers (see [The steps](#the-steps)), with a way back to where you were;
+- **Light** and **Dark**.
+
+In a narrow window the bar wraps onto two lines.
+
+## The page of a nucleus
+
+The page of a nucleus (`/?nucleus=62Ni`) holds what is known and projected about it, by method, and what is still
+open. The first time it is opened it reads ENSDF's adopted values in, from the local ENSDF copy. From the top down:
+
+- **The head:** the nucleus and the element's name; Z, N and whether it is stable, with its share of the natural
+  element (or its half-life); one sentence with how many experiments, analysed runs and data points there are and
+  which evaluation is taken in (*The evaluation is ENSDF adopted, NDS 204, 1 (2025): 453 values, taken …*); and four
+  buttons: **New experiment for ⁶²Ni** (the kinds of experiment, with the nucleus filled in), **Add a data point**
+  (it opens the comparison of the first observable with the window of the form), **Import points from a file** and
+  **Report for this nucleus** (see [Data points](#data-points) and [The report of a nucleus](#the-report-of-a-nucleus)).
+- **Lowest levels**, beside the head (under it in a narrow window): the ground state and the next four levels of the
+  evaluation, each a line at a height that follows its energy, with J^π on the left and the energy on the right (the
+  value with its uncertainty on hovering). A transition that has its own card is an arrow with its value
+  (*E2 · B(E2) 884 ± 13 e²fm⁴↑*); click the value to compare it with the literature. Under the levels stand
+  E(4⁺₁)/E(2⁺₁) (hover for what it means) and **All 453 evaluated values**, which opens the list at the bottom of
+  the page. Without a local ENSDF copy the card says so.
+- **What is known and projected:** one card for each observable that holds more than the evaluation. The switch
+  **B(E2)↑ in e²fm⁴ / B(E2)↑ in e²b²** changes how a B(E2) is written on the page; nothing is changed in the stored
+  values.
+  - The first card is the large one: the evaluated value (*evaluated · given as 12.13 W.u.↓*), how precisely it is
+    known, and a strip with every value of the observable on one axis. On the strip the reference is a band (its
+    uncertainty) with a line; a measured value is a grey dot, one in tension a dot in the warning colour and one that differs a red dot; theory
+    is a hollow dot, a simulated run a hollow dot in the accent colour, another evaluation a hollow diamond and an
+    outside program a hollow square. Hovering a dot shows its source and value. Under the strip, the counts in words
+    (*16 measured · 15 agree, 1 differs*, *4 other evaluations*, *2 theory · × 1.28 · × 1.35 · above*, *Projected ·
+    reaches ±7.1 % · both close*), what physim could still plan, and **Compare with the literature →**.
+  - The other cards are small: the value, what it is (*evaluated*, or for a value with no evaluation its evidence
+    and source), how many measured values there are and their range, what the simulated runs reach (or *No simulated
+    run*), what is still open, and **Compare →**.
+- **Your experiments on ⁶²Ni:** each experiment with its kind, runs and latest result; a row (or **Open →**) opens
+  the experiment with its steps.
+- **Still open:** each route physim can plan that no run of your own has taken yet, with physim's test of it (for
+  example whether τ is in the range of a plunger) and what it gives, and **Plan it for ⁶²Ni →**, which opens the
+  form of that kind of experiment; the runs not analysed yet; and whether the evaluation is still to be taken in. The
+  routes are tested after the page shows: until then the panel says *Testing the routes physim can plan…*.
+- **All observables:** one row per level or transition, with the columns *Evaluated*, *Measured*, *Theory*,
+  *Projected (simulated runs)* and *Still open* (and *Outside program* when there is such a value). A row opens its
+  comparison. The rows that hold only the evaluation are folded under *… more hold the evaluation only*.
+
+A nucleus with no value yet shows the head and the levels, then its experiments and what is still open beside the
+form of a data point.
+
+## Comparing with the literature
+
+**Compare with the literature →** on a card, a row of *All observables* or an arrow of the levels opens the
+comparison of one observable of one level or transition: every value side by side, against a reference. **← ⁶²Ni**
+at the top goes back to the page of the nucleus. The head names the observable (*B(E2; 0⁺₁ → 2⁺₁)↑ of ⁶²Ni, every
+value side by side*) and has **Add a data point**, **Import points from a file** and **Report for this nucleus**.
+
+Under it, the observables of the nucleus that hold more than the evaluation are tabs; the others are in the list
+*… more hold the evaluation only*, where you can type to find one.
+
+**Five tiles** sum the comparison up:
+
+- **The reference:** its value, source and precision (the evaluated value, unless you pick another);
+- **Measured:** how many measured values, and how many agree, are in tension or differ;
+- **Best single measurement:** the measured value with the smallest relative uncertainty, with its source and
+  method;
+- **Theory:** how many values, and each one's ratio to the reference;
+- **Your setup, projected:** the precision the simulated runs reach, and whether they close.
+
+A tile with nothing in it says so (*no measured value*, *no simulated run*).
+
+Above the table:
+
+- **Order:** **By method** (in groups), **By year** (the newest first) or **By pull** (the largest first). In every
+  order the reference is first and the simulated runs are last.
+- **Unit:** for a B(E2) e²fm⁴, e²b² or W.u. (always the ↓ value); for τ ps or fs; for Q_s e fm² or e b. Only how the
+  values are written changes. The choice for a B(E2) is the same as the switch on the page of the nucleus.
+- **against:** the row every other value is compared with.
+- The key to the marks that are in the table: the reference (a filled dot in the accent colour), Coulomb excitation
+  (a filled dot), electron scattering (a filled diamond), from the lifetime (a filled square), other measured
+  methods (a filled triangle), outside program (a hollow square), other evaluations (a hollow diamond), theory (a
+  hollow dot), projected (a dashed hollow dot), the value given to the simulation (a short upright line), and the
+  reference ± its uncertainty (the band).
+
+**The table** has one row per value: its source (with where in the paper and the row's note, cut short; hover for
+all of it), its method (with what it was converted from, *from τ = 2.01 ± 0.12 ps*, or what it was given as), its
+value in the unit chosen and how precisely it is known, a bar, its difference from the reference, its pull and its
+verdict (✓ agree, △ tension, ✗ differ). On the bar every row shares one axis, with the reference's band and line
+through all of them: the value is the mark and its uncertainty the line through it. A value without an uncertainty
+gets its ratio to the reference (× 1.35) and *not judged: no uncertainty*. A value that shares a source with the
+reference is marked *◦ not independent of the reference*: their agreement is no test. In a wide table the box
+scrolls sideways on its own.
+
+By method the rows stand in groups, each with a line on what it holds, the newest first in each:
+
+- *Evaluated*, the reference;
+- *Other evaluations* (another table of averages, such as Pritychenko et al. or Raman et al.): each averages
+  measurements, so it gets its difference and ratio but no pull and no verdict (*not judged: not independent*);
+- *Measured · Coulomb excitation*, *Measured · electron scattering*, *Measured · from the lifetime* (a lifetime
+  converted to a B(E2), or the other way, with the γ-ray energy, branching and conversion coefficient it was
+  converted with), *Measured · other methods*;
+- *Outside program*, *Theory*;
+- *Projected · simulated runs, analysed back*: each run with its statistical and systematic uncertainty, the
+  precision it reaches, and its closure against the value its simulation was given (✓ closes, △ closes poorly, ✗
+  does not close). The value given to the simulation is the short line on its bar. A projected value is never set
+  against the reference.
+
+The ⋮ menu at the end of a data point's row offers **Correct…** and **Retract…** (see [Data points](#data-points)).
+Under the table, a sentence says how the pull and the verdict are worked out.
+
+Under the table, side by side:
+
+- **What stands out:** a measured value that differs from the reference or is in tension with it (with its note), a
+  value that was replaced or withdrawn, or was made from one that was, and theory values that all lie on one side of
+  the reference. With nothing of the kind, it says so.
+- **What the projected runs say:** in one sentence, the precision the setup reaches (and how much of it is
+  systematic), how well the value is already known, and how well the best single measurement knows it; then a link to
+  the experiment of the best run. Without a simulated run it says what one would tell, with **Plan an experiment for
+  ⁶²Ni →**.
+
+Then, in two columns (one in a narrow window):
+
+- **Routes to …:** every way to reach the observable, each with its state: *done* (an independent value by this
+  method is here), *projected only* (only simulated runs), *in physim* (an experiment of that kind can be planned),
+  *later* (a kind of experiment physim does not have yet) or *does not apply*. Each route says whether it applies to
+  this nucleus and why: whether the nucleus can be a target or a beam, whether the level's lifetime is in the range of
+  a plunger or of DSAM, whether a shell-model calculation fits this computer. **Plan it for ⁶²Ni** (or **Plan another
+  for ⁶²Ni** where a run of your own exists) opens the form for that kind of experiment. The routes that are not
+  experiments of the planner (the evaluation, the shell model, methods known from the literature) are listed in one
+  line under the cards.
+- **History:** every row ever written for the observable, newest first, with what superseded or withdrew it.
+- **What this value gives:** what follows from the reference value (B↓, Weisskopf units, the matrix element, τ from
+  B(E2) or B(E2) from τ), the **checks against other observables** (for example E(4⁺₁)/E(2⁺₁) and the rotor's Q_s
+  from B(E2) beside the measured Q_s), each with how to read it, and **what it is used for**, with references.
+
+{doc}`results` explains the rows, the comparison, the routes and the checks in full.
+
+### Data points
+
+A data point is a value you bring in: a published value, or a measurement of your own. It is entered as a value
+with its uncertainty; physim keeps no raw spectra. **Add a data point** opens a window with the form (on the page of
+a nucleus that has no value yet, the form stands on the page). It asks for:
+
+- the **Observable** and the **Transition** or **Level**, as you would say it: `2+1 > 0+1`, `2+1`, or `2+ at 1173
+  keV`;
+- the **Value**, its **Unit** and, for a B value, the **Direction** (*↑ excitation (lower → upper)* or *↓ decay*; a
+  value in W.u. is always ↓);
+- the **Uncertainty**, as **One total**, **Stat and sys**, or **Plus and minus**;
+- the **Evidence** (*Measured*, *Outside program*, *Theory* or *Evaluated*, for another evaluation than ENSDF's)
+  and the **Method**, with an optional line of detail;
+- **Where it is from:** **A reference** (authors, year, DOI, where in the paper) or **Own measurement** (date and a
+  note on where and how).
+
+**Add the point** adds it. If something is wrong, the form lists everything at once under *Not a data point yet*.
+A value counts once: a point that is already in the ledger, also in another unit or with other words of detail, is
+not added, and the form names the row that holds it (correct that row if it should say more). A point is never
+changed: the ⋮ menu beside it offers **Correct…**, which opens the form with the point in it and adds a new row that
+supersedes it, and **Retract…**, which withdraws it with a reason. Both stay in the history. The × at the top right
+closes the window; closing it while correcting drops the correction.
+
+**Import points from a file** reads many points at once: from a JSON or CSV file, or from the literature file of a
+nucleus. Its window takes the file and lists what was **Added**, what was **Already there** (importing a file twice
+adds nothing, and neither does a point already in the ledger in another unit) and what was **Refused**, with the
+reason for each. A literature file's method in words becomes one of the methods of the ledger, and the words, the
+facility and the file's notes on the value are kept beside it. A lifetime stays a lifetime; the comparison converts
+it. Another evaluation in the file (a table of averages, such as Raman et al. or Pritychenko et al.) comes in as an
+evaluated row, marked as not independent of the measurements. ENSDF's own adopted values in the file are refused:
+they come in as the evaluation.
+
+### The report of a nucleus
+
+**Report for this nucleus** builds a report of the nucleus across its experiments, and saves it with **Save as HTML**
+or **Save as PDF**. It has one section for each observable and level or transition that holds more than the
+evaluation: the values side by side in the two groups, the routes and whether they apply, what is still to run, the
+checks between observables, and what the value gives and is used for. The experiments and the history of the rows
+follow as appendices. The report of one experiment is on that experiment's Report step.
+
+## The nuclei
+
+**All nuclei** in the bar opens the nuclei, under the title **What are you studying?** Each nucleus holds its
+experiments and everything known about it, by method.
 
 Each nucleus that an experiment studies, or that has results of its own, has a card:
 
@@ -70,7 +277,7 @@ Each nucleus that an experiment studies, or that has results of its own, has a c
   [Starting an experiment](#starting-an-experiment)).
 - **What is known and projected:** the first few observables, each with the evaluated value, how many measured
   values there are, and what the simulated runs reach (*projected: reaches ±7.1 % (2 simulated runs · …)*). Click
-  one to open the nucleus's page on it.
+  one to open its comparison with the literature.
 - **Still open:** the routes physim can plan that no run of your own has taken yet, the runs not analysed, and
   whether the evaluation is still to be taken in.
 - **Experiments:** a table with each experiment's kind, runs and latest result. A row opens the experiment.
@@ -83,97 +290,12 @@ Below the cards:
 - **Experiments tied to no nucleus**, with the reason: elastic scattering, and fusion-evaporation without a studied
   channel.
 
-**Another nucleus** and **Open its page** open the page of any nucleus, also one with no experiment yet (it starts
-with ENSDF's adopted values). Write it as `58Ni` or `Ni-58`. The page of a nucleus also has an address of its own:
-`/?nucleus=62Ni`.
-
-**Start from a kind of experiment** opens the kinds (below). The very first time, with no experiment and no
-nucleus yet, the planner opens on the kinds.
+**Another nucleus** and **Open its page** open the page of any nucleus, as in the bar. **Start from a kind of
+experiment** opens the kinds (below).
 
 An experiment belongs to the nucleus it studies. In Coulomb excitation that is the nucleus that is excited; the
 other one is its partner. A fusion-evaporation experiment belongs to the residue of the channel its setup marks as
 studied (`[run] channel`); without that mark it belongs to no nucleus. Elastic scattering belongs to none.
-
-## The page of a nucleus
-
-The page of a nucleus (from its card, or `/?nucleus=62Ni`) holds everything known and projected about it, by
-method. **Nuclei** at the top goes back to the nuclei. The page reads ENSDF's adopted values in the first time it
-is opened (from the local ENSDF copy; the line under the head says which data set, how many values and when).
-
-From the top down:
-
-- **The head:** Z, N, how many experiments, analysed runs and data points. **Add a data point** scrolls to the form;
-  **New experiment for ⁶²Ni** starts an experiment.
-- **The read-outs:** the headline observables (for ⁶²Ni, B(E2; 0⁺₁ → 2⁺₁)↑ and τ(2⁺₁)) with their evaluated value
-  and what the simulated runs reach, and how many things are still open.
-- **Observables:** one row per level or transition, with the columns *Evaluated*, *Measured*, *Theory*, *Projected
-  (simulated runs)* and *Still open* (and *Outside program* when there is such a value). Click a row to see every
-  value of it below. The rows that hold only the evaluation are folded under *… more hold the evaluation only*.
-  The switch **B(E2)↑ in e²fm⁴ / B(E2)↑ in e²b²** changes how a B(E2) is written on the page; nothing is changed in
-  the stored values.
-- **Every value, side by side**, for the chosen row, against a reference (the evaluated value unless you pick
-  another row in **against**). Two tables, never mixed:
-  - *Independent:* the evaluated, measured, theory and outside-program values. Each has its source, its method in
-    words, its value, how precisely it is known, and its difference from the reference, its pull and its verdict
-    (✓ agree, △ tension, ✗ differ). A value converted from another quantity says so (*DSAM (line shape), from τ =
-    2.01 ± 0.12 ps*). A value that shares a source with the reference is marked ◦: their agreement is no test.
-  - *Projected:* the simulated runs analysed back. Each has its statistical and systematic uncertainty, the value
-    its simulation was given, the closure (✓ closes, △ closes poorly, ✗ does not close) and the precision it
-    reaches. A projected value is never set against the reference.
-- **The values:** a plot of every value with its uncertainty, the reference's uncertainty as a band, and the value
-  the simulations were given.
-- **What the projected runs say:** in one sentence, the precision the setup reaches (and how much of it is
-  systematic), how well the value is already known, and how well the best single measurement knows it.
-- **Routes to …:** every way to reach the observable, each with its state: *done* (an independent value by this
-  method is here), *projected only* (only simulated runs), *in physim* (an experiment of that kind can be planned),
-  *later* (a kind of experiment physim does not have yet) or *does not apply*. Each route says whether it applies to
-  this nucleus and why: whether the nucleus can be a target or a beam, whether the level's lifetime is in the range of
-  a plunger or of DSAM, whether a shell-model calculation fits this computer. **Plan it for ⁶²Ni** (or **Plan another
-  for ⁶²Ni** where a run of your own exists) opens the form for that kind of experiment. The routes that are not
-  experiments of the planner (the evaluation, the shell model, methods known from the literature) are listed in one
-  line under the cards.
-- **What this value gives:** what follows from the reference value (B↓, Weisskopf units, the matrix element, τ from
-  B(E2) or B(E2) from τ), the **checks against other observables** (for example E(4⁺₁)/E(2⁺₁) and the rotor's Q_s
-  from B(E2) beside the measured Q_s), each with how to read it, and **what it is used for**, with references.
-- **Experiments:** every experiment with this nucleus; a row opens it.
-- **Add a data point**, and the **History** of every row ever written for the observable, newest first, with what
-  superseded or withdrew it.
-
-{doc}`results` explains the rows, the comparison, the routes and the checks in full.
-
-### Data points
-
-A data point is a value you bring in: a published value, or a measurement of your own. It is entered as a value
-with its uncertainty; physim keeps no raw spectra. The form **Add a data point** asks for:
-
-- the **Observable** and the **Transition** or **Level**, as you would say it: `2+1 > 0+1`, `2+1`, or `2+ at 1173
-  keV`;
-- the **Value**, its **Unit** and, for a B value, the **Direction** (*↑ excitation (lower → upper)* or *↓ decay*; a
-  value in W.u. is always ↓);
-- the **Uncertainty**, as **One total**, **Stat and sys**, or **Plus and minus**;
-- the **Evidence** (*Measured*, *Outside program* or *Theory*) and the **Method**, with an optional line of detail;
-- **Where it is from:** **A reference** (authors, year, DOI, where in the paper) or **Own measurement** (date and a
-  note on where and how).
-
-**Add the point** adds it. If something is wrong, the form lists everything at once under *Not a data point yet*.
-A point is never changed: the ⋮ menu beside it offers **Correct…**, which adds a new row that supersedes it, and
-**Retract…**, which withdraws it with a reason. Both stay in the history.
-
-**Import points from a file**, beside **Add a data point**, reads many points at once: from a JSON or CSV file, or
-from the literature file of a nucleus. Its window takes the file and lists what was **Added**, what was **Already
-there** (importing a file twice adds nothing) and what was **Refused**, with the reason for each. A literature file's
-method in words becomes one of the methods of the ledger, and the words, the facility and the file's notes on the
-value are kept beside it. A lifetime stays a lifetime; the page converts it when it compares. An evaluation in the
-file (ENSDF's adopted value, a table of averages) is refused: ENSDF's values come in as the evaluation, and another
-evaluation would count the measurements it averages a second time.
-
-### The report of a nucleus
-
-**Report for this nucleus** builds a report of the nucleus across its experiments, and saves it with **Save as HTML**
-or **Save as PDF**. It has one section for each observable and level or transition that holds more than the
-evaluation: the values side by side in the two groups, the routes and whether they apply, what is still to run, the
-checks between observables, and what the value gives and is used for. The experiments and the history of the rows
-follow as appendices. The report of one experiment is on that experiment's Report step.
 
 ## Starting an experiment
 
@@ -215,7 +337,7 @@ Pick a kind and its form opens:
 
 **Make the experiment** makes it and opens its Setup step. For Coulomb excitation the first 2⁺ state is taken from
 the local ENSDF copy; without one the setup says what to enter. **Change the kind** goes back to the kinds, and
-**The nuclei** to the first screen. Below the kinds, **Or open an experiment** lists every experiment, and **Import
+**The nuclei** to the nuclei. Below the kinds, **Or open an experiment** lists every experiment, and **Import
 a setup file…** starts from a `.toml` setup (see {doc}`nuclear-setup`).
 
 ## Experiments
@@ -224,9 +346,10 @@ An experiment has a name, its current setup and the runs taken with it. It lives
 `~/.physim/experiments` (the environment variable `PHYSIM_EXPERIMENTS` moves it), where the setup is saved every
 time you press **Apply**. Its results go to `results.jsonl` in the same folder (see {doc}`results`).
 
-At the top of the rail on the left:
+An open experiment has the rail on the left, with its steps (below). At the top of the rail:
 
-- the nucleus the experiment studies, a link to its page (nothing for an experiment that studies none);
+- **← ⁶²Ni the nucleus**, back to the page of the nucleus the experiment studies (**← All nuclei** for an
+  experiment that studies none);
 - the experiment's name, which is a menu:
   - **Open an experiment…** opens the nuclei screen: open an experiment from its table, or start one with **New
     experiment for …**;
@@ -240,8 +363,9 @@ At the top of the rail on the left:
 
 ## The steps
 
-The rail on the left is the experiment in the order it is done, from the top down: **1 Setup → 2 Plan → 3 Run →
-4 Data → 5 Analysis → 6 Report**. The step on screen has its number on the accent colour.
+The rail on the left belongs to the open experiment; the page of a nucleus, the comparison, the nuclei and the kinds
+have the bar at the top instead. It is the experiment in the order it is done, from the top down: **1 Setup → 2 Plan
+→ 3 Run → 4 Data → 5 Analysis → 6 Report**. The step on screen has its number on the accent colour.
 
 - **Each step has a line of status under its name:** the detectors, the beam time the counts need, the runs
   taken, the current run, the result of the analysed run (B(E2) for Coulomb excitation, τ for a lifetime
@@ -345,7 +469,9 @@ The steps:
   - *Reach*: *This setup reaches ±x %; the value is known to ±y %*, and how well the best single measurement knows
     it;
   - *Other routes*: how many routes hold a value, and which are still open;
-  - **Compare on the ⁶²Ni page →**, a link to the nucleus's page on this transition.
+  - **Compare on the ⁶²Ni page →**, a link to the comparison of this transition with the literature (see
+    [Comparing with the literature](#comparing-with-the-literature)); **Back to** *the experiment* in the bar
+    returns to this step.
 
   A projected result is never pulled against the reference. A result with no row in the results ledger says why.
   The alignment check reads an alignment run's offset. The all-orders solution can fit the matrix element to the
@@ -375,7 +501,9 @@ The steps:
   or Chromium; if none is installed the app says so, and the HTML page prints to the same PDF from any browser.
   Building a report writes nothing into the experiment's folder.
 
-**Physics**, at the foot of the rail, is the reference behind the numbers; it is not a step. It follows the order
+**Physics**, at the foot of the rail (and in the bar at the top, where it has a way back to the screen it was
+opened from), is the reference behind the numbers; it is not a step. It shows the numbers of the open experiment;
+with none open, those of a first example, and it says so. It follows the order
 of the physics register: nuclear data and level schemes, kinematics, energy loss, the Rutherford orbit, the
 detectors and the γ-ray response, rates and events, and Coulomb excitation. Each section links to its register page
 and names the tests behind it. **See the physics** in a number's explanation, or the flask on a setup card, opens
@@ -577,7 +705,8 @@ paper.figure(p, "kinematics", journal="nature", width="double").savefig("kinemat
 
 ## Light and dark
 
-**Light** and **Dark** at the foot of the rail on the left switch the whole page, figures included. The first
+**Light** and **Dark**, at the foot of the rail on the left and at the right of the bar at the top, switch the whole
+page, figures included. The first
 time, the planner follows your system's setting; after that it remembers your choice in this browser.
 `?theme=dark` (or `light`) in the address sets it for one visit.
 
@@ -586,8 +715,9 @@ time, the planner follows your system's setting; after that it remembers your ch
 The page keeps answering while numbers are worked out; nothing you click has to wait for them.
 
 - **Opening the page:** it is there at once, with a spinner in the setup panel and in the step for the second or so
-  the count rates take. The nuclei and a nucleus's page are read in the background too, with a spinner meanwhile;
-  the first look at a nucleus also takes ENSDF's adopted values in.
+  the count rates take. The nuclei, the page of a nucleus and the comparison are read in the background too, with a
+  spinner meanwhile; the first look at a nucleus also takes ENSDF's adopted values in. On the page of a nucleus the
+  routes still open are tested last, after the rest shows.
 - **After Apply:** the dots beside *physim* at the top of the rail turn while the rates are worked out (about a
   second for the examples; nothing if they were worked out while you paused; a fraction of a second if you changed
   only the beam current or the run conditions, which reuse the rates). Then the checks, the cards, the rail and the
