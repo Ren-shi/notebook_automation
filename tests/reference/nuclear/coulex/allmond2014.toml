@@ -140,7 +140,7 @@ b_g = -3.294953896424533e-4
 
 # Relative change of ratio_elastic in [gosia.as_run] runs: Q_s(2+) = +-0.1 e b; and the full scheme (0+2 2049,
 # 2+2 2302, 4+1 2336 keV with ENSDF's E2 matrix elements 0-2+2 0.062153, 2+-0+2 0.280565, 2+-2+2 0.307817, 2+-4+
-# 0.524889 e b and the M1 2+-2+2 0.0936, Q = 0) against 0+, 2+ alone.
+# 0.524889 e b and the M1 2+-2+2 0.0936, Q = 0) against 0+, 2+ alone. GOSIA's input has no internal conversion in either.
 [gosia.sensitivity]
 q_eb = 0.1
 [gosia.sensitivity.ring2]
@@ -195,4 +195,4 @@ why = "The paper's total uncertainty on B(E2) (0.0037 of 0.0906 e2b2, 4.1 %) app
 pp = 0.5
 rel = 0.02
 why = "Q_s = +-0.1 e b moves the ratio by about +-2.7 % (ring 2) and +-1.9 % (ring 3) in GOSIA, the feeding by +1.2 % and +0.8 %; physim must give the same changes within 0.5 percentage points (about a fifth of the Q effect: enough to catch a wrong sign or a missing reorientation term, not the E1 polarisation and mass-number differences, which cancel in a relative change)."
-rel_why = "And within 2 % of GOSIA's change, so that a constant factor on it is seen: the percentage points alone passed effects 6 % (Q_s) and 19 % (feeding) too large, from one orbit for every pair of levels. The feeding in ring 3 is right at it since physim has the E1 polarisation (2026-11-25): -1.98 % (-1.7 % before), and -2.07 % with twice the check's angles and beam energies."
+rel_why = "And within 2 % of GOSIA's change, so that a constant factor on it is seen: the percentage points alone passed effects 6 % (Q_s) and 19 % (feeding) too large, from one orbit for every pair of levels. The feeding differs from GOSIA's by +0.12 % (ring 2) and +0.27 % (ring 3), by +0.21 % and +0.18 % with twice the check's angles and beam energies. Until 2026-11-25 physim's scheme with the higher states had ENSDF's internal conversion (alpha = 1.72e-4 of 2+ -> 0+), which its 0+, 2+ scheme and GOSIA's input do not have, and the differences were -1.37 % and -1.98 % (-2.07 % in ring 3 with the finer grid, outside). The band was not changed."

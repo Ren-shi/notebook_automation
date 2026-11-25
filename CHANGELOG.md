@@ -281,6 +281,13 @@ workflow builds the wheels, tests them and publishes to PyPI.
     random coincidences are subtracted); B(E2) follows the efficiency and correlation the analysis takes against the
     sample's own (r = −0.89), 0.9 ± 0.4 % high.
   - The projectile case of the tests has the default E1 polarisation and is judged on the area and the centre too.
+- The feeding check of the Allmond 2014 reproduction compares two schemes without internal conversion, as GOSIA's input
+  (`coulex_reproduction._ensdf_levels`). The scheme with ENSDF's higher states had ENSDF's conversion, the 0⁺, 2⁺ scheme
+  and GOSIA had none: α = 1.72·10⁻⁴ of 2⁺ → 0⁺ took 1.5 % (ring 2) and 2.2 % (ring 3) off a feeding of 1.2 and 0.8 %. The
+  feeding now differs from GOSIA's by +0.12/+0.27 % (it was −1.37/−1.98 %), by +0.21/+0.18 % with twice the angles and
+  beam energies of the check (−1.27/−2.07 %). The band (2 %) is unchanged, and so is every other number of the
+  reproduction; the worst is 0.79 of its band (it was 0.99). The solver has not changed, and conversion is everywhere
+  else as it was.
 - The peak's shape from the setup also through thin targets, and the Monte Carlo error by particle (what the next entry left
   unexplained).
   - `gamma_events.doppler_spread` is no longer None for a target that is thin or one slice (`reaction_depths` still is, so

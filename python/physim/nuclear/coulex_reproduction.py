@@ -47,7 +47,8 @@ reference file; :func:`run`)::
    uncertainty of 4.1 % of its per-ring B(E2); the pulls against the per-ring statistical errors are reported.
 5. *Sensitivities*: Q_s(2⁺) = ±0.1 e b and the feeding from ENSDF's higher states (0⁺₂, 2⁺₂, 4⁺₁) move the ratio
    as in GOSIA, within 0.5 percentage points and within 2 % of GOSIA's change (a constant factor on the effect,
-   which the percentage points alone let through: ±2.9 % for ±2.7 % is 6 % too much and 0.2 points).
+   which the percentage points alone let through: ±2.9 % for ±2.7 % is 6 % too much and 0.2 points). The schemes the
+   feeding compares have no internal conversion, as GOSIA's input has none.
 6. *Stored run*: a closure sample as a run stores it (the segment of each particle, not its angle; the stored
    columns), through the app's own loading: the excitations expected per particle against the rates' integral over
    the ring (0.1 %), and B(E2) back.
@@ -116,13 +117,16 @@ def _two_levels(me_eb: float, q_eb: float) -> dict:
 def _ensdf_levels(me_eb: float) -> dict:
     """[levels.beam] of ⁶²Ni up to the 4⁺₁ at 2336 keV from ENSDF (the example ``coulex_ni62_pt194``; the 0⁺₃ at
     2891 keV, not in the GOSIA run it is compared with, left out), <0⁺‖E2‖2⁺> = ``me_eb`` and Q_s(2⁺) = 0, as in
-    the outside tools' GOSIA run with the higher states."""
+    the outside tools' GOSIA run with the higher states. Without ENSDF's internal conversion, which neither GOSIA's
+    input nor :func:`_two_levels` has: α = 1.72e-4 of 2⁺ → 0⁺ in this scheme alone takes 1.5 % (ring 2) and 2.2 %
+    (ring 3) off the feeding."""
     from .experiment import Experiment
 
     beam = copy.deepcopy(Experiment.example(ENSDF_SCHEME_EXAMPLE).to_dict()["levels"]["beam"])
     keep = 5
     beam["level"] = beam["level"][:keep]
-    beam["transition"] = [t for t in beam["transition"] if t["from"] < keep and t["to"] < keep]
+    beam["transition"] = [{k: v for k, v in t.items() if k not in ("conversion", "conversion_unc")}
+                          for t in beam["transition"] if t["from"] < keep and t["to"] < keep]
     beam["matrix_element"] = [m for m in beam["matrix_element"] if m["from"] < keep and m["to"] < keep]
     for m in beam["matrix_element"]:
         pair = (m["from"], m["to"])
@@ -429,7 +433,8 @@ def check_sensitivities(refd: dict, base: dict, q_plus: dict, q_minus: dict, fee
 
 def feeding_effect(angle_step: float = 2.0, energies: int = 6) -> dict:
     """The change of the 2⁺₁ → 0⁺ γ yield per ring when ENSDF's higher states feed it, against the 0⁺, 2⁺ scheme
-    alone (both Q = 0, all orders, :class:`~physim.nuclear.multistep.Multistep` through the target). Relative."""
+    alone (both Q = 0 and without internal conversion, all orders, :class:`~physim.nuclear.multistep.Multistep`
+    through the target). Relative."""
     from .multistep import Multistep
 
     out = {}
