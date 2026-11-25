@@ -40,7 +40,7 @@ def test_a_literature_file_is_imported_once_with_its_methods_and_refusals(lab):
     found = nucleus.import_points(LITERATURE, "62Ni")
     assert found["shape"] == "literature"
     added = {x["where"]: x["row"] for x in found["added"]}
-    assert len(added) == 8 and not found["already"]
+    assert len(added) == 9 and not found["already"]
     allmond = added["quantities.BE2_up[0]"]
     assert (allmond.key, allmond.value, allmond.unit, allmond.direction, allmond.method, allmond.total) == (
         KEY, 0.0906, "e2b2", "up", "coulex-fit", 0.0037)
@@ -58,16 +58,20 @@ def test_a_literature_file_is_imported_once_with_its_methods_and_refusals(lab):
     assert (model.evidence, model.method, model.unit, model.direction, model.key) == (
         "theory", "shell-model", "W.u.", "down", KEY)
     assert (added["quantities.other[0]"].observable, added["quantities.other[0]"].method) == ("mu", "moment")
-    # The evaluations and a quantity without a value are refused, each with its reason; the others go on.
+    # Another evaluation is taken, marked as an average of measurements.
+    raman = added["quantities.BE2_up[2]"]
+    assert (raman.method, raman.evidence, raman.origin["not_independent_of"]) == (
+        "evaluation", "evaluated", "measurements")
+    # ENSDF's values and a quantity without a value are refused, each with its reason; the others go on.
     refused = {x["where"]: " ".join(x["reasons"]) for x in found["refused"]}
     assert set(refused) == {"quantities.BE2_up[1]", "quantities.BE2_down[0]", "quantities.shell_model[1]"}
-    assert "an evaluation, not a measurement" in refused["quantities.BE2_down[0]"]
+    assert "with the snapshot of the evaluation" in refused["quantities.BE2_down[0]"]
     assert refused["quantities.shell_model[1]"].startswith("the file gives no value for it")
-    assert len(_points(lab)) == 8
+    assert len(_points(lab)) == 9
     # The same file again adds nothing: every point is there already, with its row.
     again = nucleus.import_points(LITERATURE, "62Ni")
-    assert not again["added"] and len(again["already"]) == 8 and len(again["refused"]) == 3
-    assert {x["id"] for x in again["already"]} == {r.id for r in added.values()} and len(_points(lab)) == 8
+    assert not again["added"] and len(again["already"]) == 9 and len(again["refused"]) == 3
+    assert {x["id"] for x in again["already"]} == {r.id for r in added.values()} and len(_points(lab)) == 9
 
 
 def test_points_from_json_and_csv_files(lab):

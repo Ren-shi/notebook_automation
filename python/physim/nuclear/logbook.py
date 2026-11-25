@@ -1825,7 +1825,8 @@ def comparison_html(c, here: Optional[str] = None, mine: Optional[str] = None, r
             elif ref is None:
                 against, says = "—", ""
             elif x.pull is None:
-                against = "—" if x.ratio is None else f"× {x.ratio:.2f} (no uncertainty: no pull)"
+                why = "another evaluation" if compare.averages(x.row) else "no uncertainty"
+                against = "—" if x.ratio is None else f"× {x.ratio:.2f} ({why}: no pull)"
                 says = ""
             else:
                 against = f"{x.difference_percent:+.1f} %, pull {x.pull:+.2f}"

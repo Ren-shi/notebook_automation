@@ -312,7 +312,7 @@ def plunger_areas(run: dict, ring: float, beta: float, fwhm_kev: float = 2.1, me
     e0 = run["e0_kev"]
     if method == "fit":
         areas = la.peak_areas(list(run["spectra"][ring]), e0, beta, ring, fwhm_kev, edges_kev=edges,
-                              fwhm_shifted_kev=4.0)
+                              fwhm_shifted_kev=4.0, method="fit")
         s, u, err = (np.array(x, dtype=float) for x in zip(*areas))
         return {"unshifted": u, "shifted": s, "err_unshifted": err[:, 1], "err_shifted": err[:, 0]}
     if method != "window":
