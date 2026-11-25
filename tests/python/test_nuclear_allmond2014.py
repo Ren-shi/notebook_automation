@@ -1,11 +1,12 @@
 """The reproduced Coulomb-excitation experiment: Allmond et al., PRC 90, 034309 (2014), ⁶²Ni on carbon
 (physim.nuclear.coulex_reproduction). The check itself (``reproduction_allmond2014``) runs in
-test_nuclear_validation.py; these test its parts, that every number but two is inside its band, and that those two
-(GOSIA as run, 1 %) miss it by the known, explained amount.
+test_nuclear_validation.py; these test its parts and that every number is inside its band. Two (GOSIA as run, 1 %) missed
+it by a known amount until physim had the E1 polarisation that GOSIA as run has; that record is kept.
 
 Check 4 rebuilds the paper's per-ring ratios from its matrix elements through GOSIA's ratio(M): the paper gives no
 yields, so it tests whether physim extracts the same B(E2) from the same data as GOSIA did."""
 
+import copy
 import math
 from pathlib import Path
 
@@ -91,19 +92,25 @@ def test_the_comparisons_catch_what_they_should(refd):
     the paper, a wrong sign of the reorientation effect."""
     good = {r: refd["gosia"]["matched"][cr.REF_RING[r]]["ratio_elastic"] for r in cr.RINGS}
 
-    def rows(ratios):
-        return {(x["setting"], x["ring"]): x for x in cr.check_gosia(refd, ratios)["rows"]}
+    def rows(ratios, reference=refd):
+        return {(x["setting"], x["ring"]): x for x in cr.check_gosia(reference, ratios, ratios)["rows"]}
 
     assert rows(good)["matched", "Ring2"]["passed"]
     off = rows({r: 1.01 * v for r, v in good.items()})
     assert not any(x["passed"] for x in off.values())
-    # A miss of the recorded size is the known one; half a percent more, or an agreement, is not; nor is a miss of the
-    # other band, or one on the other side.
+    # No miss is known now: one of the size of the past one (without the E1 polarisation) is a miss like any other. If
+    # the reference recorded it as known, a miss of its size would be the known one; half a percent more, or an
+    # agreement, not; nor a miss of the other band, or one on the other side.
     as_run = {r: refd["gosia"]["as_run"][cr.REF_RING[r]]["ratio_elastic"] for r in cr.RINGS}
-    size = refd["bands"]["gosia"]["known_miss"]
+    assert "known_miss" not in refd["bands"]["gosia"]
+    size = refd["bands"]["gosia"]["past_miss"]
+    again = rows({r: (1 + size[cr.REF_RING[r]]) * v for r, v in as_run.items()})
+    assert not any(again["as_run", r]["passed"] or again["as_run", r]["known_miss"] for r in cr.RINGS)
+    recorded = copy.deepcopy(refd)
+    recorded["bands"]["gosia"]["known_miss"] = size
     for extra, known, passed in ((0.0, True, False), (0.0004, True, False), (0.005, False, False),
                                  (-0.0006, False, False), (-0.005, False, True), (-0.026, False, False)):
-        got = rows({r: (1 + size[cr.REF_RING[r]] + extra) * v for r, v in as_run.items()})
+        got = rows({r: (1 + size[cr.REF_RING[r]] + extra) * v for r, v in as_run.items()}, recorded)
         for r in cr.RINGS:
             x = got["as_run", r]
             assert (x["known_miss"], x["passed"]) == (known, passed), (extra, r)
@@ -168,33 +175,36 @@ def reproduced():
     return r
 
 
-def test_the_reproduction_misses_one_band_by_the_known_amount(reproduced):
-    """The band of 1 % against GOSIA as run is missed, +1.32 % and +1.16 %, and only that: a change of either, or a
-    number that leaves its band or an agreement that is new, fails here. The check is reported as not passed."""
+def test_the_reproduction_is_inside_every_band(reproduced, refd):
+    """Every number is inside its band, the 1 % against GOSIA as run too (+0.79 % and +0.69 %), with the E1 polarisation in
+    both; without it physim would still miss that one by what the reference records."""
     r = reproduced
-    assert not r["passed"] and r["only_known_misses"], r["detail"]
+    assert r["passed"] and not r["known_misses"] and not r["only_known_misses"], r["detail"]
     assert set(r["checks"]) == {"thickness", "gosia", "closure", "paper", "sensitivities", "stored"}
-    outside = [(name, x.get("setting"), x.get("ring")) for name, c in r["checks"].items() for x in c["rows"]
-               if not x["passed"]]
-    assert outside == [("gosia", "as_run", "Ring2"), ("gosia", "as_run", "Ring3")], r["detail"]
-    miss = {x["ring"]: x["deviation"] for x in r["known_misses"]}
-    assert miss["Ring2"] == pytest.approx(0.0132, abs=5e-4) and miss["Ring3"] == pytest.approx(0.0116, abs=5e-4)
-    assert r["worst"] == pytest.approx(1.32, abs=0.05) and r["worst_other"] <= 1.0
-    # What GOSIA's masses and E1 polarisation explain of it, and what is left: the matched rows.
+    assert r["worst"] <= 1.0 and r["worst"] == r["worst_other"]
     g = {(x["setting"], x["ring"]): x for x in r["checks"]["gosia"]["rows"]}
-    for ring, left in (("Ring2", 0.0020), ("Ring3", 0.0012)):
+    masses = {x["ring"]: x for x in r["checks"]["gosia"]["second_line"] if x["setting"] == "nuclear_masses"}
+    past = refd["bands"]["gosia"]["past_miss"]
+    for ring, dev, left in (("Ring2", 0.0079, 0.0020), ("Ring3", 0.0069, 0.0012)):
         x = g["as_run", ring]
-        assert (1 + x["deviation"]) / (1 + x["explained"]) - 1 == pytest.approx(g["matched", ring]["deviation"])
+        assert x["deviation"] == pytest.approx(dev, abs=5e-4)
+        # What GOSIA's integer masses explain of it, and what is left: its run with nuclear masses (DIP 3.8), as close
+        # as the one with the E1 polarisation off, physim without it.
+        assert (1 + x["deviation"]) / (1 + x["explained"]) - 1 == pytest.approx(masses[ring]["deviation"])
+        assert masses[ring]["deviation"] == pytest.approx(left, abs=3e-4) and masses[ring]["inside"]
         assert g["matched", ring]["deviation"] == pytest.approx(left, abs=3e-4)
+        # The record: the miss without the correction.
+        was = r["ratios_without_e1"][ring] / refd["gosia"]["as_run"][cr.REF_RING[ring]]["ratio_elastic"] - 1
+        assert was == pytest.approx(past[cr.REF_RING[ring]], abs=past["size_abs"])
     table = cr.table(r)
-    assert table.count("MISS (known, explained)") == 2 and "FAIL" not in table and "The known miss: GOSIA" in table
-    assert "NOT PASSED" in r["detail"] and "worst 1.32 of its band" in r["detail"]
+    assert "MISS" not in table and "FAIL" not in table and "known" not in table
+    assert r["detail"].startswith("every number inside its band")
 
 
 def test_all_orders_are_judged_and_first_order_is_the_second_line(reproduced):
     c = reproduced["checks"]
     assert {x["order"] for x in c["gosia"]["rows"]} == {"all"}
-    assert {x["order"] for x in c["gosia"]["second_line"]} == {"first"}
+    assert [x["order"] for x in c["gosia"]["second_line"]] == ["first"] * 4 + ["all"] * 2
     # First order is above all orders in the ratio (it has no saturation), so it reads B(E2) lower.
     for a, b, more in zip(c["gosia"]["rows"], c["gosia"]["second_line"], (0.0070, 0.0040) * 2):
         assert b["physim"] / a["physim"] - 1 == pytest.approx(more, abs=3e-4)
@@ -204,7 +214,7 @@ def test_all_orders_are_judged_and_first_order_is_the_second_line(reproduced):
     for x, more in zip(c["closure"]["rows"], (-0.0070, -0.0040, -0.0048)):
         assert x["first_order"] - x["deviation"] == pytest.approx(more, abs=6e-4)
     paper = {x["ring"]: x for x in c["paper"]["rows"]}
-    # GOSIA as run is ~1.3 % above physim (integer masses, E1 polarisation), so physim reads B(E2) ~1.2 % lower.
+    # GOSIA as run is 0.7 to 0.8 % below physim's ratio (integer masses), so physim reads B(E2) as much lower.
     for ring in cr.RINGS:
         assert -0.025 < paper[ring]["deviation"] < 0.0
     table = cr.table(reproduced)
@@ -216,8 +226,9 @@ def test_the_other_parts_of_the_reproduction(reproduced):
     # A positive Q_s raises the ratio at these backward CM angles, in physim as in GOSIA.
     sens = {(x["what"], x["ring"]): x for x in c["sensitivities"]["rows"]}
     assert all(sens["q_plus", ring]["physim_percent"] > 0 > sens["q_minus", ring]["physim_percent"] for ring in cr.RINGS)
-    # Each change is GOSIA's to 2 %: the reorientation to 0.1 % of it, the feeding (GOSIA's has an M1 element and E1
-    # polarisation) to 2 %.
+    # Each change is GOSIA's to 2 %: the reorientation to 0.1 % of it, the feeding (GOSIA's has an M1 element, integer
+    # masses and its own stopping) to 2 %: −1.4 % (ring 2) and −1.98 % (ring 3), right at the band (the reference
+    # file says so).
     for (what, ring), x in sens.items():
         assert abs(x["difference_rel"]) < (0.02 if what == "feeding" else 0.01), (what, ring, x)
     closure = c["closure"]

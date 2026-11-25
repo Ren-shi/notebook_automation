@@ -102,6 +102,67 @@ The lab cross section and the total follow as for elastic scattering.
   - excitation from states other than a 0⁺ ground state;
   - feeding from higher states.
 
+## The E1 polarisation correction
+
+During the collision the field of the other nucleus also excites the giant dipole resonance, virtually. This
+second-order E1 process acts on the low-lying levels like an extra E2 interaction: proportional to the E2 matrix elements,
+falling off as 1/r⁴ instead of 1/r³, and opposing the direct one. physim has GOSIA's approximation of it (D. Cline, T.
+Czosnyka et al., *GOSIA user manual* (2012), eq. 3.27–3.28, after K. Alder and A. Winther, *Electromagnetic Excitation*
+(North-Holland, 1975), appendix J; subroutines `LOAD`, `SNAKE` and `QE` of `gosia_20110524.14.f`). Every E2 coupling, of
+the transitions and of the diagonal elements alike, in first order and in the coupled equations, is multiplied along the
+orbit by
+
+$$
+1 - z\,\frac{a}{r} = 1 - \frac{z}{\varepsilon\cosh w + 1},
+\qquad
+z = d\,\frac{E_\mathrm{cm} A}{Z^2} ,
+$$
+
+with A and Z of the excited nucleus and E_cm in MeV. E1 and E3 are unchanged. In the first-order orbit integrals the factor
+makes I_μ(2) into I_μ(2) − z I_μ(3).
+
+- **The parameter d** is the setup's `[reaction] e1_polarisation`, 0.0038 when it sets none: what GOSIA takes when its
+  input sets none (since version 20110524.11; Phys. Rev. C 91, 064602 (2015); GOSIA's manual and earlier versions have
+  0.005). So a GOSIA run with default settings compares like with like. 0 leaves the correction out. GOSIA's input `DIP,`
+  is 1000 d, and there `DIP,0` means the default. The classes themselves (`Coulex`, `Excitation`, `CoupledChannels`) leave
+  it out unless given a d.
+- **z.** GOSIA's two branches (target or projectile excited) both reduce to d E_cm A/Z² of the excited nucleus. E_cm is the
+  one the collision has everywhere else in physim, from the nuclear masses and relativistic, and A is the mass number
+  (the formula's A comes from the A^(5/3) of the dipole polarisability). GOSIA takes the masses that its input gives and
+  non-relativistic kinematics; the difference is 0.1 to 0.3 % of z, that is 0.1 to 0.3 % of the correction.
+- **One z for every pair of levels**, as in GOSIA, with each pair's own a (next section). Strictly it is z a that does not
+  depend on the pair: the polarisation term has one size, and the orbit's a grows as the energy falls. A pair at the
+  symmetrised energy √(E_n E_m) has z √(E_n E_m)/E_cm then, a few percent of z less in a light system. physim follows
+  GOSIA, so that the two can be compared.
+- **Its size.** The factor is smallest at the closest approach, 1 − z/(ε + 1), and so weakens the excitation more at
+  backward angles than at forward ones, as a change of the quadrupole moment does. At 180° in the sudden limit (ξ → 0) the
+  first-order amplitude is ∫ dw/(1 + cosh w)² = 2/3 and the correction takes z ∫ dw/(1 + cosh w)³ = 4z/15 from it, so the
+  probability falls by (1 − 0.4 z)². A level reached in two steps loses about twice what the first 2⁺ level loses.
+
+Against GOSIA, in blind runs with `DIP,` off, at 3.8 and at 20 (checks below), what the correction changes agrees to 0.5 %
+of the change (0.2 % with GOSIA's E_cm), from 0.25 % to 46 % of a probability. What the default changes on the templates,
+against `e1_polarisation = 0` (populations and γ rays integrated over all angles, excitations of the plan's rates, and B(E2)
+read from one sample made with the correction and analysed with and without it):
+
+| | z | Populations | γ rays | Plan's excitations | B(E2) read without it |
+|---|---|---|---|---|---|
+| `coulex_ni58`: ⁵⁸Ni, one state, first order | 0.0064 | 2⁺ −0.57% | −0.57% | −0.75% CD, −0.53% strips | −0.60% |
+| `coulex_ni62_pt194` (and `_clovers`): ⁶²Ni, the beam | 0.053 | 2⁺₁ −3.8%, 0⁺₂ −8.7%, 2⁺₂ −6.4%, 4⁺ −7.9% | 1172.9 keV −4.0%, 1163.5 keV −7.9% | −5.1% CD, −4.8% strips | −7.2% (clovers −7.1%) |
+| the same: ¹⁹⁴Pt, the target | 0.021 | 2⁺₁ −0.6%, 2⁺₂ −1.9%, 4⁺₁ −2.1%, 6⁺ −4.0% | 328.5 keV −0.9% | — | — |
+| `coulex_ni62_c_allmond`: ⁶²Ni on ¹²C, one state | 0.0044 | 2⁺ −0.40% | −0.40% | −0.53% ring 2, −0.47% ring 3 | −0.49% |
+| `coulex_ru98_plunger`: ⁹⁸Ru, one state | 0.011 | 2⁺ −0.70% | −0.70% | −0.72% | — |
+
+B(E2) moves more than the yield for ⁶²Ni because the excitation saturates. With d = 0.005 every change is about a third
+larger. The reorientation of the ⁶²Ni 2⁺ state (Q = +5 e fm²; it raises the population at 170° by 8%) keeps its sign and
+loses one to two percent of itself, since the diagonal coupling is weakened with the transitional one; but the ratio of the
+2⁺ populations at 160° and at 60° falls by 1.5%, as a smaller diagonal element would make it. That is why quadrupole moments
+are where it matters.
+
+**Stored runs.** A run's `setup.toml` says which d its events have, written out when the run is taken even when the setup
+sets none. A run stored before physim had the correction says nothing; it is loaded with d = 0, which is what its events
+have, so that its analysis, its simulated peak and its continuation stay without it. Compared with a current setup that
+has the default, the change is reported ("reaction.e1_polarisation: 0.0 → 0.0038").
+
 ## Beyond first order: the events of a setup with a level scheme
 
 First order excites each level in one step from the ground state. A 4⁺ state has no E2 matrix element to a 0⁺
@@ -174,20 +235,20 @@ takes 16 s; first order takes 0.2 s.
 
 For `coulex_ni62_pt194` (⁶²Ni at 237 MeV on ¹⁹⁴Pt, the beam excited), at θ = 150° in the CM frame:
 
-| Level of ⁶²Ni | First order | All orders |
-|---|---|---|
-| 2⁺, 1172.9 keV | 0.1931 | 0.1836 |
-| 0⁺, 2048.6 keV | 0 | 0.0080 |
-| 2⁺, 2301.9 keV | 0.0006 | 0.0017 |
-| 4⁺, 2336.5 keV | 0 | 0.0057 |
-| any level | 0.1936 | 0.1990 |
+| Level of ⁶²Ni | First order | All orders | First order, no E1 polarisation | All orders, no E1 polarisation |
+|---|---|---|---|---|
+| 2⁺, 1172.9 keV | 0.1826 | 0.1748 | 0.1931 | 0.1836 |
+| 0⁺, 2048.6 keV | 0 | 0.0073 | 0 | 0.0080 |
+| 2⁺, 2301.9 keV | 0.0005 | 0.0015 | 0.0006 | 0.0017 |
+| 4⁺, 2336.5 keV | 0 | 0.0052 | 0 | 0.0057 |
+| any level | 0.1831 | 0.1889 | 0.1936 | 0.1990 |
 
-The 2⁺ state loses 4.9% to the levels above it and gets it back, with more, when they decay through it: 2.5% more
+The 2⁺ state loses 4.3% to the levels above it and gets it back, with more, when they decay through it: 2.9% more
 2⁺ → 0⁺ γ rays than first order gives, 4⁺ → 2⁺ γ rays (1163.5 keV) at 3% of them and 0⁺ → 2⁺ γ rays (875.6 keV)
 at 4%.
 
 **One particle per collision.** A collision either excites the nucleus or leaves it as it was, so elastic
-scattering is the Rutherford cross section times 1 − P(θ): 20% fewer elastic particles at backward angles in the
+scattering is the Rutherford cross section times 1 − P(θ): 19% fewer elastic particles at backward angles in the
 ⁶²Ni example, and elastic and excited particles together are Rutherford scattering (to the inelastic orbit's
 (v_i/v_f − 1)·P, a few 10⁻⁴: semiclassical theory conserves the flux only on the symmetrised orbit).
 
@@ -197,7 +258,7 @@ scattering is the Rutherford cross section times 1 − P(θ): 20% fewer elastic 
   reached: with ⁶²Ni left in its 4⁺ state the two nuclei share 1.2 MeV less kinetic energy than the events give
   them.
 - The other nucleus of the collision (¹⁹⁴Pt here) is excited as well when the setup has its level scheme, with
-  the summed populations of its own coupled equations (96% at backward angles here, 0.85 γ rays of 328.5 keV per
+  the summed populations of its own coupled equations (95% at backward angles here, 0.85 γ rays of 328.5 keV per
   backward particle). The two excitations are treated as independent: a collision can excite both, and the
   excitation of one does not change the probability of the other. The particle keeps the energy of the
   collision without the other nucleus's excitation.
@@ -208,8 +269,9 @@ scattering is the Rutherford cross section times 1 − P(θ): 20% fewer elastic 
   example, with every other matrix element taken from the scheme. The excitation saturates: the yield grows as
   B(E2) to the power 0.67 there, so the uncertainties of B(E2) are 1.5 times those of the yield. With the ENSDF scheme of ⁵⁸Ni added to `coulex_ni58` (¹⁶O at 30 MeV), all orders give 5% fewer
   2⁺ → 0⁺ γ rays in the CD and 2% fewer in the strip detectors than first order, mostly through the reorientation.
-- The coupled equations have no E1 polarisation (virtual excitation of the giant dipole resonance), no excitation
-  of both nuclei in one collision, and no nuclear interference above the safe energy.
+- The coupled equations have no excitation of both nuclei in one collision and no nuclear interference above the safe
+  energy. The E1 polarisation correction is GOSIA's approximation, with one parameter d for every nucleus, not a
+  calculation from the giant dipole resonance of the nucleus at hand.
 - The plan's coincidence rate takes the angular correlation from the same solution as the events: with a level
   scheme the 2⁺ state as the whole scheme leaves it, to all orders. The state alone in first order is more
   sharply aligned: on the ⁶²Ni example it would send 14% fewer γ rays to the crystal at 90° with the CD, and 3%
@@ -256,7 +318,7 @@ Each excitation channel works like an elastic one:
 The app has an **Excitation and γ rays** tab (P(θ), events per detector, the Doppler table). The report adds a
 Coulomb-excitation section and `gamma.csv`.
 
-For `coulex_ni58` (0.1 pnA of 30 MeV ¹⁶O on 0.5 mg/cm² ⁵⁸Ni): the CD records 1.28 excitations per second next to
+For `coulex_ni58` (0.1 pnA of 30 MeV ¹⁶O on 0.5 mg/cm² ⁵⁸Ni): the CD records 1.32 excitations per second next to
 660 elastic counts. The simulated rates agree with the analytic ones within 1.5σ for every channel and detector,
 at 0.7% statistical error from 2 × 10⁶ events.
 
@@ -276,8 +338,14 @@ at 0.7% statistical error from 2 × 10⁶ events.
 | Excitation rate in each particle detector, events against `Rates` | The same excitation probability in both | 3σ and 0.5% | `test_the_rates_and_the_generator_share_the_excitation_probability` |
 | Monte Carlo against analytic rates, every channel and detector of `coulex_ni58` | `Rates` | 4σ | `test_monte_carlo_rates_agree_with_analytic_rates[coulex_ni58]` |
 | Inelastic peak below the elastic one by the kinematic difference | `TwoBody` with and without E* | 10% | `test_coulomb_excitation_in_the_report` |
-| Against GOSIA, first order, ¹⁶O + ⁵⁸Ni at 30 MeV, five angles | GOSIA 20110524.14 with the matrix element ÷10 (weak coupling), `tests/reference/nuclear/coulex_gosia.csv` | 2% (worst 0.6%) | `validation.coulex_vs_gosia` |
+| E1 polarisation strength z, target and projectile excitation | GOSIA's subroutine `LOAD` | 0.2% (E_cm) | `test_z_is_gosias_for_target_and_projectile_excitation` |
+| E1 polarisation at 180°, ξ → 0 | (1 − 0.4 z)² from the integrals above | 1e-6 (first order), 1e-5 (coupled equations) | `test_its_size_in_sudden_backscattering_is_the_hand_worked_one` |
+| E1 polarisation with a diagonal element | Second-order perturbation theory by nested quadrature | 2e-3 | `test_the_diagonal_coupling_has_it_as_second_order_theory_does` |
+| E1 polarisation against GOSIA, blind: ⁶²Ni (Q_s = ±0.3 e b) on ¹²C (either nucleus the beam) and ¹⁹⁴Pt, ¹⁵²Sm on ¹²C, ¹⁹⁴Pt by ⁶²Ni, ⁴⁸Ti on ²⁰⁸Pb | GOSIA 20110524.14 (nuclear masses; `DIP,` 0.001, 3.8, 20), the app's numbers stored before the runs, `coulex/gosia_e1.csv` | Each level at 3.8: 1% above 10⁻⁴, 3% above 10⁻⁶ (worst 0.48%); the change at 3.8 and 20 (above 0.2%): 2% of it (worst 0.5%) | `test_it_is_gosias_in_blind_runs` |
+| B(E2) from a run made with the E1 polarisation | The value put in, and 7% less when the analysis leaves it out | 4σ; 1% | `test_the_events_are_made_with_it_and_the_analysis_gives_the_b_e2_back` |
+| A run stored before the correction | Read without it, B(E2) of its own events back | 4σ | `test_a_run_stored_before_the_correction_is_read_without_it` |
+| Against GOSIA, first order, ¹⁶O + ⁵⁸Ni at 30 MeV, five angles, E1 polarisation in both | GOSIA 20110524.14 with the matrix element ÷10 (weak coupling), `tests/reference/nuclear/coulex_gosia.csv` | 2% (worst 0.23%) | `validation.coulex_vs_gosia` |
 | Each pair of levels on its own orbit | K_λ ∝ [(E_cm − E_n)(E_cm − E_m)]^((2λ−1)/4) for E1, E2, E3, either nucleus excited; first order for every level where the coupling is weak | 1e-12; 1e-4 | `test_each_pair_of_levels_is_coupled_on_its_own_symmetrised_orbit`, `test_every_level_is_first_order_where_the_coupling_is_weak` |
-| Against GOSIA, all orders, the same case | GOSIA 20110524.14, `coulex_gosia_all_orders.csv` | 1% (worst 0.6%) | `test_all_orders_agree_with_gosia` |
+| Against GOSIA, all orders, the same case | GOSIA 20110524.14, `coulex_gosia_all_orders.csv` | 1% (worst 0.24%) | `test_all_orders_agree_with_gosia` |
 | Against GOSIA, all orders, feeding and reorientation: ⁶²Ni with Q_s = ±0.3 e b, 0⁺₂, 2⁺₂, 4⁺₁ on ¹²C (100 MeV, either nucleus the beam) and ¹⁹⁴Pt (200 MeV), a rotor ¹⁵²Sm on ¹²C (400 MeV) | GOSIA 20110524.14 (nuclear masses, E1 polarisation off), the app's numbers stored before the runs, `coulex/gosia_pairs.csv` | 1% above 10⁻⁴, 3% above 10⁻⁶ (worst 0.5%; 0.01 to 0.2% with GOSIA's non-relativistic E_cm) | `test_feeding_and_reorientation_agree_with_gosia` |
 | Against a published measurement | Requested from the user (`tests/reference/nuclear/pending/coulex_literature.md`) | — | not yet written |

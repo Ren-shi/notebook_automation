@@ -558,9 +558,11 @@ setup file and seed reproduce every number.</p>
                 drawn = ""
         sub = level + 1
         b_unit = unit_words(f"e2fm{2 * int(s['multipolarity'][1])}")
+        polarisation = (f" with the E1 polarisation correction (d = {s['e1_polarisation']:g}, as in GOSIA)"
+                        if s["multipolarity"] == "E2" and s["e1_polarisation"] else "")
         return f"""<h{level}>Coulomb excitation</h{level}>
 <p>{e(s['excite'].capitalize())} excited to {s['energy_kev']:g} keV (B({e(s['multipolarity'])}↑) =
-{_fmt(s['b_up_e2fm'])} {b_unit}), first-order semiclassical theory: adiabaticity
+{_fmt(s['b_up_e2fm'])} {b_unit}), first-order semiclassical theory{polarisation}: adiabaticity
 ξ = {x['xi']:.2f}, Sommerfeld parameter η = {x['eta']:.1f}, total cross section {x['total_mb']:.3g} mb. Safe
 (Cline's criterion, closest approach ≥ {x['safe_distance_fm']:.1f} fm) at {safe}.</p>
 {drawn}

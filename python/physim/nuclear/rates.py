@@ -201,10 +201,11 @@ class _CoulexReaction:
 
 @lru_cache(maxsize=64)
 def _coulex_at(beam: str, nuclide: str, energy: float, excite: str, e_star: float, multipolarity: str,
-               b_up: float):
+               b_up: float, polarisation: float):
     from .coulex import Coulex
 
-    return Coulex(beam, nuclide, energy, excite=excite, energy=e_star, multipolarity=multipolarity, b_up=b_up)
+    return Coulex(beam, nuclide, energy, excite=excite, energy=e_star, multipolarity=multipolarity, b_up=b_up,
+                  e1_polarisation=polarisation)
 
 
 def layer_energy(experiment, layer: int, layers: Optional[list] = None) -> float:
@@ -227,8 +228,10 @@ def layer_energy(experiment, layer: int, layers: Optional[list] = None) -> float
 def coulex_for(experiment, channel: Channel, layers: Optional[list] = None, energy: Optional[float] = None):
     """The :class:`~physim.nuclear.coulex.Coulex` of a channel, at beam energy ``energy`` (MeV), by default the
     energy in the middle of its layer (of the part of it the beam crosses, when the beam stops inside:
-    :func:`layer_energy`). Raises ValueError when the beam stops before the layer, or (from
-    :class:`~physim.nuclear.coulex.Coulex`) when the energy is below the excitation threshold."""
+    :func:`layer_energy`), with the setup's E1 polarisation correction. Raises ValueError when the beam stops before
+    the layer, or (from :class:`~physim.nuclear.coulex.Coulex`) when the energy is below the excitation threshold."""
+    from .gamma import e1_polarisation
+
     layers = layers or stack(experiment)
     if energy is None:
         energy = layer_energy(experiment, channel.layer, layers)
@@ -236,7 +239,7 @@ def coulex_for(experiment, channel: Channel, layers: Optional[list] = None, ener
             raise ValueError(f"the beam stops before {layers[channel.layer].name}: no Coulomb excitation there")
     e = channel.excitation
     return _coulex_at(beam_ion(experiment), channel.nuclide.name, round(float(energy), 9), e.excite, e.energy_mev,
-                      e.multipolarity, e.b_up_e2fm)
+                      e.multipolarity, e.b_up_e2fm, e1_polarisation(experiment))
 
 
 class SchemeProbability:
@@ -526,7 +529,7 @@ class DepthProbability:
 
 
 def _depth_key(experiment, channel: Channel, layers: list) -> tuple:
-    from .gamma import excitation_order
+    from .gamma import e1_polarisation, excitation_order
 
     exc = channel.excitation
     scheme = experiment.levels.get("target" if exc.excite == "target" else "beam")
@@ -534,7 +537,7 @@ def _depth_key(experiment, channel: Channel, layers: list) -> tuple:
     return (beam_ion(experiment), beam.energy_mev, tilt_deg(experiment), channel.layer,
             tuple((lay.material, lay.thickness) for lay in layers[:channel.layer + 1]), channel.nuclide.name,
             exc.excite, exc.energy_mev, exc.multipolarity, exc.b_up_e2fm, getattr(exc, "emission", None),
-            excitation_order(experiment),
+            excitation_order(experiment), e1_polarisation(experiment),
             None if scheme is None else json.dumps(scheme.to_dict(), sort_keys=True, default=str))
 
 

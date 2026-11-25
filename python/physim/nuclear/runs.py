@@ -11,8 +11,8 @@ folder::
 
 A **run** is a beam run of a duration, a source run (beam off, a calibration source at a position) or an alignment
 run (a beam run analysed with a deliberately wrong assumed geometry). ``setup.toml`` is the exact setup the run was
-taken with, ``summary.json`` its counters, and ``events.npz`` its data as compact named columns readable from any
-Python::
+taken with (with the E1 polarisation its events have: :func:`taken_setup`), ``summary.json`` its counters, and
+``events.npz`` its data as compact named columns readable from any Python::
 
     from physim.nuclear import Experiment
     from physim.nuclear.runs import ExperimentFolder
@@ -48,7 +48,7 @@ import os
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Union
@@ -196,7 +196,9 @@ def _strip_labels(obj):
 
 def physics_changes(taken: dict, current: dict) -> list:
     """What differs in the physics between the setup a run was taken with and the current one, as
-    ["target.thickness: 0.5 mg/cm2 → 1.0 mg/cm2", ...]. Labels (titles, descriptions, names) are ignored."""
+    ["target.thickness: 0.5 mg/cm2 → 1.0 mg/cm2", ...]. Labels (titles, descriptions, names) are ignored, and a
+    Coulomb excitation that does not set its E1 polarisation has the default (a stored run's setup always says it:
+    :func:`taken_setup`)."""
     out: list = []
 
     def walk(a, b, path):
@@ -215,8 +217,37 @@ def physics_changes(taken: dict, current: dict) -> list:
                 return str(x)
             out.append(f"{path}: {show(a)} → {show(b)}")
 
-    walk(_strip_labels(taken), _strip_labels(current), "")
+    walk(_with_default_polarisation(_strip_labels(taken)), _with_default_polarisation(_strip_labels(current)), "")
     return out
+
+
+def _with_default_polarisation(setup: dict) -> dict:
+    from .coulex import GOSIA_DIPOLE_POLARISATION
+
+    r = setup.get("reaction")
+    if not isinstance(r, dict) or r.get("type") != "coulex" or r.get("e1_polarisation") is not None:
+        return setup
+    return {**setup, "reaction": {**r, "e1_polarisation": GOSIA_DIPOLE_POLARISATION}}
+
+
+def _with_polarisation(experiment: Experiment, d: float) -> Experiment:
+    """``experiment`` with the E1 polarisation parameter ``d`` written out in its ``[reaction]``; itself if it is not
+    a Coulomb excitation or says its own."""
+    exc = experiment.excitation
+    if exc is None or exc.e1_polarisation is not None:
+        return experiment
+    return replace(experiment, excitation=replace(exc, e1_polarisation=d))
+
+
+def taken_setup(folder: Union[str, Path], kind: str = "beam") -> Experiment:
+    """The setup a stored run was taken with: its folder's ``setup.toml``.
+
+    It says which E1 polarisation the run's events have (``[reaction] e1_polarisation``, written out when the run is
+    taken, whether the setup set it or had the default). A Coulomb-excitation run that says none was taken before
+    physim had the correction: its events have none, so it is loaded with 0, not with today's default (analysed with
+    it they would read B(E2) up to several percent too high). A source run has no such events and stays as it is."""
+    exp = Experiment.load(Path(folder) / "setup.toml")
+    return exp if kind == "source" else _with_polarisation(exp, 0.0)
 
 
 # -- generating unweighted events ----------------------------------------------------------------------------------
@@ -356,8 +387,7 @@ class RunData:
                 return fusion_runs.FusionRunData.load(folder)
             finally:
                 _LOADING_FUSION.discard(key)
-        setup = Experiment.load(folder / "setup.toml").to_dict()
-        return cls(folder, summary, setup)
+        return cls(folder, summary, taken_setup(folder, summary.get("kind")).to_dict())
 
     # -- what the run is ------------------------------------------------------------------------------------------
 
@@ -818,8 +848,11 @@ class RunTaker:
 
     def write(self) -> RunData:
         """Store the run (setup snapshot, compact events, summary) and return it."""
+        from .gamma import e1_polarisation
+
         self.folder.mkdir(parents=True, exist_ok=True)
-        self.experiment.save(self.folder / "setup.toml")
+        # The E1 polarisation of the events, written out: a setup without one means the default of its day.
+        _with_polarisation(self.experiment, e1_polarisation(self.experiment)).save(self.folder / "setup.toml")
         arrays = {k: (np.concatenate(v) if v else np.zeros(0, dtype=PARTICLE_COLUMNS[k][1]))
                   for k, v in self.parts.items()}
         for k, v in self.gparts.items():
@@ -1220,4 +1253,4 @@ class Background:
 __all__ = ["DEFAULT_BUDGET_S", "KINDS", "MAX_BUDGET_S", "Background", "BeamRunner", "DistanceSeries",
            "ExperimentFolder", "RunData",
            "RunInProgress", "RunTaker", "default_name", "duration_label", "estimate", "extend", "home", "list_experiments",
-           "physics_changes", "slug", "start"]
+           "physics_changes", "slug", "start", "taken_setup"]

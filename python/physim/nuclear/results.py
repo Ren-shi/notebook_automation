@@ -787,15 +787,13 @@ def backfill(folder: Union[str, Path]) -> list:
     runs without an analysis and analyses that cannot be read are passed over.
     """
     from .analysis import RESULT_FILE
-    from .experiment import Experiment
-
     folder = Path(folder).expanduser()
     have = of_experiment(folder)
     added = []
     for run in runs.ExperimentFolder(folder).run_folders():
         try:
             d = json.loads((run / RESULT_FILE).read_text(encoding="utf-8"))
-            experiment = Experiment.load(run / "setup.toml")
+            experiment = runs.taken_setup(run)
             if experiment.excitation is None or experiment.excitation.multipolarity != "E2":
                 continue
             key = key_of_reaction(experiment)

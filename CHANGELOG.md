@@ -11,6 +11,34 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- The E1 polarisation correction to Coulomb excitation, as GOSIA has it, on by default (`[reaction] e1_polarisation`). The
+  virtual excitation of the giant dipole resonance weakens every E2 coupling, transitional and diagonal, by 1 − z a/r along
+  the orbit, z = d E_cm A/Z² of the excited nucleus. The setting is GOSIA's parameter d: 0.0038 when left out, as in GOSIA;
+  0 leaves the correction out, and then every number is what it was (checked on the Coulex examples: rates, events and γ
+  rays byte for byte). **The numbers of every Coulomb-excitation setup change with the default.**
+  - It is in the coupled equations (`CoupledChannels`), first order (`Excitation`, `Coulex`), and so in the events, the
+    plan's rates, the angular correlation, the plunger foils' own lines, `Multistep` and its GOSIA input (`DIP,` is the
+    setup's 1000 d, 0.001 for none), and both B(E2) readings of the analysis; the caches of the solutions have it in their
+    keys. In the app it is a field of the reaction; over MCP, `set_value("reaction", "e1_polarisation", ...)`.
+  - Against GOSIA in blind runs (eight cases, `DIP,` off, 3.8 and 20, the app's numbers stored first;
+    `tests/reference/nuclear/coulex/gosia_e1.csv`): 47 probabilities within 1 %/3 % (worst 0.48 %) and 112 changes by the
+    correction within 2 % of the change (worst 0.5 %; 0.2 % with GOSIA's non-relativistic E_cm). None missed.
+  - What the default changes against none: `coulex_ni62_pt194` (z = 0.053) excitations −5.1 % in the CD and −4.8 % in the
+    strips, the ⁶²Ni 2⁺ state −3.8 % over all angles, levels reached in two steps −6 to −9 %, the ¹⁹⁴Pt 328 keV line −0.9 %;
+    `coulex_ni62_pt194_clovers` the same; `coulex_ni58` −0.75 % (CD) and −0.53 % (strips); `coulex_ni62_c_allmond` −0.53 %
+    (ring 2) and −0.47 % (ring 3); `coulex_ru98_plunger` −0.72 %. A ⁶²Ni-on-¹⁹⁴Pt sample made with the correction and analysed
+    without it reads B(E2) 7.2 % low (`coulex_ni58` 0.6 %).
+  - **Runs stored before** have events without it and say nothing about it: they are loaded with d = 0, whatever the
+    current default, and stay without it when they are analysed, continued or taken again. A run taken now writes its d into
+    its `setup.toml`. The current setup's difference is reported as a change of the physics (an old Coulex run is marked as
+    taken with another setup; a plunger's old runs are another distance series). A kept multi-step solution from before
+    is not shown as the setup's.
+  - The Allmond 2014 reproduction passes: its known miss against GOSIA as run (E1 polarisation on in GOSIA, not in physim)
+    is inside the 1 % band, +0.79/+0.69 % (it was +1.32/+1.16 %; the record is kept). No band was changed. The feeding from
+    ENSDF's higher states in ring 3 is −1.98 % of GOSIA's change, right at its 2 % band (it was −1.7 %); with twice the
+    angles and beam energies of the check it is −2.07 %, outside.
+  - Corrected: the headers of `coulex_gosia.csv` and `coulex_gosia_all_orders.csv` said that GOSIA's default `DIP,` had no
+    effect there. It lowers those probabilities by 0.5 to 0.8 %; physim is now compared with it (worst 0.24 %, was 0.56 %).
 - Results and comparison: every result is a row, and the nucleus is a level above the experiments. No number the
   app computes has changed: the rows store the numbers the analyses already gave, and the conversions call the
   functions the code already had (see `docs/results.md`). The one printed number that differs is in a text: the

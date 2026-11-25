@@ -9,8 +9,8 @@ the paper's numbers, the GOSIA references, the bands and which of them were fixe
 second line.
 
 1. the thickness: physim's stopping gives the measured ⁵⁸Ni and ⁶⁰Ni energy losses, and 42.4(8) MeV for ⁶²Ni;
-2. σ_C/σ_R per ring against GOSIA as run (1 %: a known, explained miss) and with GOSIA's simplifications switched
-   off (0.5 %);
+2. σ_C/σ_R per ring against GOSIA as run (E1 polarisation in both; 1 %, missed by 1.3 % before physim had it) and with
+   the nuclear masses and the E1 polarisation off in both (0.5 %);
 3. closure: simulated and analysed with several seeds, the mean B(E2) back per ring within a quarter of the paper's
    statistical error + 3 Monte Carlo errors of the mean;
 4. the paper: its per-ring matrix element through GOSIA's ratio(M) and back through physim's, B(E2) within the
@@ -21,7 +21,7 @@ second line.
 
 Prints the table and returns (from :func:`main` with ``return_result``) the dict of
 :func:`physim.nuclear.coulex_reproduction.run` that the validation check ``reproduction_allmond2014`` shows. The exit
-code is 0 only if every number is inside its band; the known miss of check 2 makes it 1.
+code is 0 only if every number is inside its band.
 """
 
 from __future__ import annotations

@@ -161,9 +161,9 @@ def setup_history(planner) -> list:
     run's changes being those from... nothing (its setup is the start)."""
     out, previous = [], None
     for s in planner.runs():
-        from .experiment import Experiment
+        from .runs import taken_setup
 
-        setup = Experiment.load(Path(s["_folder"]) / "setup.toml").to_dict()
+        setup = taken_setup(s["_folder"], s.get("kind")).to_dict()
         if previous is not None:
             from .runs import physics_changes
 
@@ -1593,10 +1593,10 @@ def _esc(text) -> str:
 def run_key(planner, summary: Optional[dict]):
     """The key of the transition the ``[reaction]`` of a run's own setup names (``summary`` is the run's
     summary; None: the current setup), or None for a setup that is not a Coulomb excitation or cannot be read."""
-    from .experiment import Experiment
+    from .runs import taken_setup
 
     try:
-        exp = Experiment.load(Path(summary["_folder"]) / "setup.toml") if summary else planner.experiment
+        exp = taken_setup(summary["_folder"], summary.get("kind")) if summary else planner.experiment
         return results.key_of_reaction(exp)
     except (OSError, ValueError, TypeError, KeyError):
         return None
@@ -1608,12 +1608,12 @@ def analysis_row(planner, summary: Optional[dict], result) -> tuple:
     reason no row of the results ledger can be made for it. ``summary`` is the run's summary (None for the
     analysis of a simulated sample without a run)."""
     from . import result_rows
-    from .experiment import Experiment
+    from .runs import taken_setup
 
     if result.b_e2fm4 != result.b_e2fm4:
         return None, "the analysis found no peak, so there is no B(E2) to enter"
     try:
-        exp = Experiment.load(Path(summary["_folder"]) / "setup.toml") if summary else planner.experiment
+        exp = taken_setup(summary["_folder"], summary.get("kind")) if summary else planner.experiment
     except (OSError, ValueError, TypeError, KeyError) as err:
         return None, f"the setup the run was taken with could not be read ({err})"
     if exp.excitation is None:

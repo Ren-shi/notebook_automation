@@ -16,7 +16,8 @@ The excitation probabilities come from :class:`~physim.nuclear.coupled.CoupledCh
 (``angle_step``) at a few beam energies through the target (``energies``, Gauss–Legendre), interpolated to each
 quadrature direction of each detector segment, weighted by the Rutherford factor of the reference level (the elastic
 cross section times v_i/v_f, in that level's kinematics, for every level, as GOSIA does with its NCM level), and the
-decay of :mod:`physim.nuclear.orientation` shares the populations out into γ rays.
+decay of :mod:`physim.nuclear.orientation` shares the populations out into γ rays. The couplings have the E1
+polarisation correction of the setup (``[reaction] e1_polarisation``).
 
 GOSIA itself is not here: :meth:`Multistep.gosia_input` writes an input (checked against runs of GOSIA 20110524)
 that integrates the γ yields over the target and each particle detector, so that GOSIA can check these numbers;
@@ -34,6 +35,7 @@ import numpy as np
 from . import data
 from .coupled import CoupledChannels
 from .detectors import Array
+from .gamma import e1_polarisation
 from .levels import LevelScheme, quadrupole_factor
 from .orientation import Excitation
 from .rates import Rates, _q, beam_energy_at, beam_ion, stack, stopping
@@ -81,6 +83,8 @@ class Multistep:
         self.beam = beam_ion(experiment)
         self.target = _target_name(experiment)
         self.excite = "target" if role == "target" else "projectile"
+        #: GOSIA's parameter d of the E1 polarisation correction, the setup's.
+        self.e1_polarisation = e1_polarisation(experiment)
         self.array = Array.from_experiment(experiment)
         self.notes: list = []
 
@@ -97,8 +101,10 @@ class Multistep:
     def solver(self, energy: float, scheme: Optional[LevelScheme] = None):
         scheme = scheme or self.scheme
         if self.first_order:
-            return Excitation(self.beam, self.target, energy, scheme, excite=self.excite)
-        return CoupledChannels(self.beam, self.target, energy, scheme, excite=self.excite, tolerance=self.tolerance)
+            return Excitation(self.beam, self.target, energy, scheme, excite=self.excite,
+                              e1_polarisation=self.e1_polarisation)
+        return CoupledChannels(self.beam, self.target, energy, scheme, excite=self.excite, tolerance=self.tolerance,
+                               e1_polarisation=self.e1_polarisation)
 
     def yields(self, scheme: Optional[LevelScheme] = None) -> Yields:
         """γ rays per second of every transition in every particle detector and ring. Every level has the kinematics
@@ -325,7 +331,7 @@ class Multistep:
 
     def gosia_input(self, title: Optional[str] = None, gamma: str = "array", mesh: tuple = (9, 9),
                     integration: tuple = (40, 40), stopping_points: int = 20, accuracy: int = 7,
-                    substates: tuple = (5, 5), dipole: float = 3.8) -> str:
+                    substates: tuple = (5, 5), dipole: Optional[float] = None) -> str:
         """A GOSIA (20110524) input that integrates the γ yields of this setup over the target's thickness and
         each particle detector, to check :meth:`yields` against GOSIA.
 
@@ -336,10 +342,10 @@ class Multistep:
           negative angle means the target recoil is detected, with the beam's lab angle given (the mesh of OP,INTI
           then holds recoil angles). One experiment per detector and per nucleus that reaches it
           (:meth:`gosia_experiments`); IAX = 0 for a ring around the beam, else the azimuths covered at each angle.
-        - CONT: ``ACC``; ``DIP`` (the E1 polarisation; 3.8 is GOSIA's own default, written out so that it does not
-          warn); ``SPL,1.`` (splines: GOSIA's default, one polynomial through the whole stopping table, puts the
-          integrated Rutherford of a thick target well off, 17 % low on ⁶²Ni + C); ``END,`` and the blank line
-          GOSIA needs after it.
+        - CONT: ``ACC``; ``DIP`` (the E1 polarisation, 1000 d: the setup's d, or ``dipole`` when given. GOSIA takes
+          ``DIP,0`` as not set and so as 3.8, its default, so no correction is written as 0.001); ``SPL,1.`` (splines:
+          GOSIA's default, one polynomial through the whole stopping table, puts the integrated Rutherford of a thick
+          target well off, 17 % low on ⁶²Ni + C); ``END,`` and the blank line GOSIA needs after it.
         - OP,YIEL: no internal conversion. ``gamma="array"`` places one GOSIA detector on the axis of each of the
           setup's γ detectors, sized by OP,GDET (written first, so the file runs as it is) as a cylinder of the
           crystals' front area and length; ``gamma="4pi"`` uses one detector with all attenuation coefficients
@@ -407,8 +413,9 @@ class Multistep:
             iax, phi1, phi2 = (0, 0.0, 360.0) if x["phi"] is None else (1, *_phi_span(x["phi"]))
             lines.append(f"{partner[0]} {partner[1]} {e_in:.4f} {x['theta_expt']:.4f} {substates[0]} "
                          f"{substates[1]} {iax} {phi1:.2f} {phi2:.2f} {x['ikin']} {dets.index(x['detector']) + 1}")
+        dip = (1000 * self.e1_polarisation if dipole is None else float(dipole)) or 0.001
         # GOSIA needs the blank line after END,
-        lines += ["CONT", f"ACC,{accuracy}.", f"DIP,{dipole:g}", "SPL,1.", "END,", ""]
+        lines += ["CONT", f"ACC,{accuracy}.", f"DIP,{dip:g}", "SPL,1.", "END,", ""]
 
         # OP,YIEL: no internal conversion; the γ detectors at each experiment; normalised to the first transition.
         offd = sorted((me.b, me.a) for me in s.matrix_elements if me.a != me.b)

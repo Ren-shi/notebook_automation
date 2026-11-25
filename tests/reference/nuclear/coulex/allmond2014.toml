@@ -7,7 +7,8 @@
 # - physim against GOSIA: the verification's plan (2026-11-22) fixed 1 % per ring before the reproduction existed.
 #   This file then said 2 % for GOSIA as run and 0.5 % for GOSIA with nuclear masses and DIP off, and that all bands
 #   were fixed before the run. Those two were not: they were written after fix wave 2 had found about 1.3 % and
-#   0.2 %. GOSIA as run is judged by the plan's 1 % again (2026-11-23), misses it, and is reported as a miss. The
+#   0.2 %. GOSIA as run is judged by the plan's 1 % again (2026-11-23). physim missed it, and was reported as missing it,
+#   until it had the E1 polarisation that GOSIA as run has (2026-11-25): now it is inside (bands.gosia.past_miss). The
 #   0.5 % is kept, tighter than the plan's 1 %, but it is not a blind test.
 # - closure and stored run: band and seeds were written down, and committed, before those seeds were run; closures
 #   of other seeds were known then (first order: within 0.4 % of the input; all orders, three seeds: -1.0(8), -0.1(5)
@@ -161,14 +162,15 @@ thickness = "each loss within its error: the paper's 0.8 MeV for 58Ni and 60Ni; 
 [bands.gosia]
 as_run_rel = 0.01
 matched_rel = 0.005
-why = "GOSIA as run: 1 % per ring, the band the plan fixed before the reproduction was run. It is missed, by a known and explained amount: see known_miss. (For some time this file had 2 % here, written after about 1.3 % had been found.) GOSIA with the same physics (nuclear masses, no E1 polarisation, the app's own input): 0.5 %, the agreement two codes that solve the same coupled equations through the same target should reach; also written after the answer, about 0.2 %, was known, so not a blind test."
+why = "GOSIA as run: 1 % per ring, the band the plan fixed before the reproduction was run; physim with the E1 polarisation, as GOSIA as run has it (d = 0.0038, DIP 3.8). It was missed while physim had none: see past_miss. (For some time this file had 2 % here, written after about 1.3 % had been found.) GOSIA with nuclear masses and without E1 polarisation, on the app's own input, against physim without it: 0.5 %, the agreement two codes that solve the same coupled equations through the same target should reach; also written after the answer, about 0.2 %, was known, so not a blind test. GOSIA with nuclear masses and DIP 3.8 (gosia.app_input.nuclear_masses) against physim with the E1 polarisation is a second line, not judged: its answer (the 0.5 % the correction makes in GOSIA) was known too."
 
-# The misses of as_run_rel, as found: physim above GOSIA. A miss is the known one while it stays within size_abs of
-# these numbers; anything else is a new disagreement.
-[bands.gosia.known_miss]
+# The record of the miss of as_run_rel while physim had no E1 polarisation (2026-11-23 to 2026-11-25): physim above GOSIA.
+# A table known_miss in its place, with the same keys, would mark a miss of these sizes (within size_abs) as known.
+[bands.gosia.past_miss]
 ring2 = 0.0132
 ring3 = 0.0116
 size_abs = 0.0005
+closed = "2026-11-25: physim has GOSIA's E1 polarisation. The two are +0.79 % (ring 2) and +0.69 % (ring 3), inside the 1 %; what is left is GOSIA's integer masses (+0.59 % and +0.56 %, its own run with nuclear masses) and the +0.20 % and +0.12 % below. No band was changed."
 why = "GOSIA as run takes integer mass numbers (A = 62 and 12 for 61.913 and 11.997 u; about 0.6 %) and E1 polarisation (DIP 3.8, not modelled in physim; about 0.5 %); its own runs with nuclear masses and DIP off are higher by 1.1 % (ring 2) and 1.0 % (ring 3). The remaining +0.20 % and +0.12 % is GOSIA's non-relativistic kinematics (0.24 %, worked out for the verification), which leaves about 0.04 % and 0.12 % without an explanation."
 
 [bands.closure]
@@ -187,10 +189,10 @@ why = "The first closure sample as a stored run has it (segments instead of angl
 [bands.paper]
 rel = 0.041
 physim_scan_me_eb = [0.28, 0.29734, 0.32]
-why = "The paper's total uncertainty on B(E2) (0.0037 of 0.0906 e2b2, 4.1 %) applied to each ring's B(E2) = M^2; the per-ring statistical errors (2.4 % and 1.6 % on M^2) are reported as pulls, not judged, because GOSIA as run and physim differ by about 1.3 % (the known miss above), which is in them. physim's ratio(M) is fitted to all-order runs at physim_scan_me_eb, in the same form as GOSIA's."
+why = "The paper's total uncertainty on B(E2) (0.0037 of 0.0906 e2b2, 4.1 %) applied to each ring's B(E2) = M^2; the per-ring statistical errors (2.4 % and 1.6 % on M^2) are reported as pulls, not judged, because GOSIA as run and physim differ by 0.7 to 0.8 % in the ratio (GOSIA's integer masses, above), which is in them (about 1.3 % while physim had no E1 polarisation). physim's ratio(M) is fitted to all-order runs at physim_scan_me_eb, in the same form as GOSIA's."
 
 [bands.sensitivity]
 pp = 0.5
 rel = 0.02
 why = "Q_s = +-0.1 e b moves the ratio by about +-2.7 % (ring 2) and +-1.9 % (ring 3) in GOSIA, the feeding by +1.2 % and +0.8 %; physim must give the same changes within 0.5 percentage points (about a fifth of the Q effect: enough to catch a wrong sign or a missing reorientation term, not the E1 polarisation and mass-number differences, which cancel in a relative change)."
-rel_why = "And within 2 % of GOSIA's change, so that a constant factor on it is seen: the percentage points alone passed effects 6 % (Q_s) and 19 % (feeding) too large, from one orbit for every pair of levels."
+rel_why = "And within 2 % of GOSIA's change, so that a constant factor on it is seen: the percentage points alone passed effects 6 % (Q_s) and 19 % (feeding) too large, from one orbit for every pair of levels. The feeding in ring 3 is right at it since physim has the E1 polarisation (2026-11-25): -1.98 % (-1.7 % before), and -2.07 % with twice the check's angles and beam energies."

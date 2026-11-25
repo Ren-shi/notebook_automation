@@ -796,7 +796,7 @@ p.set("target", "thickness", "1.0 mg/cm2")
 p.run_status()["changes"]                      # ['target.thickness: 0.5 mg/cm2 → 1.0 mg/cm2']
 ```
 
-Each run folder holds `setup.toml` (the setup it was taken with), `summary.json` (counters, rates, the Plan's
+Each run folder holds `setup.toml` (the setup it was taken with, and the E1 polarisation its events have), `summary.json` (counters, rates, the Plan's
 predictions at the time) and `events.npz` (named NumPy arrays: one row per counted particle and per γ ray). The
 results of the experiment's analyses are rows of `results.jsonl` in the experiment's folder ({doc}`results`).
 
