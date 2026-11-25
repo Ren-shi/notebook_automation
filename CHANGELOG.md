@@ -210,10 +210,17 @@ workflow builds the wheels, tests them and publishes to PyPI.
     (statistics, distance, velocity, feeding, stopping).
   - The planner (`physim.nuclear.lifetime_plan`): `Planner.lifetimes` (per level the method that suits it, τ and its
     source, plunger distances and sensitive range, the peak separation per γ-ray detector, F(τ), the beam time per
-    distance for a wanted precision, and warnings, including a Coulex plunger with no deorientation),
+    distance for a wanted precision, a DSAM backing advised per level (the usual backings ranked by |dF/d ln τ|,
+    with F(τ), the slowing-down time and the thickness that stops the recoil), and warnings: a Coulex plunger with
+    no deorientation, a backing far from the advice, and the beam in the plunger's foils (the power it deposits
+    over 0.5 W, the foils' own Coulex lines near the studied peaks)),
     `Planner.lifetime_spectra` (predicted spectra per distance and angle) and `Planner.analyse_lifetimes` (τ from
     a distance series by DDCM, three-foil DDCM or decay curve, or from DSAM line shapes, then B(Eλ↓) beside ENSDF,
-    the Coulex B(E2) and the shell model); `dataviews.distance_spectra`. The beam-time report has a lifetime
+    the Coulex B(E2) and the shell model). Peak areas are counted in windows when the shift is wide enough
+    (`lifetime_analysis.peak_areas(method="auto")`, `window_areas`), since a broad, flat-topped shifted line is not
+    one Gaussian; for Coulex the DDCM weights the shifted counts by speed, takes each ring's efficiency ratio from
+    the setup and corrects for deorientation, and gets ⁹⁸Ru's τ back from simulated runs (8.47 ± 0.36 ps with
+    deorientation, 8.05 ± 0.33 ps without, for 8.36). `dataviews.distance_spectra`. The beam-time report has a lifetime
     section with its limits and the lifetime checks; MCP tools `plan_lifetime_measurement`, `set_plunger`,
     `lifetime_spectra` and `analyse_lifetimes`; docs page "Lifetime measurements" (`docs/lifetimes.md`).
   - The planner app: a plunger (RDDS) or DSAM card in Setup for Coulex and fusion (distances, offset, foil kind,
@@ -231,8 +238,12 @@ workflow builds the wheels, tests them and publishes to PyPI.
     `physim.nuclear.lifetime_reproduction` (`scripts/reproduce_lifetimes.py`): Radeck et al.'s ⁹⁸Ru 2⁺₁ (8.35 ±
     0.27 ps against 8.36(29)) and Beckers et al.'s ⁵⁰Cr 2⁺₁ and 4⁺₁ pass; Rajbanshi et al.'s ¹⁴³Sm DSAM is a known
     failure (fitted with SRIM's stopping, as the paper did, τ comes out about 20% long: SRIM's range of Sm in Au is
-    19% longer than physim's). Register page `docs/physics-register/lifetimes.md`, notebook
-    `notebooks/validation/lifetimes.ipynb`.
+    19% longer than physim's). The planner's recommended distances and backing are checked against the three
+    papers' choices (`rdds_planner_distances`, `dsam_planner_backing`, both pass). Register page
+    `docs/physics-register/lifetimes.md`, notebook `notebooks/validation/lifetimes.ipynb`.
+  - DSAM fits and line shapes are faster with unchanged results (bitwise): a Coulex DSAM `fit_lineshape` 61 s →
+    4 s, `dsam_lineshapes` and the DSAM checks about 1.6×. `transport.Kernel` is frozen (read-only arrays) and
+    keeps `beta_cos` per detector angle.
 
 ### Documentation
 - The README shows the application: what the experiment planner does, step by step, with screenshots
@@ -555,6 +566,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
     ⁶²Ni in JUN45, ⁵⁶Ni core) is warned about, since it has no effect: `shellmodel_spaces.charge_warnings`, the
     estimate's `warnings`, and `warnings` in the MCP tools `shell_model_options`, `estimate_shell_model`,
     `run_shell_model` and `shell_model_results`.
+- `Planner.plan()` raised "the beam energy must be positive" when the beam stops in a thick backing (projectile
+  Coulex took the beam energy at the middle of every layer). It now uses the middle of the part the beam crosses
+  (`rates.layer_energy`), skips layers the beam never reaches, and reports where it stops (`beam_stops_in`).
 - Editing a fusion setup with an ancillary (neutron wall, charged-particle ball, …) could break the app's setup
   panel: `workbench.card_setup` raised for ancillary cards while a change was pending.
 - A shell-model job reads as finished, with its finish time, as soon as its results are written; before, a status

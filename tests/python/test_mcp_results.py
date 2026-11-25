@@ -192,7 +192,7 @@ def test_points_imported_from_a_file(tools, tmp_path):
     json.dumps(out)
     assert out["summary"] == "1 added, 0 already there, 1 refused" and out["shape"] == "points"
     assert out["added"][0]["as_stored"] == "τ(2+₁) = 1.60 +0.40 −0.60 ps" and out["added"][0]["where"] == "points[0]"
-    assert "an evaluation, not a measurement" in out["refused"][0]["reasons"][0]
+    assert "not a method of a point that is evaluated" in out["refused"][0]["reasons"][0]
     again = tools.import_data_points(str(points), "62Ni")
     assert again["summary"] == "0 added, 1 already there, 1 refused"
     assert again["already_there"][0]["id"] == out["added"][0]["id"]

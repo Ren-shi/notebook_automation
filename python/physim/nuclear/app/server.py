@@ -60,8 +60,8 @@ def main(argv: Optional[list] = None) -> None:
 
     ap = argparse.ArgumentParser(prog="physim app", description="Start the experiment planner in the browser.")
     ap.add_argument("--example", default=None,
-                    help="start from this example as a template (default: the nuclei, with the most recent experiment "
-                         "behind them)")
+                    help="start from this example as a template (default: the nucleus shown last, with the most recent "
+                         "experiment behind it)")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="127.0.0.1",
                     help="address to listen on (default: this computer only; 0.0.0.0 serves the local network)")
@@ -119,7 +119,8 @@ def main(argv: Optional[list] = None) -> None:
         from .figures import THEMES
         from .page import build_page
 
-        # ?nucleus=62Ni opens the page of that nucleus (with &observable=...&key=... on that row of its table).
+        # ?nucleus=62Ni opens the page of that nucleus, with &observable=...&key=... the comparison of that
+        # observable; an address that names nothing opens on the nucleus this browser showed last.
         build_page(example=example or args.example, template=template, experiment=experiment,
                    theme=theme if theme in THEMES else None, prebuild=prebuild == "all", nucleus=nucleus,
                    observable=observable, key=key)

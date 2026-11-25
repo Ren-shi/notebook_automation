@@ -1,12 +1,16 @@
-"""The nuclei screen and the page of one nucleus (``physim.nuclear.app.start`` and ``.tab_nucleus``) without a
-browser, on temporary folders with a handful of synthetic ⁶²Ni rows. No run is simulated."""
+"""The start views (``physim.nuclear.app.start``): the nuclei, the page of one nucleus (``.tab_nucleus``) and the
+comparison of one observable (``.tab_compare``), and the frame around them (the bar, the rail, what the app opens
+on), without a browser, on temporary folders with a handful of synthetic ⁶²Ni rows. No run is simulated."""
 
 import asyncio
+import os
+import re
 from types import SimpleNamespace
 
 import pytest
 
 from physim.nuclear import Experiment, ensdf, nucleus, results
+from physim.nuclear.app import nucleus_parts as parts
 from physim.nuclear.app import start
 from physim.nuclear.app import tab_nucleus as tn
 from physim.nuclear.runs import ExperimentFolder
@@ -26,7 +30,7 @@ def lab(tmp_path, monkeypatch):
     monkeypatch.setattr(nucleus, "decay", lambda nuclide, level_key: (None, None, "no γ ray known"))
     root = tmp_path / "experiments"
     coulex = ExperimentFolder.create(Experiment.example("coulex_ni62_pt194"), root=root)
-    ExperimentFolder.create(Experiment.example("alpha_on_gold"), root=root)
+    elastic = ExperimentFolder.create(Experiment.example("alpha_on_gold"), root=root)
     run = coulex.path / "runs" / "03-beam-24h"
     run.mkdir()
     (run / "summary.json").write_text("{}", encoding="utf-8")
@@ -39,7 +43,15 @@ def lab(tmp_path, monkeypatch):
         "62Ni", "B(E2)", KEY, 884.1, "e2fm4", "evaluation", "evaluated", direction="up", total=13.1,
         depends_on=(doe.id,), origin=results.reference("ENSDF", 2025, where="NDS 204, 1 (2025)",
                                                        evaluation=nucleus.ENSDF))])
-    return SimpleNamespace(coulex=coulex, doe=doe)
+    return SimpleNamespace(coulex=coulex, elastic=elastic, doe=doe)
+
+
+SCREEN: list = []
+
+
+def ctx_of(st):
+    """What the views of the screen under test were given."""
+    return SCREEN[0]
 
 
 def _texts(user) -> str:
@@ -58,6 +70,7 @@ def _on_screen(scenario, **st) -> list:
     from nicegui.testing import user_simulation
 
     opened, state = [], {"start": {"kind": None, **st}}
+    SCREEN.clear()
 
     def page() -> None:
         box = ui.column()
@@ -68,7 +81,9 @@ def _on_screen(scenario, **st) -> list:
                 start.render(ctx)
 
         ctx = SimpleNamespace(ui=ui, state=state, open_experiment=opened.append, refresh_start=refresh,
-                              create_experiment=None, open_example=None, import_setup=None, close_start=None)
+                              create_experiment=None, open_example=None, import_setup=None, close_start=None,
+                              remember_nucleus=lambda name: None)
+        SCREEN.append(ctx)
         refresh()
 
     async def main():
@@ -81,15 +96,26 @@ def _on_screen(scenario, **st) -> list:
     return opened
 
 
-def _press(user, text: str) -> None:
+def _press(user, text: str, which=min) -> None:
+    """Press the first button of the page whose text starts with ``text`` (the last one with ``which=max``)."""
     from nicegui import ui
     from nicegui.testing import UserInteraction
 
     found = [e for e in user.find(kind=ui.button).elements if str(e.text).startswith(text)]
-    UserInteraction(user, {min(found, key=lambda e: e.id)}, None).click()
+    UserInteraction(user, {which(found, key=lambda e: e.id)}, None).click()
 
 
-def test_the_nuclei_screen_and_the_page_of_one_nucleus(lab):
+def _row(user, label: str) -> None:
+    """Click the row of a table that starts with ``label``."""
+    from nicegui import ui
+    from nicegui.testing import UserInteraction
+
+    [row] = [e for e in user.find(kind=ui.element).elements if "ps-nt-click" in e.classes
+             and label in [getattr(x, "text", None) for x in list(e.descendants())[:2]]]
+    UserInteraction(user, {row}, None).click()
+
+
+def test_the_nuclei_screen_the_page_of_a_nucleus_and_the_comparison(lab):
     # The evaluation of the partner is here (its page was opened once): it stays in the line under the cards.
     results.add_points([results.Row("194Pt", "E_level", "194Pt:2+1", 328.5, "keV", "evaluation", "evaluated",
                                     total=0.1, origin=results.reference("ENSDF", 2025, evaluation=nucleus.ENSDF))])
@@ -110,7 +136,14 @@ def test_the_nuclei_screen_and_the_page_of_one_nucleus(lab):
         [row] = [e for e in user.find(kind=ui.element).elements if "ps-nt-click" in e.classes]
         UserInteraction(user, {row}, None).click()  # a row of the card opens the experiment
         _press(user, "⁶²Ni →")
-        # One nucleus: the two groups apart, each with its own comparison and the method in words.
+        # One nucleus: its head, readouts, observables and experiments, and no comparison.
+        await user.should_see("1 data point", retries=100)
+        texts = _texts(user)
+        assert "Z = 28, N = 34" in texts and "Still open" in texts and "1 with this nucleus" in texts
+        assert "Given to the simulation" not in texts and "Add the point" not in texts
+        # A row of its observables opens the comparison: the two groups apart, each with its own comparison and the
+        # method in words.
+        _row(user, "B(E2; 0⁺₁ → 2⁺₁)↑")
         await user.should_see("Given to the simulation", retries=100)
         texts = _texts(user)
         assert "INDEPENDENT · against the reference: ENSDF adopted" in texts
@@ -125,6 +158,18 @@ def test_the_nuclei_screen_and_the_page_of_one_nucleus(lab):
         _press(user, "Plan it for ⁶²Ni")
         await user.should_see("62Ni is filled in as the beam", retries=100)
         assert st["kind"] in ("coulex", "lifetimes") and st["values"]["beam"] == "62Ni"
+        # From the comparison another observable is one press away, and so is its nucleus.
+        nucleus.add_data_point("62Ni", "tau", "2+1", 2.01, uncertainty=0.12, method="dsam",
+                               reference={"authors": "Roe", "year": 2001})
+        st.update(view="observable", nucleus="62Ni", observable="B(E2)", key=KEY)
+        ctx_of(st).refresh_start()
+        await user.should_see("Given to the simulation", retries=100)
+        _press(user, "τ(2⁺₁)")
+        await user.should_see("Routes to τ(2⁺₁) in ⁶²Ni", retries=100)
+        assert (st["view"], st["observable"]) == ("observable", "tau")
+        _press(user, "← ⁶²Ni")
+        await user.should_see("Z = 28, N = 34", retries=100)
+        assert st["view"] == "nucleus"
 
     assert _on_screen(scenario) == [str(lab.coulex.path)]
 
@@ -143,9 +188,11 @@ def test_a_data_point_through_the_form(lab):
         _press(user, "Add the point")
         await user.should_see("906 ± 37", retries=100)
         texts = _texts(user)
-        assert "906 ± 37" in texts and "✓ agree" in texts and "2 data points" in texts
+        assert "906 ± 37" in texts and "✓ agree" in texts
+        _press(user, "← ⁶²Ni")
+        await user.should_see("2 data points", retries=100)
 
-    _on_screen(scenario, view="nucleus", nucleus="62Ni", observable="B(E2)", key=KEY.replace("+", " "))
+    _on_screen(scenario, view="observable", nucleus="62Ni", observable="B(E2)", key=KEY.replace("+", " "))
     # Corrected through the same form: the old row is superseded, never changed.
     assert tn.add_point("62Ni", {**tn.point_of(lab.doe), "value": "906"}).supersedes == lab.doe.id
     # The form's other shapes of an uncertainty and of where the point is from.
@@ -157,6 +204,8 @@ def test_a_data_point_through_the_form(lab):
 
 def test_words_units_addresses_and_the_figure(lab, monkeypatch):
     assert tn.url("62Ni", "B(E2)", KEY) == "/?nucleus=62Ni&observable=B%28E2%29&key=62Ni%3A2%2B1%3E0%2B1%3AE2"
+    assert parts.named_in(tn.url("62Ni", "B(E2)", KEY)) == ("62Ni", "B(E2)", KEY)
+    assert parts.named_in("/?nucleus=58Ni") == ("58Ni", None, None) and parts.named_in("/?theme=dark") is None
     assert tn.shown(12.13, 0.18, 0.18, "W.u.") == "12.13 ± 0.18 W.u.↓"  # always marked ↓
     factor, unit = tn.display_factor("B(E2)", "e2b2")
     assert tn.shown(884.1, 13.1, 13.1, unit, "up", factor) == "0.0884 ± 0.0013 e²b²↑"
@@ -205,3 +254,135 @@ def test_the_b_values_of_a_level_scheme_carry_their_arrows():
     m = {"from": 0, "to": 1, "multipolarity": "E2", "b_up_e2fm": 884.1}
     assert b_words(table, m) == "B↑ = 884.1 e²fm^4 · B↓ = 176.8 e²fm^4 = 12.1 W.u. ↓"
     assert b_words(table, {**m, "to": 2}).endswith("(B↓ and W.u. need the spins of both levels)")
+
+
+# -- the frame: what the app opens on, the rail, the bar --------------------------------------------------------------
+
+
+def _changed(folder, when: float) -> None:
+    os.utime(folder.path / "experiment.toml", (when, when))
+
+
+def test_what_the_app_opens_on(lab, tmp_path, monkeypatch):
+    other = ExperimentFolder.create(Experiment.example("coulex_ru98_plunger"), root=tmp_path / "experiments")
+    for when, folder in enumerate((lab.coulex, other, lab.elastic)):  # the elastic one, which studies none, is newest
+        os.utime(folder.path / "experiment.toml", (2e9 + when, 2e9 + when))
+    assert start.opening("62Ni") == {"view": "nucleus", "nucleus": "62Ni"}  # the one remembered
+    for gone in (None, "", "no nuclide", "208Pb"):  # none, or one that is not here any more
+        assert start.opening(gone) == {"view": "nucleus", "nucleus": "98Ru"}
+    assert start.switched_between(parts.load_nuclei(fill=False)) == ["62Ni", "98Ru"]  # not the partners
+    monkeypatch.setattr(start, "SWITCHER", 1)
+    assert start.switched_between(parts.load_nuclei(fill=False)) == ["98Ru"]
+    # Without an experiment that studies a nucleus: the data points, then the nuclei, then the kinds.
+    monkeypatch.setenv("PHYSIM_EXPERIMENTS", str(tmp_path / "none"))
+    assert start.opening() == {"view": "nucleus", "nucleus": "62Ni"}
+    monkeypatch.setenv(results.ENV, str(tmp_path / "no-nuclei"))
+    assert start.opening() == {"view": "kinds"}
+    ExperimentFolder.create(Experiment.example("alpha_on_gold"), root=tmp_path / "none")
+    assert start.opening() == {"view": "nuclei"}
+
+
+def test_a_repeated_point_is_withdrawn_once_before_the_first_read(lab, monkeypatch):
+    calls, withdraw = [], nucleus.retract_duplicates
+    monkeypatch.setattr(nucleus, "retract_duplicates", lambda *a: calls.append(1) or withdraw(*a))
+    doe = lab.doe
+    results.add_points([results.Row("62Ni", "B(E2)", KEY, doe.value / 1e4, "e2b2", doe.method, "measured",
+                                    direction="up", total=0.0037, origin=doe.origin)])  # Doe again, in e²b²
+    [bar] = [n for n in parts.load_nuclei(fill=False)["nuclei"] if n["nuclide"] == "62Ni"]
+    assert bar["points"] == 2 and not calls  # the bar only reads
+    assert parts.load("62Ni", compare=False)["view"]["points"] == 1  # a page opened straight by its address
+    parts.load("62Ni", compare=False)
+    parts.load_nuclei()
+    assert calls == [1]
+
+
+def _on_page(monkeypatch, scenario, remembered=None, **kwargs) -> list:
+    """``scenario(user)`` on the app's whole page, in a browser that remembers the nucleus ``remembered``; the
+    nuclei it was told to remember. The numbers of the experiment behind a start view are left out."""
+    pytest.importorskip("nicegui")
+    from nicegui import Client
+    from nicegui.testing import user_simulation
+
+    from physim.nuclear import planner
+    from physim.nuclear.app import page
+
+    kept, run_javascript = [], Client.run_javascript
+
+    def watched(client, code, **options):
+        kept.extend(re.findall(r"setItem\('physim-planner-nucleus', \"(\w+)\"\)", code))
+        return run_javascript(client, code, **options)
+
+    def no_numbers(*args, **options):
+        raise ValueError("no numbers in this test")
+
+    monkeypatch.setattr(Client, "run_javascript", watched)
+    monkeypatch.setattr(planner, "Rates", no_numbers)
+
+    async def main():
+        async with user_simulation(lambda: page.build_page(**kwargs)) as user:
+            user.javascript_rules[re.compile(r".*getItem\('physim-planner-theme'\).*", re.S)] = (
+                lambda match: [None, False, None, remembered])
+            await user.open("/")
+            await scenario(user)
+            await asyncio.sleep(0.2)
+
+    asyncio.run(main())
+    return kept
+
+
+def _rail(user) -> bool:
+    from nicegui import ui
+
+    [drawer] = user.find(kind=ui.left_drawer).elements
+    return drawer.value
+
+
+def test_the_frame_of_the_start_views(lab, monkeypatch):
+    ExperimentFolder.create(Experiment.example("coulex_ru98_plunger"), root=lab.coulex.path.parent)
+
+    async def scenario(user):
+        from nicegui import ui
+
+        await user.should_see("Opening the nucleus you were on…")  # nothing else until the browser answered
+        await user.should_see("Z = 28, N = 34", retries=100)  # the nucleus it remembers
+        assert _rail(user) is False and "Given to the simulation" not in _texts(user)
+        for retry in range(100):
+            if "⁹⁸Ru" in _texts(user):
+                break
+            await asyncio.sleep(0.05)
+        _press(user, "⁹⁸Ru")  # the switcher
+        await user.should_see("Z = 44, N = 54", retries=100)
+        _press(user, "All nuclei")
+        await user.should_see("What are you studying?", retries=100)
+        assert _rail(user) is False
+        # Physics is a start view of its own, with the way back.
+        _press(user, "Physics", which=max)  # the bar's: the rail's is hidden
+        await user.should_see("with the numbers of 98Ru on 24Mg")  # the reference itself is the stage, under the head
+        assert [t.value for t in user.find(kind=ui.tabs).elements] == ["physics"]
+        assert _rail(user) is False
+        _press(user, "← All nuclei")
+        await user.should_see("What are you studying?", retries=100)
+        # The two theme switches stay in step.
+        switches = [t for t in user.find(kind=ui.toggle).elements if t.options == {"light": "Light", "dark": "Dark"}]
+        assert len(switches) == 2
+        switches[0].value = "dark"
+        assert [t.value for t in switches] == ["dark", "dark"]
+        # An experiment brings the rail and the steps, with the way back to its nucleus.
+        _press(user, "Back to ")
+        assert _rail(user) is True
+        links = [(str(e.text), e.props["href"]) for e in user.find(kind=ui.link).elements]
+        assert ("⁹⁸Ru", "/?nucleus=98Ru") in links
+
+    assert _on_page(monkeypatch, scenario, remembered="62Ni") == ["62Ni", "98Ru"]
+
+
+@pytest.mark.parametrize("address, seen, unseen", [
+    ({}, "Z = 28, N = 34", "Given to the simulation"),
+    ({"observable": "B(E2)", "key": KEY}, "Given to the simulation", "Z = 28, N = 34")])
+def test_an_address_of_a_nucleus_and_of_an_observable(lab, monkeypatch, address, seen, unseen):
+    async def scenario(user):
+        await user.should_see(seen, retries=100)
+        await asyncio.sleep(0.5)  # the browser's answer does not change what the address opened
+        assert _rail(user) is False and unseen not in _texts(user)
+
+    assert _on_page(monkeypatch, scenario, remembered="194Pt", nucleus="62Ni", **address) == ["62Ni"]

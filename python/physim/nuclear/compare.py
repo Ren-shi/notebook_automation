@@ -16,7 +16,9 @@ in percent, the ratio to it, and the pull: the difference over the two uncertain
 asymmetric uncertainty counts with the side that faces the other value. The verdict follows the pull: below
 :data:`AGREE_BELOW` (2) the two agree, up to :data:`DIFFER_ABOVE` (3) there is tension, above it they differ. A
 row without an uncertainty gets its ratio and no pull or verdict. A row that is not independent of the reference
-(the two share a source through ``depends_on``) is flagged.
+(the two share a source through ``depends_on``) is flagged. Another evaluation than the one the reference is taken
+from (:func:`averages`: it averages the measurements that stand beside it) is flagged too, gets its difference and
+its ratio and no pull or verdict, and is the reference only when it is named.
 
 **Projected rows** (a simulated run analysed back) are handled apart and never pulled against the reference.
 Each is closed against its ``truth``, the value the simulation was given, over its own total uncertainty; and what
@@ -194,6 +196,18 @@ def ratio(numerator: Row, denominator: Row, scale: float = 1.0) -> float:
 # The comparison
 
 
+#: The mark in the origin of a row that another evaluation gave (``origin["not_independent_of"]``): its value is an
+#: average of measurements, those that stand beside it among them.
+MEASUREMENTS = "measurements"
+
+
+def averages(row: Row) -> bool:
+    """Whether a row is another evaluation (Raman, Pritychenko, ...): an average of measurements that may be in the
+    comparison themselves, so independent neither of them nor of the evaluated reference. ENSDF's adopted values are
+    not marked so: they are the reference."""
+    return row.evidence == "evaluated" and row.origin.get("not_independent_of") == MEASUREMENTS
+
+
 @dataclass(frozen=True)
 class Entry:
     """One independent row beside the reference. Values are in the canonical convention."""
@@ -218,10 +232,11 @@ class Entry:
     difference_percent: Optional[float] = None
     ratio: Optional[float] = None
     #: The difference over the two uncertainties in quadrature, and what the rule makes of it. None for a row
-    #: without an uncertainty, which has its ratio only.
+    #: without an uncertainty, which has its ratio only, and between two evaluations (:func:`averages`).
     pull: Optional[float] = None
     verdict: Optional[str] = None
-    #: False when the row and the reference share a source (``depends_on``): the agreement is then no test.
+    #: False when the row and the reference share a source (``depends_on``), or one of them averages measurements
+    #: and the other is one or averages them too: the agreement is then no test.
     independent_of_reference: Optional[bool] = None
 
 
@@ -308,14 +323,17 @@ def _entry(c: Canonical, reference: Optional[Canonical], by_id: dict) -> Entry:
         return Entry(**e, is_reference=True)
     difference = c.value - reference.value
     pull = None
-    if c.plus is not None:  # the side of each uncertainty that faces the other value
+    other = averages(row) or averages(reference.row)  # an average of measurements, on one of the two sides
+    judged = not averages(row) and not (other and row.evidence == "evaluated")
+    shared = other and {row.evidence, reference.row.evidence} <= {"measured", "evaluated"}
+    if judged and c.plus is not None:  # the side of each uncertainty that faces the other value
         width = math.hypot(c.unc(reference.value), reference.unc(c.value) or 0.0)
         pull = difference / width if width > 0 else None
     return Entry(
         **e, difference=difference,
         difference_percent=100.0 * difference / abs(reference.value) if reference.value else None,
         ratio=c.value / reference.value if reference.value else None, pull=pull, verdict=verdict(pull),
-        independent_of_reference=not (_sources(row, by_id) & _sources(reference.row, by_id)))
+        independent_of_reference=not shared and not (_sources(row, by_id) & _sources(reference.row, by_id)))
 
 
 def _projection(c: Canonical, known: Optional[float], best: Optional[float]) -> Projection:
@@ -330,8 +348,8 @@ def compare(rows: list, reference: Union[Row, str, None] = None) -> Comparison:
     """Compare the rows of one observable of one transition or level.
 
     ``rows`` may hold superseded rows; only those that hold now are compared. ``reference`` is a row or its id;
-    left out, the evaluated row is the reference (the newest, if there are several), and without one the rows
-    are listed with no differences. A projected row cannot be the reference. Raises ``ValueError`` for rows of
+    left out, the evaluated row is the reference (the newest, if there are several; never another evaluation,
+    :func:`averages`), and without one the rows are listed with no differences. A projected row cannot be the reference. Raises ``ValueError`` for rows of
     different observables or of different levels or transitions.
     """
     rows = list(rows)
@@ -344,7 +362,8 @@ def compare(rows: list, reference: Union[Row, str, None] = None) -> Comparison:
     now = [canonical(r) for r in current(rows)]
     independent = [c for c in now if c.row.independent]
     if reference is None:
-        evaluated = sorted((c for c in independent if c.row.evidence == "evaluated"), key=lambda c: c.row.created)
+        evaluated = sorted((c for c in independent if c.row.evidence == "evaluated" and not averages(c.row)),
+                           key=lambda c: c.row.created)
         ref = evaluated[-1] if evaluated else None
     else:
         wanted = reference.id if isinstance(reference, Row) else str(reference)
@@ -365,5 +384,5 @@ def compare(rows: list, reference: Union[Row, str, None] = None) -> Comparison:
         best)
 
 
-__all__ = ["AGREE_BELOW", "DIFFER_ABOVE", "VERDICTS", "Canonical", "Comparison", "Entry", "Projection",
-           "canonical", "compare", "convert", "ratio", "verdict"]
+__all__ = ["AGREE_BELOW", "DIFFER_ABOVE", "MEASUREMENTS", "VERDICTS", "Canonical", "Comparison", "Entry",
+           "Projection", "averages", "canonical", "compare", "convert", "ratio", "verdict"]

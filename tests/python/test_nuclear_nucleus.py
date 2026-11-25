@@ -3,10 +3,11 @@ corrected and withdrawn but never deleted, and the nucleus views on a temporary 
 the mock-ups. Plumbing on synthetic rows: no run is simulated here."""
 
 import json
+from pathlib import Path
 
 import pytest
 
-from physim.nuclear import Experiment, compare, ensdf, lifetimes, nucleus, results
+from physim.nuclear import Experiment, compare, ensdf, lifetimes, logbook, nucleus, results
 from physim.nuclear.levels import LevelScheme
 from physim.nuclear.runs import ExperimentFolder
 
@@ -246,18 +247,23 @@ def test_a_data_point_is_added_corrected_and_withdrawn_but_never_deleted(lab):
 def test_a_bad_data_point_is_refused_with_everything_that_is_wrong(lab):
     with pytest.raises(nucleus.PointProblem) as refused:
         nucleus.add_data_point("62Ni", "B(E2)", "2+1", "many", "barn", uncertainty=-1, plus=2, method="guess",
-                               evidence="evaluated")
+                               evidence="guessed")
     said = "; ".join(refused.value.problems)
     for part in ("a transition is two levels", "the value must be a number", "'barn' is not a unit of B(E2)",
                  "needs its direction", "one form", "'uncertainty' must be a number that is not negative",
-                 "not 'evaluated': the evaluation is taken from ENSDF", "the method is one of",
+                 "a data point is measured, outside program, theory or evaluated, not 'guessed'", "the method is one of",
                  "where the point is from"):
         assert part in said, part
     assert len(refused.value.problems) == 9 and not (lab / "nuclei").exists()
     good = {"direction": "up", "uncertainty": 37.0, "method": "coulex-fit", "reference": ALLMOND}
     for change, message in (
             ({"uncertainty": None}, "a measured point needs its uncertainty"),
-            ({"method": "shell-model"}, "not a method of a measured point"),
+            ({"method": "shell-model"}, "not a method of a point that is measured"),
+            ({"method": "evaluation", "evidence": "evaluated", "reference": {
+                "authors": "B. Singh et al.", "year": 2025, "where": "Nucl. Data Sheets 204, 1 (2025)"}},
+             "with the snapshot of the evaluation"),
+            ({"method": "evaluation", "evidence": "evaluated", "reference": None, "own": {"date": "2027"}},
+             "an evaluation is a published one"),
             ({"evidence": "projected"}, "simulated run"),
             ({"unit": "W.u."}, "always the ↓ value"),
             ({"reference": {"authors": "", "year": 1066}}, "needs its authors.*year it was published"),
@@ -430,3 +436,193 @@ def test_the_nuclei_and_one_nucleus_as_plain_data(lab):
     assert nucleus.observable_view("62Ni", "Qs", "2+1")["comparison"] is None
     assert [c["evidence"] for c in nucleus.holding("62Ni", "B(E2)")] == [
         "measured", "measured", "evaluated", "theory", "projected"]
+
+
+# -- a value counts once, other evaluations, and what the screens draw ---------------------------------------------
+
+
+LITERATURE = Path(__file__).resolve().parents[1] / "reference" / "nuclear" / "literature_ni62_cut.json"
+KENN = {"authors": "Kenn et al.", "year": 2001, "where": "DSAM"}
+
+
+def point(value, unit="e2fm4", **more):
+    return nucleus.add_data_point("62Ni", "B(E2)", KEY, value, unit, **{
+        "direction": "up", "uncertainty": 0.04 * value, "method": "coulex-fit", "reference": ALLMOND, **more})
+
+
+def add_ledger(*rows):
+    results.add_points(list(rows))
+
+
+def test_a_value_counts_once_whatever_its_unit_or_detail(lab):
+    typed = point(906.0, uncertainty=37.0)
+    kenn = nucleus.add_data_point("62Ni", "tau", "2+1", 2.01, "ps", uncertainty=0.12, method="dsam", reference=KENN)
+    # The same two values in a file: in e²b² and with a long detail (the DOI says so), and with stat and sys (the
+    # first author and the year say so, as one of the two has no DOI).
+    found = nucleus.import_points(LITERATURE, "62Ni")
+    assert {x["where"]: x["id"] for x in found["already"]} == {"quantities.BE2_up[0]": typed.id,
+                                                              "quantities.tau_2plus[0]": kenn.id}
+    with pytest.raises(nucleus.PointThere, match="is in the ledger of 62Ni already: 906 ± 37 e2fm4↑.*counts once") as e:
+        point(12.43, "W.u.", direction="down", uncertainty=0.5, detail="GOSIA")  # 906 e²fm⁴ to three digits
+    assert e.value.row == typed
+    with pytest.raises(nucleus.PointThere, match="counts once"):
+        point(0.0906, "e2b2", uncertainty=0.0037,
+              reference={"authors": "Allmond, J. M.", "year": 2014, "doi": "https://doi.org/10.1103/PHYSREVC.90.034309"})
+    # Another method, another paper, another year or another value is another point; so is a correction of the same.
+    for more in ({"method": "coulex-yield"}, {"reference": {**ALLMOND, "doi": "10.1000/other"}},
+                 {"reference": {"authors": "Allmond et al.", "year": 2015}}):
+        assert point(906.0, **more).value == 906.0
+    assert point(918.0).value == 918.0
+    assert nucleus.correct_data_point("62Ni", typed.id, uncertainty=40.0).total == 40.0
+    a, b = (results.Row("62Ni", "B(E2)", KEY, v, "e2fm4", "coulex-yield", "measured", direction="up", total=30.0,
+                        origin=results.reference(who, 1971, where=where))
+            for v, who, where in ((880.0, "NSR 1971ChZF", ""), (880.0, "Roe", "Ann. Phys. 1, 1 (1971) [1971ChZF]")))
+    assert nucleus.repeats(a, b)  # by the NSR key number
+
+
+def test_the_duplicates_of_an_older_ledger_are_withdrawn_once(lab):
+    def row(value, unit, created, authors="Allmond et al.", **more):
+        return results.Row("62Ni", "B(E2)", KEY, value, unit, "coulex-fit", "measured", direction="up",
+                           origin=results.reference(authors, 2014, "10.1103/PhysRevC.90.034309", "Table II"),
+                           created=created, **more)
+
+    first = row(906.0, "e2fm4", "2026-11-24T10:00:00+00:00", total=37.0)
+    twice = row(0.0906, "e2b2", "2026-11-24T11:00:00+00:00", "J. M. Allmond et al.", total=0.0037)
+    fixed = row(906.0, "e2fm4", "2026-11-24T12:00:00+00:00", total=36.0, supersedes=first.id)  # came in first, still
+    other = row(860.0, "e2fm4", "2026-11-24T13:00:00+00:00", total=37.0)
+    add_ledger(*evaluated(), first, twice, fixed, other)
+    file = lab / "nuclei" / "62Ni" / results.POINTS_FILE
+    before = file.read_text(encoding="utf-8")
+    [gone] = nucleus.retract_duplicates()
+    assert gone.supersedes == twice.id and gone.retracted.startswith(f"repeats row {fixed.id} (906 ± 36 e2fm4↑")
+    assert file.read_text(encoding="utf-8").startswith(before)  # nothing is deleted
+    after = file.read_text(encoding="utf-8")
+    assert nucleus.retract_duplicates("62Ni") == [] and nucleus.retract_duplicates() == []
+    assert file.read_text(encoding="utf-8") == after
+    view = nucleus.observable_view("62Ni", "B(E2)", KEY)
+    assert view["counts"]["measured"]["count"] == 2 and "1 evaluated, 2 measured" in logbook.nucleus_html("62Ni")
+
+
+def test_another_evaluation_is_compared_without_a_verdict_and_is_never_the_reference(lab):
+    adopted = evaluated()
+    add_ledger(*adopted)
+    ensdf_row = adopted[-1]
+    allmond = point(906.0, uncertainty=37.0)
+    raman = next(x["row"] for x in nucleus.import_points(LITERATURE, "62Ni")["added"]
+                 if x["where"] == "quantities.BE2_up[2]")  # written after ENSDF's
+    assert nucleus.is_data_point(raman) and not nucleus.is_evaluation(raman)
+    view = nucleus.observable_view("62Ni", "B(E2)", KEY)
+    entries = {e.id: e for e in view["comparison"].entries}
+    assert view["comparison"].reference.id == ensdf_row.id and entries[allmond.id].verdict == "agree"
+    e = entries[raman.id]
+    assert e.difference_percent == pytest.approx(0.67, abs=0.02) and (e.pull, e.verdict) == (None, None)
+    assert e.independent_of_reference is False and entries[allmond.id].independent_of_reference is True
+    [group] = [g for g in view["groups"] if g["id"] == "evaluation"]
+    assert [i["id"] for i in group["entries"]] == [raman.id]
+    assert group["entries"][0]["verdict_text"] == "not judged: not independent"
+    counts = view["counts"]
+    assert counts["evaluations"] == 1 and raman.id not in {
+        i["id"] for g in view["groups"] if g["label"].startswith("Measured") for i in g["entries"]}
+    row = nucleus.view("62Ni")["table"][0]
+    assert row["evaluated"]["id"] == ensdf_row.id and row["other_evaluations"]["count"] == 1
+    # Picked by hand it is the reference, the measurements are judged against it (not independent), ENSDF is not.
+    against = nucleus.observable_view("62Ni", "B(E2)", KEY, reference=raman.id)["comparison"]
+    entries = {e.id: e for e in against.entries}
+    assert entries[allmond.id].verdict == "agree" and entries[allmond.id].independent_of_reference is False
+    assert entries[ensdf_row.id].verdict is None and entries[ensdf_row.id].difference is not None
+    assert nucleus.correct_data_point("62Ni", raman.id, uncertainty=0.0026).origin == raman.origin
+
+
+def test_an_observable_ready_to_draw(lab):
+    add_ledger(*evaluated(), results.Row(
+        "62Ni", "B(E2)", KEY, 918.6, "e2fm4", "coulex-yield", "projected", direction="up", stat=12.9, sys=63.4,
+        truth=884.105, origin=results.from_run("62Ni-on-194Pt", "03-beam-24h")))
+    allmond = point(906.0, uncertainty=37.0)
+    li = point(618.0, uncertainty=42.0, method="electron-scattering", detail="(e,e') at 150 MeV",
+               reference={"authors": "NSR 1972Li28", "year": 1972})
+    kenn = nucleus.add_data_point("62Ni", "tau", "2+1", 2.01, "ps", uncertainty=0.12, method="dsam", reference=KENN)
+    model = point(15.5, "W.u.", direction="down", uncertainty=None, method="shell-model", evidence="theory",
+                  reference={"authors": "A. Chakraborty et al.", "year": 2011})
+    v = nucleus.observable_view("62Ni", "B(E2)", KEY)
+    drawn = {k: v[k] for k in ("groups", "counts", "stands_out", "axis", "units", "orders")}
+    json.dumps(drawn)
+    groups = {g["id"]: g for g in v["groups"]}
+    assert list(groups) == ["reference", "coulex", "electron-scattering", "lifetime", "theory", "projected"]
+    [made] = groups["lifetime"]["entries"]
+    assert (made["family"], made["year"], made["method"], made["made_from"]) == (
+        "lifetime", 2001, "DSAM (line shape)", "from τ = 2.01 ± 0.12 ps") and made["id"] != kenn.id
+    assert groups["lifetime"]["note"] == "1 value, converted from the τ it reports"
+    assert groups["lifetime"]["label"] == "Measured · from the lifetime τ(2⁺₁)"
+    assert "given to its simulation (884.1)" in groups["projected"]["note"]
+    [run] = groups["projected"]["entries"]
+    assert (run["pull_text"], run["verdict_text"], run["known_text"], run["stat_sys_text"]) == (
+        "+0.53σ", "closes", "reaches ±7.0 %", "± 13 (stat) ± 63 (sys)")
+    counts = v["counts"]
+    assert counts["measured"]["text"] == "2 agree · 1 differs" and counts["measured"]["count"] == 3
+    assert counts["theory"]["text"] == "× 1.28 · above" and counts["best_measured"]["id"] == allmond.id
+    assert counts["projected"]["closing_text"] == "closes" and "of which 6.9 % is systematic" in counts["projected"]["text"]
+    differs, theory = v["stands_out"]
+    assert (differs["kind"], differs["ids"], differs["note"]) == ("differ", [li.id], "(e,e') at 150 MeV")
+    assert "618 ± 42 e²fm⁴↑, a pull of −6.05: it differs" in differs["text"]
+    assert (theory["kind"], theory["ids"]) == ("theory", [model.id]) and "× 1.28" in theory["text"]
+    # Everything is on one axis, in each unit: the places are fractions of it.
+    axis = v["axis"]
+    items = [i for g in v["groups"] for i in g["entries"]]
+    assert all(0 <= i["x_low"] <= i["x"] <= i["x_high"] <= 1 for i in items)
+    assert axis["low"] < 576 and axis["high"] > 1129 and axis["band"]["x_low"] < axis["band"]["x"]
+    place = {i["id"]: (i["value"] - axis["low"]) / (axis["high"] - axis["low"]) for i in items}
+    assert all(i["x"] == pytest.approx(place[i["id"]]) for i in items)
+    assert [(u["unit"], u["label"]) for u in v["units"]] == [("e2fm4", "e²fm⁴↑"), ("e2b2", "e²b²↑"), ("W.u.", "W.u.↓")]
+    # A value without an uncertainty keeps the three digits it was given with, in every unit.
+    bare = next(i for i in items if i["id"] == model.id)
+    assert (bare["text"], bare["texts"]) == ("1130", {"e2fm4": "1130", "e2b2": "0.113", "W.u.": "15.5"})
+    assert v["orders"]["pull"][1] == li.id and v["orders"]["year"][1] == allmond.id
+    assert all(sorted(o) == sorted(i["id"] for i in items) for o in v["orders"].values())
+    # The card of the landing page says the same; the evaluation's own rows have none.
+    table = {(t["observable"], t["key"]): t for t in nucleus.view("62Ni")["table"]}
+    card_ = table["B(E2)", KEY]
+    assert card_["counts"] == counts and card_["strip"]["axis"] == axis
+    assert [d["id"] for d in card_["strip"]["dots"]] == v["orders"]["method"]
+    assert table["E_level", "62Ni:2+1"]["counts"] is None and table["E_level", "62Ni:2+1"]["strip"] is None
+    # The τ of the same nucleus: what Coulex gives is converted, what a lifetime gives is not.
+    tau = {g["id"]: g for g in nucleus.observable_view("62Ni", "tau", "2+1")["groups"]}
+    assert tau["theory"]["entries"][0]["texts"] == {"ps": "1.63", "fs": "1630"}  # by way of the B(E2) it was given as
+    assert tau["coulex"]["note"] == "1 value, converted from the B(E2) it reports" and tau["lifetime"]["note"] == "1 value"
+    empty = nucleus.observable_view("62Ni", "mu", "2+1")
+    assert (empty["groups"], empty["axis"], empty["counts"]["measured"]["count"]) == ([], None, 0)
+
+
+def test_a_value_made_from_one_that_was_replaced_stands_out(lab):
+    run = results.from_run("62Ni-plunger", "01-beam-24h")
+    tau = results.Row("62Ni", "tau", "62Ni:2+1", 2.0, "ps", "rdds", "measured", total=0.1, origin=run)
+    b = results.Row("62Ni", "B(E2)", KEY, 180.0, "e2fm4", "rdds", "measured", direction="down", total=9.0,
+                    depends_on=(tau.id,), origin=run)
+    add_ledger(*evaluated(), tau, b, tau.revised(value=2.2))
+    found = nucleus.observable_view("62Ni", "B(E2)", KEY)["stands_out"]
+    [gone] = [s for s in found if s["kind"] == "superseded"]
+    assert gone["ids"] == [b.id] and "replaced by 2.20 ± 0.10 ps" in gone["text"]
+
+
+def test_the_lowest_levels_come_from_the_evaluation(lab):
+    nothing = nucleus.lowest_levels("62Ni")
+    assert nothing["levels"] == [] and "no local copy of ENSDF" in nothing["reason"]
+
+    def energy(key, value):
+        return results.Row("62Ni", "E_level", key, value, "keV", "evaluation", "evaluated", total=0.03,
+                           origin=ENSDF_ORIGIN)
+
+    add_ledger(*evaluated(), energy("62Ni:4+1", 2336.46), energy("62Ni:0+2", 2048.55), energy("62Ni:2+2", 2301.85))
+    point(906.0, uncertainty=37.0)
+    found = nucleus.lowest_levels("62Ni", count=4)
+    json.dumps(found)
+    assert [(x["key"], x["jpi"], x["short"]) for x in found["levels"]] == [
+        ("62Ni:0+1", "0⁺₁", "0"), ("62Ni:2+1", "2⁺₁", "1172.9 keV"), ("62Ni:0+2", "0⁺₂", "2048.6 keV"),
+        ("62Ni:2+2", "2⁺₂", "2301.8 keV")]
+    ground, two = found["levels"][:2]
+    assert two["text"] == "1172.910 ± 0.030 keV" and ground["ground"] and found["reason"] == ""
+    assert [(o["observable"], o["role"], o["headline"]) for o in two["observables"]] == [
+        ("B(E2)", "from", True), ("tau", "level", True), ("Qs", "level", False)]
+    [b] = ground["observables"]
+    assert (b["key"], b["role"], b["other"]) == (KEY, "to", {"key": "62Ni:2+1", "jpi": "2⁺₁"})
+    assert b["value"]["text"] == "884 ± 13 e2fm4↑"
+    assert found["ratio"]["value"] == pytest.approx(1.992, abs=0.001) and len(nucleus.lowest_levels("62Ni")["levels"]) == 5
