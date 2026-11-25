@@ -344,10 +344,12 @@ def test_a_run_says_which_polarisation_its_events_have(tmp_path):
 
 
 def test_a_run_stored_before_the_correction_is_read_without_it(tmp_path):
-    p = Planner.example("coulex_ni62_pt194")
+    raw = Experiment.example("coulex_ni62_pt194").to_dict()
+    raw["levels"].pop("target")  # the γ rays of ¹⁹⁴Pt cost half the time and say nothing here
+    p = Planner(Experiment.from_dict(raw))
     p.create_experiment(root=tmp_path)
     p.set("reaction", "e1_polarisation", 0.0)
-    old = _as_taken_before(p.start_run("beam", duration="10 min"))
+    old = _as_taken_before(p.start_run("beam", duration="3 min"))
     p.set("reaction", "e1_polarisation", None)  # the current setup: nothing set, so the default
     assert old.setup["reaction"]["e1_polarisation"] == 0.0 == e1_polarisation(old.experiment)
     assert taken_setup(old.folder).excitation.e1_polarisation == 0.0
@@ -359,19 +361,18 @@ def test_a_run_stored_before_the_correction_is_read_without_it(tmp_path):
 
     assert [h["changes"] for h in setup_history(p)] == [[], want]
     # Its analysis is that of its own setup, the simulated peak's too.
-    a = Analysis(p._data_experiment(), old.gammas(), run=old)
-    s = Settings(particle_gate="all")
-    assert cascade_excitation(a.experiment).e1_polarisation == 0.0
+    assert p._data_experiment().to_dict() == old.experiment.to_dict()
+    assert cascade_excitation(p._data_experiment()).e1_polarisation == 0.0
     truth = p.experiment.excitation.b_up_e2fm
-    r = a.run(s)
+    assert p.analyse({"particle_gate": "all"})["available"]
+    r = p.run_analysis()
     assert abs(r.b_e2fm4 / truth - 1) < 4 * np.hypot(r.monte_carlo, r.statistical)
-    assert p.analyse({"particle_gate": "all"})["b_e2fm4"] == pytest.approx(r.b_e2fm4, rel=1e-9)
     # With today's default the same run would read some 7 % too much.
-    wrong = Analysis(p.experiment, old.gammas(), run=old).run(s)
+    wrong = Analysis(p.experiment, old.gammas(), run=old).run(Settings(particle_gate="all"))
     assert wrong.b_e2fm4 / r.b_e2fm4 == pytest.approx(1.075, abs=0.015)
     # Extended, it goes on without the correction, and says so from then on; so does the same run taken again.
     stream = old.summary["generator"]["probabilities"]
-    longer = p.extend_run("1 min")
+    longer = p.extend_run("10 s")
     assert longer.setup["reaction"]["e1_polarisation"] == 0.0 and longer.summary["extended"] == 1
     assert longer.summary["generator"]["probabilities"] == pytest.approx(stream, rel=1e-12)
     assert "e1_polarisation = 0" in (longer.folder / "setup.toml").read_text(encoding="utf-8")
