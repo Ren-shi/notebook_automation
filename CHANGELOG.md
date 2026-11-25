@@ -36,7 +36,8 @@ workflow builds the wheels, tests them and publishes to PyPI.
   - The Allmond 2014 reproduction passes: its known miss against GOSIA as run (E1 polarisation on in GOSIA, not in physim)
     is inside the 1 % band, +0.79/+0.69 % (it was +1.32/+1.16 %; the record is kept). No band was changed. The feeding from
     ENSDF's higher states in ring 3 is −1.98 % of GOSIA's change, right at its 2 % band (it was −1.7 %); with twice the
-    angles and beam energies of the check it is −2.07 %, outside.
+    angles and beam energies of the check it is −2.07 %, outside (the cause has been found since, internal conversion in one
+    of the check's two schemes, and it is +0.27 and +0.18 %: see Fixed).
   - Corrected: the headers of `coulex_gosia.csv` and `coulex_gosia_all_orders.csv` said that GOSIA's default `DIP,` had no
     effect there. It lowers those probabilities by 0.5 to 0.8 %; physim is now compared with it (worst 0.24 %, was 0.56 %).
 - Results and comparison: every result is a row, and the nucleus is a level above the experiments. No number the
@@ -254,6 +255,35 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The angular-correlation factor of the analysis is the mean over the excitations in the gate. It was the mean over the
+  particles seen with a γ ray, and a particle detector with a large factor c has more of those, so the factor was too large
+  and B(E2) too small wherever the particle detectors differ. Over the mean over all excitations (gate "all"): +1.9 % (sample)
+  and +5.0 % (1 h run) for `coulex_ni58` (c = 1.15 and 0.83), +1.6 and +3.6 % for the projectile case of the tests. A γ ray of
+  weight w seen with a particle in a detector of factor c now stands for w/c excitations: the factor is Σw / Σ(w/c)
+  (`Analysis._efficiency_and_correlation`).
+  - The sum is over the γ rays of the line, whatever energy they leave. They go to the particle detectors as its full-energy
+    counts do (the factor from them alone is the same to 0.1 %, also with γ-ray detectors of 12 and 60 mm radius side by
+    side, and scatters 2 to 4 times as much), where the nucleus's other lines do not: with all of its γ rays, and the strips
+    of `coulex_ni62_pt194` at 45°, the factor of ¹⁹⁴Pt's 328 keV line is 1.34 ± 0.03 % too large, with the line's
+    +0.02 ± 0.03 %. For the other nucleus the old mean was −2.8 % off there (it also left out how likely each particle
+    was to have excited it). Randoms are not among the simulation's γ rays.
+  - The inelastic gate's share of the excitations had the same bias with the other sign (it counted the γ rays seen: −6 % for
+    `coulex_ni58`, −3 % for the projectile case) and hid some of it. It is counted as w/c too, and factor times share is then
+    what the yield needs even where the gate picks out part of a detector. B(E2) with the inelastic gate: `coulex_ni58` sample
+    −2.3 %, run −0.3 %; projectile case +0.5/+3.4 %; Allmond +0.8/+0.7 %.
+  - The efficiency's Doppler shift is averaged over the γ rays seen, which is right for it: over the excitations it would
+    differ by +0.01/−0.02 %, and the efficiency's curvature over the shifts is worth 0.00/0.04 %. Not changed.
+  - Unseen seeds (6001–6024, samples of 200 000 reactions, runs of 1 and 24 h), factor over the mean over all excitations in
+    the gate: `coulex_ni58` sample −0.16 ± 0.04 (all)/−0.03 ± 0.05 % (inelastic), run −0.19 ± 0.11/+0.06 ± 0.14 %; projectile case
+    −0.12 ± 0.04/−0.02 ± 0.05 and −0.11 ± 0.04/+0.01 ± 0.08 %. B(E2) of the `coulex_ni58` samples +1.2 ± 0.7 % (−0.8 ± 0.7 % with
+    the old factor), inelastic +0.5 ± 0.9 %.
+  - It is the cause of what runs of the projectile case read (seeds 5101–5124, 24 h: −5.1 ± 0.7 → −1.3 ± 0.7 %; samples −2.9 ± 0.6
+    → −1.3 ± 0.6 %), and takes `coulex_ni58` on the seeds that read −2.0 ± 0.9 % (4201–4224, −1.4 ± 0.7 % with the E1
+    polarisation) to +0.6 ± 0.7 %; 1 h runs −4.3 ± 1.9 → +0.9 ± 2.0 %.
+  - Where the particle detectors have one factor nothing moves: `coulex_ni62_pt194` (gates all and inelastic), the plunger and
+    every analysis of one detector to 0.005 %. `coulex_ni62_pt194_clovers` (1.450/1.428) −0.1 %; normalised to the other
+    nucleus's line −0.03 % (single crystals) and −0.1 to −0.2 % (clovers). The Allmond 2014 closure of both rings
+    −0.28 → −0.19 % (the rings' own and the stored run are what they were); no band has changed.
 - The peak fit where the line's own Compton edge is in the window. The edge is never more than 256 keV below the line, so a
   broad peak of a few MeV has it in the window (¹⁶O, 6917 keV, σ 57 keV: 246 keV below), and what the fit had for a background
   there was a straight line: area 26 to 33 % too large, centroid 26 to 33 keV low, or the width ran to its bound on the edge
