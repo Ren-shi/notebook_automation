@@ -227,6 +227,7 @@ def _comparison(ctx, held: dict, reload, choose, redraw) -> None:
     c, cells = ov["comparison"], ov["cells"]
     display = st.get("unit")
     factor, unit = display_factor(ov["observable"], display)
+    judged = {x["id"]: x["verdict_text"] for g in ov["groups"] for x in g["entries"]}
     heading = f"{label_text(ov['label'])}"
     head, body = panel(ui, heading, "every value, side by side")
     if c is None:
@@ -282,7 +283,7 @@ def _comparison(ctx, held: dict, reload, choose, redraw) -> None:
                             td(ui, signed(e.difference_percent, 1, " %"), classes="ps-nt-num")
                             td(ui, signed(e.pull) if e.pull is not None else (
                                 f"× {e.ratio:.2f}" if e.ratio is not None else "—"), classes="ps-nt-num")
-                            text, colour = VERDICT_TEXT.get(e.verdict, ("not judged: no uncertainty", "ps-muted"))
+                            text, colour = VERDICT_TEXT.get(e.verdict, (judged[e.id], "ps-muted"))
                             td(ui, text, colour=colour)
                         with ui.element("td"):
                             if nucleus.is_data_point(e.row):

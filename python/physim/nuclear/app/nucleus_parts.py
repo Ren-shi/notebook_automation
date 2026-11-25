@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import re
+import threading
 from typing import Optional
 from urllib.parse import parse_qs, quote, urlsplit
 
@@ -232,10 +233,32 @@ def backfill() -> list:
     return found
 
 
+#: The folders of nuclei whose repeated data points were withdrawn since the app started.
+_repeats_withdrawn: set = set()
+_repeats_lock = threading.Lock()
+
+
+def withdraw_repeats() -> None:
+    """Once per start of the app, before the nuclei are first read: the data points that repeat an earlier one are
+    withdrawn (:func:`physim.nuclear.nucleus.retract_duplicates`: nothing is deleted). A ledger that cannot be read
+    or written is left as it is."""
+    home = str(results.nuclei_home())
+    with _repeats_lock:  # two pages opened at once: the second waits for the first, and finds it done
+        if home in _repeats_withdrawn:
+            return
+        _repeats_withdrawn.add(home)
+        try:
+            nucleus.retract_duplicates()
+        except Exception:  # noqa: BLE001 -- a repeated point shows twice, as it did
+            pass
+
+
 def load_nuclei(fill: bool = True) -> dict:
-    """What the nuclei screen shows, read once: :func:`physim.nuclear.nucleus.nuclei` after the backfill, and when
-    each experiment last changed ({"nuclei", "unassigned", "modified": {path: time}}). Without ``fill`` nothing is
-    written: no backfill."""
+    """What the nuclei screen shows, read once: :func:`physim.nuclear.nucleus.nuclei` after the backfill and
+    :func:`withdraw_repeats`, and when each experiment last changed ({"nuclei", "unassigned", "modified": {path:
+    time}}). Without ``fill`` nothing is written: neither of the two."""
+    if fill:
+        withdraw_repeats()
     listed = backfill() if fill else runs.list_experiments()
     return {**nucleus.nuclei(), "modified": {e["path"]: e["modified"] for e in listed}}
 
@@ -261,10 +284,11 @@ def load(nuclide: str, observable: Optional[str] = None, key: Optional[str] = No
     evaluation was never taken for the nucleus it is taken first
     (:func:`~physim.nuclear.nucleus.snapshot_evaluation`). "notes" says what could not be done: no local ENSDF
     copy, a row or a reference that is not there. ``first`` is False when the page reads again after a change of
-    its own (the experiments from before the ledger have their rows by then). Raises ``ValueError`` for a name that
-    is no nuclide."""
+    its own (the experiments from before the ledger have their rows by then, and repeated points are withdrawn).
+    Raises ``ValueError`` for a name that is no nuclide."""
     name = results.nuclide_name(nuclide)
     if first:
+        withdraw_repeats()
         backfill()
     notes = []
     if not evaluation_taken(name):

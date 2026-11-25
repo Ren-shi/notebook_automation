@@ -282,6 +282,20 @@ def test_what_the_app_opens_on(lab, tmp_path, monkeypatch):
     assert start.opening() == {"view": "nuclei"}
 
 
+def test_a_repeated_point_is_withdrawn_once_before_the_first_read(lab, monkeypatch):
+    calls, withdraw = [], nucleus.retract_duplicates
+    monkeypatch.setattr(nucleus, "retract_duplicates", lambda *a: calls.append(1) or withdraw(*a))
+    doe = lab.doe
+    results.add_points([results.Row("62Ni", "B(E2)", KEY, doe.value / 1e4, "e2b2", doe.method, "measured",
+                                    direction="up", total=0.0037, origin=doe.origin)])  # Doe again, in e²b²
+    [bar] = [n for n in parts.load_nuclei(fill=False)["nuclei"] if n["nuclide"] == "62Ni"]
+    assert bar["points"] == 2 and not calls  # the bar only reads
+    assert parts.load("62Ni", compare=False)["view"]["points"] == 1  # a page opened straight by its address
+    parts.load("62Ni", compare=False)
+    parts.load_nuclei()
+    assert calls == [1]
+
+
 def _on_page(monkeypatch, scenario, remembered=None, **kwargs) -> list:
     """``scenario(user)`` on the app's whole page, in a browser that remembers the nucleus ``remembered``; the
     nuclei it was told to remember. The numbers of the experiment behind a start view are left out."""
