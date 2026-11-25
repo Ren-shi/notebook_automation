@@ -37,8 +37,9 @@ the level and its statistical tensors t_kq, normalised so that t_00 is the popul
 
 with A_k of :func:`physim.nuclear.angular.distribution_coefficient` and b_γ the share of the level's decays that
 give this γ ray (internal conversion takes α / (1 + α) of each transition). A level fed from above takes over the
-tensors of its parent times U_k. Everything decays in flight, with the orientation it was given: there is no
-deorientation and no lifetime.
+tensors of its parent times U_k. Everything here decays with the orientation it was given: lifetimes, and the
+deorientation in vacuum while a level lives, come in where a setup's γ rays are worked out
+(:func:`physim.nuclear.gamma.correlation_table`, :mod:`physim.nuclear.gamma_events`).
 
 Not included here: multi-step excitation and reorientation (the excitation of each level is the direct one from
 the ground state), which is why the matrix elements enter only through their size.
@@ -50,6 +51,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Optional
 
 import numpy as np
@@ -105,6 +107,39 @@ def tensors_of(rho: np.ndarray, spin: float, k_max: int = K_MAX) -> dict:
                           * rho[i, j])
             out[(k, q)] = math.sqrt(2 * spin + 1) * total
     return out
+
+
+@lru_cache(maxsize=None)
+def tensor_basis(spin: float, k: int) -> np.ndarray:
+    """The operators T_kq (q = −k … k; real, (2k + 1) × (2I + 1)², M ascending from −I) of rank k on spin I, orthonormal
+    (Tr T_kq† T_kq′ = δ_qq′): the tensors of :func:`tensors_of` are t_kq = √(2I + 1) Tr(T_kq† ρ), and
+    ρ = Σ T_kq Tr(T_kq† ρ)."""
+    ms = _ms(spin)
+    out = np.zeros((2 * k + 1, len(ms), len(ms)))
+    for q in range(-k, k + 1):
+        for i, m in enumerate(ms):
+            j = int(round(m - q + spin))
+            if 0 <= j < len(ms):
+                out[q + k, i, j] = ((-1) ** int(round(spin - ms[j]))
+                                    * angular.clebsch_gordan(spin, m, spin, -ms[j], k, q))
+    out.flags.writeable = False
+    return out
+
+
+def attenuated(rho: np.ndarray, spin: float, g_k: dict) -> np.ndarray:
+    """The density matrices ``rho`` (n × (2I + 1)²) of a level of spin I with their tensors of rank k times G_k:
+    {k: one number per matrix}, such as :meth:`physim.nuclear.deorientation.TwoState.g` gives. Ranks that are not in
+    ``g_k`` stay as they are, the trace too."""
+    rho = np.asarray(rho, dtype=complex)
+    n, d = len(rho), rho.shape[-1]
+    ks = [k for k in g_k if 0 < k < d]
+    if not ks or not n:
+        return rho.copy()
+    basis = np.concatenate([tensor_basis(float(spin), k).reshape(2 * k + 1, d * d) for k in ks])
+    change = np.concatenate([np.repeat(np.asarray(g_k[k], dtype=float)[:, None] - 1.0, 2 * k + 1, axis=1) for k in ks],
+                            axis=1)
+    parts = (rho.reshape(n, d * d) @ basis.T) * change
+    return rho + (parts @ basis).reshape(n, d, d)
 
 
 def fed_density(rho: np.ndarray, spin: float, daughter: float, multipole: int) -> np.ndarray:
@@ -342,6 +377,12 @@ class Excitation:
         except KeyError:
             raise KeyError(f"the level scheme has no transition from level {initial} to level {final}") from None
 
+    def distribution_coefficient(self, initial: int, final: int, k: int) -> float:
+        """A_k of a transition (:func:`physim.nuclear.angular.distribution_coefficient`); A_0 = 1."""
+        d, levels = self.decay(initial, final), self.scheme.levels
+        return (angular.distribution_coefficient(k, levels[initial].spin, levels[final].spin, d.l1, d.l2, d.mixing)
+                if k else 1.0)
+
     def transitions(self) -> list:
         """The (initial, final) pairs of the transitions that are followed."""
         return list(self._decays)
@@ -497,10 +538,25 @@ class Excitation:
             kept[(level, step)] = (grid, np.array([s.density.get(level, blank) for s in states]))
         return kept[(level, step)]
 
+    def tensor_table(self, level: int, step: float = 2.0) -> dict:
+        """{(k, q): t_kq on the grid of :meth:`table`} of the level as the collision leaves it, before any decay and
+        without the feeding from above (even ranks from 2; those of :meth:`density_table`). Kept once worked out."""
+        kept = self.__dict__.setdefault("_tensor_tables", {})
+        if (level, step) not in kept:
+            spin = float(self.scheme.levels[level].spin)
+            _, rho = self.density_table(level, step)
+            out = {}
+            for k in range(2, min(K_MAX, int(round(2 * spin))) + 1, 2):
+                t = math.sqrt(2 * spin + 1) * np.einsum("qab,gab->gq", tensor_basis(spin, k), rho)
+                out.update({(k, q): t[:, q + k] for q in range(-k, k + 1)})
+            kept[(level, step)] = out
+        return kept[(level, step)]
+
     def probability(self, level: int, theta_cm: float) -> float:
         """Probability of exciting ``level`` directly at CM angle ``theta_cm``: the amplitudes squared, summed
         over the final substates and averaged over the initial ones."""
         return self.at(theta_cm).direct.get(level, 0.0)
 
 
-__all__ = ["Excitation", "K_MAX", "Populated", "fed_density", "simple_scheme", "tensors_of"]
+__all__ = ["Excitation", "K_MAX", "Populated", "attenuated", "fed_density", "simple_scheme", "tensor_basis",
+           "tensors_of"]

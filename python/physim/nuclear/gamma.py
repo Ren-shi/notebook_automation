@@ -200,6 +200,28 @@ def e1_polarisation(experiment) -> float:
     return GOSIA_DIPOLE_POLARISATION if d is None else float(d)
 
 
+def deorientation_of(experiment) -> str:
+    """ "vacuum" or "none": whether the nuclei of the setup that decay in vacuum are deoriented there
+    (:mod:`physim.nuclear.deorientation`): its ``[reaction] deorientation``, "vacuum" when the setup does not say. A
+    lifetime measurement (a ``[lifetime]`` section) is "none": a plunger has its own ``lifetime.deorientation``, or none."""
+    if getattr(experiment, "lifetime", None) is not None:
+        return "none"
+    exc = experiment.excitation
+    return (getattr(exc, "deorientation", None) or "vacuum") if exc is not None else "vacuum"
+
+
+def deorientation_parameters(experiment, nucleus: str = "reaction"):
+    """The :class:`~physim.nuclear.deorientation.Parameters` (GOSIA's, with the setup's g factor) of the deorientation in
+    vacuum of the ``[reaction]`` nucleus, or of the ``"other"`` one of the collision, which has g = Z/A; None when there
+    is none (:func:`deorientation_of`)."""
+    from .deorientation import Parameters
+
+    if deorientation_of(experiment) == "none":
+        return None
+    g = getattr(experiment.excitation, "deorientation_g", None) if nucleus == "reaction" else None
+    return Parameters(g_factor=g)
+
+
 def other_role(experiment) -> str:
     """ "projectile" or "target": the nucleus of the collision that the ``[reaction]`` does not name."""
     return "projectile" if experiment.excitation.excite == "target" else "target"
@@ -461,17 +483,28 @@ class DepthOrientation:
         nodes = [_LevelPopulation(s, level) for s in self.solutions]
         return nodes[0] if self.thin else self.depth.between(nodes, energy)
 
-    def coefficients(self, initial: int, final: int, theta_cm, energy) -> dict:
+    def coefficients(self, initial: int, final: int, theta_cm, energy, fade: Optional[dict] = None) -> dict:
         """{(k, q): a_kq} of a transition (:meth:`~physim.nuclear.orientation.Populated.coefficients`) at each CM
-        angle of ``theta_cm`` (degrees, an array) and the beam energy there (MeV, an array like it or a number)."""
+        angle of ``theta_cm`` (degrees, an array) and the beam energy there (MeV, an array like it or a number).
+
+        With ``fade`` (:meth:`Faded.at`: {k: {level: an array like the angles}}), deoriented in vacuum: the tensors that
+        the level ``initial`` decays with are the sums of what the collision leaves each level with, times those."""
         theta = np.asarray(theta_cm, dtype=float)
         out: dict = {}
-        for (grid, tensors, populated), w in zip(self._table(initial, final), self._weights(theta, energy)):
+        for (grid, tensors, populated), w, s in zip(self._table(initial, final), self._weights(theta, energy),
+                                                    self.solutions):
             p = np.interp(theta, grid, populated)
             safe = np.where(p > 0, p, 1.0)
             for key, v in tensors.items():
                 if key == (0, 0):
                     a = np.ones(len(theta), dtype=complex)
+                elif fade is not None and key[0] in fade:
+                    a = np.zeros(len(theta), dtype=complex)
+                    for n, share in fade[key[0]].items():
+                        t = s.tensor_table(n).get(key)
+                        if t is not None:
+                            a += share * (np.interp(theta, grid, t.real) + 1j * np.interp(theta, grid, t.imag))
+                    a *= s.distribution_coefficient(initial, final, key[0]) / safe
                 else:
                     a = (np.interp(theta, grid, v.real) + 1j * np.interp(theta, grid, v.imag)) / safe
                 out[key] = out.get(key, 0.0) + w * a
@@ -549,6 +582,122 @@ class DepthOrientation:
         return self._tables[(initial, final)]
 
 
+class Faded:
+    """What deorientation in vacuum leaves of the orientation with which the nuclei of a level decay, averaged over their
+    decays, for a solution ``ex`` with the mean life (ps; 0: decays at once) of each level of its scheme in
+    ``lives_ps`` and the model's ``parameters``. It is what the simulated events average to.
+
+    Feeding by radiation that is not observed leaves each rank k by itself: a level hands on F = (branch) × U_k of its
+    tensors. With D the tensors the collision leaves, T the time at which the nucleus leaves the target, τ the mean
+    lives and G_k of each level (:meth:`~physim.nuclear.deorientation.TwoState.average`), the levels hold at T
+
+        N = e^{AT} D,    A = −(1 − F)/τ,
+
+    and the tensors the nuclei decay with, summed over the decays before T (with the orientation the collision or the
+    feeding gave) and after (each level deoriented while it lives, and what it feeds with it), are
+
+        (1 − F)⁻¹ (1 − e^{AT}) D + (1 − G F)⁻¹ G e^{AT} D,
+
+    which is (1 − F)⁻¹ D, the feeding of :class:`~physim.nuclear.orientation.Populated`, for G = 1 or a nucleus that never
+    leaves the target. Levels that decay at once hand on what they get and are left out of N."""
+
+    def __init__(self, ex, level: int, lives_ps, parameters):
+        from . import angular
+        from .deorientation import model
+
+        levels = ex.scheme.levels
+        above = [level]
+        for n in above:
+            above += [i for i, f in ex.transitions() if f == n and i not in above and levels[i].spin is not None]
+        spins = [float(levels[n].spin) for n in above]
+        self.ranks = [k for k in (2, 4, 6) if k <= round(2 * spins[0])]
+        self.above = above
+        tau = np.array([lives_ps[n] for n in above], dtype=float)
+        self._timed, self._prompt = np.flatnonzero(tau > 0), np.flatnonzero(tau <= 0)
+        self._tau = tau[self._timed]
+        self._models = [model(ex.scheme.nuclide, spins[a], parameters) for a in self._timed]
+        self._feeds = {}
+        for k in self.ranks:
+            feed = np.zeros((len(above), len(above)))
+            for (i, f) in ex.transitions():
+                if i not in above or f not in above:
+                    continue
+                d, a, b = ex.decay(i, f), above.index(i), above.index(f)
+                parts = [(d.l1, 1.0)] if not d.l2 else [(d.l1, 1 / (1 + d.mixing**2)),
+                                                        (d.l2, d.mixing**2 / (1 + d.mixing**2))]
+                feed[b, a] = d.branch * sum(w * angular.u_coefficient(k, spins[a], spins[b], lam) for lam, w in parts
+                                            if lam and angular.triangle(spins[a], lam, spins[b])
+                                            and k <= round(2 * min(spins[a], spins[b])))
+            self._feeds[k] = feed
+
+    @property
+    def off(self) -> bool:
+        """Whether nothing is deoriented: no level on the way has a mean life, or the model is off."""
+        return not len(self._timed) or not self.ranks or all(m.off for m in self._models)
+
+    def at(self, left_ps: np.ndarray, beta: np.ndarray) -> dict:
+        """{k: {level: factor of the tensors of rank k that the collision leaves that level with}} for nuclei that leave
+        the target ``left_ps`` (ps; inf: never) after the collision at the speed ``beta``: arrays alike."""
+        left, beta = np.asarray(left_ps, dtype=float), np.asarray(beta, dtype=float)
+        n, timed, prompt = len(left), self._timed, self._prompt
+        one = np.eye(len(timed))
+        out_of = np.isfinite(left)
+        g = [m.average(np.full(n, t), np.where(out_of, beta, 0.0)) for m, t in zip(self._models, self._tau)]
+        out: dict = {}
+        for k in self.ranks:
+            feed = self._feeds[k]
+            at_once = np.linalg.inv(np.eye(len(prompt)) - feed[np.ix_(prompt, prompt)])
+            phi = (feed[np.ix_(timed, timed)]
+                   + feed[np.ix_(timed, prompt)] @ at_once @ feed[np.ix_(prompt, timed)])
+            # What the collision (or a level that decays at once) gives each level that lives a while.
+            start = np.zeros((len(timed), len(self.above)))
+            start[np.arange(len(timed)), timed] = 1.0
+            start[:, prompt] = feed[np.ix_(timed, prompt)] @ at_once
+            rate = -(one - phi) / self._tau
+            still = np.zeros((n, len(timed), len(timed)))
+            still[out_of] = _exp(rate * left[out_of][:, None, None])
+            keep = np.stack([gk.get(k, np.ones(n)) for gk in g], axis=1)[:, :, None]
+            decays = (np.linalg.inv(one - phi) @ (one - still) + np.linalg.solve(one - keep * phi, keep * still)) @ start
+            if 0 in timed:
+                row = decays[:, int(np.flatnonzero(timed == 0)[0]), :]
+            else:
+                mine = np.zeros((len(prompt), len(self.above)))
+                mine[np.arange(len(prompt)), prompt] = 1.0
+                row = (at_once @ (mine + feed[np.ix_(prompt, timed)] @ decays))[:, int(np.flatnonzero(prompt == 0)[0]), :]
+            out[k] = {level: row[:, a] for a, level in enumerate(self.above)}
+        return out
+
+
+def _exp(a: np.ndarray) -> np.ndarray:
+    """The exponentials of square matrices (n × m × m), by scaling and squaring."""
+    norm = float(np.abs(a).sum(axis=-1).max(initial=0.0))
+    halvings = max(0, math.ceil(math.log2(norm / 0.25))) if norm > 0 else 0
+    x = a / 2.0**halvings
+    out = np.eye(a.shape[-1]) + x
+    term = x
+    for n in range(2, 12):
+        term = term @ x / n
+        out = out + term
+    for _ in range(halvings):
+        out = out @ out
+    return out
+
+
+def _way_out(experiment, layers: list, depth: float, dirs: np.ndarray, emitter: str, energy: np.ndarray,
+             mass_mev: float) -> tuple:
+    """(the time (ps) at which nuclei made at ``depth`` with ``energy`` (MeV) along ``dirs`` leave the target and what
+    is behind it, inf for one that stops in there; their speed outside, units of c)."""
+    n = len(energy)
+    at = np.full(n, depth)
+    if any(not lay.material.density_g_cm3 for lay in layers):  # no clock without a density
+        out = exit_energy(experiment, layers, 0, at, emitter, energy, dirs)
+        return np.where(out > 0, 0.0, np.inf), _speed(out, mass_mev)
+    from .gamma_events import _slowed
+
+    s = _slowed(experiment, layers, at, dirs, emitter, energy, np.full(n, np.inf), mass_mev)
+    return s.left_ps, s.beta
+
+
 def _physical(rho: np.ndarray) -> np.ndarray:
     """Density matrices (n × d × d, trace 1) without eigenvalues below −:data:`NEGATIVE_EIGENVALUE`: those that have one
     get their negative eigenvalues set to zero and trace 1; the others are unchanged."""
@@ -599,6 +748,9 @@ def depth_orientation(experiment, solution=None) -> DepthOrientation:
 
 #: Equal shares of the decays (by time) over which the emitter's speed is averaged when its level has a half-life.
 DECAY_SHARES = 4
+#: Depths (Gauss–Legendre) of a target whose middle the table takes over which the deorientation is averaged: how long
+#: a nucleus takes to get out.
+EXIT_DEPTHS = 3
 
 
 def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucleus: str = "reaction",
@@ -616,6 +768,12 @@ def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucle
     events follow (:func:`cascade_excitation`) the factor is from that scheme's solution, as the events are: the
     state with the orientation the other levels leave it, and the feeding from above. Without one it is from the
     state alone, in first order (:func:`excitation_of`).
+
+    With deorientation in vacuum (:func:`deorientation_of`) the orientation is what the hyperfine field leaves of it,
+    averaged over the decays as the events have them: each level with a half-life is deoriented (:class:`Faded`) while it
+    lives outside the target, from where in the target the nucleus starts and with its own speed outside, and the levels
+    above feed it with what they have left. A nucleus that decays in the target or stops there is not deoriented, nor is
+    a level without a half-life.
 
     Each row also gives "detector_factor" for the γ-ray detector as a whole (its crystals averaged by the solid
     angle each covers). Shadowing is not applied.
@@ -647,13 +805,14 @@ def correlation_table(experiment, order: int = 8, crystal_points: int = 6, nucle
     if asked is not None and ex is not None:
         transition = tuple(asked)
     solution = ex if ex is not None else excitation_of(experiment)
-    # Kept with the solution, by the detectors and by the target the beam slows down in (the solution is that of
-    # its middle, with the setup's E1 polarisation): the plan asks again at every change of anything else.
+    # Kept with the solution, by the detectors, by the target the beam slows down in (the solution is that of its
+    # middle, with the setup's E1 polarisation; the nuclei leave it, and its layers' densities say when) and by the
+    # deorientation, which the solution does not have: the plan asks again at every change of anything else.
     scheme = experiment.levels.get("target" if experiment.excitation.excite == "target" else "beam")
     key = repr((order, crystal_points, transition, experiment.detectors, experiment.gamma_detectors,
                 experiment.chamber if hasattr(experiment, "chamber") else None, experiment.beam.energy_mev,
                 tilt_deg(experiment), [(lay.material, lay.thickness) for lay in stack(experiment)],
-                getattr(experiment, "lifetime", None),
+                getattr(experiment, "lifetime", None), deorientation_parameters(experiment, nucleus),
                 None if scheme is None else json.dumps(scheme.to_dict(), sort_keys=True, default=str)))
     kept = solution.__dict__.setdefault("_correlation_tables", {})
     if key not in kept:
@@ -700,6 +859,26 @@ def _decay_speed(experiment, layers: list, depth: float, dirs: np.ndarray, emitt
                            mass_mev) for t in times], axis=0)
 
 
+def _faded(experiment, ex, solution, level: int, nucleus: str) -> Optional[Faded]:
+    """The :class:`Faded` of a level of ``ex`` (``solution``, or the ``[reaction]`` state alone), or None when the setup
+    deorients nothing of it."""
+    from .gamma_events import _mean_lives
+
+    parameters = deorientation_parameters(experiment, nucleus)
+    if parameters is None or ex.isotropic or ex.scheme.levels[level].spin is None:
+        return None
+    lives = _mean_lives(experiment, solution, np.arange(len(ex.scheme.levels)))
+    if lives is None:
+        return None
+    faded = Faded(ex, level, 1e12 * lives, parameters)
+    return None if faded.off else faded
+
+
+def _mean_fade(parts: list) -> dict:
+    """The mean of [(share, :meth:`Faded.at`)]."""
+    return {k: {n: sum(w * f[k][n] for w, f in parts) for n in parts[0][1][k]} for k in parts[0][1]}
+
+
 def _correlation_rows(experiment, solution, order: int, crystal_points: int, transition=None,
                       nucleus: str = "reaction") -> list:
     """The rows of :func:`correlation_table`: for the ``transition`` (initial, final) of ``solution``, the
@@ -742,6 +921,9 @@ def _correlation_rows(experiment, solution, order: int, crystal_points: int, tra
     orient = DepthOrientation(None, [ex]) if nucleus == "other" else depth_orientation(experiment, solution)
     lives = None if orient.thin else _mean_lives(experiment, solution, np.array([lev_i]))
     tau = 0.0 if lives is None else float(lives[0])
+    faded = _faded(experiment, ex, solution, lev_i, nucleus)
+    x, wq = np.polynomial.legendre.leggauss(EXIT_DEPTHS)
+    exits = list(zip((x + 1) / 2 * layers[0].thickness, wq / 2))
     # The depths (None: the middle of a thin target, the emitter at its speed just after the reaction), the share
     # of each and the beam energy there.
     points = [(None, 1.0, ex.beam_energy)]
@@ -809,8 +991,13 @@ def _correlation_rows(experiment, solution, order: int, crystal_points: int, tra
                     rest = ((all_dirs[None, :, :] - cos_a[:, :, None] * u[:, None, :]) * scale[:, :, None]
                             + par[:, :, None] * u[:, None, :])
                     local = np.einsum("nmi,nij->nmj", rest, _orbit_axes(th_ej, ph_ej, flip))
+                    fade = None
+                    if faded is not None:
+                        fade = _mean_fade([(share_z, faded.at(*_way_out(experiment, layers, at, u, ex.scheme.nuclide,
+                                                                        energy, m_emitter)))
+                                           for at, share_z in (exits if z is None else [(z, 1.0)])])
                     a_kq = {key: v[:, None] for key, v in
-                            orient.coefficients(lev_i, lev_f, th_ej, e_beam).items()}
+                            orient.coefficients(lev_i, lev_f, th_ej, e_beam, fade).items()}
                     seen = (_distribution(a_kq, np.arccos(np.clip(local[:, :, 2], -1.0, 1.0)),
                                           np.arctan2(local[:, :, 1], local[:, :, 0]))
                             * (1 - b**2) / (1 - b * cos_a) ** 2)
@@ -825,7 +1012,7 @@ def _correlation_rows(experiment, solution, order: int, crystal_points: int, tra
     return rows
 
 
-__all__ = ["DepthOrientation", "cascade_excitation", "correlation_table", "depth_orientation",
-           "doppler_energy", "doppler_table", "e1_polarisation", "emitters",
+__all__ = ["DepthOrientation", "Faded", "cascade_excitation", "correlation_table", "deorientation_of",
+           "deorientation_parameters", "depth_orientation", "doppler_energy", "doppler_table", "e1_polarisation", "emitters",
            "excitation_of", "excitation_order", "has_static_moment", "level_names", "other_excitation", "other_role",
            "start_levels", "state_transition", "transition_lines", "unreached_levels"]

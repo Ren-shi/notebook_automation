@@ -35,7 +35,7 @@ import numpy as np
 from . import data
 from .coupled import CoupledChannels
 from .detectors import Array
-from .gamma import e1_polarisation
+from .gamma import deorientation_parameters, e1_polarisation
 from .levels import LevelScheme, quadrupole_factor
 from .orientation import Excitation
 from .rates import Rates, _q, beam_energy_at, beam_ion, stack, stopping
@@ -85,6 +85,11 @@ class Multistep:
         self.excite = "target" if role == "target" else "projectile"
         #: GOSIA's parameter d of the E1 polarisation correction, the setup's.
         self.e1_polarisation = e1_polarisation(experiment)
+        #: The setup's deorientation in vacuum, for the GOSIA input (the yields here are over all directions, which it
+        #: does not change): :class:`~physim.nuclear.deorientation.Parameters`, or None for none.
+        exc = experiment.excitation
+        self.deorientation = deorientation_parameters(
+            experiment, "reaction" if exc is None or exc.excite == self.excite else "other")
         self.array = Array.from_experiment(experiment)
         self.notes: list = []
 
@@ -316,6 +321,16 @@ class Multistep:
                                     theta_expt=mean, phi=phi, notes=list(notes)))
         return out
 
+    def _gosia_vac(self, nucleus: tuple) -> list:
+        """The lines of CONT's ``VAC,`` for the investigated ``nucleus`` (Z, A). Six of the seven parameters: the first,
+        J, is GOSIA's own in every setup, and GOSIA takes the lines after a seventh for something else."""
+        p = self.deorientation
+        g = 0.0 if p is None else nucleus[0] / nucleus[1] if p.g_factor is None else abs(p.g_factor)
+        if not g:  # GOSIA's formulas give 0/0 for g = 0: its switch, Λ* = 0, says that nothing is deoriented
+            return ["VAC,", "3 0.0", "0 0"]
+        values = (p.width_per_ps, p.rate_per_ps, p.correlation_ps, g, 1e-8 * p.field_tesla, p.field_power)
+        return ["VAC,", *(f"{i} {v:.8g}" for i, v in enumerate(values, start=2)), "0 0"]
+
     def _gosia_energy_range(self) -> tuple:
         """Beam energy (MeV) entering and leaving the target layer."""
         th = self.layers[0].thickness
@@ -345,7 +360,9 @@ class Multistep:
         - CONT: ``ACC``; ``DIP`` (the E1 polarisation, 1000 d: the setup's d, or ``dipole`` when given. GOSIA takes
           ``DIP,0`` as not set and so as 3.8, its default, so no correction is written as 0.001); ``SPL,1.`` (splines:
           GOSIA's default, one polynomial through the whole stopping table, puts the integrated Rutherford of a thick
-          target well off, 17 % low on ⁶²Ni + C); ``END,`` and the blank line GOSIA needs after it.
+          target well off, 17 % low on ⁶²Ni + C); ``VAC,`` (the deorientation in vacuum: the parameters of the setup's,
+          all of them, or Λ* = 0, which is none; GOSIA counts the time from the collision, and works out the charge
+          states of the first experiment only); ``END,`` and the blank line GOSIA needs after it.
         - OP,YIEL: no internal conversion. ``gamma="array"`` places one GOSIA detector on the axis of each of the
           setup's γ detectors, sized by OP,GDET (written first, so the file runs as it is) as a cylinder of the
           crystals' front area and length; ``gamma="4pi"`` uses one detector with all attenuation coefficients
@@ -415,7 +432,7 @@ class Multistep:
                          f"{substates[1]} {iax} {phi1:.2f} {phi2:.2f} {x['ikin']} {dets.index(x['detector']) + 1}")
         dip = (1000 * self.e1_polarisation if dipole is None else float(dipole)) or 0.001
         # GOSIA needs the blank line after END,
-        lines += ["CONT", f"ACC,{accuracy}.", f"DIP,{dip:g}", "SPL,1.", "END,", ""]
+        lines += ["CONT", f"ACC,{accuracy}.", f"DIP,{dip:g}", "SPL,1.", *self._gosia_vac(inv), "END,", ""]
 
         # OP,YIEL: no internal conversion; the γ detectors at each experiment; normalised to the first transition.
         offd = sorted((me.b, me.a) for me in s.matrix_elements if me.a != me.b)

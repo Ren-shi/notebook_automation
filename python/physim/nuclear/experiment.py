@@ -534,6 +534,12 @@ class Excitation:
     ``e1_polarisation`` is GOSIA's parameter d of the E1 polarisation correction to the excitation
     (:mod:`physim.nuclear.coulex`), not GOSIA's input ``DIP,``, which is 1000 d. Left out it is 0.0038, GOSIA's own
     default; 0 leaves the correction out.
+
+    ``deorientation`` says whether a nucleus that decays in vacuum, after it has left the target, has lost part of its
+    orientation to the hyperfine field of its ion: "vacuum" (also when left out), GOSIA's two-state model
+    (:mod:`physim.nuclear.deorientation`), or "none". ``deorientation_g`` is the g factor of the nucleus the reaction
+    excites, for all its levels (Z/A if left out, as GOSIA); the other nucleus has Z/A. A lifetime measurement has only
+    its own ``lifetime.deorientation``: with a ``[lifetime]`` section neither setting does anything.
     """
 
     energy: QuantityLike
@@ -549,6 +555,11 @@ class Excitation:
     #: GOSIA's E1 polarisation parameter d; None: 0.0038, GOSIA's default; 0: no correction. The value in effect is
     #: :func:`physim.nuclear.gamma.e1_polarisation`.
     e1_polarisation: Optional[float] = None
+    #: Deorientation in vacuum: "vacuum" (also when left out) or "none". What is in effect is
+    #: :func:`physim.nuclear.gamma.deorientation_of`.
+    deorientation: Optional[str] = None
+    #: The g factor that deorients the levels of the excited nucleus; None: Z/A.
+    deorientation_g: Optional[float] = None
 
     SPECS = (
         _Field("excite", "str", check=lambda s: None if s in ("target", "projectile")
@@ -562,6 +573,10 @@ class Excitation:
         _Field("e1_polarisation", "number", check=lambda d: None if 0 <= d <= 0.05 else
                "must be between 0 and 0.05: GOSIA's parameter d (0.0038 by default, 0 for none), not its DIP, input "
                "(1000 d)"),
+        _Field("deorientation", "str", check=lambda s: None if s in ("vacuum", "none")
+               else "must be 'vacuum' (GOSIA's two-state model) or 'none'"),
+        _Field("deorientation_g", "number", check=lambda g: None if -6 <= g <= 6 else
+               "must be a nuclear g factor, between -6 and 6 (Z/A if left out)"),
     )
 
     @property

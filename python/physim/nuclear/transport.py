@@ -105,6 +105,9 @@ class Slowed:
     #: along the stack's normal). For an infinite decay time, the position where the recoil stopped or left.
     proper_ps: Optional[np.ndarray] = None
     position_um: Optional[np.ndarray] = None
+    #: The lab time (ps) at which a recoil that decays outside left the stack; inf for one that decays or stops in it
+    #: (and with scattering, where it is not kept: None).
+    left_ps: Optional[np.ndarray] = None
 
 
 #: The most detector angles a :class:`Kernel` keeps :meth:`Kernel.beta_cos` for, and the most bytes it spends on
@@ -384,6 +387,7 @@ def _straight(segments, species: str, mass_mev: float, energy, direction, depth,
     rest = ~done  # out of the stack: in flight at the exit energy
     out[rest] = e[rest]
     seg_out[rest] = np.where(fwd[rest], S, -1)
+    left = np.where(rest, elapsed, np.inf)
     beta, gam = _beta_gamma(e[rest], mass_mev)
     if proper:
         prop_at[rest] = t[rest]
@@ -395,7 +399,7 @@ def _straight(segments, species: str, mass_mev: float, energy, direction, depth,
     fly = np.where(np.isfinite(lab_at[rest]), lab_at[rest] - elapsed[rest], 0.0)  # inf: where it left
     pos[rest] += u[rest] * (beta * C_UM_PS * fly)[:, None]
     return {"energy": out, "direction": u, "segment": seg_out, "stopped": stopped, "lab_ps": lab_at,
-            "proper_ps": prop_at, "position_um": pos, "t_stop_ps": t_stop}
+            "proper_ps": prop_at, "position_um": pos, "t_stop_ps": t_stop, "left_ps": left}
 
 
 def _gap_step(idx, path_um, e, u, t, elapsed, pel, pos, done, out, seg_out, lab_at, prop_at, j, mass_mev, proper):
@@ -445,7 +449,8 @@ def slow(segments, species: str, mass_mev: float, energy, direction, start_depth
         res = _straight(segments, species, mass_mev, energy, direction, start_depth_mg_cm2, t_decay_ps)
     beta, _ = _beta_gamma(res["energy"], float(mass_mev))
     return Slowed(energy=res["energy"], direction=res["direction"], segment=res["segment"],
-                  stopped=res["stopped"], beta=beta, proper_ps=res["proper_ps"], position_um=res["position_um"])
+                  stopped=res["stopped"], beta=beta, proper_ps=res["proper_ps"], position_um=res["position_um"],
+                  left_ps=res.get("left_ps"))
 
 
 def time_to_stop(segments, species: str, mass_mev: float, energy, start_depth_mg_cm2) -> np.ndarray:
