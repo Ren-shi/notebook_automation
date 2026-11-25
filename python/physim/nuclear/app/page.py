@@ -2385,8 +2385,9 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             part(2, "Integrate the peaks", "The peak of each nucleus in its own corrected spectrum: a Gaussian on a "
                  "straight line is fitted, and the area is the counts within ±3σ of its centre over that line. Where "
                  "the peak has tails it is the area of the peak fitted with them (the tails of a simulation of the "
-                 "setup, if the counts are too few to fix them). The random coincidences expected within ±3σ are "
-                 "subtracted. The area over the efficiency and the angular "
+                 "setup, if the counts are too few to fix them). Where the fit window reaches the line's own Compton "
+                 "edge, the background is that line and the continuum below the peak that the detectors' response "
+                 "gives. The random coincidences expected within ±3σ are subtracted. The area over the efficiency and the angular "
                  "correlation is the number of γ rays emitted.")
             with ui.element("div").classes("w-full grid gap-3").style(
                     "grid-template-columns: repeat(auto-fit, minmax(360px, 1fr))"):

@@ -743,7 +743,7 @@ def analysis_png(result, dpi: int = 130) -> bytes:
         x = np.linspace(fit.centroid - half, fit.centroid + half, 400)
         ax.plot(1e3 * x, k * fit.curve(x), color="#D55E00", lw=1.3, label=f"fit: {fit.shape}")
         ax.axvspan(1e3 * (fit.centroid - 3 * fit.sigma), 1e3 * (fit.centroid + 3 * fit.sigma), color="#D55E00",
-                   alpha=0.10, lw=0, label="±3σ: the area" if fit.tails is None else "±3σ")
+                   alpha=0.10, lw=0, label="±3σ: the area" if fit.tails is None and fit.below is None else "±3σ")
     if sp.get("energy"):
         ax.axvline(1e3 * sp["energy"], color="#444444", lw=0.7, ls=":", label=f"{1e3 * sp['energy']:.1f} keV")
     ax.set_xlabel("corrected γ-ray energy (keV)", fontsize=8)
@@ -826,7 +826,7 @@ def line_png(line: dict, fit_half_width: float = 4.0, dpi: int = 130) -> bytes:
         peak = PeakFit.of(fit)
         ax.plot(1e3 * x, k * peak.curve(x), color="#D55E00", lw=1.3, label=f"fit: {peak.shape}")
         ax.axvspan(1e3 * (centre - 3 * sigma), 1e3 * (centre + 3 * sigma), color="#D55E00", alpha=0.10, lw=0,
-                   label="±3σ: the area" if peak.tails is None else "±3σ")
+                   label="±3σ: the area" if peak.tails is None and peak.below is None else "±3σ")
     ax.axvline(line["energy_kev"], color="#444444", lw=0.7, ls=":", label=f"{line['energy_kev']:.1f} keV")
     ax.set_xlabel("corrected γ-ray energy (keV)", fontsize=8)
     ax.set_ylabel(f"counts per {edges[1] - edges[0]:.2g} keV in the run", fontsize=8)
@@ -900,8 +900,9 @@ def _lines_html(result, e) -> str:
     parts = ["<h4>The peaks integrated</h4><p>The peak of each nucleus in its own corrected spectrum: a Gaussian "
              "on a straight line is fitted, and the area is the counts within ±3σ of its centre over that line. "
              "Where the peak has tails it is the area of the peak fitted with them (the tails of a simulation of the "
-             "setup, if the counts are too few to fix them). The random coincidences expected within ±3σ are "
-             "subtracted. The area over the efficiency and the angular "
+             "setup, if the counts are too few to fix them). Where the fit window reaches the line's own Compton edge, "
+             "the background is that line and the continuum below the peak that the detectors' response gives. The "
+             "random coincidences expected within ±3σ are subtracted. The area over the efficiency and the angular "
              "correlation is the number of γ rays emitted.</p>"]
     for ln in lines[1:]:
         try:

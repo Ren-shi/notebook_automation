@@ -246,13 +246,16 @@ def analysis_explanations(planner, result) -> list:
     out.append(Explanation(
         "area", "Peak area", result.area, "counts",
         ("A = Σ counts within ±3σ of the peak − background under them − random coincidences"
-         if result.fit.tails is None else
+         if result.fit.tails is None and result.fit.below is None else
          "A = Σ counts in the fit window − background under the peak − random coincidences"),
         f"A = {_g(result.fit.area)} (counts over the fitted background) "
         f"− {_g(result.fit.randoms)} (randoms) = {_g(result.area)} ± {_g(math.hypot(result.fit.area_unc, math.sqrt(max(result.fit.randoms, 0))))}",
         "The γ rays of the transition that the detectors recorded in full, after the Doppler correction put them "
         "in one peak, over the continuum of other γ rays and the chance coincidences.",
-        ("A Gaussian peak on a straight-line background" if result.fit.tails is None else
+        ("A Gaussian peak on a straight-line background and the line's own Compton continuum, which the response gives "
+         "for each count in the peak, counted over the whole fit window"
+         if result.fit.tails is None and result.fit.below is not None else
+         "A Gaussian peak on a straight-line background" if result.fit.tails is None else
          "A Gaussian with the spread that the half-life and the geometry of the setup leave of the Doppler shift (with the "
          "nuclei that decay inside the target, faster than the correction takes them), on a background that steps down "
          "across the peak, counted over the whole fit window" if "spread" in result.fit.tails else

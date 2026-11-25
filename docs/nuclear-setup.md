@@ -533,6 +533,19 @@ The steps, each adjustable through `Settings`:
      without them (or what a Gaussian loses of the simulated peak, if larger), times how far the simulated width is
      from the measured one, at least a tenth. A simulation analysed by the same simulation cannot test this
      assumption: a closure test does not see it.
+   - **The line's own Compton edge in the window.** The edge is m/(m + 2E) of the energy below the line (E its energy, m
+     the electron's), never more than 256 keV, so at a few MeV a broad peak's window reaches it. A straight line is not
+     the background there: at 6.9 MeV, with a σ of 57 keV, the edge is 246 keV below the line, and the γ rays that leave
+     more than that, but not all, are twice as many as those of the peak and end under it. The background is then the
+     straight line and, for each count in the peak, what the response leaves below it (`Response.incomplete`: the escape
+     peaks, the continuum with its edge, and the flat part above it), at the energy each γ ray had in the laboratory,
+     Doppler-corrected as it was, and spread as the peak is (`Analysis._below`, `PeakFit.below`). It adds nothing to
+     the fit's parameters, and the area is that of the fitted peak. Both passes of the fit have it. The rule is that the
+     edge, spread by 3σ, reaches into the window (`Analysis._edge_fit`); elsewhere the fit is what it was. The counts below
+     the peak are the line's too, so the area's statistical uncertainty can be smaller than the square root of the counts
+     in the peak. The ratio comes from the same response as the efficiency: the budget's line **detector response below
+     the peak** is what the area moves by when it is wrong by the uncertainty of the efficiency. (A simulation analysed
+     with the response that made it cannot test the ratio.)
    - **A failed fit.** A fit whose width or centre ends at the bound it may not pass (twice what the simulated peak
      has, where there is one) is reported as failed (`PeakFit.failed`, the step and a note), without an area and
      without a B(E2).
