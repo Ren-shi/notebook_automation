@@ -147,10 +147,10 @@ def test_the_nuclei_screen_the_page_of_a_nucleus_and_the_comparison(lab):
         _row(user, "B(E2; 0⁺₁ → 2⁺₁)↑")
         await user.should_see("Given to the simulation", retries=100)
         texts = _texts(user)
-        assert "INDEPENDENT · against the reference: ENSDF adopted" in texts
+        assert "Evaluated" in texts and "ENSDF adopted, NDS 204, 1 (2025)" in texts
         assert "△ tension" in texts and "◦ not independent of the reference" in texts  # the measured point
-        assert "✓ closes (+0.53σ)" in texts and "884.1" in texts
-        assert texts.index("△ tension") < texts.index("PROJECTED · simulated runs") < texts.index("✓ closes")
+        assert "✓ closes" in texts and "+0.53σ" in texts and "884.1" in texts
+        assert texts.index("△ tension") < texts.index("Projected · simulated runs") < texts.index("✓ closes")
         assert "This setup reaches ±7.0 %" in texts and "the value is known to ±1.5 %" in texts
         # The evaluation is here already, so the page's own note of a missing ENSDF copy is not (a route may
         # still say that it could not test itself against ENSDF: that is another sentence).
