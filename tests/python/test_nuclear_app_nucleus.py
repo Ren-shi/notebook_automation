@@ -231,6 +231,8 @@ def test_the_landing_view_of_a_nucleus(lab):
         switch.value = "e2b2"
         await user.should_see("0.0884 ± 0.0013", retries=100)
         assert "e²b²↑ · known to ±1.5 %" in _texts(user)
+        tips = [str(t.text) for t in user.find(kind=ui.tooltip).elements]  # the strip follows the switch
+        assert "Doe et al. 2014: 0.0980 ± 0.0037 e²b²↑ · measured, in tension" in tips
         # A card opens its comparison with the literature.
         _press(user, "Compare with the literature →")
         await user.should_see("Given to the simulation", retries=100)

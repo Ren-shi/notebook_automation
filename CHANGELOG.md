@@ -671,6 +671,29 @@ workflow builds the wheels, tests them and publishes to PyPI.
   marked stale by a change, the one on screen too.
 
 ### Changed
+- The planner app opens on a nucleus, and the comparison with the literature is a screen of its own. No number has
+  changed: everything shown was already in the ledger, the registry or the comparison (see `docs/planner-app.md`).
+  - The app opens on the page of the nucleus this browser showed last; otherwise on the nucleus of the most recently
+    changed experiment (or the nuclei); with nothing at all, on the kinds of experiment. The page of a nucleus, the
+    comparison, the nuclei, the kinds and Physics have a bar at the top instead of the rail: a button per nucleus,
+    **All nuclei**,
+    **Another nucleus**, **Back to** *the open experiment*, **Physics** and the theme. The rail with the six steps is
+    there only while an experiment is open, and **← ⁶²Ni the nucleus** at its top leads back to the nucleus.
+  - The page of a nucleus (`/?nucleus=62Ni`) is an overview: the nucleus with its counts and actions, its lowest
+    levels drawn with the headline transition and E(4⁺₁)/E(2⁺₁), a card per observable (the first with every value on
+    one strip of dots, which follows the B(E2) unit switch), the experiments on it, what is still open with **Plan
+    it**, and all observables at the bottom.
+  - The comparison (`/?nucleus=62Ni&observable=…&key=…`, also where the old links lead) shows one observable as tabs
+    and five tiles (the reference, measured, the best single measurement, theory, what the setup reaches), then one
+    table in which every value has a bar against the reference's band, grouped by method or ordered by year or pull,
+    in the unit chosen; then *What stands out* and *What the projected runs say*, and under them the routes, what the
+    value gives, the checks and the history. The form of a data point is a window, and the plot is gone.
+  - A value counts once: a data point that repeats one in the ledger (the same publication, method and value, in
+    another unit or detail) is not added again, and the repeats already in a ledger are withdrawn with a note when
+    the app starts (nothing is deleted). Other evaluations than ENSDF's (Raman et al., Pritychenko et al.) are taken
+    in as evaluated rows that are not independent of the measurements: shown with their difference, not judged, and
+    never the reference unless picked. `nucleus.lowest_levels`, and the groups, counts and findings of
+    `nucleus.observable_view`, give a script what the two screens show.
 - CI runs a test file only if something that it used changed since it last passed (`scripts/ci_tests.py`): each file runs in a
   process of its own that records the functions, modules and data files it used (`scripts/ci_record.py`), and what passed is
   kept, for main and for each pull request. A change of text (documents, comments, docstrings) runs no tests, and after a fix

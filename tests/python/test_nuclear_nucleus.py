@@ -581,8 +581,9 @@ def test_an_observable_ready_to_draw(lab):
     # The card of the landing page says the same; the evaluation's own rows have none.
     table = {(t["observable"], t["key"]): t for t in nucleus.view("62Ni")["table"]}
     card_ = table["B(E2)", KEY]
-    assert card_["counts"] == counts and card_["strip"]["axis"] == axis
+    assert card_["counts"] == counts and card_["strip"]["axis"] == axis and card_["strip"]["units"] == v["units"]
     assert [d["id"] for d in card_["strip"]["dots"]] == v["orders"]["method"]
+    assert next(d for d in card_["strip"]["dots"] if d["id"] == model.id)["texts"] == bare["texts"]
     assert table["E_level", "62Ni:2+1"]["counts"] is None and table["E_level", "62Ni:2+1"]["strip"] is None
     # The τ of the same nucleus: what Coulex gives is converted, what a lifetime gives is not.
     tau = {g["id"]: g for g in nucleus.observable_view("62Ni", "tau", "2+1")["groups"]}

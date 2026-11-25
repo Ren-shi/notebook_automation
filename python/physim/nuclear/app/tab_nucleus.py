@@ -80,8 +80,14 @@ LANDING_STYLE = """
 .ps-l-big { font-family: var(--ps-mono); font-size: 40px; font-weight: 500; line-height: 1.1;
   color: var(--ps-accent); }
 .ps-l-unit { font-family: var(--ps-mono); font-size: 16px; color: var(--ps-muted); }
+.ps-l-small { container-type: inline-size; }
 .ps-l-mid { font-family: var(--ps-mono); font-size: 24px; font-weight: 500; line-height: 1.2; }
 .ps-l-mid-unit { font-family: var(--ps-mono); font-size: 14px; color: var(--ps-muted); }
+.ps-l-mid-line { line-height: 1.2; }
+.ps-l-mid-line > div { display: inline; }
+.ps-l-mid-line > .ps-l-mid { white-space: nowrap; margin-right: .45em; }
+.ps-l-mid-line > .ps-l-mid-unit { white-space: nowrap; }
+@container (max-width: 250px) { .ps-l-mid-line > .ps-l-mid { font-size: 20px; } }
 .ps-l-small-text { font-size: 13px; }
 .ps-l-strip { position: relative; height: 34px; border-bottom: 1px solid var(--ps-line); }
 .ps-l-band { position: absolute; top: 0; bottom: 0;
@@ -100,7 +106,6 @@ LANDING_STYLE = """
 .ps-l-ticks { position: relative; height: 16px; font-family: var(--ps-mono); font-size: 11px;
   color: var(--ps-muted); }
 .ps-l-tick { position: absolute; transform: translateX(-50%); white-space: nowrap; }
-.ps-l-axis-unit { position: absolute; right: 0; top: 16px; white-space: nowrap; }
 .ps-l-counts { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 13px; }
 .ps-l-counts b { font-weight: 600; }
 .ps-l-end { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px;
@@ -454,7 +459,7 @@ def _main_card(ctx, nuclide: str, t: dict, display: Optional[str]) -> None:
             else:
                 ui.label("no independent value yet").classes("ps-l-unit")
         if t.get("strip"):
-            _strip(ui, t["strip"])
+            _strip(ui, t["strip"], display_factor(t["observable"], display)[1])  # the unit of the value above
         counts = t.get("counts")
         with ui.element("div").classes("ps-l-counts"):
             if counts:
@@ -515,17 +520,25 @@ def _dot_kind(dot: dict) -> str:
     return dot["verdict"] if dot["verdict"] in ("tension", "differ") else "measured"
 
 
-def _strip(ui, strip: dict) -> None:
+def _strip(ui, strip: dict, display: Optional[str] = None) -> None:
     """Every value on one axis: the reference as its band and line, the others as dots (one that differs in the bad
     colour, one in tension in the warning colour, theory hollow, a simulated run hollow in the accent colour,
-    another evaluation a diamond), each with its source and value on hovering; the ticks under it. The axis and the
-    values are those of the data, in the canonical unit, which is written under the axis."""
+    another evaluation a diamond), each with its source and value on hovering; the ticks under it. The ticks and the
+    values are written in ``display`` (one of the strip's ``units``: the unit the card's value above is shown in;
+    the canonical one otherwise), as the data give them; the places are the same in every unit."""
     axis = strip["axis"]
-    unit = axis["label"]
+    units = strip.get("units") or []
+    chosen = next((u for u in units if u["unit"] == display), units[0] if units else None)
+    unit = chosen["label"] if chosen else axis["label"]
+    ticks = chosen["ticks"] if chosen else axis["ticks"]
+
+    def text(d: dict) -> str:
+        return (d.get("texts") or {}).get(chosen["unit"], d["text"]) if chosen else d["text"]
+
     dots = [d for d in strip["dots"] if not d["is_reference"]]
     reference = next((d for d in strip["dots"] if d["is_reference"]), None)
-    said = (f"Every value on one axis, {axis['ticks'][0]['text'] if axis['ticks'] else ''} to "
-            f"{axis['ticks'][-1]['text'] if axis['ticks'] else ''} {unit}: {len(dots)} besides the reference")
+    said = (f"Every value on one axis, {ticks[0]['text'] if ticks else ''} to "
+            f"{ticks[-1]['text'] if ticks else ''} {unit}: {len(dots)} besides the reference")
     with ui.element("div").classes("w-full").style("display: flex; flex-direction: column; gap: 4px"):
         line = ui.element("div").classes("ps-l-strip").props(f'role="img" aria-label="{said}"')
         with line:
@@ -536,18 +549,17 @@ def _strip(ui, strip: dict) -> None:
                 ui.element("div").classes("ps-l-ref").style(f"left: {100 * band['x']:.3f}%")
                 if reference:
                     ui.element("div").classes("ps-l-ref-hit").style(f"left: {100 * band['x']:.3f}%").tooltip(
-                        f"The reference: {reference['source']}, {reference['text']} {unit}")
+                        f"The reference: {reference['source']}, {text(reference)} {unit}")
             order = ("evaluation", "theory", "outside", "measured", "tension", "differ", "projected")
             for d in sorted(dots, key=lambda d: order.index(_dot_kind(d))):
                 kind = _dot_kind(d)
                 ui.element("div").classes(f"ps-l-dot ps-l-dot-{kind}").style(f"left: {100 * d['x']:.3f}%").tooltip(
-                    f"{d['source']}: {d['text']} {unit} · {DOT_WORDS[kind]}"
+                    f"{d['source']}: {text(d)} {unit} · {DOT_WORDS[kind]}"
                     + (f" · {VERDICTS[d['verdict']].lower()}" if kind == "measured" and d["verdict"] in VERDICTS
                        else ""))
-        with ui.element("div").classes("ps-l-ticks").style("height: 30px"):
-            for tick in axis["ticks"]:
+        with ui.element("div").classes("ps-l-ticks"):
+            for tick in ticks:
                 ui.label(tick["text"]).classes("ps-l-tick").style(f"left: {100 * tick['x']:.3f}%")
-            ui.label(unit).classes("ps-l-axis-unit")
 
 
 def _small_card(ctx, nuclide: str, t: dict, display: Optional[str]) -> None:
@@ -559,7 +571,9 @@ def _small_card(ctx, nuclide: str, t: dict, display: Optional[str]) -> None:
         ui.label(label_text(t["label"])).classes("ps-l-label")
         if best:
             number, unit = value_parts(best, display)
-            with ui.element("div").classes("ps-l-value").style("gap: 4px 8px"):
+            # One line of text, not two boxes: the unit follows the value, and only a card too narrow for both breaks
+            # the line, between whole words.
+            with ui.element("div").classes("ps-l-mid-line"):
                 ui.label(number).classes("ps-l-mid")
                 ui.label(unit).classes("ps-l-mid-unit")
         else:
@@ -674,7 +688,7 @@ def _observables(ctx, view: dict, redraw, held: Optional[dict] = None) -> None:
                         td(ui, " · ".join(METHODS[m] for m in t["open"]) or "nothing",
                             colour="ps-open" if t["open"] else "ps-muted")
         if rest:
-            more = ui.expansion(f"{len(rest)} more hold the evaluation only", icon="list").props("dense").classes(
+            more = ui.expansion(f"{len(rest)}{' more' if listed else ''} hold the evaluation only", icon="list").props("dense").classes(
                 "w-full text-sm")
             if held is not None:
                 held["more"] = more

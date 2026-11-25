@@ -2402,12 +2402,14 @@ def drawing(nuclide: str, observable: str, key: str, comparison, cells: dict, vi
 
 
 def _strip(drawn: dict) -> Optional[dict]:
-    """The dot strip of a card, from a :func:`drawing`: {"axis", "dots"}, the dots in the order of the groups."""
+    """The dot strip of a card, from a :func:`drawing`: {"axis", "units", "dots"}, the dots in the order of the
+    groups. "units" and each dot's "texts" are those of the drawing, so a card can write the strip in any of the
+    units; the places "x" are the same in every unit."""
     if drawn["axis"] is None:
         return None
-    return {"axis": drawn["axis"], "dots": [
-        {k: i[k] for k in ("id", "evidence", "family", "verdict", "is_reference", "source", "text", "value", "low",
-                           "high", "x", "x_low", "x_high")} for g in drawn["groups"] for i in g["entries"]]}
+    return {"axis": drawn["axis"], "units": drawn["units"], "dots": [
+        {k: i[k] for k in ("id", "evidence", "family", "verdict", "is_reference", "source", "text", "texts", "value",
+                           "low", "high", "x", "x_low", "x_high")} for g in drawn["groups"] for i in g["entries"]]}
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -2511,9 +2513,9 @@ def table(nuclide: str, rows: list, extra: tuple = ()) -> list:
     - "headline": whether there is more than the evaluation (or nothing at all yet): what a short list shows;
     - "counts" and "strip", for a headline row (None for the others, and where the values cannot be compared): the
       counts of :func:`observable_view`, and what a card's strip of dots needs: {"axis" (as there, with the
-      reference band and the ticks), "dots": [{"id", "evidence", "family", "verdict", "is_reference", "source",
-      "text", "value", "low", "high", "x", "x_low", "x_high"}]}, in the order of the groups. The strip is None where
-      there is no value yet.
+      reference band and the ticks), "units" (as there, each with its ticks), "dots": [{"id", "evidence", "family",
+      "verdict", "is_reference", "source", "text", "texts", "value", "low", "high", "x", "x_low", "x_high"}]}, in
+      the order of the groups. The strip is None where there is no value yet.
 
     The independent evidence and the projected rows are in separate entries and are never merged. Headline rows
     come first, then B(E2), τ, Q_s and energies, each by level energy.
