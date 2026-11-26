@@ -306,6 +306,26 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- The particle–γ correlation table where a particle detector's face holds the largest lab angle of the scattered nucleus
+  (a beam heavier than its target): at its 8 points each way it was 7.6 % off per crystal for `coulex_ru98_plunger` and its
+  efficiency-weighted factor +2.3 %, so the plan overstated the coincidence efficiency. The points over the face are now cut
+  at that angle and crowded up to it (the cross section per lab solid angle goes as 1/√ of the distance), and equally
+  spaced round an annulus (Allmond's rings were 0.75 % off with Gauss points round them). Every Coulex example and a ⁹⁸Ru
+  setup without plunger are within 0.02 % per pair of a fine table; events against the plan on that ⁹⁸Ru setup: χ²/dof 0.82
+  with deorientation off and on (15.2 and 2.6 before), no pair beyond 3σ. Ordinary plans take as long as before (±3 %); the
+  ⁹⁸Ru plunger's 7 % longer. **Tables of every example move**: by up to 0.08 % (0.75 % Allmond per crystal, 2.3 % ⁹⁸Ru).
+- A weighted sample keeps the γ rays of particles its detectors count, as a run does: it kept those of particles below
+  threshold (1.3 % of `coulex_ni58`'s), and its ⟨P⟩/B counted their excitations (+1.0 %), together +0.3 % on B(E2). Where
+  the threshold cuts a segment its ⟨P⟩/B is the segment's of the counted particles, as a run's. `GammaEvents.rate`, `counts`
+  and `coincidences` count the counted particles' γ rays only. `coulex_ni58`, 24 samples: B(E2) +0.64 ± 0.62 %, ⟨P⟩/B
+  against the truth −0.01 ± 0.27 % (+1.0 % before); runs against their samples −1.5 ± 2.7 %.
+- The analysis's angular-correlation factor is that of each particle's segment and kind of particle
+  (`gamma.segment_correlation`), not its detector's mean, so a gate on rings, on the kind or on the particle's energy has the
+  factor of what it keeps; and a window on the particle's energy divides by the share of the excitations it keeps, as the
+  inelastic gate does (B(E2) with a window was the share of the window too small). `coulex_ni58` with an 8–16 MeV window
+  (the recoils in its strips, factor 1.02 where the strips' is 0.83): the factor against the truth −0.29 ± 0.77 % (12 samples
+  of 10⁶ reactions), B(E2) −3.0 ± 1.6 % over 24 samples of 2·10⁵. The inelastic gate's factor of that example moves −2.3 % and
+  its gate efficiency +2 %, B(E2) −0.1 %.
 - The angular-correlation factor of the analysis is the mean over the excitations in the gate. It was the mean over the
   particles seen with a γ ray, and a particle detector with a large factor c has more of those, so the factor was too large
   and B(E2) too small wherever the particle detectors differ. Over the mean over all excitations (gate "all"): +1.9 % (sample)
