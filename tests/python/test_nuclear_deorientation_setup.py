@@ -404,3 +404,20 @@ def test_the_gosia_input_has_the_setups_deorientation():
     assert vac(exp, "target")[5] == pytest.approx(78 / 194)
     for none in (setup("coulex_ni62_pt194", "none"), setup("coulex_ni62_pt194", g=0.0)):
         assert vac(none, "beam") == {3: 0.0}
+
+
+# -- the analysis ---------------------------------------------------------------------------------------------------
+
+
+def test_the_analysis_gives_b_e2_back_from_deoriented_events():
+    """⁶²Ni on ¹⁹⁴Pt: B(E2) back within its errors; analysed without deorientation the same events read about 2.7 % less
+    (12 samples of 400 000 reactions: −2.65 ± 0.02 %)."""
+    from physim.nuclear.analysis import Analysis, Settings
+
+    on, off = Experiment.example("coulex_ni62_pt194"), setup("coulex_ni62_pt194", "none")
+    g = simulate_gammas(on, 150_000, seed=3)
+    s = Settings(particle_gate="all")
+    a, b = Analysis(on, g).run(s), Analysis(off, g).run(s)
+    truth = on.excitation.b_up_e2fm
+    assert abs(a.b_e2fm4 / truth - 1) < 4 * np.hypot(a.monte_carlo, a.statistical)
+    assert b.b_e2fm4 / a.b_e2fm4 == pytest.approx(0.9735, abs=0.004)
