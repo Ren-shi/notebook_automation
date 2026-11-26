@@ -33,7 +33,8 @@ The steps are those of a Coulomb-excitation analysis, each shown and adjustable:
    peak of a few MeV), no straight line is the background: the line's incomplete energies, as the detectors' response
    and the Doppler correction give them, are part of it (:meth:`Analysis._below`, :attr:`PeakFit.below`).
 5. **Yield:** the area over the full-energy-peak efficiency (each crystal's at the Doppler-shifted energy it sees
-   the line at), the γ-ray branch (internal conversion) and the angular-correlation factor.
+   the line at), the γ-ray branch (internal conversion) and the angular-correlation factor, the mean over the
+   excitations in the gate.
 6. **Normalisation**, chosen by the user: ``"rutherford"``, to the particles counted in the same rings,
    so the beam current and the target thickness cancel; or ``"target"``, to a transition of the other nucleus of
    the collision whose strength is known. When the events hold that nucleus's γ rays (the setup has its level
@@ -69,7 +70,7 @@ import numpy as np
 
 from . import data
 from .coulex import Coulex
-from .gamma import correlation_table, e1_polarisation, emitters, transition_lines
+from .gamma import correlation_table, e1_polarisation, emitters, state_transition, transition_lines
 from .gamma_events import doppler_spread, to_steps
 from .kinematics import TwoBody, lab_points
 from .levels import weisskopf_unit
@@ -1103,6 +1104,7 @@ class Analysis:
         self._e_mid = float(beam_energy_at(experiment, 0, [self._layers[0].thickness / 2], self._layers)[0])
         #: The γ rays of the [reaction] nucleus (all of them when the events hold one nucleus).
         self._own = (gammas["nucleus"] == 0) if "nucleus" in gammas.columns else np.ones(len(gammas), dtype=bool)
+        self._transition = state_transition(experiment)
         self._emitters = emitters(experiment)
         self._lines = transition_lines(experiment)
         self._other: Optional[dict] = None
@@ -1169,10 +1171,13 @@ class Analysis:
             self._gate_overlap = float(g["weight"][base & overlap].sum() / w_base) if w_base > 0 else 0.0
             keep &= near & closer
         # What the gate does, known here because the simulation knows the truth: the share of the excitations it
-        # keeps, and the particles it lets through (they carry no γ ray, so they only add to the randoms).
+        # keeps (each γ ray seen stands for as many as its particle detector's factor says; of every transition, as
+        # the peak may hold others of the nucleus), and the particles it lets through (they carry no γ ray, so they
+        # only add to the randoms).
         in_dets = self._in_rings(s)
-        w_all = g["weight"][in_dets & self._own].sum()
-        self._gate_efficiency = float(g["weight"][keep & self._own].sum() / w_all) if w_all > 0 else 1.0
+        _, factors = self._seen_by(keep)
+        w_all = self._stands_for(in_dets & self._own, factors).sum()
+        self._gate_efficiency = float(self._stands_for(keep & self._own, factors).sum() / w_all) if w_all > 0 else 1.0
         return keep, float(np.sum(c["weight"][elastic]) * ev.beam_time_s * g.live_fraction)
 
     def _groups_overlap(self, rows: np.ndarray, fwhm: np.ndarray) -> np.ndarray:
@@ -2495,7 +2500,7 @@ class Analysis:
         except ValueError:
             return None
         area, area_unc = self._area(s, fit, edges, rnd)
-        eff, corr = self._efficiency_and_correlation(keep, e_line, o["correlation"], ~self._own, which)
+        eff, corr = self._efficiency_and_correlation(keep, o)
         yield_ = area / (eff * corr) if eff > 0 and corr > 0 else float("nan")
         # What the level scheme gives per particle in the same rings: the transition's yield per
         # collision at each particle's CM angle (no excitation on the other nuclides of the target stack).
@@ -2658,30 +2663,34 @@ class Analysis:
         elastic = math.sqrt(float(np.sum(el**2))) / float(np.sum(el)) if el.sum() > 0 else 0.0
         return math.hypot(peak, elastic)
 
-    def _efficiency_and_correlation(self, keep: np.ndarray, energy: Optional[float] = None,
-                                    correlation: Optional[dict] = None, own: Optional[np.ndarray] = None,
-                                    correction: Optional[str] = None) -> tuple:
-        """The full-energy-peak efficiency of all crystals together (the spectrum is summed), each crystal's at the
-        energy it sees the line at (Doppler shifted), and the angular-correlation factor averaged over the
-        excitations in the gate: for each excitation, the efficiency-weighted mean of its particle detector's
-        factors. For the ``[reaction]`` transition, or for another one at ``energy`` (MeV) with its
-        ``correlation`` factors, the γ rays ``own`` of its nucleus and the Doppler ``correction`` right for it."""
+    def _line_of(self, other: Optional[dict] = None) -> np.ndarray:
+        """Mask over the γ rays of the ``[reaction]`` transition, or of the other nucleus's line (``other`` from
+        :meth:`_other_setup`). All γ rays of the nucleus where none is of that transition (a run from before the
+        transitions were kept)."""
         g = self.gammas
-        exc = self.experiment.excitation
-        if correction is None:
-            correction = "recoil" if exc.excite == "target" else "projectile"
-        energy = self.e0 if energy is None else energy
-        correlation = self._correlation if correlation is None else correlation
-        mine = keep & (self._own if own is None else own)
-        rows = np.unique(g["particle"][mine])
-        c = self.events.columns
+        own = self._own if other is None else ~self._own
+        initial, final = self._transition if other is None else (other["line"]["initial"], other["line"]["final"])
+        line = own & (g["initial"] == initial) & (g["final"] == final)
+        return line if line.any() else own
+
+    def _seen_by(self, keep: np.ndarray, other: Optional[dict] = None) -> tuple:
+        """The full-energy-peak efficiency of all crystals together (the spectrum is summed), each crystal's at the
+        energy it sees the line at (Doppler shifted), and for each particle detector the efficiency-weighted mean of its
+        angular-correlation factors. For the ``[reaction]`` transition, or for the ``other`` nucleus's line."""
+        g = self.gammas
+        if other is None:
+            energy, correlation, own = self.e0, self._correlation, self._own
+            correction = "recoil" if self.experiment.excitation.excite == "target" else "projectile"
+        else:
+            energy, correlation, own = other["energy"], other["correlation"], ~self._own
+            correction = other["correction"]
         # Each crystal sees the line at its Doppler-shifted energy, and its efficiency is that at this energy: the
         # shift is read from the data, as the measured energy over the Doppler-corrected one of the γ rays in the
         # gate that the crystal counted (the correction for the nucleus that emits the line).
         measured = np.asarray(g["measured"], dtype=float)
         fixed = np.asarray(g[{"projectile": "corrected_projectile", "recoil": "corrected_recoil"}[correction]],
                            dtype=float)
-        good = mine & g["counted"] & (measured > 0) & (fixed > 0)
+        good = keep & own & g["counted"] & (measured > 0) & (fixed > 0)
         crystal = np.asarray(g["crystal"])
         shift = np.ones(len(g.crystals))
         if good.any():
@@ -2694,11 +2703,28 @@ class Analysis:
             name = cr.name.rsplit(" ", 1)[0] if cr.element is not None else cr.name
             effs[name] = effs.get(name, 0.0) + float(cr.response.peak_efficiency(energy * shift[k], cr.element))
         total_eff = sum(effs.values())
-        per_det = {d: sum(e * correlation.get((d, n), 1.0) for n, e in effs.items()) / total_eff
-                   for d in self.events.detectors}
-        factors = np.array([per_det[self.events.detectors[d]] for d in c["detector"][rows]])
-        w = c["weight"][rows]
-        return float(total_eff), float(np.average(factors, weights=w)) if len(w) else 1.0
+        factors = np.array([sum(e * correlation.get((d, n), 1.0) for n, e in effs.items()) / total_eff
+                            for d in self.events.detectors])
+        return float(total_eff), factors
+
+    def _stands_for(self, mine: np.ndarray, factors: np.ndarray) -> np.ndarray:
+        """What each of the γ rays ``mine`` stands for in excitations (per second, up to the efficiency): its weight
+        over the factor of its particle detector, since a particle is seen with its γ ray in proportion to that
+        factor."""
+        f = factors[self.events.columns["detector"][self.gammas["particle"][mine]]]
+        return self.gammas["weight"][mine] / np.where(f > 0, f, 1.0)
+
+    def _efficiency_and_correlation(self, keep: np.ndarray, other: Optional[dict] = None) -> tuple:
+        """The full-energy-peak efficiency of all crystals together, and the angular-correlation factor averaged over
+        the excitations in the gate: of the ``[reaction]`` transition, or of the ``other`` nucleus's line.
+
+        The average is over the excitations, not over the γ rays or the particles that were seen with one, which favour
+        the particle detectors with a large factor. The γ rays of the line that were seen, at whatever energy, stand
+        for them (:meth:`_stands_for`)."""
+        eff, factors = self._seen_by(keep, other)
+        mine = keep & self._line_of(other)
+        seen = float(self.gammas["weight"][mine].sum())
+        return eff, seen / float(self._stands_for(mine, factors).sum()) if seen > 0 else 1.0
 
     def _reference(self, s: Settings, keep: np.ndarray, w: np.ndarray) -> dict:
         """The reference transition's expected peak counts (analytic, with Poisson noise) and its ⟨P⟩/B."""

@@ -10,7 +10,8 @@ import pytest
 
 from physim.nuclear import Experiment
 from physim.nuclear.analysis import Analysis, PeakFit, Result, Settings, fit_peak, fit_tails
-from physim.nuclear.gamma_events import simulate_gammas
+from physim.nuclear.coulex_reproduction import stored_run
+from physim.nuclear.gamma_events import GammaEvents, simulate_gammas
 from physim.nuclear.levels import weisskopf_unit
 from physim.nuclear.planner import Planner
 
@@ -122,6 +123,129 @@ def test_a_gaussian_has_no_tails(n):
 
 
 # -- B(E2) ----------------------------------------------------------------------------------------------------------
+
+
+# -- the angular-correlation factor ----------------------------------------------------------------------------------
+
+#: The excited particles of the hand-made case in the detectors A and B, the weight (1/s) of each in a sample, and the
+#: chance that its γ ray is seen without an angular correlation.
+EXCITED, SAMPLE_WEIGHT, CHANCE = (1000, 1000), (2.0, 2.0), 0.1
+
+
+def hand_made(factors=(1.6, 0.4), kind="run", gated=1.0, above=True) -> Analysis:
+    """Two particle detectors, A and B, with as many excitations each and their angular-correlation factors: the γ rays
+    are seen in proportion to the factor. A "run" has as many γ rays, each counting once; in a "sample" every
+    particle has the ten γ rays it emits, each with a share of the weight. ``gated``: the share of the particles of B that
+    the gate 5 to 15 MeV keeps. Beside them there is what must not matter: γ rays of a level ``above``, of the other
+    nucleus, nearly all of them in A; and particles with no γ ray."""
+    detector, measured, rays = [], [], []   # rays: (particle, weight, initial, final, nucleus)
+    for d, (n, c) in enumerate(zip(EXCITED, factors)):
+        seen = round(CHANCE * c * n)
+        for k in range(n):
+            detector.append(d)
+            measured.append(10.0 if d == 0 or k % 100 < 100 * gated else 2.0)
+            if kind == "run" and k * seen // n != (k + 1) * seen // n:
+                rays.append((len(detector) - 1, 1.0, 1, 0, 0))
+            elif kind == "sample":   # ten γ rays emitted, 10 CHANCE c of them seen
+                some = (k + 1) * 10 * seen // n - k * 10 * seen // n
+                rays += [(len(detector) - 1, SAMPLE_WEIGHT[d] / 10, 1, 0, 0)] * some
+    for d, n in ((0, 300), (1, 10)):
+        for other in ((2, 1, 0), (1, 0, 1))[0 if above else 1:]:
+            for _ in range(n):
+                detector.append(d)
+                measured.append(10.0)
+                rays.append((len(detector) - 1, 1.0, *other))
+    n = len(detector)
+    events = SimpleNamespace(detectors=["A", "B"], channels=["elastic", "excited"], beam_time_s=1.0, columns={
+        "detector": np.array(detector), "measured": np.array(measured), "counted": np.ones(n, dtype=bool),
+        "segment_i": np.zeros(n, dtype=int), "channel": np.ones(n, dtype=int), "weight": np.ones(n)})
+    particle, weight, initial, final, nucleus = (np.array(x) for x in zip(*rays))
+    m = len(particle)
+    crystal = SimpleNamespace(name="Ge", element=None,
+                              response=SimpleNamespace(peak_efficiency=lambda energy, element=None: CHANCE))
+    gammas = GammaEvents({"event": particle, "particle": particle, "weight": weight, "initial": initial, "final": final,
+                          "nucleus": nucleus, "counted": np.ones(m, dtype=bool), "crystal": np.zeros(m, dtype=int),
+                          "measured": np.ones(m), "corrected_projectile": np.ones(m), "corrected_recoil": np.ones(m)},
+                         events, [crystal], 1, 1.0, "X", 1e-7, 0.0, 1.0)
+    a = Analysis.__new__(Analysis)
+    a.__dict__.update(experiment=SimpleNamespace(excitation=SimpleNamespace(excite="target")), gammas=gammas, events=events,
+                      taken=None, e0=1.0, _own=nucleus == 0, _transition=(1, 0), _whole=True,
+                      _correlation={(d, "Ge"): c for d, c in zip("AB", factors)})
+    return a
+
+
+@pytest.mark.parametrize("kind", ["run", "sample"])
+@pytest.mark.parametrize("factors, over_the_seen", [((1.6, 0.4), 1.36), ((1.2, 0.8), 1.04), ((1.1, 1.1), 1.1)])
+def test_the_correlation_factor_is_the_mean_over_the_excitations(kind, factors, over_the_seen):
+    """Not over the particles seen with a γ ray, which a detector with a large factor has more of. γ rays of another
+    level and of the other nucleus do not count."""
+    a = hand_made(factors, kind)
+    keep, _ = a._gate(Settings(particle_gate="all"))
+    eff, corr = a._efficiency_and_correlation(keep)
+    assert eff == pytest.approx(CHANCE) and corr == pytest.approx(np.mean(factors), rel=1e-12)
+    line = keep & a._line_of()
+    rows = np.unique(a.gammas["particle"][line]) if kind == "run" else a.gammas["particle"][line]
+    old = np.mean(np.array(factors)[a.events.columns["detector"][rows]])
+    assert old == pytest.approx(over_the_seen, rel=1e-3)
+    # The yield: the γ rays seen over the efficiency and the factor are the excitations in the detectors.
+    per_s = sum(EXCITED) if kind == "run" else sum(n * w for n, w in zip(EXCITED, SAMPLE_WEIGHT))
+    assert a.gammas["weight"][line].sum() / (eff * corr) == pytest.approx(per_s, rel=1e-12)
+    # In one detector it is that detector's.
+    for d, c in zip("AB", factors):
+        assert a._efficiency_and_correlation(a._gate(Settings(particle_gate="all", detectors=[d]))[0])[1] == \
+            pytest.approx(c, rel=1e-12)
+
+
+@pytest.mark.parametrize("kind", ["run", "sample"])
+def test_the_gates_share_of_the_excitations_is_not_that_of_the_seen(kind):
+    """A gate that keeps half of B keeps 3/4 of the excitations; of the particles seen with a γ ray it keeps 9/10. With
+    the factor of the excitations it keeps, the yield is all of them."""
+    a = hand_made(kind=kind, gated=0.5, above=False)
+    s = Settings(particle_gate="all", particle_energy=(5.0, 15.0))
+    keep, _ = a._gate(s)
+    eff, corr = a._efficiency_and_correlation(keep)
+    assert a._gate_efficiency == pytest.approx(0.75, rel=1e-12)
+    assert corr == pytest.approx((1.6 * 1000 + 0.4 * 500) / 1500, rel=1e-12)
+    line = a._line_of()
+    in_rings = a._in_rings(s)
+    assert a.gammas["weight"][keep & line].sum() / a.gammas["weight"][in_rings & line].sum() == pytest.approx(0.9)
+    per_s = sum(EXCITED) if kind == "run" else sum(n * w for n, w in zip(EXCITED, SAMPLE_WEIGHT))
+    assert a.gammas["weight"][keep & line].sum() / (eff * corr * a._gate_efficiency) == pytest.approx(per_s, rel=1e-12)
+    same = hand_made((1.1, 1.1), kind, gated=0.5)   # one factor: the share seen is the share
+    keep, _ = same._gate(s)
+    assert same._efficiency_and_correlation(keep)[1] == pytest.approx(1.1, rel=1e-12)
+    assert same._gate_efficiency == pytest.approx(same.gammas["weight"][keep & same._own].sum()
+                                                  / same.gammas["weight"][same._in_rings(s) & same._own].sum(), rel=1e-12)
+
+
+def test_the_other_nucleuss_factor_is_the_mean_over_its_excitations():
+    """Its γ rays are 300 in A and 10 in B; with factors 1.5 and 0.5 they stand for 200 and 20 excitations."""
+    a = hand_made()
+    other = {"energy": 0.5, "correction": "projectile", "line": {"initial": 1, "final": 0},
+             "correlation": {("A", "Ge"): 1.5, ("B", "Ge"): 0.5}}
+    _, corr = a._efficiency_and_correlation(a._in_rings(Settings()), other)
+    assert corr == pytest.approx(310 / 220, rel=1e-12)
+    # A run from before the transitions were kept has no γ ray of a line that is not (1, 0): all of the nucleus's then.
+    other["line"] = {"initial": 3, "final": 0}
+    assert a._efficiency_and_correlation(a._in_rings(Settings()), other)[1] == pytest.approx(310 / 220, rel=1e-12)
+    assert a._efficiency_and_correlation(np.zeros(len(a.gammas), dtype=bool))[1] == 1.0   # nothing seen
+
+
+@pytest.mark.parametrize("gate", ["all", "inelastic"])
+def test_a_run_has_the_correlation_factor_of_its_sample(ni, gate):
+    """The factors are 1.15 (CD) and 0.83 (strips). The average over the particles seen gave a run a factor 3 % larger than
+    its sample, where a particle has ten chances to be seen, and 5 % larger than the excitations have."""
+    exp, a = ni
+    run = stored_run(a, 5.0, 8)
+    b = Analysis(run.experiment, run.gammas(), run=run)
+    s = Settings(particle_gate=gate)
+    corr = [x._efficiency_and_correlation(x._gate(s)[0])[1] for x in (a, b)]
+    assert corr[1] == pytest.approx(corr[0], rel=0.012)
+    if gate == "all":
+        _, per = a._seen_by(a._gate(s)[0])
+        c = a.events.columns
+        hit = a._elastic_rows(s) & np.isin(c["channel"], [i for i, n in enumerate(a.events.channels) if "excited" in n])
+        assert corr[0] == pytest.approx(np.average(per[c["detector"][hit]], weights=c["weight"][hit]), rel=0.005)
 
 
 def test_b_e2_agrees_with_the_input_with_the_rutherford_normalisation(ni):
