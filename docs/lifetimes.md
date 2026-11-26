@@ -238,7 +238,10 @@ to the suite appears there without a change to the report.
 ## Limits
 
 - **Deorientation in vacuum** follows the static model (G_k(t) = α_k + (1 − α_k)e^(−Γ_k t), α_k and Γ_k given);
-  dynamic deorientation and an a-priori calculation of α_k and Γ_k are left out. The planner's analysis corrects
+  dynamic deorientation and an a-priori calculation of α_k and Γ_k are left out. This is the plunger's own and only
+  deorientation: the two-state model that a Coulomb excitation without a lifetime measurement has (`[reaction]
+  deorientation`, {doc}`theory/coulex`) is not applied beside a `[lifetime]` section, even where the reaction says
+  `"vacuum"` (the summary notes it), and DSAM has none, since the nuclei stop. The planner's analysis corrects
   Coulomb excitation's first excited state for it; the correction is good to about 2% of τ (the alignment is
   averaged over a ring, with one flight time per distance at the mean speed), which is not in the budget. Other
   levels are not corrected, and the result's notes say so.

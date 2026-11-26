@@ -560,11 +560,19 @@ setup file and seed reproduce every number.</p>
         b_unit = unit_words(f"e2fm{2 * int(s['multipolarity'][1])}")
         polarisation = (f" with the E1 polarisation correction (d = {s['e1_polarisation']:g}, as in GOSIA)"
                         if s["multipolarity"] == "E2" and s["e1_polarisation"] else "")
+        if s.get("deorientation") == "vacuum":
+            g = s.get("deorientation_g")
+            deoriented = ("<p>A level with a half-life that decays after leaving the target is deoriented in vacuum "
+                          "(GOSIA's two-state model with its parameters, g = "
+                          + (f"{g:g}" if g is not None else "Z/A") + "): its γ rays come out more evenly.</p>")
+        else:
+            deoriented = ""
         return f"""<h{level}>Coulomb excitation</h{level}>
 <p>{e(s['excite'].capitalize())} excited to {s['energy_kev']:g} keV (B({e(s['multipolarity'])}↑) =
 {_fmt(s['b_up_e2fm'])} {b_unit}), first-order semiclassical theory{polarisation}: adiabaticity
 ξ = {x['xi']:.2f}, Sommerfeld parameter η = {x['eta']:.1f}, total cross section {x['total_mb']:.3g} mb. Safe
 (Cline's criterion, closest approach ≥ {x['safe_distance_fm']:.1f} fm) at {safe}.</p>
+{deoriented}
 {drawn}
 <table><thead><tr><th>Detector</th><th>Excitation events (1/s)</th></tr></thead><tbody>{rows}</tbody></table>
 {(f'<h{sub}>γ rays</h{sub}><table><thead><tr><th>Particle detector</th><th>γ detector</th><th>E_γ (keV)</th>'

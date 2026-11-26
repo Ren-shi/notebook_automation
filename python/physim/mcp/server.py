@@ -37,6 +37,12 @@ Quantities are text with a unit, as in the app and setup files: "30 MeV", "0.5 m
 experiment's summary, with problems (the setup is invalid until they are fixed) and warnings (most important
 first): read them before going on.
 
+Coulomb excitation has, unless the setup says otherwise, GOSIA's E1 polarisation correction (reaction
+e1_polarisation, GOSIA's d, 0.0038) and the deorientation in vacuum of levels with a half-life that decay after
+leaving the target (reaction deorientation "vacuum", GOSIA's two-state model with its parameters, or "none";
+deorientation_g, Z/A when not set). get_setup's in_effect says what is applied. A lifetime measurement has its own
+deorientation (set_plunger) and not this one.
+
 The planner app (physim app) shows the same experiment folders. It does not watch for changes: an experiment
 changed here shows the changes in the app once it is opened there again.
 
