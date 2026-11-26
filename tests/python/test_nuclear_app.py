@@ -58,6 +58,12 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _own_folders(tmp_path) -> dict:
+    """The app's folders, apart from the machine's ~/.physim: with the experiments, the shell-model results or the nuclei
+    there the start page is another."""
+    return {"PHYSIM_" + name.upper(): str(tmp_path / name) for name in ("experiments", "shellmodel", "nuclei")}
+
+
 def test_the_app_serves_every_example(tmp_path):
     pytest.importorskip("nicegui")
     from physim.nuclear import workbench
@@ -66,7 +72,7 @@ def test_the_app_serves_every_example(tmp_path):
     # NiceGUI switches to its own test mode when it sees pytest's variables; the app here is a normal run.
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST")}
     env["PYTHONIOENCODING"] = "utf-8"
-    env["PHYSIM_EXPERIMENTS"] = str(tmp_path)
+    env.update(_own_folders(tmp_path))
     proc = subprocess.Popen([sys.executable, "-m", "physim", "app", "--no-browser", "--port", str(port)],
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     try:
@@ -178,7 +184,7 @@ def test_desktop_launch(tmp_path):
     from physim.nuclear import app
 
     port = _free_port()
-    env = {"LOCALAPPDATA": str(tmp_path), "PYTHONIOENCODING": "utf-8"}
+    env = {"LOCALAPPDATA": str(tmp_path), "PYTHONIOENCODING": "utf-8", **_own_folders(tmp_path)}
     first = _start(["--desktop", "--no-browser", "--port", str(port), "--idle-exit", "15"], env)
     try:
         assert _wait_for(lambda: app.planner_at(port), 60), "the planner did not start"
