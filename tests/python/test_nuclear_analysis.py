@@ -158,7 +158,8 @@ def hand_made(factors=(1.6, 0.4), kind="run", gated=1.0, above=True) -> Analysis
     n = len(detector)
     events = SimpleNamespace(detectors=["A", "B"], channels=["elastic", "excited"], beam_time_s=1.0, columns={
         "detector": np.array(detector), "measured": np.array(measured), "counted": np.ones(n, dtype=bool),
-        "segment_i": np.zeros(n, dtype=int), "channel": np.ones(n, dtype=int), "weight": np.ones(n)})
+        "segment_i": np.zeros(n, dtype=int), "segment_j": np.zeros(n, dtype=int), "recoil": np.zeros(n, dtype=bool),
+        "channel": np.ones(n, dtype=int), "weight": np.ones(n)})
     particle, weight, initial, final, nucleus = (np.array(x) for x in zip(*rays))
     m = len(particle)
     crystal = SimpleNamespace(name="Ge", element=None,
@@ -171,6 +172,15 @@ def hand_made(factors=(1.6, 0.4), kind="run", gated=1.0, above=True) -> Analysis
     a.__dict__.update(experiment=SimpleNamespace(excitation=SimpleNamespace(excite="target")), gammas=gammas, events=events,
                       taken=None, e0=1.0, _own=nucleus == 0, _transition=(1, 0), _whole=True,
                       _correlation={(d, "Ge"): c for d, c in zip("AB", factors)})
+
+    def parts(other=None):
+        """Each part of a detector (one segment, one kind of particle here) has the detector's factor."""
+        table = a._correlation if other is None else other["correlation"]
+        keys = a._part_keys(other)
+        rows = np.array([table.get((events.detectors[int(k[0])], "Ge"), 1.0) for k in keys]).reshape(len(keys), 1)
+        return ["Ge"], rows, a._parts["own" if other is None else "other"][1]
+
+    a._part_factors = parts
     return a
 
 
@@ -242,10 +252,18 @@ def test_a_run_has_the_correlation_factor_of_its_sample(ni, gate):
     corr = [x._efficiency_and_correlation(x._gate(s)[0])[1] for x in (a, b)]
     assert corr[1] == pytest.approx(corr[0], rel=0.012)
     if gate == "all":
+        # The mean over the excited particles of the factor of each one's segment and kind (those of its parts that have
+        # a γ ray, which are nearly all).
         _, per = a._seen_by(a._gate(s)[0])
         c = a.events.columns
         hit = a._elastic_rows(s) & np.isin(c["channel"], [i for i, n in enumerate(a.events.channels) if "excited" in n])
-        assert corr[0] == pytest.approx(np.average(per[c["detector"][hit]], weights=c["weight"][hit]), rel=0.005)
+        keys, part_of = a._part_keys(), a._parts["own"][1]
+        factor_of = {tuple(int(x) for x in k): per[np.flatnonzero(part_of == n)[0]] for n, k in enumerate(keys)}
+        f = np.array([factor_of.get(tuple(int(x) for x in k), np.nan) for k in
+                      zip(c["detector"][hit], c["segment_i"][hit], c["segment_j"][hit], c["recoil"][hit])])
+        ok = np.isfinite(f)
+        assert ok.mean() > 0.99
+        assert corr[0] == pytest.approx(np.average(f[ok], weights=c["weight"][hit][ok]), rel=0.005)
 
 
 def test_b_e2_agrees_with_the_input_with_the_rutherford_normalisation(ni):

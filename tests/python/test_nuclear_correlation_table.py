@@ -37,8 +37,10 @@ def test_the_points_cover_the_solid_angle_of_the_face():
     exp = Experiment.example("coulex_ni58")
     for g in Array.from_experiment(exp):
         whole = g.solid_angle() * 1e-3
-        for limits in ((), (g.theta_range()[0] * 0.6 + g.theta_range()[1] * 0.4,)):
-            assert _table_points(g, 8, limits)[1].sum() == pytest.approx(whole, rel=1e-6)
+        assert _table_points(g, 8)[1].sum() == pytest.approx(whole, rel=1e-6)
+        # Cut where no particle turns back, the pieces (5 points each, crowded to their ends) still cover the face.
+        cut = (g.theta_range()[0] * 0.6 + g.theta_range()[1] * 0.4,)
+        assert _table_points(g, 8, cut)[1].sum() == pytest.approx(whole, rel=1e-4)
         assert sum(_table_points(g, 3, (), seg)[1].sum() for seg in g.segments) == pytest.approx(whole, rel=1e-6)
 
 

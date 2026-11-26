@@ -314,6 +314,9 @@ workflow builds the wheels, tests them and publishes to PyPI.
   setup without plunger are within 0.02 % per pair of a fine table; events against the plan on that ⁹⁸Ru setup: χ²/dof 0.82
   with deorientation off and on (15.2 and 2.6 before), no pair beyond 3σ. Ordinary plans take as long as before (±3 %); the
   ⁹⁸Ru plunger's 7 % longer. **Tables of every example move**: by up to 0.08 % (0.75 % Allmond per crystal, 2.3 % ⁹⁸Ru).
+  `lifetime_reproduction.coulex_alignment` takes the same points: the ⁹⁸Ru plunger's alignment with the beam and the recoils
+  (what the planner's deorientation correction uses) is a₂ = 0.21, a₄ = −0.09, not 0.26 and −0.17; gated on the recoils
+  (the reproduction's) 0.498 and −0.691, not 0.504 and −0.686.
 - A weighted sample keeps the γ rays of particles its detectors count, as a run does: it kept those of particles below
   threshold (1.3 % of `coulex_ni58`'s), and its ⟨P⟩/B counted their excitations (+1.0 %), together +0.3 % on B(E2). Where
   the threshold cuts a segment its ⟨P⟩/B is the segment's of the counted particles, as a run's. `GammaEvents.rate`, `counts`
