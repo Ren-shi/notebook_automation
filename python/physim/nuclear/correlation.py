@@ -28,8 +28,8 @@ rotated at once::
     w = e.weights(rho, directions)            # 4π W along each direction (rho: n × 9 × 9, trace 1)
     rho_2 = e.after(rho, directions)          # the 2⁺ state each γ ray leaves (n × 5 × 5, trace 1)
 
-Not included: the conversion electrons' own correlation (a converted transition feeds as an unobserved one), and
-deorientation while a level lives.
+Not included: the conversion electrons' own correlation (a converted transition feeds as an unobserved one).
+Deorientation while a level lives is the caller's: the ρ given here is the one the level decays with.
 """
 
 from __future__ import annotations
@@ -108,9 +108,10 @@ class Emission:
         #: No 4π W(n) exceeds this, for any ρ of trace 1.
         self.bound = float(self.p.max())
 
-    def weights(self, rho: np.ndarray, directions: np.ndarray) -> np.ndarray:
+    def weights(self, rho: np.ndarray, directions: np.ndarray, tally=None) -> np.ndarray:
         """4π W along each direction (n × 3, in the frame of ``rho``) for each density matrix of ``rho``
-        (n × (2I + 1)², trace 1): 1 on average over the sphere."""
+        (n × (2I + 1)², trace 1): 1 on average over the sphere. One below zero (a matrix that is not quite positive) is
+        taken as zero; ``tally(values)`` is given the values as they were."""
         n = len(directions)
         out = np.zeros(n)
         for lo in range(0, n, BLOCK):
@@ -118,6 +119,8 @@ class Emission:
             d = rotation(self.ji, directions[sl])
             diag = (d.conj() * (rho[sl] @ d)).sum(axis=1).real
             out[sl] = diag @ self.p
+        if tally is not None:
+            tally(out)
         return np.maximum(out, 0.0)
 
     def after(self, rho: np.ndarray, directions: np.ndarray) -> np.ndarray:
@@ -139,9 +142,9 @@ class Emission:
         out[~good] = isotropic(self.jf)
         return out
 
-    def sample(self, rho: np.ndarray, rng) -> np.ndarray:
+    def sample(self, rho: np.ndarray, rng, tally=None) -> np.ndarray:
         """A direction for each density matrix of ``rho``, drawn from W(n): unit vectors n × 3 in its frame, by
-        acceptance against :attr:`bound`."""
+        acceptance against :attr:`bound` (``tally`` as in :meth:`weights`)."""
         n = len(rho)
         out = np.zeros((n, 3))
         todo = np.arange(n)
@@ -152,7 +155,7 @@ class Emission:
             ph = rng.uniform(0.0, 2 * math.pi, len(todo))
             s = np.sqrt(np.maximum(1 - u * u, 0.0))
             cand = np.c_[s * np.cos(ph), s * np.sin(ph), u]
-            w = self.weights(rho[todo], cand)
+            w = self.weights(rho[todo], cand, tally)
             ok = rng.uniform(0.0, self.bound, len(todo)) <= w
             out[todo[ok]] = cand[ok]
             todo = todo[~ok]

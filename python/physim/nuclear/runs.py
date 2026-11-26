@@ -11,7 +11,7 @@ folder::
 
 A **run** is a beam run of a duration, a source run (beam off, a calibration source at a position) or an alignment
 run (a beam run analysed with a deliberately wrong assumed geometry). ``setup.toml`` is the exact setup the run was
-taken with (with the E1 polarisation its events have: :func:`taken_setup`), ``summary.json`` its counters, and
+taken with (with the E1 polarisation and the deorientation its events have: :func:`taken_setup`), ``summary.json`` its counters, and
 ``events.npz`` its data as compact named columns readable from any Python::
 
     from physim.nuclear import Experiment
@@ -197,8 +197,8 @@ def _strip_labels(obj):
 def physics_changes(taken: dict, current: dict) -> list:
     """What differs in the physics between the setup a run was taken with and the current one, as
     ["target.thickness: 0.5 mg/cm2 → 1.0 mg/cm2", ...]. Labels (titles, descriptions, names) are ignored, and a
-    Coulomb excitation that does not set its E1 polarisation has the default (a stored run's setup always says it:
-    :func:`taken_setup`)."""
+    Coulomb excitation that does not set its E1 polarisation or its deorientation has the default (a stored run's setup
+    always says them: :func:`taken_setup`); a lifetime measurement has no deorientation but its own."""
     out: list = []
 
     def walk(a, b, path):
@@ -217,17 +217,26 @@ def physics_changes(taken: dict, current: dict) -> list:
                 return str(x)
             out.append(f"{path}: {show(a)} → {show(b)}")
 
-    walk(_with_default_polarisation(_strip_labels(taken)), _with_default_polarisation(_strip_labels(current)), "")
+    walk(_with_defaults(_strip_labels(taken)), _with_defaults(_strip_labels(current)), "")
     return out
 
 
-def _with_default_polarisation(setup: dict) -> dict:
+def _with_defaults(setup: dict) -> dict:
+    """A setup (a dict) with the E1 polarisation and the deorientation in effect written out: the defaults of a Coulomb
+    excitation that does not set them, and no deorientation (nor its g factor, nor one that "none" does not use) beside
+    a ``[lifetime]`` section."""
     from .coulex import GOSIA_DIPOLE_POLARISATION
 
     r = setup.get("reaction")
-    if not isinstance(r, dict) or r.get("type") != "coulex" or r.get("e1_polarisation") is not None:
+    if not isinstance(r, dict) or r.get("type") != "coulex":
         return setup
-    return {**setup, "reaction": {**r, "e1_polarisation": GOSIA_DIPOLE_POLARISATION}}
+    r = dict(r)
+    if r.get("e1_polarisation") is None:
+        r["e1_polarisation"] = GOSIA_DIPOLE_POLARISATION
+    r["deorientation"] = "none" if setup.get("lifetime") else r.get("deorientation") or "vacuum"
+    if r["deorientation"] == "none":
+        r.pop("deorientation_g", None)
+    return {**setup, "reaction": r}
 
 
 def _with_polarisation(experiment: Experiment, d: float) -> Experiment:
@@ -239,15 +248,27 @@ def _with_polarisation(experiment: Experiment, d: float) -> Experiment:
     return replace(experiment, excitation=replace(exc, e1_polarisation=d))
 
 
+def _with_deorientation(experiment: Experiment, how: str) -> Experiment:
+    """``experiment`` with the deorientation ``how`` ("vacuum" or "none") written out in its ``[reaction]``; itself if it
+    is not a Coulomb excitation, says its own, or is a lifetime measurement (which has none but its
+    ``lifetime.deorientation``)."""
+    exc = experiment.excitation
+    if exc is None or exc.deorientation is not None or getattr(experiment, "lifetime", None) is not None:
+        return experiment
+    return replace(experiment, excitation=replace(exc, deorientation=how))
+
+
 def taken_setup(folder: Union[str, Path], kind: str = "beam") -> Experiment:
     """The setup a stored run was taken with: its folder's ``setup.toml``.
 
     It says which E1 polarisation the run's events have (``[reaction] e1_polarisation``, written out when the run is
     taken, whether the setup set it or had the default). A Coulomb-excitation run that says none was taken before
     physim had the correction: its events have none, so it is loaded with 0, not with today's default (analysed with
-    it they would read B(E2) up to several percent too high). A source run has no such events and stays as it is."""
+    it they would read B(E2) up to several percent too high). In the same way it says whether its nuclei were deoriented
+    in vacuum (``[reaction] deorientation``), and a run that says nothing is loaded with "none". A source run has no such
+    events and stays as it is."""
     exp = Experiment.load(Path(folder) / "setup.toml")
-    return exp if kind == "source" else _with_polarisation(exp, 0.0)
+    return exp if kind == "source" else _with_deorientation(_with_polarisation(exp, 0.0), "none")
 
 
 # -- generating unweighted events ----------------------------------------------------------------------------------
@@ -848,11 +869,13 @@ class RunTaker:
 
     def write(self) -> RunData:
         """Store the run (setup snapshot, compact events, summary) and return it."""
-        from .gamma import e1_polarisation
+        from .gamma import deorientation_of, e1_polarisation
 
         self.folder.mkdir(parents=True, exist_ok=True)
-        # The E1 polarisation of the events, written out: a setup without one means the default of its day.
-        _with_polarisation(self.experiment, e1_polarisation(self.experiment)).save(self.folder / "setup.toml")
+        # The E1 polarisation and the deorientation of the events, written out: a setup without them means the defaults
+        # of its day.
+        exp = _with_polarisation(self.experiment, e1_polarisation(self.experiment))
+        _with_deorientation(exp, deorientation_of(exp)).save(self.folder / "setup.toml")
         arrays = {k: (np.concatenate(v) if v else np.zeros(0, dtype=PARTICLE_COLUMNS[k][1]))
                   for k, v in self.parts.items()}
         for k, v in self.gparts.items():

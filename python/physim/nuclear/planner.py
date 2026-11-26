@@ -127,8 +127,9 @@ EXPLAIN = {
         "assumptions": "One state reached from a 0⁺ ground state; B(Eλ) as given in the setup; decay in flight after "
                        "leaving the target, with the particle–γ angular correlation of first-order excitation "
                        "(or isotropic, by the switch).",
-        "limits": "Closer than Cline's safe distance nuclear forces interfere; lifetimes and deorientation are not "
-                  "modelled. The rates and the table of all levels are first order; 'Solve with all orders' "
+        "limits": "Closer than Cline's safe distance nuclear forces interfere. Lifetimes, and the deorientation of a "
+                  "nucleus that decays in vacuum (GOSIA's two-state model), need the half-lives of a level scheme. "
+                  "The rates and the table of all levels are first order; 'Solve with all orders' "
                   "includes multi-step excitation and reorientation for the level scheme. With a level scheme "
                   "the simulated events, and the excitation probability of the rates, take the populations of "
                   "all orders too (unless the setup says order = \"first\").",

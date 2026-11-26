@@ -611,9 +611,10 @@ def test_the_gamma_rays_of_a_scheme_follow_the_orientation_of_their_depth(monkey
     """In a level scheme through a thick target the γ rays have the orientation of each event's own beam energy: in thirds
     of the target by depth, the mean P2 and P4 of their angles to the axes of the orbit's frame are those of solutions at
     the beam energies there (solved anew, at other energies than the events take). Of an excitation that starts in the
-    2⁺₁, and of both γ rays of one that starts in the 2⁺₂ and goes through the 2⁺₁."""
+    2⁺₁, and of both γ rays of one that starts in the 2⁺₂ and goes through the 2⁺₁. Without deorientation: the solutions are
+    what the collision leaves."""
     d = coulex_reproduction.setup(levels="ensdf").to_dict()
-    d["reaction"]["order"] = "first"
+    d["reaction"].update(order="first", deorientation="none")
     for m in d["levels"]["beam"]["matrix_element"]:
         if (m["from"], m["to"]) == (0, 3):
             m["value"] = "400 efm2"  # so that the 2⁺₂ is excited often

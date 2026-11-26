@@ -475,8 +475,9 @@ LEFT_OUT = (
     "The E1 polarisation (the virtual excitation of the giant dipole resonance) is GOSIA's correction to the E2 "
     "couplings, with one parameter for every nucleus and every pair of levels, not the resonance of the nucleus at "
     "hand.",
-    "Deorientation; and lifetimes only where the level scheme gives a half-life (the nucleus then slows down along "
-    "its path and decays on the way, with its orientation unchanged; no angular straggling).",
+    "Lifetimes, and the deorientation of a nucleus in vacuum (GOSIA's two-state model, with its parameters), only where "
+    "the level scheme gives a half-life: the nucleus then slows down along its path and decays on the way, without "
+    "angular straggling, and its orientation fades once it has left the target. Fields in solids are not in it.",
     "Cascades: followed through the level scheme when the setup has one (one γ ray per excitation otherwise), "
     "with the angular correlation between successive γ rays; a converted transition hands its orientation on as "
     "an unobserved one.",
