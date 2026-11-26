@@ -4,7 +4,9 @@
 # One per line: file::test (all its parameters, or file::test[parameters]), or file::fixture:NAME for every test
 # that takes a slow fixture. Refresh it from the durations in the log of a run on main.
 
+test_mcp.py::test_a_vacuum_deorientation_beside_a_plunger_is_noted
 test_mcp.py::test_level_schemes_and_the_excited_state
+test_mcp.py::test_the_deorientation_through_set_value_and_get_setup
 test_nuclear_alignment.py::test_the_diagnostic_is_flat_when_aligned_and_the_fit_recovers_an_offset
 test_nuclear_alignment.py::test_the_fit_merges_rings_until_its_points_hold_enough_gamma_rays
 test_nuclear_alignment.py::test_the_fit_recovers_a_two_mm_offset
@@ -25,6 +27,10 @@ test_nuclear_app.py::test_every_figure_renders[coulex_ni62_pt194]
 test_nuclear_app.py::test_every_figure_renders[coulex_ni62_pt194_clovers]
 test_nuclear_app.py::test_every_figure_renders[coulex_ru98_plunger]
 test_nuclear_app.py::test_the_app_serves_every_example
+test_nuclear_app_deorientation.py::test_a_lifetime_measurement_has_its_own
+test_nuclear_app_deorientation.py::test_beside_a_plunger_the_fields_are_greyed_out_and_what_is_written_can_go
+test_nuclear_app_deorientation.py::test_the_card_sets_the_deorientation_and_its_g_factor
+test_nuclear_app_deorientation.py::test_the_record_row_and_the_report_sentence
 test_nuclear_app_shellmodel.py::test_a_cached_result_shows_at_once_and_applies_without_replacing_ensdf
 test_nuclear_both_nuclei.py::test_a_clover_run_counts_what_its_data_sheet_efficiency_says
 test_nuclear_both_nuclei.py::test_a_run_holds_both_nuclei_and_its_analysis_shows_both_peaks

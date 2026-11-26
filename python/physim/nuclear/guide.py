@@ -208,6 +208,22 @@ HELP = {
                                         "the excitation falls, by a few percent for a heavy partner and more at "
                                         "backward angles than at forward ones, as a change of the quadrupole moment "
                                         "would do."),
+    ("reaction", "deorientation"): _h("Deorientation in vacuum: a nucleus that decays after it has left the target "
+                                      "loses part of its orientation to the field of its ion's electrons, so its "
+                                      "γ rays come out more evenly. The model is GOSIA's two-state model with "
+                                      "GOSIA's parameters. Only levels with a half-life in the level scheme that "
+                                      "decay in vacuum are deoriented; a lifetime measurement (plunger, DSAM) has "
+                                      "its own deorientation and not this one.",
+                                      "vacuum (on); none to leave it out",
+                                      "the coincidence rates of long-lived levels fall: for ⁶²Ni on ¹⁹⁴Pt the "
+                                      "⁶²Ni lines by 1.5 to 3% (clovers 5 to 7%), the ¹⁹⁴Pt lines by 8 to 11% "
+                                      "(clovers 20 to 23%)."),
+    ("reaction", "deorientation_g"): _h("The g factor of the excited nucleus's levels for the deorientation in "
+                                        "vacuum, one for all its levels. Only its size matters. The other nucleus of "
+                                        "the collision has Z/A.",
+                                        "empty for Z/A, as GOSIA; the level's measured g if it is known",
+                                        "a larger g turns the spin faster: the levels lose more of their "
+                                        "orientation."),
     ("gamma", "material"): _h("What the crystal is made of: Ge or LaBr3.", "Ge",
                               "LaBr3 is faster and more efficient per volume, with about ten times worse resolution."),
     ("gamma", "absorbers"): _h("Material between the target and the detector, such as a lead or copper sheet "

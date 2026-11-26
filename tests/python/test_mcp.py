@@ -241,3 +241,45 @@ def test_physim_mcp_without_the_extra(monkeypatch, capsys):
     monkeypatch.setitem(sys.modules, "mcp", None)
     assert cli.main([]) == 2
     assert "physim-engine[mcp]" in capsys.readouterr().err
+
+
+# -- the deorientation in vacuum (wave 3B) -------------------------------------------------------------------------
+
+
+def test_the_deorientation_through_set_value_and_get_setup(tools):
+    tools.new_experiment(name="Ni on Pt", from_example="coulex_ni62_pt194")
+    shown = tools.get_setup()["in_effect"]
+    assert shown["reaction.deorientation"] == "vacuum" and shown["reaction.e1_polarisation"] == pytest.approx(0.0038)
+    assert shown["reaction.deorientation_g"] == "Z/A = 0.4516 (62Ni)" and "1.5 to 3%" in shown["deorientation_note"]
+    out = tools.set_value("reaction", "deorientation_g", 0.33)
+    assert out["ok"] and tools.get_setup()["in_effect"]["reaction.deorientation_g"] == pytest.approx(0.33)
+    out = tools.set_value("reaction", "deorientation", "none")
+    assert out["ok"] and out["reaction"]["deorientation"] == "none"
+    shown = tools.get_setup()["in_effect"]
+    assert shown["reaction.deorientation"] == "none" and "reaction.deorientation_g" not in shown
+    assert "The g factor written is not used" in shown["deorientation_note"]
+    assert 'deorientation = "none"' in tools.get_setup()["toml"]
+    assert tools.session.require().experiment.excitation.deorientation == "none"
+    out = tools.set_value("reaction", "deorientation", "sometimes")
+    assert not out["ok"] and any("'vacuum'" in x for x in out["problems"])
+    assert tools.set_value("reaction", "deorientation", None)["ok"]
+    assert tools.set_value("reaction", "deorientation_g", None)["ok"]
+    assert tools.get_setup()["in_effect"]["reaction.deorientation"] == "vacuum"
+
+
+def test_a_vacuum_deorientation_beside_a_plunger_is_noted(tools):
+    tools.new_experiment(name="Ru plunger", from_example="coulex_ru98_plunger")
+    assert not any("does nothing" in w.text for w in tools.session.require().warnings())
+    out = tools.set_value("reaction", "deorientation", "vacuum")
+    assert out["ok"]
+    note = [w for w in out["warnings"] if "does nothing beside the lifetime measurement" in w["text"]]
+    assert len(note) == 1 and note[0]["level"] == "note" and "lifetime.deorientation" in note[0]["text"]
+    shown = tools.get_setup()["in_effect"]
+    assert shown["reaction.deorientation"] == "none" and "does nothing" in shown["deorientation_note"]
+    out = tools.set_value("reaction", "deorientation", "none")
+    assert not any("does nothing" in w["text"] for w in out["warnings"])
+
+
+def test_a_setup_without_coulomb_excitation_has_nothing_in_effect(tools):
+    tools.new_experiment(name="Gold", from_example="alpha_on_gold")
+    assert "in_effect" not in tools.get_setup()

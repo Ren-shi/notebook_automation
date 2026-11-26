@@ -27,6 +27,29 @@ Value = Union[str, int, float, bool, None]
 _LINE = ("shape", "model", "theta", "phi", "distance")
 
 
+def _in_effect(experiment) -> dict:
+    """The Coulomb-excitation settings a setup may leave to their defaults, as they are applied ({} for a setup without
+    Coulomb excitation)."""
+    from ..nuclear import workbench
+    from ..nuclear.gamma import deorientation_of, e1_polarisation
+
+    exc = experiment.excitation
+    if exc is None:
+        return {}
+    st = workbench.deorientation_state(experiment.to_dict())
+    out = {"reaction.e1_polarisation": e1_polarisation(experiment),
+           "reaction.deorientation": deorientation_of(experiment)}
+    if out["reaction.deorientation"] == "vacuum":
+        if exc.deorientation_g is not None:
+            out["reaction.deorientation_g"] = exc.deorientation_g
+        elif st["z_over_a"] is not None:
+            out["reaction.deorientation_g"] = f"Z/A = {st['z_over_a']:.4f} ({st['nuclide']})"
+        else:
+            out["reaction.deorientation_g"] = "Z/A"
+    out["deorientation_note"] = workbench.deorientation_note(st)
+    return out
+
+
 def _line(number: int, det: dict) -> str:
     where = ", ".join(f"{k} {det[k]}" for k in _LINE if k in det)
     return f"{number}. {det.get('name', '(no name)')}: {where}"
@@ -166,9 +189,17 @@ class SetupTools:
     def get_setup(self) -> dict:
         """The open experiment's setup as TOML text: every field of the beam, target, reaction, run, detectors,
         γ-ray detectors and level schemes. When the setup being edited has problems, this is the last valid setup
-        and the problems are listed."""
+        and the problems are listed. For Coulomb excitation, in_effect gives the physics settings the TOML may leave
+        to their defaults, as they are applied: reaction.e1_polarisation (GOSIA's d), reaction.deorientation
+        ("vacuum": GOSIA's two-state model for levels that decay after leaving the target; "none" beside a lifetime
+        measurement, which has its own) and reaction.deorientation_g (Z/A unless set), with a note when the setup
+        sets one that does nothing."""
         p = self.session.require()
-        return {"toml": p.to_toml(), "problems": list(p.problems)}
+        out = {"toml": p.to_toml(), "problems": list(p.problems)}
+        in_effect = _in_effect(p.experiment)
+        if in_effect:
+            out["in_effect"] = in_effect
+        return out
 
     def replace_setup(self, toml_text: str) -> dict:
         """Replace the whole setup of the open experiment with a setup in TOML text (the format get_setup returns
@@ -215,8 +246,10 @@ class SetupTools:
         Examples: ("beam", "energy", "32 MeV"); ("target", "material", "208Pb"); ("reaction", "type", "coulex");
         ("reaction", "type", "fusion-evaporation"); ("reaction channel 2", "cross_section", "450 mb");
         ("detector CD", "distance", "35 mm"); ("reaction", "e1_polarisation", 0) for Coulomb excitation without the
-        E1 polarisation correction (GOSIA's d, 0.0038 when not set). Returns ok (whether the setup is valid) and the
-        summary."""
+        E1 polarisation correction (GOSIA's d, 0.0038 when not set); ("reaction", "deorientation", "none") without
+        the deorientation in vacuum ("vacuum", GOSIA's two-state model, when not set; a lifetime measurement has its
+        own and ignores it); ("reaction", "deorientation_g", 0.33) for the g factor of the excited nucleus's levels
+        (Z/A when not set, null to go back to it). Returns ok (whether the setup is valid) and the summary."""
         p = self.session.require()
         return _changed(p, p.set(_section(p, section), field, value))
 

@@ -126,7 +126,9 @@ EXPLAIN = {
                    "for a nucleus moving at β, emitting at α to its velocity.",
         "assumptions": "One state reached from a 0⁺ ground state; B(Eλ) as given in the setup; decay in flight after "
                        "leaving the target, with the particle–γ angular correlation of first-order excitation "
-                       "(or isotropic, by the switch).",
+                       "(or isotropic, by the switch); a level with a half-life that decays in vacuum is deoriented "
+                       "by the field of its ion (GOSIA's two-state model, unless the setup says deorientation = "
+                       "\"none\").",
         "limits": "Closer than Cline's safe distance nuclear forces interfere. Lifetimes, and the deorientation of a "
                   "nucleus that decays in vacuum (GOSIA's two-state model), need the half-lives of a level scheme. "
                   "The rates and the table of all levels are first order; 'Solve with all orders' "
@@ -162,6 +164,21 @@ LIFETIME_REACTIONS = ("coulex", "fusion-evaporation")
 
 #: The fields of a lifetime section that belong to a plunger (RDDS) only.
 PLUNGER_FIELDS = ("distances", "offset", "deorientation", "stopper", "degrader2")
+
+
+def _vacuum_beside_lifetime(experiment) -> Optional[str]:
+    """The note for a lifetime measurement whose ``[reaction]`` still sets the deorientation in vacuum (or its g
+    factor): it is accepted and does nothing, as a plunger has only its own ``lifetime.deorientation`` and DSAM none."""
+    exc = experiment.excitation
+    if exc is None or experiment.lifetime is None:
+        return None
+    given = [f for f in ("deorientation", "deorientation_g") if getattr(exc, f, None) is not None]
+    if not given or (given == ["deorientation"] and exc.deorientation == "none"):
+        return None
+    own = ("a plunger has only its own deorientation (lifetime.deorientation), or none"
+           if experiment.lifetime.method != "dsam" else "in a DSAM measurement the nuclei stop in the backing")
+    return (f"The setup's {' and '.join('reaction.' + f for f in given)} does nothing beside the lifetime "
+            f"measurement: {own}. The deorientation in vacuum (GOSIA's two-state model) is not applied.")
 
 
 def first_state(nuclide: str, multipolarity: str = "E2", max_energy_kev: float = 3000.0) -> tuple:
@@ -1002,6 +1019,9 @@ class Planner:
             text = deorientation_warning(self.experiment)
             if text:
                 out.append(Warning("warning", "physics", text))
+            text = _vacuum_beside_lifetime(self.experiment)
+            if text:
+                out.append(Warning("note", "physics", text))
             # The beam in the plunger's foils: its heating and their own Coulomb excitation (kept for the setup,
             # shared with Planner.lifetimes).
             for text in stopper_warnings(self):
@@ -2267,7 +2287,7 @@ class Planner:
         exc = self.experiment.excitation
         if exc is None:
             return {"available": False, "reason": "The setup has no excited state ([reaction] type = \"coulex\")."}
-        from .gamma import doppler_table
+        from .gamma import deorientation_of, doppler_table
         from .rates import coulex_for
 
         r = self._rates()
@@ -2280,7 +2300,9 @@ class Planner:
             self._cache["gamma"] = doppler_table(self.experiment) if self.experiment.gamma_detectors else []
         return {"available": True, "state": {"excite": exc.excite, "energy_kev": exc.energy_mev * 1e3,
                                              "multipolarity": exc.multipolarity, "b_up_e2fm": exc.b_up_e2fm,
-                                             "e1_polarisation": cx.e1_polarisation},
+                                             "e1_polarisation": cx.e1_polarisation,
+                                             "deorientation": deorientation_of(self.experiment),
+                                             "deorientation_g": exc.deorientation_g},
                 "xi": cx.xi, "eta": cx.eta, "safe_distance_fm": cx.safe_distance, "max_safe_angle": cx.max_safe_angle(),
                 "total_mb": cx.total(), "theta_cm": th, "probability": cx.probability(th),
                 "rates": rates, "particles": self._particle_energies(ch), "doppler": self._cache["gamma"],

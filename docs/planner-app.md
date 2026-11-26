@@ -506,8 +506,10 @@ opened from), is the reference behind the numbers; it is not a step. It shows th
 with none open, those of a first example, and it says so. It follows the order
 of the physics register: nuclear data and level schemes, kinematics, energy loss, the Rutherford orbit, the
 detectors and the γ-ray response, rates and events, and Coulomb excitation. Each section links to its register page
-and names the tests behind it. **See the physics** in a number's explanation, or the flask on a setup card, opens
-the section it belongs to.
+and names the tests behind it. Under Coulomb excitation, **Deorientation in vacuum** says whether it is applied to the
+setup and why, gives G₂ / G₄ of every level with a half-life of both nuclei at v/c 0.02, 0.05 and 0.08, and explains
+the model, its parameters, where it acts, its blind check against GOSIA and what it leaves out. **See the physics**
+in a number's explanation, or the flask on a setup card, opens the section it belongs to.
 
 Each result opens with **How to read this**, using your numbers, and ends with an **Explain** panel giving the
 formula, the assumptions and where they stop being valid.
@@ -521,7 +523,8 @@ Coulomb excitation or fusion-evaporation. {doc}`lifetimes` has the physics and t
   fusion-evaporation setup: **Add** under *Lifetime measurement* in the setup window offers **Plunger (RDDS)** and
   **Line shapes (DSAM)**. In a fusion-evaporation experiment the panel **Measure the lifetimes** on the Plan step
   does the same. The *Lifetime measurement* card holds the distances, the stopper or degrader foils and the
-  deorientation (or the DSAM backing).
+  deorientation (or the DSAM backing). That deorientation is the only one a lifetime measurement has: the reaction's
+  deorientation in vacuum (GOSIA's two-state model) is not applied beside it.
 - **Plan:** the panel *Lifetimes · Plunger (RDDS)* (or *Line shapes (DSAM)*): per level its method, τ and where τ
   comes from, the recommended distances, the separation of the shifted and unshifted peaks at each detector, F(τ)
   for DSAM, the beam time per distance, the beam in the plunger's foils, and the predicted spectra per distance.
@@ -736,8 +739,16 @@ The example *coulex_ni58* is a complete one. To build your own (in the setup win
 1. In the card **Target and reaction**, set *What happens in the target* to **Coulomb excitation**.
 2. Choose the **Excited nucleus**: the target, or the beam.
 3. Set the **Multipolarity**, usually E2.
-4. Enter the **State energy** (`1.454 MeV`) and **B(Eλ↑)** (`0.0695 e2b2` or `695 e2fm4`). Take both from ENSDF
-   for your nucleus. Until both are filled in, a red line names what is missing.
+4. Enter the **State energy** (`1.454 MeV`) and **B(Eλ↑)** (`0.0695 e2b2` or `695 e2fm4`). Take both from ENSDF for your
+   nucleus. Until both are filled in, a red line names what is missing. Below them stand the corrections GOSIA has too,
+   both on unless you change them: **E1 polarisation (GOSIA's d)**, empty for GOSIA's 0.0038, and **Deorientation in
+   vacuum**, *In vacuum* (GOSIA's two-state model) or *None*, with the **g factor** of the excited nucleus's levels
+   (empty for Z/A, whose value the field's label gives). A level with a half-life in the level scheme that decays after
+   leaving the target loses part of its orientation, so its coincidences at the angles the correlation favours fall (for
+   ⁶²Ni on ¹⁹⁴Pt: the ⁶²Ni lines by 1.5 to 3%, the ¹⁹⁴Pt lines by 8 to 11%; with clovers 5 to 7% and 20 to 23%). With a
+   lifetime measurement the two deorientation fields are greyed out: a plunger has its own deorientation on its card (or
+   none), DSAM none; a deorientation still written in the reaction does nothing there, which the card and the summary
+   say, and **Remove it** takes it out.
 5. **Particle detectors** are silicon detectors. They measure the scattered beam particles and recoils, so you know
    each excited nucleus's direction and speed. Close collisions excite the state, so put detectors where those
    particles go: **Add → Backward ring around the beam (CD, 180°)** for the backscattered beam, and forward strip
@@ -796,9 +807,14 @@ p.set("target", "thickness", "1.0 mg/cm2")
 p.run_status()["changes"]                      # ['target.thickness: 0.5 mg/cm2 → 1.0 mg/cm2']
 ```
 
-Each run folder holds `setup.toml` (the setup it was taken with, and the E1 polarisation its events have), `summary.json` (counters, rates, the Plan's
-predictions at the time) and `events.npz` (named NumPy arrays: one row per counted particle and per γ ray). The
-results of the experiment's analyses are rows of `results.jsonl` in the experiment's folder ({doc}`results`).
+A run stored before physim had the E1 polarisation or the deorientation in vacuum is read as its events were made,
+without them; the Data step then says it was taken with another setup, in words ("deorientation in vacuum: none →
+vacuum").
+
+Each run folder holds `setup.toml` (the setup it was taken with, and the E1 polarisation and the deorientation in
+vacuum its events have), `summary.json` (counters, rates, the Plan's predictions at the time) and `events.npz`
+(named NumPy arrays: one row per counted particle and per γ ray). The results of the experiment's analyses are rows
+of `results.jsonl` in the experiment's folder ({doc}`results`).
 
 ## What it does not do yet
 

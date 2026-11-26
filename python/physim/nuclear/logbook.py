@@ -2632,7 +2632,10 @@ def experiment_html(planner, result=None, scene_png: Optional[str] = None, plan=
             if h["run"] is not None and h is history[0]:
                 sec["setup"].append(f"<li>{which}: the setup as it started.</li>")
             else:
-                sec["setup"].append(f"<li>{which}: " + (e("; ".join(h["changes"])) if h["changes"] else
+                from .workbench import change_words
+
+                sec["setup"].append(f"<li>{which}: " + (e("; ".join(change_words(c) for c in h["changes"]))
+                                                        if h["changes"] else
                                                         "no change to the physics") + "</li>")
         sec["setup"].append("</ul>")
 

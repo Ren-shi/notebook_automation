@@ -40,6 +40,28 @@ workflow builds the wheels, tests them and publishes to PyPI.
     current setup is reported as a change of the physics.
   - The GOSIA input of `Multistep` writes `VAC,` with the setup's parameters (Λ* = 0 for none). The app's page, MCP, the
     guide and the docs follow.
+- The deorientation in vacuum in the app, MCP, the guide, the record, the report and the docs.
+  - Setup card, *Target and reaction*: **Deorientation in vacuum** (in vacuum, GOSIA's two-state model, or none) and its
+    **g factor** (empty for Z/A, whose value the field's label gives) below the E1 polarisation, with a line on what it
+    does and how large it is. With a lifetime measurement both are greyed out with the reason (a plunger has its own
+    deorientation, DSAM none); a deorientation still written in the reaction is accepted and does nothing, which the
+    card and the setup's summary (a note) say, and **Remove it** takes it out. The card's first line says "no
+    deorientation" when it is switched off.
+  - Physics page, Coulomb excitation: whether it is applied and why, G₂ / G₄ of every level with a half-life of both
+    nuclei at v/c 0.02, 0.05 and 0.08, and an explanation (the model, GOSIA's parameters, where it acts, the blind check
+    against GOSIA: 174 G_k, none missed, largest difference 0.00058; what it leaves out). The guide's help for both
+    fields; the Explain panel's assumptions.
+  - MCP: `get_setup` gives `in_effect` (the E1 polarisation, the deorientation and its g as applied, with a note when a
+    setting does nothing); `set_value("reaction", "deorientation", "none")` and `("reaction", "deorientation_g", 0.33)`
+    are in its examples (the generic path already set them); the server's instructions and `set_plunger` say which
+    deorientation a lifetime measurement has.
+  - The record's table of the nuclear data has a row for it (model and g, or none, or not applied beside a lifetime
+    measurement); its and the report's "what the simulation leaves out" name the fields in solids, the transient field
+    and fusion-evaporation residues; the report's Coulomb-excitation section says when it is applied. A stored run taken
+    without it is reported on the Data step and in the report's setup history in words ("deorientation in vacuum: none →
+    vacuum", the same for the E1 polarisation).
+  - Docs: the two fields in `nuclear-setup.md` and its "not included" lists, a section in `theory/coulex.md` with its
+    checks, `planner-app.md`, `lifetimes.md` (a plunger has only its own) and the register's Coulomb-excitation row.
 - The E1 polarisation correction to Coulomb excitation, as GOSIA has it, on by default (`[reaction] e1_polarisation`). The
   virtual excitation of the giant dipole resonance weakens every E2 coupling, transitional and diagonal, by 1 − z a/r along
   the orbit, z = d E_cm A/Z² of the excited nucleus. The setting is GOSIA's parameter d: 0.0038 when left out, as in GOSIA;

@@ -450,6 +450,7 @@ def provenance(experiment) -> list:
 
             rows.append(("E1 polarisation, GOSIA's parameter d", f"{e1_polarisation(experiment):g}",
                          "GOSIA's default" if exc.e1_polarisation is None else "user"))
+        rows.append(deorientation_row(experiment))
     for role, scheme in experiment.levels.items():
         for i, lev in enumerate(scheme.levels):
             rows.append((f"{role}: level {i} {lev.label} energy", f"{lev.energy.value:g} keV", lev.energy.source))
@@ -462,6 +463,26 @@ def provenance(experiment) -> list:
         src = "user" if (gd.efficiency is not None or gd.efficiency_curve) else "assumed (typical response)"
         rows.append((f"Efficiency of {gd.name}", "measured" if src == "user" else "typical response", src))
     return rows
+
+
+def deorientation_row(experiment) -> tuple:
+    """The record's row of the deorientation in vacuum of a Coulomb excitation: (quantity, value, source)."""
+    from .gamma import deorientation_of
+    from .workbench import deorientation_state
+
+    exc = experiment.excitation
+    if getattr(experiment, "lifetime", None) is not None:
+        own = "the plunger's own" if experiment.lifetime.method != "dsam" else "none: the nuclei stop"
+        return ("Deorientation in vacuum", f"not applied (lifetime measurement: {own})", "setup")
+    if deorientation_of(experiment) == "none":
+        return ("Deorientation in vacuum", "none", "user")
+    st = deorientation_state(experiment.to_dict())
+    if exc.deorientation_g is not None:
+        g = f"g = {exc.deorientation_g:g}"
+    else:
+        g = f"g = Z/A = {st['z_over_a']:.3f}" if st["z_over_a"] is not None else "g = Z/A"
+    return ("Deorientation in vacuum", f"GOSIA's two-state model, its parameters, {g}",
+            "user" if (exc.deorientation is not None or exc.deorientation_g is not None) else "GOSIA's default")
 
 
 LEFT_OUT = (
@@ -477,7 +498,9 @@ LEFT_OUT = (
     "hand.",
     "Lifetimes, and the deorientation of a nucleus in vacuum (GOSIA's two-state model, with its parameters), only where "
     "the level scheme gives a half-life: the nucleus then slows down along its path and decays on the way, without "
-    "angular straggling, and its orientation fades once it has left the target. Fields in solids are not in it.",
+    "angular straggling, and its orientation fades once it has left the target. Fields in solids, the transient "
+    "field of a magnetised foil and the deorientation of fusion-evaporation residues are not in it; a lifetime "
+    "measurement has only its own (a plunger's static model, as the setup gives it).",
     "Cascades: followed through the level scheme when the setup has one (one γ ray per excitation otherwise), "
     "with the angular correlation between successive γ rays; a converted transition hands its orientation on as "
     "an unobserved one.",
@@ -609,6 +632,7 @@ def _explanation_html(x: Explanation) -> str:
             f'<div class="a">Assumptions: {e(x.assumptions)} <a href="{e(x.reference)}">Theory</a></div></div>')
 
 
-__all__ = ["DOCS", "Explanation", "LEFT_OUT", "analysis_explanations", "explanations", "method_html", "provenance",
+__all__ = ["DOCS", "Explanation", "LEFT_OUT", "analysis_explanations", "deorientation_row",
+           "explanations", "method_html", "provenance",
            "record_css",
            "record_html"]
