@@ -62,6 +62,24 @@ workflow builds the wheels, tests them and publishes to PyPI.
     vacuum", the same for the E1 polarisation).
   - Docs: the two fields in `nuclear-setup.md` and its "not included" lists, a section in `theory/coulex.md` with its
     checks, `planner-app.md`, `lifetimes.md` (a plunger has only its own) and the register's Coulomb-excitation row.
+- A blind check of the γ-ray yields with deorientation in vacuum against GOSIA (`test_nuclear_gosia_yields`, the reference
+  `tests/reference/nuclear/coulex/gosia_yields_vac.csv`). GOSIA's yields at a point (OP,POIN) of every line of ⁶²Ni and
+  ¹⁹⁴Pt (⁶²Ni at 237 MeV on ¹⁹⁴Pt, as `coulex_ni62_pt194`) and ⁹⁸Ru (300 MeV on ²⁴Mg, the recoil detected), three angles
+  each, ten point γ detectors, without deorientation, with GOSIA's parameters and with a given g; GOSIA's inputs written
+  by hand, the app's numbers stored before any run. The on/off ratio of each line at each detector (1320 numbers, within
+  2 % of the change where it is above 1 %, else 1 %) and the yields without deorientation relative to each other (651,
+  1 %): 6 missed, all in the 2⁺₂ → 0⁺ lines, where the two codes' Coulomb excitation of the 2⁺₂ level differs (two
+  interfering paths; GOSIA also excites by M1, the app does not), not the deorientation: ⁶²Ni at one detector where that
+  line's yield is 3 % of its mean (3.2 % off there), ¹⁹⁴Pt and ⁹⁸Ru by 3.5 and 5 × 10⁻⁴ in ratios whose change is just
+  above 1 %. The check sees 1 − G_k 10 % off (every ratio whose change is above 1 %), g or the mean lives 10 % off, the
+  feeding with unattenuated tensors and a nucleus that spends 0.1 ps in the target first.
+  - What the default moves, measured again: the plan's coincidences of `coulex_ni62_pt194` and its clovers as above, the
+    other templates not at all (the same numbers to the last digit, B(E2) of samples and runs too); B(E2) back from samples
+    of 400 000 events (seeds 9101–9103), each analysed with its own setup, on/none: −2.0/−0.5 % (Monte Carlo ±2.1 %),
+    clovers +0.8/+1.4 % (±1.2 %). The Allmond 2014 reproduction passes every check with it and without (worst 0.79 of a
+    band). Its ring 2 closure, −0.36 → +1.70 % on the check's four seeds (band 2.77 %), is statistics: over seeds
+    1001–1024 +0.54 ± 0.32 % with it and −0.09 ± 0.31 % without, over the 20 not used before +0.30 ± 0.34 %; both rings
+    +0.44 ± 0.13 %. The lifetime and fusion-evaporation reproductions and closures have none of it.
 - The E1 polarisation correction to Coulomb excitation, as GOSIA has it, on by default (`[reaction] e1_polarisation`). The
   virtual excitation of the giant dipole resonance weakens every E2 coupling, transitional and diagonal, by 1 − z a/r along
   the orbit, z = d E_cm A/Z² of the excited nucleus. The setting is GOSIA's parameter d: 0.0038 when left out, as in GOSIA;
