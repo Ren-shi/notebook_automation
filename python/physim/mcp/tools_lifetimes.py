@@ -270,8 +270,10 @@ class LifetimeTools:
         length with a density); second_foil for a differential plunger: {"material": "Ta", "thickness": "6.5
         mg/cm2", "gap": "100 um"}; deorientation of the recoil's alignment in vacuum: {"alpha2": 0.18, "gamma2":
         "0.142 /ps", "alpha4": 0.24, "gamma4": "0.314 /ps"} or {"g": 0.47, "c2": "3.3 ps", "c4": "1.5 ps",
-        "alpha2": ..., "alpha4": ...}, {} to remove it. method "dsam" uses the target's backing instead (the
-        plunger's fields are kept aside and come back with "rdds"). remove true takes the lifetime measurement out.
+        "alpha2": ..., "alpha4": ...}, {} to remove it (the static model; the reaction's deorientation in vacuum,
+        GOSIA's two-state model, does nothing beside a lifetime measurement). method "dsam" uses the target's backing
+        instead (the plunger's fields are kept aside and come back with "rdds"). remove true takes the lifetime
+        measurement out.
         Only what is given changes. Returns ok, the lifetime section and the summary with problems and warnings."""
         p = self.session.require()
         if remove:

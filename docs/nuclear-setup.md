@@ -102,6 +102,8 @@ distance **d** from the target. θ = 0° is straight downstream and θ = 180° s
 | `emission` | no | `"correlated"` (default): the γ rays follow the particle–γ angular correlation. `"isotropic"`: they leave evenly in all directions. |
 | `order` | no | With a level scheme of the excited nucleus (`[levels]`): `"all"` (default) populates its levels in the simulated events as the coupled equations give them, to all orders (a 4⁺ state reached through the 2⁺, the reorientation); `"first"` keeps first-order theory, each level in one step from the ground state. Without a level scheme the events are first order. |
 | `e1_polarisation` | no | The E1 polarisation correction, as GOSIA has it: GOSIA's parameter d, a number from 0 to 0.05. Left out it is `0.0038`, GOSIA's own default; `0` leaves the correction out. Every E2 coupling is weakened by 1 − z a/r along the orbit, z = d E_cm A/Z² of the excited nucleus ({doc}`theory/coulex`): with the default, 3.8% fewer 2⁺ excitations of ⁶²Ni in the `coulex_ni62_pt194` example, 0.6% in `coulex_ni58`. GOSIA's input `DIP,` is 1000 d. |
+| `deorientation` | no | `"vacuum"` (also when left out) or `"none"`: whether a nucleus that decays after it has left the target has lost part of its orientation to the hyperfine field of its ion, by GOSIA's two-state model with GOSIA's parameters ({doc}`theory/coulex`). Only levels with a half-life in the level scheme, and only while they live in vacuum: a nucleus that decays in the target or stops there keeps its orientation. For `coulex_ni62_pt194` it lowers the ⁶²Ni coincidences by 1.5 to 3% (clovers 5 to 7%) and the ¹⁹⁴Pt ones by 8 to 11% (clovers 20 to 23%). A lifetime measurement (`[lifetime]`) has its own deorientation, a plunger's `lifetime.deorientation` ({doc}`lifetimes`) or none: beside it this field is accepted and does nothing, and the summary says so. |
+| `deorientation_g` | no | The g factor of the excited nucleus's levels for the deorientation in vacuum, one for all its levels, between −6 and 6 (only its size matters). Left out it is Z/A, as in GOSIA. The other nucleus of the collision has Z/A. |
 | `b_up` | for `coulex` | B(Eλ↑), the reduced transition probability up, with its unit: `"0.0695 e2b2"` or `"695 e2fm4"` for E2 (`e2b`/`e2fm2` for E1, `e2b3`/`e2fm6` for E3). Take it from ENSDF; physim does not look it up. |
 
 A Coulomb-excitation setup:
@@ -375,9 +377,11 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
   target keeps the kinematics of its middle. The simulated events take the orientation at each event's own beam energy
   too, with and without a level scheme, in a target that the generator cuts into slices.
 - **Not included:** excitation in two or more steps and reorientation (first order only, so the matrix elements
-  enter through their size and not their sign), deorientation in vacuum, and lifetimes: every state decays in
-  flight with the orientation it was given. The simulated events of a setup with a level scheme do have the
-  further steps and the reorientation: see "Multi-step excitation and reorientation" below.
+  enter through their size and not their sign). The simulated events of a setup with a level scheme do have the
+  further steps and the reorientation: see "Multi-step excitation and reorientation" below. Lifetimes and the
+  deorientation in vacuum come with the half-lives of a level scheme: the nucleus then decays on its way, and a level
+  that decays after it has left the target is deoriented (`[reaction] deorientation`), in the table and in the events
+  alike. A state without a half-life decays at once, with the orientation it was given.
 
 (particle-gamma-events)=
 ## Particle–γ events
@@ -668,6 +672,10 @@ cc.cross_sections()               # mb, over all angles: every populated level, 
   unless its `[reaction] e1_polarisation` says otherwise, and then the events, the plan's rates, the angular
   correlation, `Multistep` and the analysis have the same. A stored run keeps the d its events were made with
   ({doc}`theory/coulex`).
+- **Deorientation in vacuum** (`physim.nuclear.deorientation`, GOSIA's two-state model) is not part of the solution:
+  the populations and the orientation the collision leaves are the same with it. It acts on the decay, level by level,
+  while a nucleus lives outside the target (`[reaction] deorientation`, on unless the setup says `"none"`; g = Z/A
+  unless `deorientation_g` is given), in the events and in the plan's angular correlation. The classes leave it out.
 - **Speed:** a Runge–Kutta integration whose steps follow the fastest phase. 25 levels (265 substates) take
   about 0.4 s per angle; a grid of 45 angles and 2 energies for an experiment about 40 s.
 
@@ -698,7 +706,8 @@ ms.gosia_input()                    # a GOSIA input that integrates the same yie
   and the integrated Rutherford back. GOSIA's Rutherford uses the inelastic kinematics, so a ratio built from it
   divides by that, not by the elastic one. For ⁶²Ni on carbon the input reproduces an independent hand-written
   GOSIA run within 0.1 % per ring. Its `DIP,` line is the setup's E1 polarisation (1000 d; 0.001 for none, as GOSIA
-  takes 0 as its default), or `dipole`. With `gamma="4pi"`, write `GOSIA_4PI_FORT9` as `fort.9` beside the input; its
+  takes 0 as its default), or `dipole`; its `VAC,` lines the setup's deorientation (Γ, Λ*, τ_c, g, K and x, the g
+  factor written out; Λ* = 0 for none). With `gamma="4pi"`, write `GOSIA_4PI_FORT9` as `fort.9` beside the input; its
   yield ×4π is then the angle-integrated γ yield.
 
 In the app, **Solve with all orders** in the "Excitation and γ rays" tab (once a level scheme is looked up) shows
@@ -716,8 +725,9 @@ gives first-order events instead. The table of angles is solved once per setup, 
 the kinematics of the `[reaction]` state. The analysis extracts B(E2) from such events to all orders (step 7
 under {ref}`Automatic analysis <automatic-analysis>` below).
 
-Not included: deorientation, lifetimes, mutual excitation of both nuclei, and nuclear interference above the safe
-energy.
+Not included: mutual excitation of both nuclei in one collision, and nuclear interference above the safe energy.
+Lifetimes and the deorientation in vacuum come with the level scheme's half-lives; the fields in solids, the transient
+field of a magnetised foil and the deorientation of fusion-evaporation residues are not included ({doc}`theory/coulex`).
 
 ## Tracks of simulated events
 

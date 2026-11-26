@@ -184,7 +184,8 @@ def _value(field: str, text):
             return text  # the setup checks report it
     if field == "addback":
         return text.lower() in ("true", "yes", "on", "1")
-    if field in ("addback_factor", "suppression_factor", "alignment", "entry_spin", "e1_polarisation"):
+    if field in ("addback_factor", "suppression_factor", "alignment", "entry_spin", "e1_polarisation",
+                 "deorientation_g"):
         try:
             return float(text)
         except ValueError:
