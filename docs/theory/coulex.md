@@ -277,6 +277,63 @@ scattering is the Rutherford cross section times 1 − P(θ): 19% fewer elastic 
   sharply aligned: on the ⁶²Ni example it would send 14% fewer γ rays to the crystal at 90° with the CD, and 3%
   more to those at 45° and 135°. Without a level scheme the plan and the events both take the state alone.
 
+## Deorientation in vacuum
+
+A nucleus that leaves the target is an ion stripped of many electrons, and its electron shells are still decaying. The
+hyperfine field they make at the nucleus turns the nuclear spin, so the orientation the collision gave fades while the
+level lives in vacuum, and the γ rays come out more evenly. physim has GOSIA's two-state model of it
+(`physim.nuclear.deorientation`; F. Bosch and H. Spehl, Z. Phys. A 280, 329 (1977); R. Brenn et al., Z. Phys. A 281,
+219 (1977); the GOSIA manual (2012), section 4.4; subroutines `GKVAC`, `GKK`, `XSTATIC` and function `ATS` of
+`gosia_20110524.14.f`, whose arithmetic it follows). The statistical tensors of rank k of a level that has been in vacuum
+for a time t are G_k(t) times what the collision, or the decay that fed it, left. The field first *fluctuates*, turned at
+random every τ_c, until at the rate Λ* the ion reaches its ground state and the field is *static*:
+
+$$
+G_k(t) = e^{-\Lambda^* t} G_k^\mathrm{fl}(t) + \int_0^t \Lambda^* e^{-\Lambda^* t'} G_k^\mathrm{fl}(t')\,
+G_k^\mathrm{st}(t - t')\,dt' ,
+\qquad
+G_k^\mathrm{st}(t) = \langle\alpha_k\rangle + (1 - \langle\alpha_k\rangle)\,e^{-\Gamma t} ,
+$$
+
+with the hard core α_k averaged over the ion's charge states and the field H = K Z β^x. Averaged over the decay of a level
+of mean life τ, (1/τ)∫ G_k(t) e^{−t/τ} dt, this is GOSIA's closed form, the G_k GOSIA prints.
+
+- **The parameters** are GOSIA's defaults (its input `VAC,`): atomic spin J = 3, Γ = 0.02 /ps, Λ* = 0.0345 /ps,
+  τ_c = 3.5 ps, K = 600 T, x = 0.6. The g factor is Z/A, as in GOSIA, unless the setup gives one:
+  `[reaction] deorientation_g`, for every level of the nucleus the reaction names. The other nucleus of the collision
+  has Z/A. `[reaction] deorientation = "none"` leaves it out; left unset it is `"vacuum"`.
+- **Only in vacuum.** A level is deoriented while it lives outside the target and what is behind it: from where its
+  nucleus leaves the stack (in the events each nucleus with its own depth, direction and speed, so its own time of exit
+  and speed in vacuum), or from its feeding if it is fed outside. A nucleus that decays in the target, or stops there, is
+  not deoriented, and a level without a half-life in the level scheme decays at once and keeps G_k = 1. Times are the
+  nucleus's own, the speed that at the exit.
+- **Down a cascade** each level is deoriented before it emits and before it feeds the next one (all ranks of its density
+  matrix), as GOSIA feeds with the deoriented tensors; a converted step takes the average over its level's life. The plan's
+  angular correlation is what the events average to, the feeding in and out of the target in closed form (`gamma.Faded`),
+  and so the coincidence rates, the efficiency and correlation of the analysis and the simulated peaks have it too.
+  The GOSIA input of `Multistep` writes `VAC,` with the setup's parameters (Λ* = 0 for none).
+- **Its size** on `coulex_ni62_pt194`: G₂ of the ⁶²Ni 2⁺₁ (1.44 ps) is 0.92 at β = 0.05, that of the ¹⁹⁴Pt 2⁺₁ (42 ps)
+  0.16. The coincidences fall by 1.5% (CD) and 2.9% (strips) for ⁶²Ni and by 8.3% and 10.6% for ¹⁹⁴Pt; with clovers by 5.3%
+  and 6.7%, and by 20.3% and 23.0%. B(E2) from samples made with it comes back (12 seeds: +0.39 ± 0.49%; clovers
+  −0.22 ± 0.27%); analysed without it the same samples read 2.65% low (clovers 7.7%). The other templates have no half-life
+  in a scheme their events follow and do not change. The Physics page of the app gives G₂ and G₄ of every level with a
+  half-life at v/c 0.02, 0.05 and 0.08.
+- **Against GOSIA, blind** (`tests/reference/nuclear/coulex/gosia_gk.csv`, the app's numbers stored before GOSIA was run):
+  174 coefficients G₂, G₄, G₆ (k up to 2I) of the ⁶²Ni, ¹⁹⁴Pt, ¹⁵²Sm, ⁴⁸Ti and ⁹⁸Ru levels at v/c from 0.02 to 0.08, with
+  GOSIA's defaults and with a set in which every parameter was changed: none outside 0.002 + half the last printed digit.
+  The largest difference, 0.00058, is GOSIA's g = Z/mass (the mass typed in its input) against physim's Z/A; where `VAC,`
+  gives g the two agree to the last digit.
+- **Where physim departs from GOSIA:** g = Z/A with the mass number; every speed has its own ⟨α_k⟩ (GOSIA works it out
+  once in a run, for the first experiment); g = 0 is no interaction (GOSIA's formula gives 0/0).
+- **Not included:** the fields in solids (a nucleus in the target, its backing or a stopper), the transient field of a
+  nucleus crossing a magnetised foil, and the deorientation of fusion-evaporation residues. A lifetime measurement has its
+  own: a plunger only the static model of its `lifetime.deorientation` ({doc}`lifetimes`), or none; DSAM none, since the
+  nuclei stop. With a `[lifetime]` section the reaction's setting does nothing, and the app and the summary say so.
+- **Stored runs.** A run's `setup.toml` says which deorientation its events have, written out when it is taken. A run
+  stored before physim had it says nothing and is loaded with `"none"`, also when it is continued, taken again, compared
+  and for its simulated peak; against the current setup the change is reported ("deorientation in vacuum: none →
+  vacuum").
+
 ## γ rays and the Doppler shift
 
 The excited nucleus decays in flight. A photon emitted at angle α to its velocity β has
@@ -348,4 +405,10 @@ at 0.7% statistical error from 2 × 10⁶ events.
 | Each pair of levels on its own orbit | K_λ ∝ [(E_cm − E_n)(E_cm − E_m)]^((2λ−1)/4) for E1, E2, E3, either nucleus excited; first order for every level where the coupling is weak | 1e-12; 1e-4 | `test_each_pair_of_levels_is_coupled_on_its_own_symmetrised_orbit`, `test_every_level_is_first_order_where_the_coupling_is_weak` |
 | Against GOSIA, all orders, the same case | GOSIA 20110524.14, `coulex_gosia_all_orders.csv` | 1% (worst 0.24%) | `test_all_orders_agree_with_gosia` |
 | Against GOSIA, all orders, feeding and reorientation: ⁶²Ni with Q_s = ±0.3 e b, 0⁺₂, 2⁺₂, 4⁺₁ on ¹²C (100 MeV, either nucleus the beam) and ¹⁹⁴Pt (200 MeV), a rotor ¹⁵²Sm on ¹²C (400 MeV) | GOSIA 20110524.14 (nuclear masses, E1 polarisation off), the app's numbers stored before the runs, `coulex/gosia_pairs.csv` | 1% above 10⁻⁴, 3% above 10⁻⁶ (worst 0.5%; 0.01 to 0.2% with GOSIA's non-relativistic E_cm) | `test_feeding_and_reorientation_agree_with_gosia` |
+| Deorientation in vacuum: GOSIA's defaults, atomic spins and charge states | GOSIA's `VAC,` defaults, function `ATS`, subroutine `XSTATIC` | exact | `test_the_defaults_are_gosias`, `test_the_atomic_spins_are_gosias_function_ats`, `test_the_charge_states_are_gosias` |
+| Deorientation: the average over the decay | GOSIA's closed form, and the time-dependent G_k(t) averaged by quadrature | 1e-6 | `test_the_average_over_the_decay_is_gosias_closed_form` |
+| Deorientation against GOSIA, blind: 174 G_k of ⁶²Ni, ¹⁹⁴Pt, ¹⁵²Sm, ⁴⁸Ti, ⁹⁸Ru levels, v/c 0.02 to 0.08, default and changed parameters | GOSIA 20110524.14, `tests/reference/nuclear/coulex/gosia_gk.csv` | 0.002 + half the last digit (worst 0.00058) | `test_it_is_gosias_in_blind_runs` |
+| Deorientation in the events against the plan | `correlation_table` with the feeding in and out of the target; decays drawn one by one | 4σ | `test_the_events_of_one_state_follow_the_plan`, `test_the_feeding_is_what_drawn_decays_average_to` |
+| B(E2) from deoriented events | The value put in; 2.65% low when the analysis leaves it out | 4σ | `test_the_analysis_gives_b_e2_back_from_deoriented_events` |
+| A run stored before deorientation | Read with `"none"`, and stays so when continued | exact | `test_a_run_stored_before_is_read_without_it_and_goes_on_without_it` |
 | Against a published measurement | Requested from the user (`tests/reference/nuclear/pending/coulex_literature.md`) | — | not yet written |

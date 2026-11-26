@@ -49,6 +49,8 @@ TARGET_MORE = [("position", "Position along the beam", "0 mm"), ("tilt", "Tilt",
 BACKING_FIELDS = [("material", "Backing material", "C"), ("thickness", "Backing thickness", "20 ug/cm2")]
 REACTION_FIELDS = [("energy", "State energy", "1.454 MeV"), ("b_up", "B(Eλ↑)", "0.0695 e2b2 or 695 e2fm4"),
                    ("e1_polarisation", "E1 polarisation (GOSIA's d)", "0.0038")]
+#: The choices of ``[reaction] deorientation`` on the Setup card: "vacuum" is also what a setup that says nothing has.
+DEORIENTATION_CHOICES = {"vacuum": "In vacuum", "none": "None"}
 REACTION_TYPES = {"elastic": "Elastic (Rutherford) scattering", "coulex": "Coulomb excitation",
                   "fusion-evaporation": "Fusion-evaporation (residues from a channel table)"}
 #: The fusion-evaporation reaction's own fields, and those of each exit channel (backlog item 75).
@@ -169,7 +171,8 @@ PHYSICS = (
     ("rates", "Count rates and events", "physics-register/rates-and-events",
      ("test_nuclear_validation.py", "test_nuclear_events.py")),
     ("coulex", "Coulomb excitation: the excitation, the correlation and the Doppler shift", "theory/coulex",
-     ("test_nuclear_coulex.py", "test_nuclear_orientation.py", "test_nuclear_gamma_events.py")),
+     ("test_nuclear_coulex.py", "test_nuclear_orientation.py", "test_nuclear_gamma_events.py",
+      "test_nuclear_deorientation.py")),
 )
 
 #: Which Physics section shows the physics behind a number: by the key of its explanation (the ? of the Plan, the
@@ -529,6 +532,8 @@ def _target(p) -> Decision:
     reaction = d.get("reaction", {"type": "elastic"})
     if reaction.get("type") == "coulex":
         state += f" · Coulomb excitation of the {reaction.get('excite', 'target')} ({reaction.get('energy', '?')})"
+        if reaction.get("deorientation") == "none" and "lifetime" not in d:
+            state += ", no deorientation"
     elif reaction.get("type") == "fusion-evaporation":
         chans = reaction.get("channels", [])
         state += f" · fusion-evaporation, {len(chans)} exit channel{'s' * (len(chans) != 1)}"
@@ -827,6 +832,137 @@ def _lifetime(p) -> Decision:
             state += " · deorientation set"
     return Decision("lifetime", "Lifetime measurement", title, state, _try(lambda: lifetime_line(p)), "lifetime",
                     [], [], lt)
+
+
+def _reaction_nuclide(setup: dict) -> Optional[str]:
+    """The nuclide the ``[reaction]`` of a setup (a dict) excites, as "194Pt"; for a target of a natural element its
+    most abundant isotope, as the excitation takes it; None for a compound or what cannot be read."""
+    from . import data
+
+    reaction = setup.get("reaction") or {}
+    role = "beam" if reaction.get("excite") == "projectile" else "target"
+    scheme = (setup.get("levels") or {}).get(role) or {}
+    name = scheme.get("nuclide") or ((setup.get(role) or {}).get("nuclide" if role == "beam" else "material"))
+    parts = split_nuclide(name)
+    if parts is None:
+        return None
+    symbol, a = parts
+    a = a or most_abundant(symbol)
+    try:
+        return data.nuclide(f"{a}{symbol}").name if a else None
+    except (KeyError, ValueError):
+        return None
+
+
+def deorientation_state(setup: dict) -> dict:
+    """What the Setup card says of the deorientation in vacuum of a setup (a dict in the structure of a setup file):
+    ``set`` (the ``[reaction] deorientation`` written, or None), ``g`` (its ``deorientation_g``, or None), ``in_effect``
+    ("vacuum" or "none", as :func:`physim.nuclear.gamma.deorientation_of` has it), ``lifetime`` (None, "rdds" or
+    "dsam": a lifetime measurement has its own deorientation, or none, and not this one), ``ignored`` (the fields
+    written that do nothing: beside a lifetime measurement, or a g with "none"), ``nuclide`` and ``z_over_a`` (the
+    excited nucleus and its g when none is given; None where it cannot be told)."""
+    reaction = setup.get("reaction") or {}
+    lt = setup.get("lifetime")
+    lifetime = None if lt is None else ("dsam" if (lt or {}).get("method") == "dsam" else "rdds")
+    how, g = reaction.get("deorientation"), reaction.get("deorientation_g")
+    in_effect = "none" if lifetime else (how or "vacuum")
+    if lifetime:
+        ignored = [f for f in ("deorientation", "deorientation_g") if reaction.get(f) is not None]
+    else:
+        ignored = ["deorientation_g"] if (how == "none" and g is not None) else []
+    nuclide = _reaction_nuclide(setup)
+    z_over_a = None
+    if nuclide is not None:
+        from . import data
+
+        nuc = data.nuclide(nuclide)
+        z_over_a = nuc.Z / nuc.A
+    return {"set": how, "g": g, "in_effect": in_effect, "lifetime": lifetime, "ignored": ignored, "nuclide": nuclide,
+            "z_over_a": z_over_a}
+
+
+def deorientation_note(st: dict) -> str:
+    """The line under the deorientation's fields on the Setup card, for :func:`deorientation_state`'s ``st``."""
+    if st["lifetime"] == "rdds":
+        text = ("Not in effect: a plunger has its own deorientation, the static model on the Plunger card (or "
+                "none).")
+    elif st["lifetime"] == "dsam":
+        text = "Not in effect: in a DSAM measurement the nuclei slow down and stop in the backing, not in vacuum."
+    elif st["in_effect"] == "none":
+        text = ("Left out: every level keeps the orientation the collision gave it, however long it lives after "
+                "leaving the target.")
+    else:
+        text = ("Levels with a half-life that decay after leaving the target lose part of their orientation, as "
+                "GOSIA's two-state model has it (with its parameters): their γ rays come out more evenly, so the "
+                "coincidences at the angles the correlation favours fall. For ⁶²Ni on ¹⁹⁴Pt: the ⁶²Ni lines by 1.5 to "
+                "3% (clovers 5 to 7%), the ¹⁹⁴Pt lines by 8 to 11% (clovers 20 to 23%). A level without a half-life "
+                "decays at once and is not deoriented. The Physics tab gives each level's G₂ and G₄.")
+    if st["ignored"] and st["lifetime"]:
+        text += " The setting written in the reaction does nothing beside it."
+    elif st["ignored"]:
+        text += " The g factor written is not used."
+    return text
+
+
+#: The physics settings of a reaction in plain words, for the changes between a run's setup and the current one.
+_CHANGE_WORDS = {"reaction.deorientation": "deorientation in vacuum",
+                 "reaction.deorientation_g": "g factor of the deorientation",
+                 "reaction.e1_polarisation": "E1 polarisation (GOSIA's d)"}
+
+
+def change_words(text: str) -> str:
+    """A line of :func:`physim.nuclear.runs.physics_changes` ("reaction.deorientation: none → vacuum") with the
+    reaction's physics settings in plain words ("deorientation in vacuum: none → vacuum"); others as they are."""
+    path, sep, rest = text.partition(": ")
+    return f"{_CHANGE_WORDS[path]}{sep}{rest}" if sep and path in _CHANGE_WORDS else text
+
+
+#: The speeds (v/c) at which the Physics tab gives each level's G_k: those of GOSIA's blind check.
+DEORIENTATION_BETAS = (0.02, 0.05, 0.08)
+
+
+def deorientation_levels(planner) -> dict:
+    """The deorientation in vacuum of a planner's setup, for the Physics tab: ``in_effect`` ("vacuum" or "none"),
+    ``why`` (a sentence), ``nuclide``, ``g`` and ``g_source`` ("Z/A" or "setup") of the excited nucleus, and ``levels``,
+    one row per level with a half-life and a spin above 0 of the level schemes of both nuclei of the collision:
+    {"nucleus", "level", "energy_kev", "half_life_ps", "g": {beta: (G_2, G_4)}}, G_k averaged over the decay of a
+    nucleus that is in vacuum from the reaction on at each speed of :data:`DEORIENTATION_BETAS` (G_4 None below spin
+    2; no "g" when the deorientation is not in effect)."""
+    import math
+
+    from .deorientation import model
+    from .gamma import deorientation_of, deorientation_parameters
+
+    exp = planner.experiment
+    st = deorientation_state(exp.to_dict())
+    out = {"in_effect": deorientation_of(exp), "why": deorientation_note(st), "nuclide": st["nuclide"],
+           "g": None, "g_source": None, "levels": []}
+    exc = exp.excitation
+    if exc is None:
+        return out
+    given = exc.deorientation_g
+    out["g"] = float(given) if given is not None else st["z_over_a"]
+    out["g_source"] = "setup" if given is not None else "Z/A"
+    own = "beam" if exc.excite == "projectile" else "target"
+    for role in (own, "target" if own == "beam" else "beam"):
+        scheme = exp.levels.get(role)
+        if scheme is None:
+            continue
+        params = deorientation_parameters(exp, "reaction" if role == own else "other")
+        for lv in scheme.levels:
+            if lv.half_life is None or not lv.half_life.value or not lv.spin:
+                continue
+            row = {"nucleus": scheme.nuclide, "level": lv.label, "energy_kev": lv.energy.value,
+                   "half_life_ps": lv.half_life.value * 1e12}
+            if params is not None:
+                tau_ps = lv.half_life.value / math.log(2) * 1e12
+                m = model(scheme.nuclide, float(lv.spin), params)
+                row["g"] = {}
+                for beta in DEORIENTATION_BETAS:
+                    got = m.average(tau_ps, beta)
+                    row["g"][beta] = (float(got[2]) if 2 in got else None, float(got[4]) if 4 in got else None)
+            out["levels"].append(row)
+    return out
 
 
 def ancillary_numbers(planner) -> dict:
@@ -1472,6 +1608,8 @@ _SUPERSCRIPT = {2: "²", 4: "⁴", 6: "⁶", 8: "⁸"}
 __all__ = ["ANCILLARY_CARDS", "ancillary_numbers", "card_setup", "changes", "draft_decisions", "COMPOUND",
            "FUSION_TEMPLATES", "GROUPS", "KINDS", "Kind", "LIFETIME_METHODS", "LIFETIME_TEMPLATES", "FOIL_KINDS",
            "lifetime_line", "lifetime_plan",
+           "DEORIENTATION_BETAS", "DEORIENTATION_CHOICES", "change_words", "deorientation_levels",
+           "deorientation_note", "deorientation_state",
            "kind_of", "template_label", "MEASUREMENTS", "NATURAL", "NOT_SIMULATED", "PHYSICS", "PHYSICS_FOR", "physics_for",
            "STAGES", "STEPS", "TEMPLATES", "Decision", "checks", "decisions", "elements", "mass_numbers",
            "most_abundant", "new_setup", "new_setup_notes", "next_step", "split_nuclide", "states", "status_strip",

@@ -1034,6 +1034,53 @@ def build_page(example: Optional[str] = None, events: int = 100_000, theme: Opti
             mark(mul, "reaction", "multipolarity")
         state_picker(reaction)
         section("", REACTION_FIELDS, "reaction", reaction)
+        deorientation_fields(reaction)
+
+    def deorientation_fields(reaction: dict) -> None:
+        """Deorientation in vacuum (in vacuum or none) and the g factor of the excited nucleus, below the E1
+        polarisation, with a line on what it does. A lifetime measurement has its own deorientation (a plunger's
+        ``lifetime.deorientation``) or none: there both are shown greyed out, as not in effect, and what the reaction
+        still says can be removed."""
+        st = wb.deorientation_state(D().draft)
+        off = st["lifetime"] is not None
+        with ui.grid(columns=2).classes("w-full gap-1"):
+            sel = ui.select(wb.DEORIENTATION_CHOICES, value=st["in_effect"] if off else (st["set"] or "vacuum"),
+                            label="Deorientation in vacuum",
+                            on_change=lambda e: edit("reaction", "deorientation",
+                                                     None if e.value == "vacuum" else e.value, rebuild=True)).props(
+                "dense outlined")
+            help_icon(sel, "reaction", "deorientation")
+            mark(sel, "reaction", "deorientation")
+            za = f"Z/A = {st['z_over_a']:.3f}" if st["z_over_a"] is not None else "Z/A"
+            # What an empty field means stands in the label: a placeholder shows only while the field has the focus.
+            g = ui.input(f"g factor (empty: {za})", value=_shown("deorientation_g", st["g"]),
+                         placeholder=za).props("dense outlined").classes("w-full")
+            bind(g, "reaction", "deorientation_g")
+            help_icon(g, "reaction", "deorientation_g")
+            field_inputs[("reaction", "deorientation_g")] = g
+            field_shown[("reaction", "deorientation_g")] = _shown("deorientation_g", st["g"]) or ""
+            mark(g, "reaction", "deorientation_g")
+            if off:
+                sel.props("disable")
+            if st["in_effect"] == "none":
+                g.props("disable")
+        with ui.row().classes("w-full items-start no-wrap gap-1"):
+            ui.label(wb.deorientation_note(st)).classes("text-xs ps-muted ps-deorientation-note")
+            if off and st["ignored"]:
+                ui.button("Remove it", icon="delete_outline", on_click=lambda: remove_reaction_fields(st["ignored"])
+                          ).props("dense flat no-caps size=sm").tooltip(
+                    "Take the deorientation out of the reaction: beside a lifetime measurement it does nothing")
+
+    def remove_reaction_fields(fields: list) -> None:
+        """Take fields out of the draft's reaction (the deorientation a lifetime measurement does not use)."""
+        if locked():
+            return
+        d = D()
+        ok = True
+        for f in fields:
+            ok = d.set("reaction", f, None) and ok
+        state["open"] = card_of("reaction") or state["open"]
+        staged(ok, True)
 
     def channel_table(reaction: dict) -> None:
         """The fusion-evaporation reaction (backlog item 75): its own fields, then the exit channels as a table, one

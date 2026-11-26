@@ -413,7 +413,10 @@ def render_view(ctx) -> None:
     head = f"Run {run.number}: {run.describe()}"
     ctx.ui.label(head).classes("text-base font-medium")
     if status and status["stale"]:
-        ctx.ui.label("Taken with another setup: " + "; ".join(status["changes"][:4]) + ". These are its data as "
+        from .. import workbench as wb
+
+        ctx.ui.label("Taken with another setup: " + "; ".join(wb.change_words(c) for c in status["changes"][:4])
+                     + ". These are its data as "
                      "taken; take a new run to see the current setup.").classes("text-sm ps-warn")
     if run.kind == "source":
         grid(ctx, run)
