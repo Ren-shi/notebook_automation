@@ -11,6 +11,35 @@ workflow builds the wheels, tests them and publishes to PyPI.
 ## Unreleased
 
 ### Added
+- Deorientation in vacuum, on by default for Coulomb excitation (`[reaction] deorientation`: `"vacuum"`, or `"none"`;
+  `deorientation_g`, the g factor of the nucleus the reaction names, Z/A when left out; the other nucleus has Z/A). A nucleus
+  that decays after it has left the target has lost part of its orientation to the hyperfine field of its ion, so its γ rays
+  come out more evenly. The model is GOSIA's two-state model with GOSIA's parameters (`physim.nuclear.deorientation`, checked
+  blind against GOSIA's G_k). `"none"` gives every number of before, byte for byte (rates, correlation tables, events with
+  the same seeds, runs and analyses of the Coulex examples). **The numbers of every Coulex setup whose level scheme has
+  half-lives change with the default.**
+  - Only in vacuum: a level is deoriented while it lives outside the target and what is behind it, from where the nucleus
+    leaves it (each event its own depth, direction and speed) or, fed outside, from its feeding. A nucleus that decays in the
+    target or stops there is not deoriented, nor is a level without a half-life. Down a cascade each level is attenuated
+    before it emits and before it feeds the next one (all ranks of its density matrix), as GOSIA feeds with the attenuated
+    tensors; a converted step takes the average over its level's life.
+  - The plan's angular correlation (`correlation_table`, and so the rates, the analysis and the simulated peaks) is what the
+    events average to (`gamma.Faded`: the feeding in and out of the target in closed form). Events against the table, pair by
+    pair of particle detector (and ring) and crystal, on `coulex_ni62_pt194` (both nuclei) and its clover version: none
+    beyond 3 errors, χ²/dof 0.64 to 1.11. Density matrices keep trace and rank 0 to 1e-15; the model leaves eigenvalues down
+    to −0.002 on the 4⁺ and 6⁺ states of the examples, and no angular probability of the events fell below zero (one that
+    does is taken as zero and counted in the notes).
+  - Lifetime measurements keep their own: a plunger has only its `lifetime.deorientation` (or none), DSAM none.
+    Fusion-evaporation residues are not deoriented.
+  - What the default changes: `coulex_ni62_pt194` ⁶²Ni coincidences −1.5 % (CD) and −2.9 % (strips), ¹⁹⁴Pt −8.3 % and
+    −10.6 %; with clovers −5.3 % and −6.7 %, ¹⁹⁴Pt −20.3 % and −23.0 %. The other templates have no half-life in a scheme the
+    events follow and do not change. B(E2) comes back from deoriented samples (12 seeds: +0.39 ± 0.49 %, clovers
+    −0.22 ± 0.27 %); analysed without deorientation they read 2.65 % low (clovers 7.7 %).
+  - **Runs stored before** say nothing of it and their events have none: they are loaded with `"none"`, also when continued,
+    taken again, compared and for the simulated peak. A run taken now writes what its events have; the difference to the
+    current setup is reported as a change of the physics.
+  - The GOSIA input of `Multistep` writes `VAC,` with the setup's parameters (Λ* = 0 for none). The app's page, MCP, the
+    guide and the docs follow.
 - The E1 polarisation correction to Coulomb excitation, as GOSIA has it, on by default (`[reaction] e1_polarisation`). The
   virtual excitation of the giant dipole resonance weakens every E2 coupling, transitional and diagonal, by 1 − z a/r along
   the orbit, z = d E_cm A/Z² of the excited nucleus. The setting is GOSIA's parameter d: 0.0038 when left out, as in GOSIA;
