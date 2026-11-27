@@ -58,7 +58,7 @@ import numpy as np
 
 from . import angular, data
 from .coulex import HBARC_MEV_FM, Coulex, polarised_integrals, ylm_equator
-from .levels import Level, LevelScheme, Transition, Value, components
+from .levels import Level, LevelScheme, Transition, Value, components, leading
 from .rutherford import E2_MEV_FM
 
 #: Highest rank of the statistical tensors kept (E3 excitation of a 3⁻ state reaches rank 6).
@@ -170,7 +170,8 @@ class _Decay:
     #: its γ ray.
     branch: float
     gamma: float
-    #: Multipoles L and L′ (0 if pure) and the mixing ratio δ.
+    #: Multipoles L < L′ (L′ = 0 if pure) and the mixing ratio δ, the amplitude of L′ over that of L (ENSDF's, Krane
+    #: and Steffen's sign).
     l1: int
     l2: int
     mixing: float
@@ -359,10 +360,13 @@ class Excitation:
                 parts = components(t.multipolarity)
                 if ji is None or jf is None:
                     l1, l2, delta = 0, 0, 0.0
+                elif len(parts or ()) == 2 and t.mixing is not None:
+                    # The lower multipole first and δ (ENSDF's) the amplitude of the higher over it, whatever the
+                    # order written (levels.components).
+                    l1, l2, delta = int(parts[0][1]), int(parts[1][1]), t.mixing.value
                 elif parts:
-                    l1 = int(parts[0][1])
-                    l2 = int(parts[1][1]) if len(parts) == 2 and t.mixing is not None else 0
-                    delta = t.mixing.value if l2 else 0.0
+                    # Pure, or mixed without δ: the multipole written first (ENSDF's dominant one) alone.
+                    l1, l2, delta = int(leading(t.multipolarity)[1]), 0, 0.0
                 else:
                     # No multipolarity given: the lowest the spins allow.
                     l1, l2, delta = max(int(round(abs(ji - jf))), 1), 0, 0.0

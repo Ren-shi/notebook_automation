@@ -81,7 +81,10 @@ def isotropic(j: float) -> np.ndarray:
 
 class Emission:
     """One transition from spin ``ji`` to ``jf`` by the multipole ``l1`` (mixed with ``l2`` by the mixing ratio
-    ``mixing``, the amplitude of ``l2`` over that of ``l1``), as a γ ray seen along a direction."""
+    ``mixing``, the amplitude of ``l2`` over that of ``l1``), as a γ ray seen along a direction. With ``l1`` < ``l2``
+    this is ENSDF's δ with Krane and Steffen's sign: the distribution is that of
+    :func:`physim.nuclear.angular.distribution_coefficient` for either sign (the helicity factor −s of the second
+    multipole gives their 2δ F_k(L L′) term)."""
 
     def __init__(self, ji: float, jf: float, l1: int, l2: int = 0, mixing: float = 0.0):
         self.ji, self.jf, self.l1, self.l2, self.mixing = float(ji), float(jf), int(l1), int(l2), float(mixing)

@@ -89,6 +89,8 @@ class Transition:
     #: Relative photon intensity among the γ rays of the initial level.
     intensity: Optional[Value] = None
     multipolarity: str = ""
+    #: The mixing ratio δ as ENSDF gives it: the amplitude of the higher multipole over that of the lower (E2/M1 for
+    #: an M1+E2 line), Krane and Steffen's sign, whatever order the multipolarity is written in.
     mixing: Optional[Value] = None
     #: Total internal conversion coefficient α.
     conversion: Optional[Value] = None
@@ -132,17 +134,36 @@ def quadrupole_factor(j: float) -> float:
 
 
 def components(multipolarity: str) -> Optional[list]:
-    """The multipoles of an ENSDF multipolarity, in the order written: ``"M1+E2"`` → ["M1", "E2"]; ``"(E2)"`` →
-    ["E2"]. ``None`` when it does not name them (``"D+Q"``, ``"M1,E2"``, empty)."""
+    """The γ-ray multipoles of an ENSDF multipolarity, the lower one first, whatever the order written: ``"M1+E2"``
+    and ``"E2+M1"`` → ["M1", "E2"]; ``"(E2(+M1))"`` → ["M1", "E2"]; ``"(E2)"`` → ["E2"]. E0 emits no γ ray (only
+    conversion electrons and pairs), so it is left out when other multipoles are named: ``"M1+E2+E0"`` and
+    ``"E0+M1+E2"`` → ["M1", "E2"] (a pure ``"E0"`` stays ["E0"]). This is the order ENSDF's mixing ratio refers to:
+    δ is the amplitude of the second (the higher multipole) over that of the first. ``None`` when it does not name
+    them (``"D+Q"``, ``"M1,E2"``, empty) or names more than two γ-ray multipoles."""
     text = multipolarity.replace("(", "").replace(")", "").replace("[", "").replace("]", "").strip()
     parts = text.split("+") if text else []
-    if not 1 <= len(parts) <= 2 or not all(len(p) == 2 and p[0] in "EM" and p[1].isdigit() for p in parts):
+    if not 1 <= len(parts) <= 3 or not all(len(p) == 2 and p[0] in "EM" and p[1].isdigit() for p in parts):
         return None
-    return parts
+    gamma = [p for p in parts if p != "E0"] or parts[:1]
+    if len(gamma) > 2 or len(set(gamma)) != len(gamma):
+        return None
+    return sorted(gamma, key=lambda p: int(p[1]))
+
+
+def leading(multipolarity: str) -> Optional[str]:
+    """The γ-ray multipole an ENSDF multipolarity writes first (E0 left out), which ENSDF gives as the dominant one:
+    ``"E2+M1"`` and ``"(E2(+M1))"`` → "E2", ``"M1+E2+E0"`` → "M1". What a mixed transition without a mixing ratio is
+    taken as. ``None`` where :func:`components` is."""
+    parts = components(multipolarity)
+    if parts is None:
+        return None
+    text = multipolarity.replace("(", "").replace(")", "").replace("[", "").replace("]", "").strip()
+    return next(p for p in text.split("+") if p in parts)
 
 
 def fractions(multipolarity: str, mixing: Optional[float]) -> dict:
-    """Share of the γ-ray intensity carried by each multipole: {"M1": 1/(1+δ²), "E2": δ²/(1+δ²)}. A mixed
+    """Share of the γ-ray intensity carried by each multipole: {"M1": 1/(1+δ²), "E2": δ²/(1+δ²)}, δ the amplitude of
+    the higher multipole over the lower (ENSDF's), whatever order the multipolarity is written in. A mixed
     transition without a mixing ratio gives an empty result, as the shares are then unknown."""
     parts = components(multipolarity)
     if parts is None:

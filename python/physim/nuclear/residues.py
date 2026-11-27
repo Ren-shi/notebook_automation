@@ -794,16 +794,16 @@ def _ensdf_scheme(residue: str, max_energy_kev: float):
 
 
 def _multipoles(t, ji: Optional[float], jf: Optional[float]) -> tuple:
-    """(L1, L2, δ) of a transition: from its multipolarity, else the lowest multipole the spins allow (dipole for
-    ΔJ = 0)."""
-    from .levels import components
+    """(L1, L2, δ) of a transition: from its multipolarity (L1 < L2 and δ, ENSDF's, the amplitude of L2 over L1,
+    whatever the order written; E0 left out: :func:`physim.nuclear.levels.components`; a mixed one without δ the
+    multipole written first alone), else the lowest multipole the spins allow (dipole for ΔJ = 0)."""
+    from .levels import components, leading
 
     parts = components(t.multipolarity or "")
+    if parts and len(parts) == 2 and t.mixing is not None:
+        return int(parts[0][1]), int(parts[1][1]), float(t.mixing.value)
     if parts:
-        l1 = int(parts[0][1])
-        l2 = int(parts[1][1]) if len(parts) > 1 else 0
-        delta = float(t.mixing.value) if (len(parts) > 1 and t.mixing is not None) else 0.0
-        return l1, l2, delta
+        return int(leading(t.multipolarity)[1]), 0, 0.0
     if ji is None or jf is None:
         return 0, 0, 0.0
     return max(int(round(abs(ji - jf))), 1), 0, 0.0

@@ -363,7 +363,9 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
   level that an E1, E2 or E3 matrix element connects to the ground state, whatever the ground state's spin.
 - **Decay.** Each level decays by its branching ratios. Internal conversion takes α/(1 + α) of a transition. A
   level fed from above takes over its parent's orientation, reduced as the theory of angular correlations gives.
-  Mixed transitions use the mixing ratio (ENSDF's sign convention, that of Krane and Steffen).
+  Mixed transitions use the mixing ratio (ENSDF's sign convention, that of Krane and Steffen): δ is the amplitude of
+  the higher multipole over the lower (E2/M1), whatever order the multipolarity is written in, and E0 is left out of
+  the γ ray (see [Level schemes](#level-schemes)).
 - **In the laboratory.** The γ rays are thrown forward by the motion of the emitting nucleus, which also changes
   the solid angle.
 - **In the rates.** `correlation_table(experiment)` in `physim.nuclear.gamma` gives, for every particle detector
@@ -899,6 +901,13 @@ to = 1
 multipolarity = "E2"
 value = "0.26 eb"
 ```
+
+A transition's `multipolarity` is written as ENSDF writes it (`"E2"`, `"M1+E2"`, `"E2(+M1)"`, `"E2+M1+E0"`), and
+`mixing` is ENSDF's δ: the amplitude of the higher multipole over that of the lower (E2/M1, generally L + 1 over L),
+with Krane and Steffen's sign, **whatever order the multipolarity is written in**: `"E2+M1"` with δ = 13 is 99.4 %
+E2, as `"M1+E2"` with δ = 13 is. The E2 share of the γ rays is δ²/(1 + δ²). E0 emits no γ ray (only conversion
+electrons), so `"M1+E2+E0"` is an M1/E2 γ ray; its conversion coefficient goes in `conversion`. A mixed
+transition without `mixing` is taken as the multipole written first alone (ENSDF writes the dominant one first).
 
 Levels are numbered from 0 in order of energy, the ground state first. A matrix element is written in `efm2` or
 `eb` for E2, `efm` or `eb0.5` for E1, and `efm3` or `eb1.5` for E3. A value without a `source` is taken as yours.

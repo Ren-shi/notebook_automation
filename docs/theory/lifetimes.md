@@ -18,7 +18,8 @@ $$
 the same for Mλ times (µ_N/e)² = (ħc/2m_pc²)², with B(Mλ) in µ_N² fm^{2λ−2}. A level decays through all its
 transitions; one transition carries the share b = I_γ(1 + α)/Σ_k I_γ,k(1 + α_k) of its decays (γ rays and conversion
 electrons), and of its γ rays the multipole λ carries the share s (1/(1 + δ²) for M1, δ²/(1 + δ²) for E2, with δ
-the E2/M1 mixing ratio). So
+the E2/M1 mixing ratio as ENSDF gives it, whatever order the multipolarity is written in; an E0 part of the
+multipolarity has no γ ray). So
 
 $$
 \frac{1}{\tau} = \frac{T(\lambda)\,(1+\alpha)}{s\,b},
