@@ -1211,6 +1211,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     if not through.thin and through.depth.slice_count() > 1:
         main.depth = through
     rows = np.flatnonzero(np.isin(c["channel"], excited_channels))
+    counted_rows = int(np.count_nonzero(c["counted"][rows]))
     lifetime = getattr(experiment, "lifetime", None)
     chosen = ""
     if lifetime is not None and lifetime.method == "rdds":
@@ -1241,6 +1242,14 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
         parts.append(_chain(experiment, ev, layers, crystals, bare, em, o_rows, o_base, k_rep, plain,
                             first_cascade=parts[0]["info"]["chains"], aimed=aimed, distance_um=distance_um))
     info = [p.pop("info") for p in parts]
+    # A particle below its detector's threshold is not seen, nor are the γ rays in coincidence with it: the sample keeps
+    # those of the counted particles, as a run (which records no other particle) does. Each nucleus's γ rays are drawn
+    # as before, and those of the particles not counted are left out afterwards.
+    for p in parts:
+        seen = c["counted"][p["particle"]]
+        if not seen.all():
+            for k in p:
+                p[k] = p[k][seen]
     cols = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
     if lifetime is None:  # kept for lifetime setups only (NaN through GammaEvents[name] otherwise)
         for name in _NAN_WITHOUT_PLUNGER:
@@ -1256,7 +1265,7 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     excited_rows, done, summed = info[0]["excited_rows"], info[0]["done"], info[0]["summed"]
     notes = [f"{len(parts[0]['particle'])} γ rays from {excited_rows} excited events with a detected particle "
              f"({k_rep} emissions "
-             f"each); {ev.n_events} reactions "
+             f"each; the γ rays of the {counted_rows} whose particle was counted are kept); {ev.n_events} reactions "
              f"generated. The particle events stand for {excitation_rate:.3g} excitations/s with a detected "
              f"particle out of {all_excitations:.3g}/s in all."]
     if done.get("added_back") or done.get("suppressed"):

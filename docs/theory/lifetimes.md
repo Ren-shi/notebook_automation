@@ -190,7 +190,7 @@ How the planner corrects (`Planner.analyse_lifetimes`, a Coulex first excited st
 - a_k is the unattenuated alignment of the particle–γ coincidences that physim's Coulex correlation gives for the
   particles the setup's detectors see (`lifetime_reproduction.coulex_alignment`, ``particle="both"``).
 - physim's stopper does not take the scattered beam, so a planner run holds the γ rays in coincidence with the beam
-  and with the recoils. For ⁹⁸Ru, 84% of them come with the beam: a₂ = 0.26, a₄ = −0.17, against 0.50 and −0.69 gated
+  and with the recoils. For ⁹⁸Ru, 84% of them come with the beam: a₂ = 0.21, a₄ = −0.09, against 0.50 and −0.69 gated
   on the ²⁴Mg recoils alone. The recoil-only a_k is right for data gated on the recoils, as in Radeck et al. and the
   reproduction. On the planner's runs it over-corrects: τ ≈ 9.1 ps for 8.36.
 - Closure on simulated ⁹⁸Ru runs (τ = 8.36 ps):

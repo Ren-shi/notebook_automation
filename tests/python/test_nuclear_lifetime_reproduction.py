@@ -77,8 +77,9 @@ def test_recoil_alignment_matches_the_correlation_table_for_both_particles():
     f1 = np.mean([corr[k] / flat[k] for k in corr if k[0].startswith("F")])
     assert both["w"][41.5] == pytest.approx(f1, rel=1e-9)
     rec = lr.coulex_alignment(exp, "recoil")
-    # Gated on the ²⁴Mg recoils (head-on collisions) the 2⁺ is much more aligned: W(90°) about 0.5, not 0.8.
-    assert 0.4 < rec["w"][90.0] < 0.6 and 0.75 < both["w"][90.0] < 0.85
+    # Gated on the ²⁴Mg recoils (head-on collisions) the 2⁺ is much more aligned: W(90°) about 0.5, not 0.86. (0.81 with
+    # the table's points before they were cut at the scattered ⁹⁸Ru's largest angle on the face.)
+    assert 0.4 < rec["w"][90.0] < 0.6 and 0.80 < both["w"][90.0] < 0.90
     assert rec[2] > both[2] > 0 and rec[4] < both[4] < 0
 
 

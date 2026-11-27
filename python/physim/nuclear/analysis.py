@@ -206,6 +206,13 @@ def _moment(me, levels) -> str:
     return f"{me.value.unc:.3g} e fm^{me.multipolarity[1]}"
 
 
+def _narrower(s) -> bool:
+    """Whether the particle gate of the settings ``s`` keeps only some of the particles in its detectors and rings:
+    the inelastic group, or a window on their energy. The yield is then divided by the share of the excitations it
+    keeps (:meth:`Analysis._gate`)."""
+    return s.particle_gate == "inelastic" or s.particle_energy is not None
+
+
 @dataclass
 class Settings:
     """The adjustable choices of the analysis."""
@@ -1122,7 +1129,9 @@ class Analysis:
         c = ev.columns
         rows = g["particle"]
         dets = list(ev.detectors) if s.detectors is None else list(s.detectors)
-        keep = np.isin(c["detector"][rows], [ev.detectors.index(d) for d in dets]) & g["counted"]
+        # γ rays counted in their crystal, with a particle counted in its detector (a weighted sample drops the γ rays
+        # of particles below threshold, :func:`~physim.nuclear.gamma_events.simulate_gammas`; this is for older ones).
+        keep = np.isin(c["detector"][rows], [ev.detectors.index(d) for d in dets]) & g["counted"] & c["counted"][rows]
         elastic = np.isin(c["detector"], [ev.detectors.index(d) for d in dets]) & c["counted"]
         if s.rings is not None:
             keep &= np.isin(c["segment_i"][rows], list(s.rings))
@@ -1226,7 +1235,7 @@ class Analysis:
         c = ev.columns
         rows = g["particle"]
         dets = list(ev.detectors) if s.detectors is None else list(s.detectors)
-        m = np.isin(c["detector"][rows], [ev.detectors.index(d) for d in dets]) & g["counted"]
+        m = np.isin(c["detector"][rows], [ev.detectors.index(d) for d in dets]) & g["counted"] & c["counted"][rows]
         if s.rings is not None:
             m &= np.isin(c["segment_i"][rows], list(s.rings))
         return m
@@ -1362,6 +1371,19 @@ class Analysis:
                         r[m] = np.interp(th[m], grid, ratio)
                     else:
                         r[:, m] = [np.interp(th[m], grid, x) for x in ratio]
+            # Where the detector's threshold leaves out some of a segment's particles (an excited one may be below it
+            # where the elastic one is not), the excitations per counted particle are those a run has there: the
+            # segment's, of the counted particles alone (:meth:`_segment_ratios`).
+            nodes = self._segment_nodes()
+            index = nodes["index"][rows]
+            for particle in ("ejectile", "recoil"):
+                ratio = self._segment_ratios(particle, cut_only=True, **model)
+                cut = np.zeros(len(nodes["recoil"]), dtype=bool)
+                which = np.flatnonzero(nodes["recoil"] == (particle == "recoil"))
+                cut[which[self._cut_by_threshold(particle, which)]] = True
+                mine = cut[index]
+                if mine.any():
+                    r[..., mine] = ratio[..., index[mine]]
             return r
         nodes = self._segment_nodes()
         index = nodes["index"][rows]
@@ -1615,6 +1637,9 @@ class Analysis:
             return kept[particle]
         nodes = self._segment_nodes()
         cut = np.zeros(len(which), dtype=bool)
+        if not len(which):  # no particle of this kind in any segment
+            kept[particle] = cut
+            return cut
         dirs, omega, owner = self._directions(which, 3)
         names = np.array([nodes["detector"][n] for n in which])[owner]
         theta = np.degrees(np.arccos(np.clip(dirs[:, 2], -1.0, 1.0)))
@@ -1648,13 +1673,14 @@ class Analysis:
         return np.array(out).reshape(-1, 2)
 
     def _segment_ratios(self, particle: str, energy_scale: float = 1.0, mode: str = "first", exact: bool = False,
-                        thickness: Optional[float] = None, response=None) -> np.ndarray:
+                        thickness: Optional[float] = None, response=None, cut_only: bool = False) -> np.ndarray:
         """The excitations per particle in each segment of :meth:`_segment_nodes` (for those of this ``particle``): the
         cross section of the excitation over that of every particle, each integrated over the segment's solid angle
         (:meth:`_lab_sums`, as the rates integrate it). What lies in another detector's shadow or below the
         threshold is left out of both. A segment the model sends no particle to (the beam spot or multiple scattering
-        did) gets the ratio at its mean angle. With a ``response``, one row for each of its changes. Kept."""
-        key = self._model_key(particle, energy_scale, mode, exact, thickness, response)
+        did) gets the ratio at its mean angle. With a ``response``, one row for each of its changes. ``cut_only``
+        works out only the segments the threshold cuts (:meth:`_cut_by_threshold`), the others are 0. Kept."""
+        key = self._model_key(particle, energy_scale, mode, exact, thickness, response) + (cut_only,)
         kept = self.__dict__.setdefault("_segment_kept", {})
         if key in kept:
             return kept[key]
@@ -1662,6 +1688,12 @@ class Analysis:
                  "response": response}
         nodes = self._segment_nodes()
         which = np.flatnonzero(nodes["recoil"] == (particle == "recoil"))
+        cut = self._cut_by_threshold(particle, which)
+        if cut_only:
+            which, cut = which[cut], cut[cut]
+            if not len(which):
+                kept[key] = np.zeros(len(nodes["recoil"]) if response is None else (response.count, len(nodes["recoil"])))
+                return kept[key]
         dirs, omega, owner = self._directions(which)
         theta = np.degrees(np.arccos(np.clip(dirs[:, 2], -1.0, 1.0)))
         at = np.r_[theta[omega > 0], nodes["theta"][which]]
@@ -1686,7 +1718,6 @@ class Analysis:
         turning = np.array([bool(np.any((turns[:, 0] > a - 0.5) & (turns[:, 0] < b + 0.5)
                                         & (turns[:, 1] > least[nodes["detector"][n]])))
                             for n, a, b in zip(which, lo, hi)], dtype=bool)
-        cut = self._cut_by_threshold(particle, which)
         self._turning_segments(particle, which, turning, cut, model, above, below)
         for name in dict.fromkeys(nodes["detector"][n] for n, c, t in zip(which, cut, turning) if c and not t):
             mine = np.array([c and not t and nodes["detector"][n] == name for n, c, t in zip(which, cut, turning)])
@@ -1785,12 +1816,12 @@ class Analysis:
         w = g["weight"][keep]
         eff, corr = self._efficiency_and_correlation(keep)
         branch = 1.0  # one state decaying to the ground state; conversion is below 1e-3 above 1 MeV
-        gate_eff = getattr(self, "_gate_efficiency", 1.0) if s.particle_gate == "inelastic" else 1.0
+        gate_eff = getattr(self, "_gate_efficiency", 1.0) if _narrower(s) else 1.0
         yield_ = area / (eff * corr * branch * gate_eff)
         steps.append({"step": "yield", "text": f"area / (efficiency {eff:.4%} × correlation {corr:.3f} × branch "
                       f"{branch:g} × gate efficiency {gate_eff:.3f}) = {yield_:.4g} excitations in the gated "
                       "rings"})
-        if s.particle_gate == "inelastic":
+        if _narrower(s):
             notes_gate = (f"The gate keeps {gate_eff:.1%} of the excitations (known from the simulation, as an "
                           "experimentalist would take it from one); the yield is divided by that.")
         p_per_b = self._mean_probability(s, keep)
@@ -2357,7 +2388,7 @@ class Analysis:
         a.gammas, a.events, a.taken, a.history, a._whole = gammas, gammas.events, None, [], True
         a._own = (gammas["nucleus"] == 0) if "nucleus" in gammas.columns else np.ones(len(gammas), dtype=bool)
         for name in ("_forward", "_segments", "_segment_kept", "_cut", "_simulated", "_variance", "_gate_overlap",
-                     "_gate_efficiency", "_below_kept"):
+                     "_gate_efficiency", "_below_kept", "_parts"):
             a.__dict__.pop(name, None)
         return a
 
@@ -2675,8 +2706,9 @@ class Analysis:
 
     def _seen_by(self, keep: np.ndarray, other: Optional[dict] = None) -> tuple:
         """The full-energy-peak efficiency of all crystals together (the spectrum is summed), each crystal's at the
-        energy it sees the line at (Doppler shifted), and for each particle detector the efficiency-weighted mean of its
-        angular-correlation factors. For the ``[reaction]`` transition, or for the ``other`` nucleus's line."""
+        energy it sees the line at (Doppler shifted), and for each particle row of the events the efficiency-weighted
+        mean of the angular-correlation factors of its part of its detector (:meth:`_part_factors`; 1 for a row without a
+        γ ray of the nucleus). For the ``[reaction]`` transition, or for the ``other`` nucleus's line."""
         g = self.gammas
         if other is None:
             energy, correlation, own = self.e0, self._correlation, self._own
@@ -2703,15 +2735,70 @@ class Analysis:
             name = cr.name.rsplit(" ", 1)[0] if cr.element is not None else cr.name
             effs[name] = effs.get(name, 0.0) + float(cr.response.peak_efficiency(energy * shift[k], cr.element))
         total_eff = sum(effs.values())
-        factors = np.array([sum(e * correlation.get((d, n), 1.0) for n, e in effs.items()) / total_eff
-                            for d in self.events.detectors])
+        names, parts, part_of = self._part_factors(other)
+        # Each part's factors, weighted by the efficiencies; a part the model sends no excitation to has its particle
+        # detector's (the correlation table's).
+        e = np.array([effs.get(n, 0.0) for n in names])
+        each = parts @ e / total_eff + (total_eff - e.sum()) / total_eff
+        whole = np.array([sum(x * correlation.get((d, n), 1.0) for n, x in effs.items()) / total_eff
+                          for d in self.events.detectors])
+        detector = self._part_keys(other)[:, 0]
+        each = np.where(np.isfinite(each), each, whole[detector])
+        factors = np.ones(len(self.events.columns["detector"]))
+        has = part_of >= 0
+        factors[has] = each[part_of[has]]
         return float(total_eff), factors
+
+    def _part_keys(self, other: Optional[dict] = None) -> np.ndarray:
+        """The parts of the particle detectors that the particles with γ rays of the ``[reaction]`` nucleus (or of the
+        ``other`` one) hit: rows (detector, segment i, segment j, recoil), and kept with them, for each particle row
+        of the events, the part it is in (−1 for a row without such a γ ray)."""
+        kept = self.__dict__.setdefault("_parts", {})
+        key = "other" if other is not None else "own"
+        if key not in kept:
+            c = self.events.columns
+            own = self._own if other is None else ~self._own
+            rows = np.unique(self.gammas["particle"][own])
+            code = np.stack([np.asarray(c[k])[rows].astype(np.int64)
+                             for k in ("detector", "segment_i", "segment_j", "recoil")], axis=1)
+            found, inverse = np.unique(code.reshape(-1, 4), axis=0, return_inverse=True)
+            part_of = np.full(len(c["detector"]), -1, dtype=np.int64)
+            part_of[rows] = inverse.ravel()
+            kept[key] = (found, part_of)
+        return kept[key][0]
+
+    def _part_factors(self, other: Optional[dict] = None) -> tuple:
+        """The angular-correlation factor of every γ-ray detector for each part of the particle detectors
+        (:meth:`_part_keys`): of the particles of one kind (scattered beam or recoil) in one segment
+        (:func:`~physim.nuclear.gamma.segment_correlation`), so that a gate on rings, on the kind of particle or on its
+        energy has the factor of what it keeps. (the γ-ray detectors' names, the factors with a row per part (NaN where
+        the model excites nothing there), the part of each particle row). Each part's factors are kept, also for the
+        copies of this analysis with other γ rays (:meth:`_of`), which work out only the parts they add."""
+        from .gamma import segment_correlation
+
+        keys = self._part_keys(other)
+        key = "other" if other is not None else "own"
+        found = self.__dict__.setdefault("_part_factor", {})
+        parts = [(self.events.detectors[int(d)], (int(i), int(j)), bool(r)) for d, i, j, r in keys]
+        new = list(dict.fromkeys(p for p in parts if (key, p) not in found))
+        if new or (key, "names") not in found:
+            if other is None:
+                names, f = segment_correlation(self.experiment, new)
+            else:
+                line = other["line"]
+                names, f = segment_correlation(self.experiment, new, nucleus="other",
+                                               transition=(line["initial"], line["final"]))
+            found[key, "names"] = names
+            found.update({(key, p): row for p, row in zip(new, np.asarray(f, dtype=float).reshape(len(new), len(names)))})
+        names = found[key, "names"]
+        rows = np.array([found[key, p] for p in parts]).reshape(len(parts), len(names))
+        return names, rows, self._parts[key][1]
 
     def _stands_for(self, mine: np.ndarray, factors: np.ndarray) -> np.ndarray:
         """What each of the γ rays ``mine`` stands for in excitations (per second, up to the efficiency): its weight
-        over the factor of its particle detector, since a particle is seen with its γ ray in proportion to that
-        factor."""
-        f = factors[self.events.columns["detector"][self.gammas["particle"][mine]]]
+        over the factor of its particle's part of its detector (``factors``, by particle row: :meth:`_seen_by`), since a
+        particle is seen with its γ ray in proportion to that factor."""
+        f = factors[self.gammas["particle"][mine]]
         return self.gammas["weight"][mine] / np.where(f > 0, f, 1.0)
 
     def _efficiency_and_correlation(self, keep: np.ndarray, other: Optional[dict] = None) -> tuple:

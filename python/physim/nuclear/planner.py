@@ -2074,7 +2074,7 @@ class Planner:
         (:meth:`fit_matrix_elements`): the analysis of each detector's gated, corrected peak, its area over the
         efficiency and the correlation, as {detector: {(1, 0): (γ rays emitted, uncertainty)}} in the run's real
         part, and the beam time that is (s)."""
-        from .analysis import Settings
+        from .analysis import Settings, _narrower
 
         run = self._beam_run()
         if run is None:
@@ -2093,8 +2093,9 @@ class Planner:
                 continue
             if not r.area > 0:
                 continue
-            # The inelastic gate keeps a share of the excitations; the analysis knows it from the simulation.
-            gate_eff = getattr(a, "_gate_efficiency", 1.0) if s.particle_gate == "inelastic" else 1.0
+            # The inelastic gate (or a window on the particle's energy) keeps a share of the excitations; the analysis
+            # knows it from the simulation.
+            gate_eff = getattr(a, "_gate_efficiency", 1.0) if _narrower(s) else 1.0
             y = r.area / (r.efficiency * r.correlation * r.branch * gate_eff)
             out[d] = {(1, 0): (y, y * math.hypot(r.fit.area_unc / r.area, 0.0))}
         return {"measured": out, "beam_time_s": run.real_s}

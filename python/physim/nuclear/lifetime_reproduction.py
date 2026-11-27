@@ -136,7 +136,8 @@ def coulex_alignment(experiment, particle: str = "recoil", order: int = 8) -> di
     particles = ("ejectile", "recoil") if particle == "both" else (particle,)
     corr, flat = np.zeros(len(crystals)), np.zeros(len(crystals))
     for g in Array.from_experiment(experiment):
-        dirs, dom = g.directions(None, order)
+        # The table's points over the face, cut where the scattered beam turns back on it.
+        dirs, dom = gamma._table_points(g, order, gamma._limits_on(g, tb))
         theta, phi = angles(dirs)
         for which in particles:
             for point in tb.at_lab(theta, which):

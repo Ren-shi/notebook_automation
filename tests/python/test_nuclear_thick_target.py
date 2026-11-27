@@ -25,7 +25,7 @@ from physim.nuclear.correlation import Emission
 from physim.nuclear.coulex import Coulex
 from physim.nuclear.detectors import Array, angles
 from physim.nuclear.events import generator_config, simulate
-from physim.nuclear.gamma import (NEGATIVE_EIGENVALUE, DepthOrientation, _disc_directions, cascade_excitation,
+from physim.nuclear.gamma import (NEGATIVE_EIGENVALUE, DepthOrientation, _disc_directions, _table_points, cascade_excitation,
                                   correlation_table, depth_orientation, excitation_of, has_static_moment)
 from physim.nuclear.gamma_events import _distribution, _interp_density
 from physim.nuclear.kinematics import TwoBody
@@ -459,7 +459,7 @@ def reference_factors(exp, order: int = 4, crystal_points: int = 3) -> list:
                                           crystal_points))
     dirs_all, out = np.concatenate(faces), []
     for g in Array.from_experiment(exp):
-        dirs, dom = g.directions(None, order)
+        dirs, dom = _table_points(g, order)  # the table's points over the face
         theta, phi = angles(dirs)
         sums, weight = np.zeros(len(faces)), 0.0
         for particle in ("ejectile", "recoil"):

@@ -372,6 +372,11 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
   particle is in the backward ring, and those at 45° and 135° see 1.5 times. With a level scheme that the events
   follow, the table is for the `[reaction]` state in that scheme's solution (to all orders unless the setup
   says first order), with its feeding from above: the plan and the events then share one angular correlation.
+  Over each particle detector the table takes 8 × 8 points, equally spaced round an annulus; where a particle goes no
+  further than some lab angle on the face (a beam heavier than its target), the points are cut at that angle and crowded
+  up to it, where the particle's cross section per lab solid angle goes as 1/√ of the distance. At 8 points every
+  example is within 0.02 % of a fine table (the ⁹⁸Ru plunger's was 7.6 % off before the cut, Allmond's 0.75 % with Gauss
+  points round its rings). `gamma.segment_correlation` gives the factors of one segment and one kind of particle.
   Through a target that slows the beam the factors are averaged over the depth, each depth at its own beam energy
   and weighted by the excitation cross section there, with the emitting nucleus slowed down on its way out; a thin
   target keeps the kinematics of its middle. The simulated events take the orientation at each event's own beam energy
@@ -387,7 +392,7 @@ ex.cross_sections()                  # mb, over all angles: each level directly 
 ## Particle–γ events
 
 `physim.nuclear.gamma_events` follows the γ ray of every simulated Coulomb-excitation event whose particle
-reached a detector:
+reached a detector, and keeps those whose particle the detector counted (above its threshold), as a run records them:
 
 ```python
 from physim.nuclear import Experiment
@@ -490,8 +495,9 @@ The steps, each adjustable through `Settings`:
 
 1. **Particle gate:** the particle must sit in the inelastic group of its detector (its measured energy nearer
    the kinematic value for a particle that excited the state than for an elastic one, within `gate_width`
-   resolutions), in the chosen `detectors` and `rings`. The share of excitations the gate keeps is known from the
-   simulation and divided out, as an experimentalist takes it from one. Through a thick target the two groups
+   resolutions), in the chosen `detectors` and `rings`, and counted by its detector. The share of excitations the
+   gate keeps is known from the simulation and divided out, as an experimentalist takes it from one; so is that of a
+   window on the particle's energy (`particle_energy`). Through a thick target the two groups
    spread over the energies of every depth and may overlap; when they do for most of the excitations in the
    rings, the result warns (`Result.gate_warning`, also the first note) and says to use `particle_gate="all"`.
    It does not switch by itself; `Result.gate` says which gate was used.
@@ -558,8 +564,10 @@ The steps, each adjustable through `Settings`:
    factor. With particle detectors of different factors c the factor is the mean over the excitations in the gate, not
    over the particles seen with a γ ray, which detectors with a large c have more of: Σw / Σ(w/c) over the γ rays of the
    line that were seen, at any energy, each with its weight w standing for w/c excitations. The share of the excitations
-   that the inelastic gate keeps is counted the same way. c is the detector's: within it, a gate on rings or on energy
-   keeps it.
+   that the gate keeps is counted the same way. c is that of the particle's segment and kind (scattered beam or
+   recoil, `gamma.segment_correlation`), so a gate on rings, on the kind or on the energy (which in one segment tells
+   the kinds apart) has the factor of what it keeps: in the strips of ⁵⁸Ni an 8–16 MeV window keeps the recoils, whose
+   factor is 1.02 where the strips' is 0.83.
 6. **Normalisation:** `"rutherford"`, to the particles counted in the same rings (beam current and target
    thickness cancel); or `"target"`, to a transition of the other nucleus of the collision whose strength is
    known. The excitations expected per particle, ⟨P⟩/B, come from the forward model's own cross sections (those
@@ -571,7 +579,9 @@ The steps, each adjustable through `Settings`:
      over the segment's solid angle before they are divided, for the scattered beam and the recoils on their own.
      Directions in another detector's shadow and particles below the detector's threshold are left out of both.
      With one ring per detector, ⟨P⟩/B at the segment's mean angle was 0.6 and 1.2% too large for ⁶²Ni on carbon
-     (14–28° and 28–44°). A weighted simulation keeps the angle of each of its particles.
+     (14–28° and 28–44°). A weighted simulation keeps the angle of each of its particles, except in the segments where
+     the threshold leaves out some of the particles (an excited one may be below it where the elastic one is not):
+     there it takes the segment's ratio of the counted particles, as a run does.
    - With a level scheme of that nucleus in the setup its γ rays are in the events (see *Both nuclei* under
      {ref}`Particle–γ events <particle-gamma-events>`). Its first transition's peak is then found, fitted and
      integrated in its own corrected spectrum, in coincidence with every particle counted in the same rings.
