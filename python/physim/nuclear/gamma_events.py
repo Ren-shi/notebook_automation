@@ -1293,7 +1293,8 @@ def simulate_gammas(experiment, events: int = 200_000, seed: int = 1, particle_e
     elif info[0]["lifetimes"]:
         stopped = parts[0]["stopped"]
         notes.append(f"Lifetimes: each emitter slows down in the target and backing and decays after its level's "
-                     f"lifetime; {stopped.mean():.1%} of the γ rays kept come from nuclei that had stopped.")
+                     f"lifetime; {stopped.mean() if len(stopped) else 0.0:.1%} of the γ rays kept come from nuclei "
+                     "that had stopped.")
     for part, nuclide in zip(info, [emitter] + ([other.scheme.nuclide] if other is not None else [])):
         if part["vacuum"] is not None:
             notes.append(part["vacuum"].note(nuclide))
