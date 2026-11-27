@@ -991,16 +991,17 @@ class _Integrand:
                 lev_i = min((n for n in range(len(levels)) if n != lev_f), key=lambda n: levels[n].energy.value)
             else:
                 lev_i, lev_f = transition
-            e0 = 1e-3 * (levels[lev_i].energy.value - levels[lev_f].energy.value)
+            # The collision leaves the nucleus in the initial level: its excitation energy sets the kinematics (not
+            # the γ-ray energy, which differs for a line that does not go to the ground state).
+            e_star = 1e-3 * (levels[lev_i].energy.value - levels[ex.ground].energy.value)
         else:
             ex = excitation_of(experiment)
-            e0 = exc.energy_mev
+            e_star = exc.energy_mev
             lev_i, lev_f = 1, 0
         self.ex, self.lev_i, self.lev_f = ex, lev_i, lev_f
         self.excite = "recoil" if ex.excite == "target" else "ejectile"
         self.flip = ex.excite == "projectile"
-        e_star = 1e-3 * (ex.scheme.levels[lev_i].energy.value - ex.scheme.levels[ex.ground].energy.value)
-        self.m_emitter = data.nuclide(ex.scheme.nuclide).nuclear_mass_mev + e0
+        self.m_emitter = data.nuclide(ex.scheme.nuclide).nuclear_mass_mev + e_star
         crystals = []
         for i, gd in enumerate(experiment.gamma_detectors):
             for label, centre, radius in gd.elements():
@@ -1041,7 +1042,7 @@ class _Integrand:
             if populated is None:
                 continue
             try:
-                tb = TwoBody(ex.beam, ex.target, e_beam, excitation_mev=e0, excite=self.excite)
+                tb = TwoBody(ex.beam, ex.target, e_beam, excitation_mev=e_star, excite=self.excite)
             except ValueError:  # below the threshold at this depth
                 continue
             ruth = Rutherford(ex.beam, ex.target, e_beam)

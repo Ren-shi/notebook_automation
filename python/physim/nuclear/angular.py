@@ -99,7 +99,10 @@ def distribution_coefficient(k: int, j_initial: float, j_final: float, l1: int, 
     """A_k of a γ ray from J_i to J_f: F_k for a pure multipole L, and for a mixture with mixing ratio δ (the
     amplitude of L′ = ``l2`` over that of L = ``l1``)
 
-        A_k = [F_k(L L) + 2δ F_k(L L′) + δ² F_k(L′ L′)] / (1 + δ²)."""
+        A_k = [F_k(L L) + 2δ F_k(L L′) + δ² F_k(L′ L′)] / (1 + δ²).
+
+    With L < L′ (L′ = L + 1) δ is ENSDF's, with Krane and Steffen's sign (their formula for the emitted γ ray). The
+    result is the same for (L′, L, 1/δ), so only the pairing of δ with the right order matters."""
     pure = f_coefficient(k, l1, l1, j_final, j_initial)
     if not l2 or not mixing:
         return pure

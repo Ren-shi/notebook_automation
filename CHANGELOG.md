@@ -324,6 +324,30 @@ workflow builds the wheels, tests them and publishes to PyPI.
   in `docs/images/planner-setup-light.png`, and the README lists the clover template.
 
 ### Fixed
+- ENSDF's γ-ray mixing ratios and multipolarities. δ is the amplitude of the higher multipole over the lower (E2/M1,
+  generally L + 1 over L) with Krane and Steffen's sign, **whatever order the multipolarity is written in**; physim took it
+  as the second-written over the first-written, and could not read a multipolarity of three parts. So ¹⁹⁴Pt's
+  4⁺₂ → 4⁺₁ "(E2(+M1))" with δ = 3 was 90 % M1 (it is 90 % E2), ENSDF's ⁹⁸Ru 2⁺₂ → 2⁺₁ "E2+M1" with δ = 13 was 99.4 % M1, ¹⁵²Sm's
+  1086 keV "E2+M1" (δ = −9.3) 98.9 % M1, and every "M1+E2+E0" or "E2+M1+E0" line (⁶²Ni's and ¹⁹⁴Pt's 2⁺₂ → 2⁺₁ in
+  `coulex_ni62_pt194` and its clovers) pure M1. Now `levels.components` gives the γ-ray multipoles lower first and leaves
+  E0 out (it emits no γ ray: "E2+M1+E0" is an E2/M1 γ ray), and every reader of δ follows it: the shares (`fractions`), B
+  from a half-life, τ from a matrix element, the decay and its angular distribution (`orientation`, the correlation and
+  the events), the residues' cascades, the B ↔ τ conversion of a level's one γ ray (which now takes three-part lines) and
+  the deorientation's feeding. A mixed line without δ is the multipole written first (ENSDF writes the dominant one first),
+  as before for two parts. The "M1+E2" lines (`fusion_sm143_dsam`, ENSDF's usual order) were read right and do not move.
+  Checked (`test_nuclear_mixing_ratios`, bands fixed before the change): the same numbers whatever the order, for every
+  reader; A₂ and A₄ of 2 → 2 and 4 → 4 lines against Krane and Steffen's F coefficients as exact surds (1e-6, both signs
+  of δ; the event generator's helicity amplitudes too); the E2 share of every mixed line of the templates and of ENSDF's
+  ⁶²Ni, ⁹⁸Ru, ¹⁹⁴Pt and ¹⁵²Sm is δ²/(1 + δ²); B(E2) from a lifetime as the lifetime analysis has it (1e-9).
+  `test_nuclear_gosia_yields` now writes its mixed lines as the template and ENSDF do and still agrees with GOSIA; with δ's
+  sign flipped its four mixed lines miss by up to 500 bands. What moves: `coulex_ni62_pt194` coincidences per pair −0.13 %
+  to +0.07 % (strips +0.04 %, beam time −0.04 %), its clovers up to +0.06 % (the 2⁺₂ → 2⁺₁ lines' feeding of the 2⁺₁); B(E2) back from a sample (seed 701) +1.9 % →
+  −1.4 % (MC 3.6 %), clovers −3.5 % → −3.0 % (MC 2.1 %). Every other template's plan, the Allmond reproduction, and the
+  lifetime and DSAM reproductions are unchanged to the last digit.
+- The correlation table of a line that does not go to the ground state (`gamma.correlation_table` with `transition`, as
+  the analysis asks for a line beside its peak and for the other nucleus's line) sets its kinematics and the emitter's
+  mass with the initial level's excitation energy, not the γ-ray energy. No template's plan moves by it; B(E2) of the Pt
+  samples by 0.001 %.
 - The particle–γ correlation table where a particle detector's face holds the largest lab angle of the scattered nucleus
   (a beam heavier than its target): at its 8 points each way it was 7.6 % off per crystal for `coulex_ru98_plunger` and its
   efficiency-weighted factor +2.3 %, so the plan overstated the coincidence efficiency. The points over the face are now cut

@@ -42,6 +42,8 @@ SCHEMES = {
              {(2, 5): 0.0384377}, {(5, 2): 13.0},
              {(2, 1): 0.00253, (3, 2): 0.00236, (4, 2): 0.00179, (5, 2): 0.00169, (5, 1): 0.0005, (6, 4): 0.0016}),
 }
+#: The mixed lines written as the templates (coulex_ni62_pt194) and ENSDF write them: δ is E2/M1 whatever the order.
+WRITTEN = {("62Ni", 4, 2): "M1+E2+E0", ("194Pt", 3, 2): "E2+M1+E0", ("194Pt", 5, 4): "(E2(+M1))", ("98Ru", 5, 2): "E2+M1"}
 G_CHANGED = {"62Ni": 0.30, "194Pt": 0.25, "98Ru": 0.35}
 DETECTORS = [(t, p) for t in (25.0, 55.0, 90.0, 125.0, 155.0) for p in (45.0, 135.0)]
 
@@ -66,7 +68,7 @@ def scheme(nuc: str) -> LevelScheme:
         mixed = e2 > 0 and m1 > 0
         assert not mixed or abs(deltas[i, f] ** 2 / (e2 / m1) - 1) < 1e-4
         s.transitions.append(Transition(i - 1, f - 1, Value(1e3 * (energy[i - 1] - energy[f - 1]), source="user"),
-                                        Value(e2 + m1, source="user"), "M1+E2" if mixed else "E2",
+                                        Value(e2 + m1, source="user"), WRITTEN[nuc, i, f] if mixed else "E2",
                                         Value(deltas[i, f], source="user") if mixed else None,
                                         Value(alphas[i, f], source="user")))
     for (a, b), m in sorted(e2s.items()):

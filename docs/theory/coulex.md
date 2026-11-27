@@ -205,9 +205,13 @@ transition, the simulated events take that solution (`gamma.cascade_excitation`)
   cascade. The 4⁺ → 2⁺ γ rays of a 4⁺ state reached in two steps are emitted with that state's own alignment;
   nothing is taken as isotropic.
 - **The γ rays of one cascade are correlated** (`physim.nuclear.correlation`). Each excitation carries the
-  density matrix ρ of its level down the cascade. A γ ray from spin I to I_f by multipoles L, L′ (mixing ratio
-  δ) is drawn along n with the probability W(n) ∝ Σ_σ Tr[A_σ ρ_n A_σ†], where ρ_n is ρ quantised along n, σ = ±1
-  the photon's helicity and (A_σ)_{mM} = Σ_L c_L √(2L + 1) ⟨I_f m L σ | I M⟩ with c_L = 1, c_L′ = −σδ. The level
+  density matrix ρ of its level down the cascade. A γ ray from spin I to I_f by multipoles L < L′ (mixing ratio
+  δ, ENSDF's: the amplitude of L′ over L with Krane and Steffen's sign, whatever order the multipolarity is written
+  in; E0 has no γ ray and is left out) is drawn along n with the probability W(n) ∝ Σ_σ Tr[A_σ ρ_n A_σ†], where
+  ρ_n is ρ quantised along n, σ = ±1 the photon's helicity and (A_σ)_{mM} = Σ_L c_L √(2L + 1) ⟨I_f m L σ | I M⟩
+  with c_L = 1, c_L′ = −σδ: for either sign of δ this is Krane and Steffen's A_k = [F_k(LL) + 2δ F_k(LL′) +
+  δ² F_k(L′L′)]/(1 + δ²) (checked against their F coefficients as exact surds for 2 → 2 and 4 → 4 lines, and against
+  GOSIA's yields of four mixed lines, which miss by up to 500 bands with δ's sign flipped). The level
   it feeds is left in Σ_σ A_σ ρ_n A_σ† rotated back and normalised, and the next γ ray starts from that. Summed
   over directions this is the unobserved feeding above, so the singles are unchanged and only the γ–γ
   coincidences between crystals change: for an unoriented 4⁺ → 2⁺ → 0⁺ cascade the two γ rays follow
